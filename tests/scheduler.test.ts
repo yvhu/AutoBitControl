@@ -47,4 +47,26 @@ describe('Scheduler', () => {
     sched.fireNow('nope')
     expect(enqueue).not.toHaveBeenCalled()
   })
+
+  it('deprecated 任务不调度', () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]) } as never
+    const enqueue = vi.fn()
+    const enq = { enqueue } as never
+    const warn = vi.fn()
+    const deprecated = { meta: { key: 'old', name: '旧任务', url: 'https://x.io', schedule: '0 9 * * *', deprecated: true } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['old', deprecated]]), enq, { info: vi.fn(), warn, error: vi.fn() } as never)
+    sched.start()
+    expect(warn).toHaveBeenCalled()
+    expect(enqueue).not.toHaveBeenCalled()
+    sched.stop()
+  })
+
+  it('fireNow 对 deprecated 任务仍可手动触发', () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }]) } as never
+    const enqueue = vi.fn()
+    const enq = { enqueue } as never
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['old', { meta: { key: 'old', name: '旧任务', url: 'https://x.io', deprecated: true } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
+    sched.fireNow('old')
+    expect(enqueue).toHaveBeenCalledTimes(1)
+  })
 })

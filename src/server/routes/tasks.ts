@@ -4,13 +4,12 @@ import { HttpError } from '../http/error'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
-import type { TaskMeta } from '../../engine/task'
 
 export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   router.get('/tasks', (req, res) => {
     ok(res, [...deps.tasks.values()].map(t => {
-      const m = t.meta as TaskMeta & { sourceUrl?: string; note?: string; category?: string; lastUpdated?: string; deprecated?: boolean }
+      const m = t.meta
       return {
         key: m.key,
         name: m.name,

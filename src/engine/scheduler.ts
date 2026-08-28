@@ -38,6 +38,10 @@ export class Scheduler {
 
   start(): void {
     for (const task of this.tasks.values()) {
+      if (task.meta.deprecated) {
+        this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
+        continue
+      }
       if (!task.meta.url) {
         this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
         continue
