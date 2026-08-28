@@ -1,12 +1,12 @@
 /**
  * 截图路由（server 层）：按路径回传截图文件
  * 依赖方向：依赖 infrastructure/config；被 app 装配
- * 设计思路：路径穿越防护——resolve 后必须仍在截图根目录内（startsWith 前缀校验），
- * 文件不存在返回 404（截图可能因失败未生成）
+ * 设计思路：双重路径防护——realpath 解析符号链接后再做前缀校验（防 symlink 逃逸），
+ * 比较前统一小写（Windows 盘符大小写）；文件不存在返回 404（截图可能因失败未生成）
  */
 import { Router } from 'express'
 import { resolve, sep } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import type { AppConfig } from '../../infrastructure/config'
 import { fail, asyncHandler } from '../http/response'
 
@@ -16,8 +16,18 @@ export function screenshotsRouter(deps: { cfg: AppConfig }): Router {
     const p = typeof req.query.path === 'string' ? req.query.path : ''
     const root = resolve(deps.cfg.storage.screenshotDir)
     const target = resolve(p)
-    // 前缀校验 + sep：防止 /data/screenshots-evil 这类前缀绕过（startsWith 需含路径分隔符）
-    if (!target.startsWith(root + sep) || !existsSync(target)) {
+    // realpath 解析符号链接（根目录或目标不存在视为 404）：链接指向根目录外时前缀校验拦截
+    let rootReal: string
+    let targetReal: string
+    try {
+      rootReal = realpathSync(root)
+      targetReal = realpathSync(target)
+    } catch {
+      fail(res, 404, 404, '截图不存在')
+      return
+    }
+    // 前缀校验 + sep + 统一小写：防 /data/screenshots-evil 前缀绕过与盘符大小写差异
+    if (!targetReal.toLowerCase().startsWith((rootReal + sep).toLowerCase()) || !existsSync(target)) {
       fail(res, 404, 404, '截图不存在')
       return
     }

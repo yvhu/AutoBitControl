@@ -38,6 +38,8 @@ async function main(): Promise<void> {
     const popup = await waitForPopup(conn.page.context(), adapter.extensionUrlPatterns, 60000)
     if (!popup) {
       logger.error('未检测到钱包弹窗')
+      // 标记失败退出码后 return：finally 中的关窗清理仍会执行
+      process.exitCode = 1
       return
     }
     logger.info({ url: popup.url() }, '检测到钱包弹窗，尝试自动确认')

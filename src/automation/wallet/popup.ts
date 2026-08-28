@@ -23,10 +23,14 @@ export async function waitForPopup(context: BrowserContext, patterns: string[], 
   if (existing) return existing
   return new Promise(resolve => {
     let settled = false
+    // 句柄先声明后赋值：finish 内统一清理轮询定时器与超时定时器
+    let timer: ReturnType<typeof setInterval>
+    let timeoutHandle: ReturnType<typeof setTimeout>
     const finish = (p: Page | null) => {
       if (settled) return
       settled = true
       clearInterval(timer)
+      clearTimeout(timeoutHandle)
       context.off('page', handler)
       resolve(p)
     }
@@ -34,10 +38,10 @@ export async function waitForPopup(context: BrowserContext, patterns: string[], 
       if (matchesWalletUrl(p.url(), patterns)) finish(p)
     }
     context.on('page', handler)
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       const p = find()
       if (p) finish(p)
     }, 100)
-    setTimeout(() => finish(null), timeoutMs)
+    timeoutHandle = setTimeout(() => finish(null), timeoutMs)
   })
 }

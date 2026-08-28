@@ -67,6 +67,17 @@ describe('ensureConnected 重试循环', () => {
     await adapter.ensureConnected(popup)
     expect(clicks).toBe(2)
   })
+
+  it('3 次耗尽（弹窗始终不关闭）后正常返回', async () => {
+    const adapter = new MetaMaskAdapter()
+    let clicks = 0
+    const popup = makePopup({
+      getByRole: () => makeLocator({ click: async () => { clicks++ } }),
+      waitForEvent: async () => { throw new Error('永不关闭') },
+    })
+    await adapter.ensureConnected(popup)
+    expect(clicks).toBe(3)
+  })
 })
 
 describe('MetaMaskAdapter', () => {

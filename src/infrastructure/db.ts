@@ -169,7 +169,7 @@ export class AppDb {
    * started_at 取首次值（标记真正开始时刻），finished_at 保留已有值不被中间状态覆盖
    */
   upsertRun(profileId: number, taskKey: string, date: string, status: RunStatus, patch: Partial<RunRow> = {}): RunRow {
-    const existing = this.raw.prepare(`SELECT id, profile_id AS profileId, task_key AS taskKey, date, status, attempts, error, screenshot, started_at AS startedAt, finished_at AS finishedAt FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`).get(profileId, taskKey, date) as RunRow | undefined
+    const existing = this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow | undefined
     const base: RunRow = existing ?? {
       id: 0, profileId, taskKey, date, status: 'pending', attempts: 0,
       error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '',
@@ -203,9 +203,9 @@ export class AppDb {
     this.raw.prepare('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok) VALUES (?, ?, ?, ?, ?)').run(profileId, taskKey, kind, cost, ok ? 1 : 0)
   }
 
-  /** 某天的打码统计：次数与总费用（点） */
+  /** 某天的打码统计：次数与总费用（点）；created_at 为 UTC 存储，按本地日期过滤（与 todayStr 口径一致） */
   captchaStats(date: string): { count: number; totalCost: number } {
-    const row = this.raw.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at) = ?`).get(date) as { count: number; total: number }
+    const row = this.raw.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at, 'localtime') = ?`).get(date) as { count: number; total: number }
     return { count: row.count, totalCost: row.total }
   }
 

@@ -38,11 +38,12 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     const key = String(req.params.key)
     if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
     if (!deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true)) throw new HttpError(409, '任务已停用')
-    const { bitbrowserId } = req.body as { bitbrowserId?: string } ?? {}
+    // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
+    const body = (req.body ?? {}) as { bitbrowserId?: string }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）
-    if (bitbrowserId) {
-      const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.bitbrowserId === bitbrowserId)
-      if (!profile) throw new HttpError(404, `窗口不存在: ${bitbrowserId}`)
+    if (body.bitbrowserId) {
+      const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)
+      if (!profile) throw new HttpError(404, `窗口不存在: ${body.bitbrowserId}`)
       deps.enqueuer.enqueue(profile, key)
       ok(res, { scope: 'single' })
       return
@@ -54,7 +55,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
   router.patch('/tasks/:key', asyncHandler(async (req, res) => {
     const key = String(req.params.key)
     if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
-    const { enabled } = req.body as { enabled?: boolean } ?? {}
+    const { enabled } = (req.body ?? {}) as { enabled?: boolean }
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled 必须为布尔值')
     deps.db.setTaskEnabled(key, enabled)
     ok(res, { key, enabled })

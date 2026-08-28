@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import Database from 'better-sqlite3'
-import { AppDb, type RunStatus } from '../src/infrastructure/db'
+import { AppDb, todayStr } from '../src/infrastructure/db'
 
 let db: AppDb
 let dir: string
@@ -47,13 +47,12 @@ describe('AppDb', () => {
     expect(db.incrCircuitBreaker(p.id)).toBe(1)
   })
 
-  it('验证码统计聚合', () => {
+  it('验证码统计聚合（按本地日期过滤）', () => {
     const p = db.upsertProfile('bb-1', 'A')
     db.logCaptcha(p.id, 'task-a', 'turnstile', 0.03, true)
     db.logCaptcha(p.id, 'task-a', 'hcaptcha', 0.05, false)
     db.logCaptcha(p.id, 'task-b', 'turnstile', 0.03, true)
-    const utcDate = new Date().toISOString().slice(0, 10)
-    const stats = db.captchaStats(utcDate)
+    const stats = db.captchaStats(todayStr())
     expect(stats.count).toBe(3)
     expect(stats.totalCost).toBeCloseTo(0.11)
   })

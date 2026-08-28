@@ -85,9 +85,8 @@ export async function startApp(): Promise<void> {
     cfg,
     logger,
     bitbrowser,
-    // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板）
+    // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {
-      if (!yescaptcha) return null
       try {
         return { points: await yescaptcha.getBalance() }
       } catch {
@@ -95,19 +94,32 @@ export async function startApp(): Promise<void> {
       }
     },
   })
-  app.listen(cfg.web.port, cfg.web.host, () => {
+  // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
+  const server = app.listen(cfg.web.port, cfg.web.host, () => {
     logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, 'Web 面板已启动')
   })
 
   const scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
   scheduler.start()
 
-  // 优雅退出：先停调度器再关数据库（顺序反了会有写入风险）
+  // 优雅退出：先停调度器 → server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
+  let finishing = false
+  const finish = () => {
+    if (finishing) return
+    finishing = true
+    try {
+      db.close()
+    } catch {
+      // 兜底与回调竞争时可能已关闭，忽略
+    }
+    process.exit(0)
+  }
   const shutdown = () => {
     logger.info('正在关闭...')
     scheduler.stop()
-    db.close()
-    process.exit(0)
+    server.close(() => finish())
+    // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）
+    setTimeout(finish, 3000).unref()
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)

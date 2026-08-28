@@ -13,7 +13,9 @@ export function runsRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer }): R
   const router = Router()
   router.post('/runs/rerun-failed', asyncHandler(async (req, res) => {
     // date 缺省今天；body 里可传指定日期（面板日期切换后重跑对应日）
-    const date = typeof req.body?.date === 'string' ? req.body.date : todayStr()
+    // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
+    const body = (req.body ?? {}) as { date?: unknown }
+    const date = typeof body.date === 'string' ? body.date : todayStr()
     const failed = deps.db.listRunsForDate(date).filter(r => r.status === 'failed' || r.status === 'captcha_failed')
     for (const r of failed) {
       const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.id === r.profileId)

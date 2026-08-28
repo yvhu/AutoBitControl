@@ -184,7 +184,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
   if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
-  if (env.WEB_PORT) cfg.web.port = Number(env.WEB_PORT)
+  // WEB_PORT 非法值（NaN/非正数）静默忽略并保留默认端口（config 层无 logger，不做告警）
+  if (env.WEB_PORT) {
+    const port = Number(env.WEB_PORT)
+    if (Number.isFinite(port) && port > 0) cfg.web.port = port
+  }
   // 钱包密码：WALLET_PASSWORDS 为 JSON 映射字符串（{"窗口ID":"密码"}），解析成功时与配置文件值合并（env 覆盖同名 key）
   // 解析失败静默忽略并保留配置值（config 层无 logger，直接忽略非法 JSON）
   if (env.WALLET_PASSWORDS) {

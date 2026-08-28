@@ -38,6 +38,18 @@ describe('loadConfig', () => {
     expect(cfg.captcha.clientKey).toBe('abc123')
   })
 
+  it('WEB_PORT 合法值覆盖默认端口', () => {
+    const cfg = loadConfig({ rootDir: dir, env: { WEB_PORT: '8080' } })
+    expect(cfg.web.port).toBe(8080)
+  })
+
+  it('WEB_PORT 非法值静默忽略并保留默认端口', () => {
+    for (const bad of ['not-a-number', '0', '-1', '']) {
+      const cfg = loadConfig({ rootDir: dir, env: { WEB_PORT: bad } })
+      expect(cfg.web.port).toBe(3000)
+    }
+  })
+
   it('相对存储路径解析为 root 下的绝对路径', () => {
     const configDir = join(dir, 'config')
     mkdirSync(configDir, { recursive: true })

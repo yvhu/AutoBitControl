@@ -52,6 +52,7 @@ describe('BitBrowserClient', () => {
 
   it('listBrowsers 为 POST 且 page 从 0 开始', async () => {
     mockFetchOnce((url, init) => {
+      expect(url).toContain('/browser/list')
       expect(init.method).toBe('POST')
       expect(JSON.parse(String(init.body))).toEqual({ page: 0, pageSize: 100 })
       return new Response(JSON.stringify({ success: true, data: { list: [{ id: 'a1', name: '窗口1' }, { id: 'a2', name: '窗口2' }] } }), { status: 200 })
@@ -61,7 +62,10 @@ describe('BitBrowserClient', () => {
   })
 
   it('health 返回 true', async () => {
-    mockFetchOnce(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
+    mockFetchOnce((url) => {
+      expect(url).toContain('/health')
+      return new Response(JSON.stringify({ success: true }), { status: 200 })
+    })
     expect(await client.health()).toBe(true)
   })
 

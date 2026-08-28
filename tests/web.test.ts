@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import request from 'supertest'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { createApp } from '../src/server/app'
 
 type Mock = ReturnType<typeof vi.fn>
@@ -139,12 +142,23 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
   })
 
-  it('POST /api/runs/rerun-failed 重跑失败', async () => {
+  it('POST /api/runs/rerun-failed 重跑失败（failed 行入队一次）', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
     expect(res.body.code).toBe(0)
     expect(res.body.data.count).toBe(1)
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('POST /api/runs/rerun-failed 无失败记录返回 count 0', async () => {
+    const deps = makeDeps()
+    ;(deps.db.listRunsForDate as Mock).mockReturnValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(0)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
   it('POST /api/bitbrowser/test 返回连接状态', async () => {
@@ -175,6 +189,26 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/screenshots').query({ path: 'C:/windows/win.ini' })
     expect(res.status).toBe(404)
     expect(res.body.code).not.toBe(0)
+  })
+
+  it('GET /api/screenshots 拒绝符号链接逃逸（realpath 前缀校验）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-shots-'))
+    try {
+      const root = join(dir, 'screenshots')
+      const outside = join(dir, 'outside')
+      mkdirSync(root)
+      mkdirSync(outside)
+      writeFileSync(join(outside, 'secret.txt'), 'secret')
+      // junction：Windows 下无需管理员权限的目录符号链接，指向截图根目录之外
+      symlinkSync(outside, join(root, 'link'), 'junction')
+      const deps = makeDeps()
+      deps.cfg.storage.screenshotDir = root
+      const res = await request(createApp(deps as never)).get('/api/screenshots').query({ path: join(root, 'link', 'secret.txt') })
+      expect(res.status).toBe(404)
+      expect(res.body.code).not.toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('GET /api/docs/guide 返回手册 markdown', async () => {

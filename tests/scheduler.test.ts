@@ -93,4 +93,23 @@ describe('Scheduler', () => {
     sched.fireNow('off')
     expect(enqueue).not.toHaveBeenCalled()
   })
+
+  it('start 重入保护：再次调用先停旧任务再重新注册', () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockReturnValue(true) } as never
+    const enqueue = vi.fn()
+    const enq = { enqueue } as never
+    const warn = vi.fn()
+    const info = vi.fn()
+    const logger = { info, warn, error: vi.fn() } as never
+    const task = { meta: { key: 't1', name: 'T1', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['t1', task]]), enq, logger)
+    sched.start()
+    const scheduled = () => info.mock.calls.filter(c => c[1] === '任务已调度').length
+    expect(scheduled()).toBe(1)
+    // 再次 start：先 stop 旧 cron（warn 提示）再注册一次，无重复 cron
+    sched.start()
+    expect(warn).toHaveBeenCalled()
+    expect(scheduled()).toBe(2)
+    sched.stop()
+  })
 })

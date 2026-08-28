@@ -55,6 +55,11 @@ export class Scheduler {
 
   /** 为每个任务建 cron 定时器 */
   start(): void {
+    // 重入保护：已注册过任务时先停旧任务再重新注册（保证可重入且不产生重复 cron）
+    if (this.jobs.length > 0) {
+      this.logger.warn('调度器已启动，先停止旧任务再重新注册')
+      this.stop()
+    }
     for (const task of this.tasks.values()) {
       if (task.meta.deprecated) {
         this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
