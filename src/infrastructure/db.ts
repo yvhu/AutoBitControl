@@ -116,6 +116,8 @@ export class AppDb {
   }
 
   async migrate(): Promise<void> {
+    // 清理历史遗留表（task_states 已废弃：任务开关改为纯代码 meta.enabled）
+    await this.client.execute('DROP TABLE IF EXISTS task_states')
     for (const stmt of SCHEMA) await this.client.execute(stmt)
   }
 
