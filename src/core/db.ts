@@ -9,7 +9,6 @@ export interface ProfileRow {
   bitbrowserId: string
   name: string
   enabled: number
-  wallet: string | null
   walletPassword: string | null
   circuitBreakerCount: number
 }
@@ -41,7 +40,6 @@ CREATE TABLE IF NOT EXISTS profiles (
   bitbrowser_id TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  wallet TEXT,
   wallet_password TEXT,
   circuit_breaker_count INTEGER NOT NULL DEFAULT 0
 );
@@ -95,13 +93,13 @@ export class AppDb {
       `INSERT INTO profiles (bitbrowser_id, name) VALUES (?, ?)
        ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name`
     ).run(bitbrowserId, name)
-    return this.raw.prepare(`SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE bitbrowser_id = ?`).get(bitbrowserId) as ProfileRow
+    return this.raw.prepare(`SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE bitbrowser_id = ?`).get(bitbrowserId) as ProfileRow
   }
 
   listProfiles(enabledOnly = false): ProfileRow[] {
     const sql = enabledOnly
-      ? `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE enabled = 1 ORDER BY id`
-      : `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles ORDER BY id`
+      ? `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE enabled = 1 ORDER BY id`
+      : `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles ORDER BY id`
     return this.raw.prepare(sql).all() as ProfileRow[]
   }
 
@@ -109,8 +107,8 @@ export class AppDb {
     this.raw.prepare('UPDATE profiles SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
   }
 
-  setProfileWallet(id: number, wallet: string | null, walletPassword: string | null): void {
-    this.raw.prepare('UPDATE profiles SET wallet = ?, wallet_password = ? WHERE id = ?').run(wallet, walletPassword, id)
+  setProfileWalletPassword(id: number, walletPassword: string | null): void {
+    this.raw.prepare('UPDATE profiles SET wallet_password = ? WHERE id = ?').run(walletPassword, id)
   }
 
   incrCircuitBreaker(profileId: number): number {
@@ -138,11 +136,11 @@ export class AppDb {
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at)`
     ).run(merged)
-    return this.raw.prepare(`SELECT id, profile_id AS profileId, task_key AS taskKey, date, status, attempts, error, screenshot, started_at AS startedAt, finished_at AS finishedAt FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`).get(profileId, taskKey, date) as RunRow
+    return this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow
   }
 
   getRun(profileId: number, taskKey: string, date: string): RunRow | null {
-    return (this.raw.prepare(`SELECT id, profile_id AS profileId, task_key AS taskKey, date, status, attempts, error, screenshot, started_at AS startedAt, finished_at AS finishedAt FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`).get(profileId, taskKey, date) as RunRow | null) ?? null
+    return (this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow | null) ?? null
   }
 
   listRunsForDate(date: string): RunRow[] {
