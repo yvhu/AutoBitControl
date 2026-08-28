@@ -1568,7 +1568,7 @@ describe('TaskContext 集成', () => {
       page,
       task,
       human: new Humanizer(page),
-      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 },
+      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 0 },
       cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
       artifactsDir: '',
@@ -1589,7 +1589,7 @@ describe('TaskContext 集成', () => {
       page,
       task,
       human: new Humanizer(page),
-      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 },
+      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 0 },
       cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
       artifactsDir: '',
@@ -1917,7 +1917,7 @@ describe('CoalescingEnqueuer', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never)
-    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 }
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
     enq.enqueue(profile, 'task-a')
     enq.enqueue(profile, 'task-b')
     enq.enqueue(profile, 'task-c')
@@ -1930,7 +1930,7 @@ describe('CoalescingEnqueuer', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never)
-    const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 })
+    const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, walletPassword: null, circuitBreakerCount: 0 })
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
     await q.onIdle()
@@ -1948,7 +1948,7 @@ import type { AppDb, ProfileRow, RunRow } from '../src/core/db'
 import type { SiteTask } from '../src/tasks/base'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
-  return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0, ...over }
+  return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 0, ...over }
 }
 
 function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
@@ -2315,8 +2315,8 @@ describe('Scheduler', () => {
   it('fireNow 将启用窗口的任务入队', () => {
     const db = {
       listProfiles: vi.fn().mockReturnValue([
-        { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 },
-        { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 0, wallet: null, walletPassword: null, circuitBreakerCount: 0 },
+        { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 },
+        { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 0, walletPassword: null, circuitBreakerCount: 0 },
       ]),
     } as never
     const enq = { enqueue: vi.fn() } as never
@@ -2437,8 +2437,8 @@ git commit -m "feat: croner scheduler with stagger time windows"
 - Create: `tests/web.test.ts`
 
 **Interfaces:**
-- Consumes: `AppDb`（Task 2）、`TaskQueue`/`CoalescingEnqueuer`（Task 8）、`WindowRunner`（Task 8）、`loadTasks`（Task 7）
-- Produces: `createApp(deps: WebDeps): express.Express`，路由：`GET /api/dashboard?date=`、`POST /api/trigger`、`POST /api/rerun-failed`、`POST /api/profile/:id/toggle`、`GET /`（静态面板）（Task 12 依赖）
+- Consumes: `AppDb`（Task 2）、`CoalescingEnqueuer`（Task 8）、`loadTasks`（Task 7）、`BitBrowserClient.health`（Task 4）、`YesCaptchaClient.getBalance`（Task 6）
+- Produces: `createApp(deps: WebDeps): express.Express`，路由：`GET /api/dashboard?date=`、`POST /api/trigger`、`POST /api/rerun-failed`、`POST /api/profile/:id/toggle`、`POST /api/profile/:id/run`、`POST /api/profile/:id/password`、`POST /api/profile/:id/reset-breaker`、`POST /api/bitbrowser/test`、`GET /api/captcha/balance`、`GET /`（4 页静态面板，深色主题，按设计文档 7.5.1 实现）（Task 12 依赖）
 
 - [ ] **Step 1: 写失败测试 tests/web.test.ts**
 
@@ -2450,24 +2450,35 @@ import { createApp } from '../src/web/server'
 function makeDeps() {
   return {
     db: {
-      listRunsForDate: vi.fn().mockReturnValue([{ id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' }]),
-      listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, wallet: null, walletPassword: null, circuitBreakerCount: 0 }]),
+      listRunsForDate: vi.fn().mockReturnValue([
+        { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+        { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'failed', attempts: 2, error: 'boom', screenshot: 's.png', startedAt: null, finishedAt: null, profileName: '窗口1' },
+      ]),
+      listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 1 }]),
       captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 0.23 }),
       setProfileEnabled: vi.fn(),
+      setProfileWalletPassword: vi.fn(),
+      resetCircuitBreaker: vi.fn(),
     } as never,
     enqueuer: { enqueue: vi.fn() } as never,
-    tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '' } }]]),
+    tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
     cfg: { web: { port: 3000 } } as never,
+    bitbrowser: { health: vi.fn().mockResolvedValue(true) },
+    captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
   }
 }
 
 describe('web panel API', () => {
-  it('GET /api/dashboard 返回今日数据', async () => {
+  it('GET /api/dashboard 返回统计与矩阵数据', async () => {
     const app = createApp(makeDeps() as never)
     const res = await request(app).get('/api/dashboard?date=2026-08-28')
     expect(res.status).toBe(200)
-    expect(res.body.runs).toHaveLength(1)
+    expect(res.body.stats.success).toBe(1)
+    expect(res.body.stats.failed).toBe(1)
+    expect(res.body.stats.total).toBe(2)
+    expect(res.body.runs).toHaveLength(2)
     expect(res.body.captcha.totalCost).toBeCloseTo(0.23)
+    expect(res.body.profilesEnabled).toBe(1)
   })
 
   it('POST /api/trigger 入队执行', async () => {
@@ -2493,11 +2504,52 @@ describe('web panel API', () => {
     expect(deps.db.setProfileEnabled).toHaveBeenCalledWith(1, false)
   })
 
+  it('POST /api/profile/:id/run 将该窗口全部任务入队', async () => {
+    const deps = makeDeps()
+    const app = createApp(deps as never)
+    const res = await request(app).post('/api/profile/1/run')
+    expect(res.status).toBe(200)
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1')
+  })
+
+  it('POST /api/profile/:id/password 保存解锁密码', async () => {
+    const deps = makeDeps()
+    const app = createApp(deps as never)
+    const res = await request(app).post('/api/profile/1/password').send({ password: 'secret' })
+    expect(res.status).toBe(200)
+    expect(deps.db.setProfileWalletPassword).toHaveBeenCalledWith(1, 'secret')
+  })
+
+  it('POST /api/profile/:id/reset-breaker 重置熔断', async () => {
+    const deps = makeDeps()
+    const app = createApp(deps as never)
+    const res = await request(app).post('/api/profile/1/reset-breaker')
+    expect(res.status).toBe(200)
+    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+  })
+
+  it('POST /api/bitbrowser/test 返回连接状态', async () => {
+    const app = createApp(makeDeps() as never)
+    const res = await request(app).post('/api/bitbrowser/test')
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(true)
+  })
+
+  it('GET /api/captcha/balance 返回点数', async () => {
+    const app = createApp(makeDeps() as never)
+    const res = await request(app).get('/api/captcha/balance')
+    expect(res.status).toBe(200)
+    expect(res.body.points).toBe(98210)
+    expect(res.body.yuan).toBeCloseTo(98.21)
+  })
+
   it('GET / 返回面板页面', async () => {
     const app = createApp(makeDeps() as never)
     const res = await request(app).get('/')
     expect(res.status).toBe(200)
     expect(res.text).toContain('AutoBitControl')
+    expect(res.text).toContain('窗口管理')
   })
 })
 ```
@@ -2513,7 +2565,7 @@ Expected: FAIL（模块不存在）
 import express from 'express'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { todayStr, type AppDb, type ProfileRow } from '../core/db'
+import { todayStr, type AppDb, type ProfileRow, type RunStatus } from '../core/db'
 import type { CoalescingEnqueuer } from '../core/queue'
 import type { SiteTask } from '../tasks/base'
 import type { AppConfig } from '../core/config'
@@ -2523,7 +2575,11 @@ export interface WebDeps {
   enqueuer: CoalescingEnqueuer
   tasks: Map<string, SiteTask>
   cfg: AppConfig
+  bitbrowser: { health(): Promise<boolean> }
+  captchaBalance: () => Promise<{ points: number } | null>
 }
+
+const COUNTED: RunStatus[] = ['success', 'failed', 'captcha_failed', 'skipped', 'running', 'retry_wait', 'pending']
 
 export function createApp(deps: WebDeps): express.Express {
   const app = express()
@@ -2531,12 +2587,33 @@ export function createApp(deps: WebDeps): express.Express {
 
   app.get('/api/dashboard', (req, res) => {
     const date = typeof req.query.date === 'string' ? req.query.date : todayStr()
+    const runs = deps.db.listRunsForDate(date)
+    const count = (s: RunStatus) => runs.filter(r => r.status === s).length
+    const profiles = deps.db.listProfiles(false)
     res.json({
       date,
-      profiles: deps.db.listProfiles(false),
-      runs: deps.db.listRunsForDate(date),
-      tasks: [...deps.tasks.values()].map(t => ({ key: t.meta.key, name: t.meta.name })),
+      stats: {
+        total: runs.length,
+        success: count('success'),
+        failed: count('failed'),
+        captchaFailed: count('captcha_failed'),
+        skipped: count('skipped'),
+        running: count('running') + count('retry_wait'),
+        pending: count('pending'),
+      },
+      runs,
       captcha: deps.db.captchaStats(date),
+      profilesTotal: profiles.length,
+      profilesEnabled: profiles.filter(p => p.enabled === 1).length,
+      tasks: [...deps.tasks.values()].map(t => ({
+        key: t.meta.key,
+        name: t.meta.name,
+        wallet: t.meta.wallet ?? null,
+        schedule: t.meta.schedule ?? null,
+        timeoutSec: t.meta.timeoutSec ?? null,
+        retry: t.meta.retry ?? null,
+        captcha: t.meta.captcha ?? null,
+      })),
     })
   })
 
@@ -2577,6 +2654,51 @@ export function createApp(deps: WebDeps): express.Express {
     res.json({ ok: true })
   })
 
+  app.post('/api/profile/:id/run', (req, res) => {
+    const id = Number(req.params.id)
+    const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.id === id)
+    if (!profile) {
+      res.status(404).json({ ok: false, error: `窗口不存在: ${id}` })
+      return
+    }
+    for (const task of deps.tasks.values()) deps.enqueuer.enqueue(profile, task.meta.key)
+    res.json({ ok: true, count: deps.tasks.size })
+  })
+
+  app.post('/api/profile/:id/password', (req, res) => {
+    const id = Number(req.params.id)
+    const { password } = req.body as { password?: string | null }
+    deps.db.setProfileWalletPassword(id, password ?? null)
+    res.json({ ok: true })
+  })
+
+  app.post('/api/profile/:id/reset-breaker', (req, res) => {
+    deps.db.resetCircuitBreaker(Number(req.params.id))
+    res.json({ ok: true })
+  })
+
+  app.post('/api/bitbrowser/test', async (req, res) => {
+    try {
+      const ok = await deps.bitbrowser.health()
+      res.json({ ok })
+    } catch {
+      res.json({ ok: false })
+    }
+  })
+
+  app.get('/api/captcha/balance', async (req, res) => {
+    try {
+      const balance = await deps.captchaBalance()
+      if (balance === null) {
+        res.json({ configured: false, points: 0, yuan: 0 })
+        return
+      }
+      res.json({ configured: true, points: balance.points, yuan: Number((balance.points / 1000).toFixed(2)) })
+    } catch {
+      res.json({ configured: false, points: 0, yuan: 0 })
+    }
+  })
+
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')
   app.use(express.static(publicDir))
   return app
@@ -2589,75 +2711,380 @@ export function createApp(deps: WebDeps): express.Express {
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <title>AutoBitControl 面板</title>
-  <style>
-    body { font-family: 'Microsoft YaHei', sans-serif; margin: 20px; background: #0f172a; color: #e2e8f0; }
-    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-    th, td { border: 1px solid #334155; padding: 6px 10px; font-size: 13px; text-align: left; }
-    th { background: #1e293b; }
-    .ok { color: #4ade80; } .fail { color: #f87171; } .run { color: #fbbf24; } .skip { color: #94a3b8; }
-    button { margin: 4px; padding: 4px 10px; cursor: pointer; }
-    .card { background: #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
-  </style>
+<meta charset="utf-8" />
+<title>AutoBitControl 面板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #0B0F19; color: #E2E8F0; }
+  .app { display: flex; min-height: 100vh; }
+  .side { width: 196px; background: #0D1220; border-right: 1px solid rgba(255,255,255,.06); padding: 20px 12px; display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; }
+  .logo { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .logo-mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg,#6366F1,#8B5CF6); display: flex; align-items: center; justify-content: center; }
+  .logo-name { font-weight: 700; font-size: 15px; }
+  .logo-sub { color: #64748B; font-size: 10px; }
+  .nav { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; color: #94A3B8; font-size: 13px; cursor: pointer; }
+  .nav-item.active { background: linear-gradient(90deg,rgba(99,102,241,.18),rgba(139,92,246,.08)); color: #E2E8F0; font-weight: 600; }
+  .nav-badge { margin-left: auto; background: #F87171; color: #fff; font-size: 10px; border-radius: 8px; padding: 1px 7px; }
+  .side-foot { margin-top: auto; padding: 12px; background: rgba(255,255,255,.03); border-radius: 12px; font-size: 11px; color: #64748B; line-height: 1.7; }
+  .main { flex: 1; margin-left: 196px; padding: 20px 24px; }
+  .topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .page-title { font-size: 18px; font-weight: 700; }
+  .crumb { color: #64748B; font-size: 12px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #94A3B8; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); border-radius: 999px; padding: 5px 12px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.ok { background: #34D399; box-shadow: 0 0 8px #34D39988; }
+  .dot.err { background: #F87171; }
+  .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+  .stat { background: linear-gradient(180deg,#121A2C,#0F1626); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; }
+  .stat-label { font-size: 11px; color: #94A3B8; }
+  .stat-value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+  .stat-extra { font-size: 11px; color: #64748B; margin-top: 4px; }
+  .ring { width: 44px; height: 44px; border-radius: 50%; background: conic-gradient(#34D399 calc(var(--p) * 1%), #1E293B 0); display: flex; align-items: center; justify-content: center; }
+  .ring-inner { width: 32px; height: 32px; border-radius: 50%; background: #101828; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #34D399; }
+  .bar { display: flex; height: 6px; border-radius: 99px; overflow: hidden; }
+  .card { background: linear-gradient(180deg,#121A2C,#0F1626); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: rgba(255,255,255,.05); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg span { padding: 5px 14px; border-radius: 8px; font-size: 12px; color: #94A3B8; cursor: pointer; }
+  .seg span.on { background: #1E293B; color: #E2E8F0; font-weight: 600; }
+  .btn { border: 0; border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .btn.primary { background: linear-gradient(135deg,#6366F1,#8B5CF6); color: #fff; }
+  .btn.ghost { background: rgba(255,255,255,.06); color: #E2E8F0; border: 1px solid rgba(255,255,255,.08); }
+  .btn.sm { padding: 4px 10px; font-size: 11px; border-radius: 8px; }
+  .select, .input { background: #151D30; color: #E2E8F0; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 7px 12px; font-size: 12px; }
+  table.mx { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 12px; }
+  table.mx th { color: #64748B; font-weight: 500; text-align: left; padding: 2px 10px; font-size: 11px; }
+  table.mx td { background: rgba(255,255,255,.025); padding: 9px 10px; }
+  table.mx td:first-child { border-radius: 10px 0 0 10px; }
+  table.mx td:last-child { border-radius: 0 10px 10px 0; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
+  .pill .d { width: 6px; height: 6px; border-radius: 50%; }
+  .pill.ok { background: rgba(52,211,153,.12); color: #34D399; } .pill.ok .d { background: #34D399; }
+  .pill.fail { background: rgba(248,113,113,.12); color: #F87171; } .pill.fail .d { background: #F87171; }
+  .pill.run { background: rgba(251,191,36,.12); color: #FBBF24; } .pill.run .d { background: #FBBF24; }
+  .pill.skip { background: rgba(148,163,184,.12); color: #94A3B8; } .pill.skip .d { background: #94A3B8; }
+  .pill.cap { background: rgba(56,189,248,.12); color: #38BDF8; } .pill.cap .d { background: #38BDF8; }
+  .link { color: #818CF8; cursor: pointer; }
+  .err-text { color: #F87171; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .avatar { width: 28px; height: 28px; border-radius: 9px; background: linear-gradient(135deg,#334155,#1E293B); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #CBD5E1; }
+  .toggle { width: 34px; height: 19px; border-radius: 999px; background: #34D399; position: relative; display: inline-block; cursor: pointer; }
+  .toggle::after { content: ''; position: absolute; top: 2px; left: 17px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: .15s; }
+  .toggle.off { background: #334155; } .toggle.off::after { left: 2px; }
+  .progress { height: 5px; border-radius: 99px; background: #1E293B; overflow: hidden; }
+  .progress i { display: block; height: 100%; border-radius: 99px; }
+  .drawer { border-left: 1px solid rgba(255,255,255,.08); background: #0D1424; border-radius: 14px; padding: 14px; margin-top: 12px; }
+  .section-tag { display: flex; align-items: center; gap: 8px; color: #818CF8; font-size: 12px; font-weight: 700; margin: 0 0 10px; }
+  .task-card { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .task-card:last-child { border-bottom: 0; }
+  .wallet-ico { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+  .wallet-ico.mm { background: linear-gradient(135deg,#F59E0B33,#B4530933); border: 1px solid #F59E0B44; }
+  .wallet-ico.pt { background: linear-gradient(135deg,#0EA5E933,#0369A133); border: 1px solid #0EA5E944; }
+  .meta { font-size: 11px; color: #64748B; margin-top: 3px; }
+  .kbd { font-family: 'Cascadia Code', Consolas, monospace; background: #151D30; border: 1px solid rgba(255,255,255,.08); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: #A5B4FC; }
+  .page { display: none; }
+  .page.on { display: block; }
+</style>
 </head>
 <body>
-  <h1>AutoBitControl</h1>
-  <div class="card">
-    <span>日期：<input type="date" id="date" /></span>
-    <span id="captcha-stats" style="margin-left:20px"></span>
+<div class="app">
+  <div class="side">
+    <div class="logo"><div class="logo-mark">◈</div><div><div class="logo-name">AutoBitControl</div><div class="logo-sub">Web3 签到自动化</div></div></div>
+    <div class="nav">
+      <div class="nav-item active" data-page="dashboard"><span>▦</span>看板</div>
+      <div class="nav-item" data-page="profiles"><span>▤</span>窗口<span class="nav-badge" id="badge-fail" style="display:none"></span></div>
+      <div class="nav-item" data-page="tasks"><span>☰</span>任务</div>
+      <div class="nav-item" data-page="settings"><span>⚙</span>设置</div>
+    </div>
+    <div class="side-foot">v0.1.0<br>本地服务<br>时区 Asia/Shanghai</div>
   </div>
-  <div class="card">
-    <select id="task-select"></select>
-    <button onclick="triggerAll()">全部窗口执行</button>
-    <button onclick="rerunFailed()">重跑今日失败</button>
+
+  <div class="main">
+    <div class="topbar">
+      <div><div class="page-title" id="page-title">看板</div><div class="crumb" id="crumb">今日运行总览</div></div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <span class="chip" id="chip-bitbrowser"><span class="dot err"></span>比特浏览器未检测</span>
+        <span class="chip" id="chip-balance"><span class="dot ok"></span>yescaptcha —</span>
+      </div>
+    </div>
+
+    <div class="page on" id="page-dashboard">
+      <div class="stats">
+        <div class="stat"><div class="stat-label">📅 今日完成率</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
+            <div class="ring" id="ring-complete"><div class="ring-inner" id="ring-text">0%</div></div>
+            <div><div class="stat-value" style="margin-top:0" id="stat-complete">0 / 0</div><div class="stat-extra">窗口任务完成</div></div>
+          </div>
+        </div>
+        <div class="stat"><div class="stat-label">📊 结果分布</div>
+          <div class="stat-value" style="font-size:15px;margin-top:10px">
+            <span style="color:#34D399" id="st-ok">0</span> <span style="color:#F87171" id="st-fail">0</span> <span style="color:#38BDF8" id="st-cap">0</span> <span style="color:#94A3B8" id="st-skip">0</span>
+          </div>
+          <div class="stat-extra">成功 · 失败 · 验证码失败 · 跳过</div>
+          <div class="bar" id="bar-dist" style="margin-top:8px"></div>
+        </div>
+        <div class="stat"><div class="stat-label">🧩 验证码</div>
+          <div class="stat-value" style="margin-top:10px" id="st-capcost">¥0</div>
+          <div class="stat-extra" id="st-capcount">0 次</div>
+        </div>
+        <div class="stat"><div class="stat-label">⚡ 实时运行</div>
+          <div class="stat-value" style="margin-top:10px" id="st-running">0</div>
+          <div class="stat-extra" id="st-profiles">窗口 0 / 启用 0</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">任务执行矩阵 <span style="font-weight:400;color:#64748B">· 窗口 × 任务 × 当日结果</span></div>
+        <div class="toolbar">
+          <div class="seg" id="seg-filter"><span class="on" data-f="all">全部</span><span data-f="failed">失败</span><span data-f="success">成功</span><span data-f="running">进行中</span></div>
+          <select class="select" id="filter-task"><option value="">全部任务</option></select>
+          <input class="input" id="filter-profile" placeholder="搜索窗口…" style="width:140px">
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn ghost sm" onclick="rerunFailed()">↻ 重跑今日失败</button>
+            <button class="btn primary sm" onclick="triggerAll()">▶ 全部窗口执行</button>
+          </div>
+        </div>
+        <table class="mx">
+          <thead><tr><th>窗口</th><th>任务</th><th>状态</th><th>尝试</th><th>错误信息</th><th>截图</th><th>操作</th></tr></thead>
+          <tbody id="matrix"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="page" id="page-profiles">
+      <div class="card">
+        <div class="toolbar">
+          <input class="input" id="profile-search" placeholder="🔍 搜索窗口名 / 比特ID" style="width:220px">
+          <span style="color:#64748B;font-size:12px" id="profile-count"></span>
+          <div style="margin-left:auto"><button class="btn primary sm" onclick="syncProfiles()">⇅ 同步比特浏览器</button></div>
+        </div>
+        <table class="mx">
+          <thead><tr><th>窗口</th><th>今日结果</th><th>熔断计数</th><th>启用</th><th>操作</th></tr></thead>
+          <tbody id="profile-table"></tbody>
+        </table>
+        <div class="drawer" id="profile-drawer" style="display:none">
+          <div class="card-title" id="drawer-title">详情</div>
+          <div id="drawer-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-tasks">
+      <div class="card" id="task-cards"></div>
+      <div style="color:#64748B;font-size:11px">→ 任务定义在代码（src/tasks），此页只读展示与触发</div>
+    </div>
+
+    <div class="page" id="page-settings">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
+          <div style="width:120px;color:#94A3B8;font-size:12px">比特浏览器</div>
+          <span class="kbd" id="set-bb-url">—</span>
+          <button class="btn ghost sm" onclick="testBitbrowser()">测试连接</button>
+          <span class="chip"><span class="dot err" id="set-bb-dot"></span><span id="set-bb-text">未检测</span></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
+          <div style="width:120px;color:#94A3B8;font-size:12px">执行参数</div>
+          <span class="kbd" id="set-exec">—</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
+          <div style="width:120px;color:#94A3B8;font-size:12px">yescaptcha</div>
+          <button class="btn ghost sm" onclick="loadBalance()">查询余额</button>
+          <span class="chip"><span class="dot ok"></span><span id="set-balance">—</span></span>
+        </div>
+        <div style="color:#64748B;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）</div>
+      </div>
+    </div>
   </div>
-  <div class="card">
-    <table id="matrix">
-      <thead><tr><th>窗口</th><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>截图</th><th>操作</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <script>
-    const $ = (s) => document.querySelector(s)
-    function fmtDate(d) { return d.toISOString().slice(0, 10) }
-    function localToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
-    const dateInput = $('#date')
-    dateInput.value = localToday()
-    dateInput.addEventListener('change', load)
-    async function load() {
-      const res = await fetch(`/api/dashboard?date=${dateInput.value}`)
-      const data = await res.json()
-      $('#captcha-stats').textContent = `验证码：${data.captcha.count} 次 / $${data.captcha.totalCost.toFixed(3)}`
-      const sel = $('#task-select')
-      sel.innerHTML = data.tasks.map(t => `<option value="${t.key}">${t.name}</option>`).join('')
-      const tbody = $('#matrix tbody')
-      tbody.innerHTML = ''
-      for (const r of data.runs) {
-        const cls = { success: 'ok', failed: 'fail', captcha_failed: 'fail', running: 'run', retry_wait: 'run', skipped: 'skip', pending: 'skip' }[r.status] ?? ''
-        tbody.innerHTML += `<tr>
-          <td>${r.profileName}</td><td>${r.taskKey}</td>
-          <td class="${cls}">${r.status}</td><td>${r.attempts}</td>
-          <td>${r.error ?? ''}</td><td>${r.screenshot ?? ''}</td>
-          <td><button onclick="triggerSingle('${r.profileName}', '${r.taskKey}')">执行</button></td>
-        </tr>`
-      }
-    }
-    async function triggerAll() {
-      await fetch('/api/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskKey: $('#task-select').value }) })
-      load()
-    }
-    async function triggerSingle(name, taskKey) {
-      await fetch('/api/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskKey }) })
-      load()
-    }
-    async function rerunFailed() {
-      await fetch('/api/rerun-failed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: dateInput.value }) })
-      load()
-    }
-    load()
-    setInterval(load, 15000)
-  </script>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s)
+let state = { date: localToday(), filter: 'all', taskFilter: '', profileSearch: '', profiles: [], runs: [], tasks: [] }
+
+function localToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+async function api(path, opts) { const res = await fetch(path, opts); return res.json() }
+const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) })
+
+const PILLS = {
+  success: ['ok', '成功'], failed: ['fail', '失败'], captcha_failed: ['cap', '验证码失败'],
+  running: ['run', '执行中'], retry_wait: ['run', '重试中'], skipped: ['skip', '跳过'], pending: ['skip', '待执行'],
+}
+const WALLET_ICON = { metamask: '<div class="wallet-ico mm">🦊</div>', petra: '<div class="wallet-ico pt">🐍</div>' }
+
+async function loadDashboard() {
+  const data = await api(`/api/dashboard?date=${state.date}`)
+  state.runs = data.runs; state.profiles = data.profiles; state.tasks = data.tasks
+  const s = data.stats
+  const done = s.success + s.failed + s.captchaFailed + s.skipped
+  const pct = s.total ? Math.round(done / s.total * 100) : 0
+  $('#ring-complete').style.setProperty('--p', pct)
+  $('#ring-text').textContent = pct + '%'
+  $('#stat-complete').textContent = `${done} / ${s.total}`
+  $('#st-ok').textContent = s.success; $('#st-fail').textContent = s.failed
+  $('#st-cap').textContent = s.captchaFailed; $('#st-skip').textContent = s.skipped
+  $('#st-running').textContent = s.running
+  $('#st-profiles').textContent = `窗口 ${data.profilesTotal} / 启用 ${data.profilesEnabled}`
+  $('#st-capcost').textContent = '¥' + (data.captcha.totalCost / 1000).toFixed(2)
+  $('#st-capcount').textContent = data.captcha.count + ' 次'
+  const total = s.total || 1
+  $('#bar-dist').innerHTML = `<div style="width:${s.success/total*100}%;background:#34D399"></div><div style="width:${s.failed/total*100}%;background:#F87171"></div><div style="width:${s.captchaFailed/total*100}%;background:#38BDF8"></div><div style="width:${s.skipped/total*100}%;background:#334155"></div>`
+  const badge = $('#badge-fail')
+  badge.textContent = s.failed + s.captchaFailed
+  badge.style.display = s.failed + s.captchaFailed > 0 ? '' : 'none'
+  $('#filter-task').innerHTML = '<option value="">全部任务</option>' + data.tasks.map(t => `<option value="${t.key}">${t.name}</option>`).join('')
+  renderMatrix()
+}
+
+function renderMatrix() {
+  const rows = state.runs.filter(r => {
+    if (state.filter === 'failed' && !['failed','captcha_failed'].includes(r.status)) return false
+    if (state.filter === 'success' && r.status !== 'success') return false
+    if (state.filter === 'running' && !['running','retry_wait'].includes(r.status)) return false
+    if (state.taskFilter && r.taskKey !== state.taskFilter) return false
+    if (state.profileSearch && !r.profileName.includes(state.profileSearch)) return false
+    return true
+  })
+  $('#matrix').innerHTML = rows.map(r => {
+    const [cls, label] = PILLS[r.status] ?? ['skip', r.status]
+    const profile = state.profiles.find(p => p.id === r.profileId)
+    const bitId = profile ? String(profile.bitbrowserId).slice(0, 8) : ''
+    const num = String(r.profileId).padStart(2, '0')
+    return `<tr>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="avatar">${num}</div><div><div>${esc(r.profileName)}</div><div style="font-size:10px;color:#64748B">${esc(bitId)}</div></div></div></td>
+      <td>${esc(r.taskKey)}</td>
+      <td><span class="pill ${cls}"><span class="d"></span>${label}</span></td>
+      <td>${r.attempts}</td>
+      <td class="err-text" title="${esc(r.error ?? '')}">${esc(r.error ?? '—')}</td>
+      <td>${r.screenshot ? `<span class="link" onclick="openShot('${esc(r.screenshot)}')">🖼 查看</span>` : '—'}</td>
+      <td><span class="link" onclick="rerunOne(${r.profileId}, '${esc(r.taskKey)}')">${['failed','captcha_failed'].includes(r.status) ? '重跑' : '执行'}</span></td>
+    </tr>`
+  }).join('')
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])) }
+
+async function loadProfiles() {
+  const data = await api(`/api/dashboard?date=${state.date}`)
+  state.profiles = data.profiles; state.runs = data.runs
+  $('#profile-count').textContent = `${data.profilesTotal} 个窗口 · 启用 ${data.profilesEnabled}`
+  const q = $('#profile-search').value.trim()
+  const rows = data.profiles.filter(p => !q || p.name.includes(q) || p.bitbrowserId.includes(q))
+  $('#profile-table').innerHTML = rows.map(p => {
+    const mine = data.runs.filter(r => r.profileId === p.id)
+    const ok = mine.filter(r => r.status === 'success').length
+    const fail = mine.filter(r => ['failed','captcha_failed'].includes(r.status)).length
+    return `<tr>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="avatar">${String(p.id).padStart(2,'0')}</div><div><div>${esc(p.name)}</div><div style="font-size:10px;color:#64748B">${esc(p.bitbrowserId)}</div></div></div></td>
+      <td><span style="color:#34D399">${ok} ✓</span>${fail ? ` <span style="color:#F87171">${fail} ✗</span>` : ''}</td>
+      <td><span style="color:${p.circuitBreakerCount > 0 ? '#FBBF24' : '#64748B'};font-size:11px">${p.circuitBreakerCount}/2</span></td>
+      <td><span class="toggle ${p.enabled ? '' : 'off'}" onclick="toggleProfile(${p.id}, ${p.enabled ? 0 : 1})"></span></td>
+      <td><span class="link" onclick="runProfile(${p.id})">立即跑</span> · <span class="link" onclick="openDrawer(${p.id})">详情</span></td>
+    </tr>`
+  }).join('')
+}
+
+async function openDrawer(id) {
+  const data = await api(`/api/dashboard?date=${state.date}`)
+  const p = data.profiles.find(x => x.id === id)
+  const mine = data.runs.filter(r => r.profileId === id)
+  $('#profile-drawer').style.display = ''
+  $('#drawer-title').textContent = `详情抽屉 · ${p.name}`
+  $('#drawer-body').innerHTML = `
+    <div style="border-left:2px solid #1E293B;padding-left:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+      ${mine.length ? mine.map(r => {
+        const [cls] = PILLS[r.status] ?? ['skip']
+        const dot = { ok: '#34D399', fail: '#F87171', cap: '#38BDF8', run: '#FBBF24', skip: '#94A3B8' }[cls]
+        return `<div style="position:relative;font-size:12px"><span style="position:absolute;left:-19px;top:5px;width:8px;height:8px;border-radius:50%;background:${dot}"></span>${r.taskKey} <span class="pill ${cls}"><span class="d"></span>${PILLS[r.status][1]}</span>${r.error ? ` · ${esc(r.error)}` : ''}</div>`
+      }).join('') : '<div style="color:#64748B">今日暂无任务记录</div>'}
+    </div>
+    <div style="font-size:12px;color:#94A3B8;display:flex;gap:8px;align-items:center">
+      本窗口钱包解锁密码 ${p.walletPassword ? '<span class="kbd">••••••</span>' : '<span style="color:#64748B">未设置</span>'}
+      <span class="link" onclick="setPassword(${p.id})">${p.walletPassword ? '修改' : '设置'}</span>
+      <span class="link" style="margin-left:12px" onclick="resetBreaker(${p.id})">重置熔断</span>
+    </div>`
+}
+
+async function toggleProfile(id, enabled) { await post(`/api/profile/${id}/toggle`, { enabled }); loadProfiles() }
+async function runProfile(id) { await post(`/api/profile/${id}/run`); loadProfiles() }
+async function resetBreaker(id) { await post(`/api/profile/${id}/reset-breaker`); loadProfiles() }
+async function setPassword(id) {
+  const password = prompt('输入该窗口的钱包解锁密码（留空清除）')
+  if (password === null) return
+  await post(`/api/profile/${id}/password`, { password: password || null })
+  openDrawer(id)
+}
+
+async function triggerAll() {
+  const taskKey = $('#filter-task').value
+  if (!taskKey) { alert('请先选择一个任务'); return }
+  await post('/api/trigger', { taskKey })
+  loadDashboard()
+}
+async function rerunOne(profileId, taskKey) {
+  const p = state.profiles.find(x => x.id === profileId)
+  await post('/api/trigger', { taskKey, bitbrowserId: p.bitbrowserId })
+  loadDashboard()
+}
+async function rerunFailed() { await post('/api/rerun-failed', { date: state.date }); loadDashboard() }
+
+async function renderTasks() {
+  const data = await api(`/api/dashboard?date=${state.date}`)
+  $('#task-cards').innerHTML = data.tasks.map(t => {
+    const icon = WALLET_ICON[t.wallet] ?? '<div class="wallet-ico" style="background:#33415522">▣</div>'
+    const sched = t.schedule === null ? '手动触发' : typeof t.schedule === 'string' ? `cron ${t.schedule}` : `cron ${t.schedule.stagger[0]}-${t.schedule.stagger[1]} 错峰`
+    return `<div class="task-card">
+      ${icon}
+      <div style="flex:1"><div style="font-weight:700;font-size:13px">${esc(t.name)} <span style="color:#64748B;font-weight:400">${esc(t.key)}</span></div>
+      <div class="meta">⏱ ${esc(sched)} · 钱包 ${esc(t.wallet ?? '无')} · 重试 ${t.retry?.max ?? '默认'} 次 · 验证码 ${t.captcha?.auto === false ? '关' : '自动'}</div></div>
+      <button class="btn primary sm" onclick="triggerTask('${esc(t.key)}')">立即触发</button>
+    </div>`
+  }).join('')
+}
+async function triggerTask(taskKey) { await post('/api/trigger', { taskKey }); loadDashboard() }
+
+async function testBitbrowser() {
+  const r = await post('/api/bitbrowser/test')
+  $('#set-bb-dot').className = 'dot ' + (r.ok ? 'ok' : 'err')
+  $('#set-bb-text').textContent = r.ok ? '已连接' : '连接失败'
+}
+async function loadBalance() {
+  const r = await api('/api/captcha/balance')
+  $('#set-balance').textContent = r.configured ? `${r.points.toLocaleString()} 点（¥${r.yuan}）` : '未配置 Key'
+}
+async function syncProfiles() {
+  const r = await api('/api/dashboard?date=' + state.date)
+  $('#profile-count').textContent = `${r.profilesTotal} 个窗口 · 启用 ${r.profilesEnabled}`
+  loadProfiles()
+}
+
+document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => {
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'))
+  el.classList.add('active')
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('on'))
+  $('#page-' + el.dataset.page).classList.add('on')
+  const titles = { dashboard: ['看板', '今日运行总览'], profiles: ['窗口', '窗口管理与详情'], tasks: ['任务', '任务定义与手动触发'], settings: ['设置', '运行参数（只读）'] }
+  $('#page-title').textContent = titles[el.dataset.page][0]
+  $('#crumb').textContent = titles[el.dataset.page][1]
+  if (el.dataset.page === 'profiles') loadProfiles()
+  if (el.dataset.page === 'tasks') renderTasks()
+}))
+$('#seg-filter').addEventListener('click', e => {
+  if (!e.target.dataset.f) return
+  document.querySelectorAll('#seg-filter span').forEach(x => x.classList.remove('on'))
+  e.target.classList.add('on')
+  state.filter = e.target.dataset.f
+  renderMatrix()
+})
+$('#filter-task').addEventListener('change', e => { state.taskFilter = e.target.value; renderMatrix() })
+$('#filter-profile').addEventListener('input', e => { state.profileSearch = e.target.value; renderMatrix() })
+$('#profile-search').addEventListener('input', loadProfiles)
+
+testBitbrowser()
+loadBalance()
+loadDashboard()
+setInterval(loadDashboard, 15000)
+</script>
 </body>
 </html>
 ```
@@ -2669,13 +3096,18 @@ Expected: PASS
 
 - [ ] **Step 6: 手动验证面板（不写代码）**
 
-`npm run dev` 启动后浏览器打开 http://127.0.0.1:3000：确认看板渲染今日数据、选任务点「全部窗口执行」后比特浏览器窗口真实打开并执行、点「重跑今日失败」入队。同时确认面板无跨域报错（同源）。
+`npm run dev` 启动后浏览器打开 http://127.0.0.1:3000，逐页验证：
+1. 看板：统计卡数字正确、矩阵渲染、状态 tab 过滤生效、选任务点「全部窗口执行」后比特浏览器窗口真实打开并执行、「重跑今日失败」入队
+2. 窗口：搜索过滤、启用开关切换后刷新仍生效、详情抽屉显示时间线与密码设置、重置熔断生效
+3. 任务：卡片展示 cron/钱包/重试配置、「立即触发」入队
+4. 设置：「测试连接」显示已连接、「查询余额」显示点数与 ¥
+同时确认面板无跨域报错（同源），15 秒自动刷新正常。
 
 - [ ] **Step 7: Commit**
 
 ```powershell
 git add src/web/server.ts src/web/public/index.html tests/web.test.ts
-git commit -m "feat: local web dashboard with trigger and rerun endpoints"
+git commit -m "feat: 4-page dark dashboard with matrix, profiles drawer and settings"
 ```
 
 ---
@@ -2958,7 +3390,21 @@ async function main(): Promise<void> {
   const queue = new TaskQueue(cfg.execution.concurrency)
   const enqueuer = new CoalescingEnqueuer(queue, runner)
 
-  const app = createApp({ db, enqueuer, tasks, cfg })
+  const app = createApp({
+    db,
+    enqueuer,
+    tasks,
+    cfg,
+    bitbrowser,
+    captchaBalance: async () => {
+      if (!yescaptcha) return null
+      try {
+        return { points: await yescaptcha.getBalance() }
+      } catch {
+        return null
+      }
+    },
+  })
   app.listen(cfg.web.port, cfg.web.host, () => {
     logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, 'Web 面板已启动')
   })
@@ -3162,5 +3608,6 @@ git commit -m "feat: application entrypoint, smoke scripts, pm2 config and readm
 - 规格覆盖：spec 第 2 节架构→Task 8/12；第 3 节组件→Task 1/5/6/11；第 4 节任务模型→Task 7；第 5 节拟人化→Task 5；第 6 节验证码→Task 6；第 7 节稳定性/状态机/SQLite/面板→Task 2/3/8/10；第 8 节配置→Task 1；第 10 节 MVP 顺序→Task 编号顺序；第 11 节运行部署→Task 12
 - 类型一致性：`RunStatus`（Task 2）在 Task 3/8 引用一致；`Humanizer` 接口 Task 5 定义、Task 7/8 使用一致；`WalletRegistry`/`WalletAdapter` Task 7 定义、Task 8/11/12 使用一致；`CoalescingEnqueuer.enqueue(profile, taskKey)` Task 8 定义、Task 9/10/12 调用一致；`OpenResult { http, ws }`（Task 4）与 Task 8/12 的 `connect(\`http://${open.http}\`)` 用法一致
 - 外部接口全部按官方文档核实（见「外部接口参考」一节）：比特浏览器 success/msg 约定与 `data.http` 调试地址、yescaptcha 任务类型精确拼写与 1 并发硬限制（客户端串行排队）、patchright `isolatedContext: false` 回填 token、better-sqlite3 锁 v12
-- 已知偏差：设计文档 7.3 节 profiles 表含"绑定任务"字段，实施中简化为"所有启用窗口跑所有注册任务"（MVP），按任务过滤留待后续加 `task_keys` 列；README 已同步此语义
+- 已知偏差：设计文档 7.3 节 profiles 表含"绑定任务"字段，实施中简化为"所有启用窗口跑所有注册任务"（MVP），按任务过滤留待后续加 `task_keys` 列；README 已同步此语义。钱包类型为任务级配置（TaskMeta.wallet），profiles 表只保留钱包解锁密码（按窗口）
 - 已知偏差 2：yescaptcha 官方不支持极验 GeeTest，设计文档 6 节中的"极验等"改为实际支持范围（Turnstile/reCAPTCHA/hCaptcha/图片），遇极验站点需后续接其他打码平台
+- UI：Task 10 按设计文档 7.5.1 实现 4 页深色面板（看板/窗口/任务/设置），交互细节（截图大图、错误悬浮完整）为前端细节实现，MVP 中截图点击弹大图暂用新窗口打开图片替代
