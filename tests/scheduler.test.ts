@@ -28,6 +28,7 @@ describe('Scheduler', () => {
     ]
     const db = {
       listProfiles: vi.fn().mockImplementation((enabledOnly: boolean) => (enabledOnly ? rows.filter(r => r.enabled === 1) : rows)),
+      getTaskEnabled: vi.fn().mockReturnValue(true),
     } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
@@ -76,11 +77,20 @@ describe('Scheduler', () => {
   })
 
   it('fireNow 对 deprecated 任务仍可手动触发', () => {
-    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }]) } as never
+    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }]), getTaskEnabled: vi.fn().mockReturnValue(true) } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['old', { meta: { key: 'old', name: '旧任务', url: 'https://x.io', deprecated: true } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
     sched.fireNow('old')
     expect(enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('fireNow 对停用任务不触发', () => {
+    const db = { listProfiles: vi.fn(), getTaskEnabled: vi.fn().mockReturnValue(false) } as never
+    const enqueue = vi.fn()
+    const enq = { enqueue } as never
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['off', { meta: { key: 'off', name: '停用', url: 'https://x.io' } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
+    sched.fireNow('off')
+    expect(enqueue).not.toHaveBeenCalled()
   })
 })

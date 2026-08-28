@@ -83,7 +83,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
-| `enabled` | `boolean?` | `true` | 任务总开关：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。运行时可在面板任务页覆盖（覆盖值存 SQLite `task_states` 表，重启后保留） |
+| `enabled` | `boolean?` | `true` | 任务总开关：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。运行时可在面板任务页覆盖（覆盖值存 SQLite `task_states` 表）。面板切换**即时生效**，无需重启服务：已注册的定时任务触发时会再次校验开关，关停后到点也不会执行 |
 | `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见第 7 章） |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见第 4 章） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
@@ -440,6 +440,8 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 任意窗口 id（含禁用窗口，find 基于 listProfiles(false)）跑全部任务 |
 | 面板看板「重跑今日失败」 | `POST /api/runs/rerun-failed`，body `{ date }` | 当日失败行重新入队 |
 | 代码内 `Scheduler.fireNow(taskKey)` | — | 对**全部启用窗口**逐窗口入队（与 `POST /api/tasks/:key/trigger` 不带 body 等价） |
+
+`重跑今日失败` 会重跑失败记录对应的任务，即使该任务当前已停用（显式恢复操作，语义等同手动触发）。
 
 ### fireNow 语义
 

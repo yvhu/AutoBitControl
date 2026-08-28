@@ -83,12 +83,18 @@ export class Scheduler {
   }
 
   /**
-   * 立即触发某任务：推给所有启用窗口（cron 到点与 API 手动触发共用此入口）
-   * @param taskKey 任务 key（未注册静默忽略）
+   * 立即触发某任务：推给所有启用窗口（cron 到点与代码内触发共用此入口）
+   * 守卫：任务未注册静默忽略；任务已停用（含面板运行时关停）告警跳过，
+   * 保证已注册 cron 在关停后到点也不会执行
+   * @param taskKey 任务 key
    */
   fireNow(taskKey: string): void {
     const task = this.tasks.get(taskKey)
     if (!task) return
+    if (!this.db.getTaskEnabled(taskKey, task.meta.enabled ?? true)) {
+      this.logger.warn({ task: taskKey }, '任务已停用，跳过本次触发')
+      return
+    }
     const profiles: ProfileRow[] = this.db.listProfiles(true)
     for (const p of profiles) {
       this.enqueuer.enqueue(p, taskKey)

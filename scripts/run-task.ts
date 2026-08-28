@@ -23,32 +23,38 @@ async function main(): Promise<void> {
   }
   const cfg = loadConfig()
   const logger = createLogger(cfg)
-  const db = AppDb.open(cfg.storage.dbPath)
-  const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
   const tasks = loadTasks()
   if (!tasks.has(taskKey)) {
     console.error(`任务未注册: ${taskKey}（可用: ${[...tasks.keys()].join(', ')}）`)
     process.exit(1)
   }
-  const wallets = new WalletRegistry()
-  wallets.register(new MetaMaskAdapter())
-  wallets.register(new PetraAdapter())
-  const yescaptcha = new YesCaptchaClient(
-    { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
-    cfg.captcha.taskTypes,
-  )
-  const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
-  const runner = new WindowRunner({ cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir })
-  logger.info({ profileId, taskKey }, '开始单任务调试运行')
-  await runner.runManual(profileId, taskKey)
-  const row = db.listRunsForDate(todayStr()).find(r => r.taskKey === taskKey)
-  if (row) {
-    logger.info({ status: row.status, error: row.error, screenshot: row.screenshot }, '任务运行结果')
-  } else {
-    logger.error('未找到运行记录')
+  const db = AppDb.open(cfg.storage.dbPath)
+  try {
+    const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
+    const wallets = new WalletRegistry()
+    wallets.register(new MetaMaskAdapter())
+    wallets.register(new PetraAdapter())
+    const yescaptcha = new YesCaptchaClient(
+      { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
+      cfg.captcha.taskTypes,
+    )
+    const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
+    const runner = new WindowRunner({ cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir })
+    logger.info({ profileId, taskKey }, '开始单任务调试运行')
+    await runner.runManual(profileId, taskKey)
+    const row = db.listRunsForDate(todayStr()).find(r => r.taskKey === taskKey)
+    if (row) {
+      logger.info({ status: row.status, error: row.error, screenshot: row.screenshot }, '任务运行结果')
+    } else {
+      logger.error('未找到运行记录')
+    }
+    process.exit(row && row.status === 'success' ? 0 : 1)
+  } finally {
+    db.close()
   }
-  db.close()
-  process.exit(row && row.status === 'success' ? 0 : 1)
 }
 
-void main()
+void main().catch((e) => {
+  console.error((e as Error).message)
+  process.exit(1)
+})
