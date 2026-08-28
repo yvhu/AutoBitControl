@@ -2196,17 +2196,14 @@ export interface BrowserDriver {
 }
 
 export class PatchrightDriver implements BrowserDriver {
-  private browser: Browser | null = null
-
   async connect(endpointUrl: string): Promise<{ page: Page; close(): Promise<void> }> {
-    this.browser = await chromium.connectOverCDP(endpointUrl)
-    const context = this.browser.contexts()[0] ?? (await this.browser.newContext())
+    const browser = await chromium.connectOverCDP(endpointUrl)
+    const context = browser.contexts()[0] ?? (await browser.newContext())
     const page = context.pages()[0] ?? (await context.newPage())
     return {
       page,
       close: async () => {
-        await this.browser?.close().catch(() => {})
-        this.browser = null
+        await browser.close().catch(() => {})
       },
     }
   }
