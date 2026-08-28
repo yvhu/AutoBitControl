@@ -13,15 +13,27 @@ import type { CoalescingEnqueuer } from './queue'
 
 /**
  * 在 [start, end] 分钟区间内随机取一分钟（含两端），返回"今天"该时刻的 Date
- * 注意：返回的是今天的时间，跨零点窗口（如 23:00-01:00）不在此支持范围
+ * endMin <= startMin 视为跨天窗口（如 23:00-01:00）：随机点取 [startMin, 1440) ∪ [0, endMin]（均匀），
+ * 落点早于 startMin 时日期加一天（即次日凌晨）
  */
 export function pickRandomTimeInWindow(start: string, end: string, now = new Date()): Date {
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
   const startMin = sh * 60 + sm
   const endMin = eh * 60 + em
-  const picked = startMin + Math.floor(Math.random() * (endMin - startMin + 1))
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(picked / 60), picked % 60, 0, 0)
+  const crossDay = endMin <= startMin
+  let picked: number
+  if (crossDay) {
+    // 跨天：[startMin, 1440) 与 [0, endMin] 两段连续拼接后均匀随机
+    const total = (1440 - startMin) + (endMin + 1)
+    picked = startMin + Math.floor(Math.random() * total)
+    if (picked >= 1440) picked -= 1440
+  } else {
+    picked = startMin + Math.floor(Math.random() * (endMin - startMin + 1))
+  }
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(picked / 60), picked % 60, 0, 0)
+  if (crossDay && picked < startMin) date.setDate(date.getDate() + 1)
+  return date
 }
 
 /** 把错峰窗口转成 croner 五段式 "分 时 * * *"（随机分钟固化在进程生命周期内） */
@@ -37,6 +49,12 @@ export function staggerToCron(start: string, end: string): string {
  */
 export class Scheduler {
   private jobs: Cron[] = []
+  /** stagger 任务的当日错峰 cron（key → cron），日更刷新时先停旧的再重建 */
+  private staggerJobs = new Map<string, Cron>()
+  /** 已注册日更刷新器的任务 key 集合（防止重复注册 00:01 cron） */
+  private staggerRefreshKeys = new Set<string>()
+  /** 日更刷新 cron（00:01 触发，为每个 stagger 任务重选当日时间） */
+  private staggerRefreshers: Cron[] = []
 
   constructor(
     private cfg: AppConfig,
@@ -46,17 +64,32 @@ export class Scheduler {
     private logger: Logger,
   ) {}
 
-  /** 解析任务的调度表达式：cron 字符串直接用；stagger 转成错峰 cron */
-  private scheduleOf(meta: TaskMeta): string | null {
-    if (!meta.schedule) return null
-    if (typeof meta.schedule === 'string') return meta.schedule
-    return staggerToCron(meta.schedule.stagger[0], meta.schedule.stagger[1])
+  /**
+   * 重建单个 stagger 任务的当日错峰 cron：停旧 cron → 随机新时间 → 注册新 cron；
+   * 首次调用同时为该任务注册 00:01 的日更刷新器（每日重选错峰时间，分散站点压力）
+   * 幂等安全：未知任务/非 stagger 任务静默返回，重复调用不抛错
+   */
+  refreshStagger(taskKey: string): void {
+    const task = this.tasks.get(taskKey)
+    if (!task?.meta.schedule || typeof task.meta.schedule === 'string') return
+    const [start, end] = task.meta.schedule.stagger
+    const cron = staggerToCron(start, end)
+    const old = this.staggerJobs.get(taskKey)
+    if (old) old.stop()
+    const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(taskKey))
+    this.staggerJobs.set(taskKey, job)
+    if (!this.staggerRefreshKeys.has(taskKey)) {
+      this.staggerRefreshKeys.add(taskKey)
+      const refresher = new Cron('1 0 * * *', { timezone: this.cfg.execution.timezone }, () => this.refreshStagger(taskKey))
+      this.staggerRefreshers.push(refresher)
+    }
+    this.logger.info({ task: taskKey, cron }, '任务已调度')
   }
 
   /** 为每个任务建 cron 定时器 */
   start(): void {
     // 重入保护：已注册过任务时先停旧任务再重新注册（保证可重入且不产生重复 cron）
-    if (this.jobs.length > 0) {
+    if (this.jobs.length > 0 || this.staggerJobs.size > 0) {
       this.logger.warn('调度器已启动，先停止旧任务再重新注册')
       this.stop()
     }
@@ -73,18 +106,27 @@ export class Scheduler {
         this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
         continue
       }
-      const cron = this.scheduleOf(task.meta)
-      if (!cron) continue
-      const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(task.meta.key))
-      this.jobs.push(job)
-      this.logger.info({ task: task.meta.key, cron }, '任务已调度')
+      if (!task.meta.schedule) continue
+      if (typeof task.meta.schedule === 'string') {
+        const cron = task.meta.schedule
+        const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(task.meta.key))
+        this.jobs.push(job)
+        this.logger.info({ task: task.meta.key, cron }, '任务已调度')
+      } else {
+        this.refreshStagger(task.meta.key)
+      }
     }
   }
 
-  /** 停止全部 cron（SIGINT/SIGTERM 时调用） */
+  /** 停止全部 cron（SIGINT/SIGTERM 时调用）：普通任务 + stagger 任务 + 日更刷新器 */
   stop(): void {
     for (const j of this.jobs) j.stop()
     this.jobs = []
+    for (const j of this.staggerJobs.values()) j.stop()
+    this.staggerJobs.clear()
+    this.staggerRefreshKeys.clear()
+    for (const r of this.staggerRefreshers) r.stop()
+    this.staggerRefreshers = []
   }
 
   /**

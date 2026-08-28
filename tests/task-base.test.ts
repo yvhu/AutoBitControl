@@ -34,43 +34,49 @@ describe('TaskContext 集成', () => {
 
   it('clickCheckin 带成功断言', async () => {
     const browser = await chromium.launch({ headless: true })
-    const page = await browser.newPage()
-    const task = new FakeTask()
-    task.meta.url = baseUrl
-    const ctx = new TaskContext({
-      page,
-      task,
-      human: new Humanizer(page),
-      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-      cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
-      logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
-      artifactsDir: '',
-      walletPasswords: {},
-    })
-    await ctx.goto()
-    await task.run(ctx)
-    const badge = await page.locator('#checked-badge').count()
-    expect(badge).toBe(1)
-    await browser.close()
+    try {
+      const page = await browser.newPage()
+      const task = new FakeTask()
+      task.meta.url = baseUrl
+      const ctx = new TaskContext({
+        page,
+        task,
+        human: new Humanizer(page),
+        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+        artifactsDir: '',
+        walletPasswords: {},
+      })
+      await ctx.goto()
+      await task.run(ctx)
+      const badge = await page.locator('#checked-badge').count()
+      expect(badge).toBe(1)
+    } finally {
+      await browser.close()
+    }
   })
 
   it('断言超时抛异常', async () => {
     const browser = await chromium.launch({ headless: true })
-    const page = await browser.newPage()
-    const task = new FakeTask()
-    task.meta.url = baseUrl
-    const ctx = new TaskContext({
-      page,
-      task,
-      human: new Humanizer(page),
-      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-      cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
-      logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
-      artifactsDir: '',
-      walletPasswords: {},
-    })
-    await ctx.goto()
-    await expect(ctx.assertVisible('#never-exists', 800)).rejects.toThrow(/超时/)
-    await browser.close()
+    try {
+      const page = await browser.newPage()
+      const task = new FakeTask()
+      task.meta.url = baseUrl
+      const ctx = new TaskContext({
+        page,
+        task,
+        human: new Humanizer(page),
+        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+        artifactsDir: '',
+        walletPasswords: {},
+      })
+      await ctx.goto()
+      await expect(ctx.assertVisible('#never-exists', 800)).rejects.toThrow(/超时/)
+    } finally {
+      await browser.close()
+    }
   })
 })

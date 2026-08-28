@@ -63,6 +63,9 @@ export async function startApp(): Promise<void> {
     ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask })
     : null
 
+  // enqueuer 后置声明：runner 的 scheduleRetry 闭包引用它（重试到期重新入队），
+  // 二者互相依赖（enqueuer 需要 runner），先声明变量再在下方赋值
+  let enqueuer!: CoalescingEnqueuer
   const runner = new WindowRunner({
     cfg,
     db,
@@ -74,9 +77,13 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
+    // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗
+    scheduleRetry: (profile, taskKey, delayMs) => {
+      setTimeout(() => enqueuer.enqueue(profile, taskKey), delayMs)
+    },
   })
   const queue = new TaskQueue(cfg.execution.concurrency)
-  const enqueuer = new CoalescingEnqueuer(queue, runner, logger)
+  enqueuer = new CoalescingEnqueuer(queue, runner, logger)
 
   const app = createApp({
     db,

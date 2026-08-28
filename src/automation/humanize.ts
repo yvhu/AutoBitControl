@@ -96,7 +96,8 @@ export class Humanizer {
     const target = randomPointInBox(box)
     await this.page.locator(selector).first().hover({ timeout: 5000 }).catch(() => {})
     await this.moveTo(target.x, target.y)
-    await Humanizer.sleep(60, 400)
+    // 点击前犹豫：使用构造注入的 min/max 停顿区间（默认 0.8-3s，可调快调慢）
+    await Humanizer.sleep(this.minDelay, this.maxDelay)
     const s = await this.cdp()
     await s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 })
     await Humanizer.sleep(40, 150)

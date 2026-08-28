@@ -6,7 +6,7 @@
 import type { Page } from 'patchright'
 import { httpJson } from '../infrastructure/http'
 
-/** 支持的验证码类型（recaptcha_v3 无可见 iframe，只支持回填不支持检测） */
+/** 支持的验证码类型（recaptcha_v3 无可见 iframe，靠 api.js 脚本的 render 参数检测） */
 export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
 
 /** 检测结果：类型 + sitekey（可能为 null，某些站点用动态注入的 sitekey） */
@@ -60,6 +60,13 @@ export async function detectCaptcha(page: Page, timeoutMs = 5000): Promise<Captc
         return { kind: d.kind, sitekey }
       }
     }
+    // recaptcha v3 无可见 iframe：靠 api.js 脚本的 render 参数识别 sitekey
+    const script = page.locator('script[src*="recaptcha/api.js"]').first()
+    if (await script.count() > 0) {
+      const src = (await script.getAttribute('src')) ?? ''
+      const render = src.match(/[?&]render=([^&]+)/)
+      if (render) return { kind: 'recaptcha_v3', sitekey: render[1] }
+    }
     await new Promise(r => setTimeout(r, 300))
   }
   return null
@@ -104,6 +111,8 @@ export class YesCaptchaClient {
    */
   private async getResult(taskId: string, kind: CaptchaKind): Promise<string | null> {
     const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
+    // 轮询失败快速失败：平台明确报错（key 无效/任务不存在等）再等也等不出结果
+    if (resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询结果失败: ${resp.errorCode ?? resp.errorId}`)
     if (resp.status !== 'ready') return null
     const s = resp.solution ?? {}
     if (kind === 'turnstile') return s.token ?? null

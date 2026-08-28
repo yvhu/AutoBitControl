@@ -29,18 +29,18 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   const db = AppDb.open(cfg.storage.dbPath)
-  try {
-    const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
-    const wallets = new WalletRegistry()
-    wallets.register(new MetaMaskAdapter())
-    wallets.register(new PetraAdapter())
-    const yescaptcha = new YesCaptchaClient(
-      { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
-      cfg.captcha.taskTypes,
-    )
-    const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
-    const runner = new WindowRunner({ cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords })
-    logger.info({ profileId, taskKey }, '开始单任务调试运行')
+  const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
+  const wallets = new WalletRegistry()
+  wallets.register(new MetaMaskAdapter())
+  wallets.register(new PetraAdapter())
+  const yescaptcha = new YesCaptchaClient(
+    { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
+    cfg.captcha.taskTypes,
+  )
+  const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
+  let runner!: WindowRunner
+  /** 单次运行：跑完查记录打印结果；终态时关库退出，retry_wait 时保持存活等重试定时器 */
+  const runOnce = async (): Promise<void> => {
     await runner.runManual(profileId, taskKey)
     const row = db.listRunsForDate(todayStr()).find(r => r.taskKey === taskKey)
     if (row) {
@@ -48,11 +48,22 @@ async function main(): Promise<void> {
     } else {
       logger.error('未找到运行记录')
     }
-    process.exitCode = row && row.status === 'success' ? 0 : 1
-    return
-  } finally {
-    db.close()
+    if (!row || row.status !== 'retry_wait') {
+      process.exitCode = row && row.status === 'success' ? 0 : 1
+      db.close()
+    } else {
+      logger.info({ taskKey }, '任务待重试，脚本保持存活等待退避到期')
+    }
   }
+  runner = new WindowRunner({
+    cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords,
+    // 脚本场景无队列：退避到期直接重跑该任务（定时器不 unref，保持进程存活等待重试）
+    scheduleRetry: (profile, taskKey, delayMs) => {
+      setTimeout(() => { void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) }) }, delayMs)
+    },
+  })
+  logger.info({ profileId, taskKey }, '开始单任务调试运行')
+  await runOnce()
 }
 
 void main().catch((e) => {

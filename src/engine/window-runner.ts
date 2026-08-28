@@ -55,6 +55,11 @@ export interface WindowRunnerDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为比特窗口 ID，透传给 TaskContext） */
   walletPasswords: Record<string, string>
+  /**
+   * 重试退避调度（不占窗口）：retry_wait 后由装配层 setTimeout 到期重新入队，
+   * 当前窗口立即继续下一个任务/正常关窗
+   */
+  scheduleRetry: (profile: ProfileRow, taskKey: string, delayMs: number) => void
 }
 
 export class WindowRunner {
@@ -101,7 +106,17 @@ export class WindowRunner {
         return
       }
       // 第三段（循环内）：逐任务执行，失败只影响当前任务
-      for (const key of taskKeys) {
+      // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证并发槽位不被长时间占用）
+      const deadline = Date.now() + cfg.execution.windowTimeoutMs
+      for (let i = 0; i < taskKeys.length; i++) {
+        const key = taskKeys[i]
+        if (Date.now() >= deadline) {
+          for (const rest of taskKeys.slice(i)) {
+            db.upsertRun(profile.id, rest, date, 'skipped', { error: '窗口超时', finishedAt: new Date().toISOString() })
+          }
+          logger.warn({ profile: profile.name }, '窗口超时，剩余任务跳过')
+          break
+        }
         // 窗口级熔断：计数达阈值后当日不再跑（成功一次即重置，见 runTask）
         if (shouldSkipAfterBreaker(profile.circuitBreakerCount, cfg.execution.circuitBreakerThreshold)) {
           db.upsertRun(profile.id, key, date, 'skipped', { error: '窗口熔断', finishedAt: new Date().toISOString() })
@@ -111,8 +126,8 @@ export class WindowRunner {
         await this.runTask(profile, key, page, date)
       }
     } finally {
-      // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）
-      if (connected) await connected.close()
+      // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）；close 失败只忽略
+      if (connected) await connected.close().catch(() => {})
       if (open) await bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
     }
   }
@@ -155,7 +170,9 @@ export class WindowRunner {
 
   /**
    * 单任务执行：解析任务级参数（覆盖全局默认）→ 建 TaskContext → 超时保护执行 → 落状态
-   * 重试循环：attempt 从 1 到 retryMax+1；retry_wait 时退避 backoffSec 秒后继续；
+   * 重试不占窗：retry_wait 不 sleep 占窗，交给 deps.scheduleRetry 到期后重新入队（新一轮窗口会话）；
+   * 尝试计数跨会话延续（读上次 retry_wait 记录的 attempts 续跑），保证重试上限始终生效；
+   * 非首次尝试先复位页面（about:blank），避免上一轮残留 DOM/事件干扰
    * 成功重置熔断计数；终态失败（failed/captcha_failed）熔断计数 +1
    */
   private async runTask(profile: ProfileRow, taskKey: string, page: Page, date: string): Promise<void> {
@@ -169,6 +186,9 @@ export class WindowRunner {
     const retryMax = task.meta.retry?.max ?? cfg.execution.retryMax
     const backoffSec = task.meta.retry?.backoffSec ?? cfg.execution.retryBackoffSec
     const timeoutSec = task.meta.timeoutSec ?? Math.floor(cfg.execution.taskTimeoutMs / 1000)
+    // 上次会话停在 retry_wait 时从记录的 attempts 续跑（重试上限跨会话生效），否则从头开始
+    const prior = db.getRun(profile.id, taskKey, date)
+    const startAttempt = prior?.status === 'retry_wait' ? (prior.attempts ?? 0) + 1 : 1
     // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
     try {
@@ -178,7 +198,11 @@ export class WindowRunner {
       return
     }
 
-    for (let attempt = 1; attempt <= retryMax + 1; attempt++) {
+    for (let attempt = startAttempt; attempt <= retryMax + 1; attempt++) {
+      // 重试前页面复位：非首次尝试先清空页面（失败容错：about:blank 加载失败不影响后续）
+      if (attempt > 1) {
+        await page.goto('about:blank', { timeout: 10000 }).catch(() => {})
+      }
       db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() })
       try {
         const ctx = new TaskContext({
@@ -211,8 +235,10 @@ export class WindowRunner {
         db.upsertRun(profile.id, taskKey, date, status, { error: (e as Error).message, screenshot: shot, finishedAt: new Date().toISOString() })
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')
         if (status === 'retry_wait') {
-          await new Promise(r => setTimeout(r, backoffSec * 1000))
-          continue
+          // 重试不占窗：退避期不 sleep，立即返回让窗口继续处理下一个任务/正常关窗；
+          // 到期由 scheduleRetry 重新入队，新一轮窗口会话从续跑 attempts 开始
+          this.deps.scheduleRetry(profile, taskKey, backoffSec * 1000)
+          return
         }
         // 终态失败：熔断计数 +1（达阈值后本窗口当日不再跑）
         db.incrCircuitBreaker(profile.id)

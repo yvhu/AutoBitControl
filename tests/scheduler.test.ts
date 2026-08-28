@@ -12,6 +12,23 @@ describe('pickRandomTimeInWindow', () => {
       expect(t.getDate()).toBe(28)
     }
   })
+
+  it('跨天窗口（end<start）随机时间落在午夜两侧且落点加一天', () => {
+    const base = new Date(2026, 7, 28, 0, 0, 0)
+    for (let i = 0; i < 200; i++) {
+      const t = pickRandomTimeInWindow('23:00', '01:00', base)
+      const minutes = t.getHours() * 60 + t.getMinutes()
+      const inLate = minutes >= 23 * 60
+      const inEarly = minutes <= 1 * 60
+      expect(inLate || inEarly).toBe(true)
+      if (inEarly) {
+        // 落点在午夜前（< startMin）视为次日
+        expect(t.getDate()).toBe(29)
+      } else {
+        expect(t.getDate()).toBe(28)
+      }
+    }
+  })
 })
 
 describe('staggerToCron', () => {
@@ -111,5 +128,21 @@ describe('Scheduler', () => {
     expect(warn).toHaveBeenCalled()
     expect(scheduled()).toBe(2)
     sched.stop()
+  })
+
+  it('stagger 任务注册日更刷新器且 refreshStagger 可重复调用', () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockReturnValue(true) } as never
+    const info = vi.fn()
+    const logger = { info, warn: vi.fn(), error: vi.fn() } as never
+    const task = { meta: { key: 'st', name: '错峰', url: 'https://x.io', schedule: { stagger: ['23:00', '01:00'] as [string, string] } } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['st', task]]), { enqueue: vi.fn() } as never, logger)
+    sched.start()
+    expect(info.mock.calls.some(c => c[1] === '任务已调度')).toBe(true)
+    // 重复刷新/未知任务都不抛错（幂等安全）
+    expect(() => sched.refreshStagger('st')).not.toThrow()
+    expect(() => sched.refreshStagger('st')).not.toThrow()
+    expect(() => sched.refreshStagger('nope')).not.toThrow()
+    sched.stop()
+    expect(() => sched.stop()).not.toThrow()
   })
 })
