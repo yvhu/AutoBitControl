@@ -527,7 +527,8 @@ describe('AppDb', () => {
     db.logCaptcha(p.id, 'task-a', 'turnstile', 0.03, 1)
     db.logCaptcha(p.id, 'task-a', 'hcaptcha', 0.05, 0)
     db.logCaptcha(p.id, 'task-b', 'turnstile', 0.03, 1)
-    const stats = db.captchaStats('2026-08-28')
+    const utcDate = new Date().toISOString().slice(0, 10)
+    const stats = db.captchaStats(utcDate)
     expect(stats.count).toBe(3)
     expect(stats.totalCost).toBeCloseTo(0.11)
   })
@@ -553,7 +554,6 @@ export interface ProfileRow {
   bitbrowserId: string
   name: string
   enabled: number
-  wallet: string | null
   walletPassword: string | null
   circuitBreakerCount: number
 }
@@ -585,7 +585,6 @@ CREATE TABLE IF NOT EXISTS profiles (
   bitbrowser_id TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  wallet TEXT,
   wallet_password TEXT,
   circuit_breaker_count INTEGER NOT NULL DEFAULT 0
 );
@@ -653,8 +652,8 @@ export class AppDb {
     this.raw.prepare('UPDATE profiles SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
   }
 
-  setProfileWallet(id: number, wallet: string | null, walletPassword: string | null): void {
-    this.raw.prepare('UPDATE profiles SET wallet = ?, wallet_password = ? WHERE id = ?').run(wallet, walletPassword, id)
+  setProfileWalletPassword(id: number, walletPassword: string | null): void {
+    this.raw.prepare('UPDATE profiles SET wallet_password = ? WHERE id = ?').run(walletPassword, id)
   }
 
   incrCircuitBreaker(profileId: number): number {
@@ -682,11 +681,17 @@ export class AppDb {
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at)`
     ).run(merged)
-    return this.raw.prepare('SELECT * FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?').get(profileId, taskKey, date) as RunRow
+    return this.raw.prepare(
+      `SELECT r.*, p.name AS profile_name FROM runs r JOIN profiles p ON p.id = r.profile_id
+       WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`
+    ).get(profileId, taskKey, date) as RunRow
   }
 
   getRun(profileId: number, taskKey: string, date: string): RunRow | null {
-    return (this.raw.prepare('SELECT * FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?').get(profileId, taskKey, date) as RunRow | null) ?? null
+    return (this.raw.prepare(
+      `SELECT r.*, p.name AS profile_name FROM runs r JOIN profiles p ON p.id = r.profile_id
+       WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`
+    ).get(profileId, taskKey, date) as RunRow | null) ?? null
   }
 
   listRunsForDate(date: string): RunRow[] {
