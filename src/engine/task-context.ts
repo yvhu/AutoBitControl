@@ -25,6 +25,8 @@ export interface TaskContextDeps {
   cfg: AppConfig
   logger: Logger
   artifactsDir: string
+  /** 钱包解锁密码映射（key 为比特窗口 ID，来自配置 wallet.passwords 与环境变量 WALLET_PASSWORDS） */
+  walletPasswords: Record<string, string>
   captcha?: CaptchaService
   wallets?: WalletRegistry
   onCaptchaLog?: (kind: string, ok: boolean, costPoints: number) => void
@@ -43,7 +45,7 @@ export class TaskContext {
     return this.deps.human
   }
 
-  /** 当前窗口记录（钱包密码/熔断计数等） */
+  /** 当前窗口记录（熔断计数等） */
   get profile(): ProfileRow {
     return this.deps.profile
   }
@@ -131,8 +133,9 @@ export class TaskContext {
     const adapter = this.deps.wallets.get(walletKey)
     const popup = (await waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 15000)) as PopupPage | null
     if (!popup) throw new Error('钱包弹窗未出现')
-    if (this.deps.profile.walletPassword && adapter.unlock) {
-      await adapter.unlock(popup, this.deps.profile.walletPassword)
+    const unlockPassword = this.deps.walletPasswords[this.deps.profile.bitbrowserId]
+    if (unlockPassword && adapter.unlock) {
+      await adapter.unlock(popup, unlockPassword)
     }
     await adapter.ensureConnected(popup)
   }

@@ -33,7 +33,6 @@ window.abcRerun = async (profileId, taskKey) => {
 window.abcToggle = (id, enabled) => profiles.toggle(id, enabled)
 window.abcRunProfile = (id) => profiles.runProfile(id)
 window.abcDrawer = (id) => profiles.openDrawer(id)
-window.abcPassword = (id) => profiles.setPassword(id)
 window.abcResetBreaker = (id) => profiles.resetBreaker(id)
 window.abcTriggerTask = (key) => tasks.triggerTask(key).then(() => navigate('tasks'))
 window.abcToggleTask = (key, enabled) => tasks.toggleTask(key, enabled)

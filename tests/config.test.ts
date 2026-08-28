@@ -47,4 +47,34 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.storage.dbPath).toBe(join(dir, 'data', 'app.db'))
   })
+
+  it('WALLET_PASSWORDS env JSON 解析并与配置文件 wallet.passwords 合并', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      wallet: { passwords: { 'bb-1': 'file-pw' } },
+    }))
+    const cfg = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: '{"bb-2":"env-pw"}' } })
+    expect(cfg.wallet.passwords).toEqual({ 'bb-1': 'file-pw', 'bb-2': 'env-pw' })
+  })
+
+  it('WALLET_PASSWORDS env 覆盖同名 key', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      wallet: { passwords: { 'bb-1': 'file-pw' } },
+    }))
+    const cfg = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: '{"bb-1":"env-pw"}' } })
+    expect(cfg.wallet.passwords['bb-1']).toBe('env-pw')
+  })
+
+  it('WALLET_PASSWORDS 非法 JSON 忽略不抛错并保留配置值', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      wallet: { passwords: { 'bb-1': 'file-pw' } },
+    }))
+    const cfg = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: 'not-json' } })
+    expect(cfg.wallet.passwords).toEqual({ 'bb-1': 'file-pw' })
+  })
 })

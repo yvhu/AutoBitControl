@@ -218,7 +218,7 @@ async loginByWallet(): Promise<void>
 1. 取 `meta.wallet` 作为适配器 key（未配置抛 `任务未配置钱包`）。
 2. 从 `WalletRegistry` 取适配器（未注册抛 `未注册的钱包适配器: X`）。
 3. `waitForPopup(context, adapter.extensionUrlPatterns, 15000)` 等待弹窗（15 秒超时，未出现抛 `钱包弹窗未出现`）。
-4. 若该窗口配置了钱包密码（`profile.walletPassword`，来源见第 4 章）且适配器实现了 `unlock`，先解锁。
+4. 若该窗口配置了钱包解锁密码（`WALLET_PASSWORDS` 环境变量映射，见第 4 章）且适配器实现了 `unlock`，先解锁。
 5. `adapter.ensureConnected(popup)` 点连接/确认按钮。
 
 ### textPresent
@@ -263,7 +263,22 @@ if (await ctx.urlIncludes('/dashboard')) { /* 已登录，跳过登录 */ }
 
 ### 窗口级密码配置
 
-钱包解锁密码是**窗口级**的：面板「窗口」页 → 详情抽屉 → 「设置/修改钱包解锁密码」（弹输入框，留空清除）。底层走 `PATCH /api/profiles/:id`（`{ password }`），存储于 SQLite `profiles.wallet_password` 列。仅当窗口配置了密码时，`loginByWallet` 才会调用适配器的 `unlock`。
+钱包解锁密码是**窗口级**的，通过环境变量 `WALLET_PASSWORDS` 配置（JSON 字符串，映射比特窗口 ID → 密码）：
+
+```env
+# config/.env（或部署环境变量）
+WALLET_PASSWORDS={"bb-1001":"钱包解锁密码","bb-1002":"另一个密码"}
+```
+
+也可以在 `config/config.json` / `config/config.local.json` 的 `wallet.passwords` 对象中配置：
+
+```json
+{
+  "wallet": { "passwords": { "bb-1001": "钱包解锁密码" } }
+}
+```
+
+两者并存时环境变量覆盖同名 key。**修改后需重启服务生效**。密码 key 取窗口的比特浏览器窗口 ID（面板「窗口」页可见）。仅当窗口配置了密码时，`loginByWallet` 才会调用适配器的 `unlock`。
 
 ### 弹窗识别机制
 

@@ -1,5 +1,5 @@
 /**
- * 窗口路由（server 层）：窗口列表、启用开关、密码、整窗口重跑与熔断重置
+ * 窗口路由（server 层）：窗口列表、启用开关、整窗口重跑与熔断重置
  * 依赖方向：依赖 engine/infrastructure；被 app 装配
  * 设计思路：find 辅助统一 404 语义；PATCH 幂等局部更新（只改传了的字段）
  */
@@ -24,10 +24,9 @@ export function profilesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; 
   router.patch('/profiles/:id', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)
     const profile = find(id)
-    const body = req.body as { enabled?: boolean; password?: string | null } ?? {}
-    // 只更新显式传入的字段：enabled 开关、password（null 清除）
+    const body = req.body as { enabled?: boolean } ?? {}
+    // 只更新显式传入的字段：enabled 开关（钱包密码已改为环境变量 WALLET_PASSWORDS 配置，不在此处修改）
     if (typeof body.enabled === 'boolean') deps.db.setProfileEnabled(id, body.enabled)
-    if (body.password !== undefined) deps.db.setProfileWalletPassword(id, body.password)
     ok(res, profile)
   }))
   router.post('/profiles/:id/run', asyncHandler(async (req, res) => {

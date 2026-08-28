@@ -24,7 +24,7 @@ export async function render() {
   }).join('')
 }
 
-// 打开详情抽屉：今日运行时间线 + 钱包密码 + 熔断状态
+// 打开详情抽屉：今日运行时间线 + 熔断状态
 export async function openDrawer(id) {
   const profiles = await get('/api/profiles')
   const data = await get('/api/dashboard')
@@ -42,8 +42,7 @@ export async function openDrawer(id) {
       }).join('') : '<div style="color:#64748B">今日暂无任务记录</div>'}
     </div>
     <div style="font-size:12px;color:#94A3B8;display:flex;gap:8px;align-items:center">
-      本窗口钱包解锁密码 ${p.walletPassword ? '<span class="kbd">••••••</span>' : '<span style="color:#64748B">未设置</span>'}
-      <span class="link" onclick="window.abcPassword(${p.id})">${p.walletPassword ? '修改' : '设置'}</span>
+      钱包解锁密码：由环境变量 WALLET_PASSWORDS 配置（重启生效）
       <span class="link" style="margin-left:12px" onclick="window.abcResetBreaker(${p.id})">重置熔断</span>
     </div>`
 }
@@ -54,10 +53,3 @@ export async function toggle(id, enabled) { await patch(`/api/profiles/${id}`, {
 export async function runProfile(id) { await post(`/api/profiles/${id}/run`, {}); await render() }
 // 重置熔断计数
 export async function resetBreaker(id) { await post(`/api/profiles/${id}/breaker/reset`, {}); await render() }
-// 设置钱包解锁密码（prompt 交互；留空清除）
-export async function setPassword(id) {
-  const password = prompt('输入该窗口的钱包解锁密码（留空清除）')
-  if (password === null) return
-  await patch(`/api/profiles/${id}`, { password: password || null })
-  await openDrawer(id)
-}

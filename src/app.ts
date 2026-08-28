@@ -73,6 +73,7 @@ export async function startApp(): Promise<void> {
     captcha,
     logger,
     artifactsDir: cfg.storage.screenshotDir,
+    walletPasswords: cfg.wallet.passwords,
   })
   const queue = new TaskQueue(cfg.execution.concurrency)
   const enqueuer = new CoalescingEnqueuer(queue, runner, logger)

@@ -23,7 +23,7 @@ describe('CoalescingEnqueuer', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
-    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
     enq.enqueue(profile, 'task-a')
     enq.enqueue(profile, 'task-b')
     enq.enqueue(profile, 'task-c')
@@ -36,7 +36,7 @@ describe('CoalescingEnqueuer', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
-    const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, walletPassword: null, circuitBreakerCount: 0 })
+    const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, circuitBreakerCount: 0 })
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
     await q.onIdle()
@@ -52,7 +52,7 @@ describe('CoalescingEnqueuer', () => {
     })
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
-    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
     enq.enqueue(profile, 'task-a')
     await new Promise(r => setTimeout(r, 10))
     expect(run).toHaveBeenCalledTimes(1)
@@ -69,7 +69,7 @@ describe('CoalescingEnqueuer', () => {
     const run = vi.fn().mockRejectedValue(new Error('boom'))
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
-    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
     enq.enqueue(profile, 'task-a')
     await q.onIdle()
     expect(run).toHaveBeenCalledTimes(1)

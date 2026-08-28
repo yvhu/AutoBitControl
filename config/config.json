@@ -30,6 +30,7 @@
     }
   },
   "web": { "host": "127.0.0.1", "port": 3000 },
+  "wallet": { "passwords": {} },
   "storage": {
     "dbPath": "data/app.db",
     "screenshotDir": "data/screenshots",

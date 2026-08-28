@@ -57,6 +57,11 @@ export interface StorageConfig {
   logLevel: string
 }
 
+/** 钱包配置：窗口解锁密码映射（key 为比特窗口 ID，值环境变量 WALLET_PASSWORDS 优先） */
+export interface WalletConfig {
+  passwords: Record<string, string>
+}
+
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -64,6 +69,7 @@ export interface AppConfig {
   captcha: CaptchaConfig
   web: WebConfig
   storage: StorageConfig
+  wallet: WalletConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -120,6 +126,8 @@ const defaults: AppConfig = {
     logDir: join(DEFAULT_ROOT, 'data', 'logs'),
     logLevel: 'info',
   },
+  // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供
+  wallet: { passwords: {} },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */
@@ -177,6 +185,20 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
   if (env.WEB_PORT) cfg.web.port = Number(env.WEB_PORT)
+  // 钱包密码：WALLET_PASSWORDS 为 JSON 映射字符串（{"窗口ID":"密码"}），解析成功时与配置文件值合并（env 覆盖同名 key）
+  // 解析失败静默忽略并保留配置值（config 层无 logger，直接忽略非法 JSON）
+  if (env.WALLET_PASSWORDS) {
+    try {
+      const parsed = JSON.parse(env.WALLET_PASSWORDS)
+      if (isPlainObject(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === 'string') cfg.wallet.passwords[k] = v
+        }
+      }
+    } catch {
+      // 非法 JSON：忽略 env 值，保留配置文件中的密码
+    }
+  }
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]

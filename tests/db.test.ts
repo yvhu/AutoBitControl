@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import Database from 'better-sqlite3'
 import { AppDb, type RunStatus } from '../src/infrastructure/db'
 
 let db: AppDb
@@ -63,5 +64,35 @@ describe('AppDb', () => {
     expect(db.getTaskEnabled('t-x', true)).toBe(false)
     db.setTaskEnabled('t-x', true)
     expect(db.getTaskEnabled('t-x', false)).toBe(true)
+  })
+
+  it('旧库含 wallet_password 列时打开自动 DROP 该列', () => {
+    // 用独立临时目录构造旧版库（含 wallet_password 列与数据）再走 open 迁移
+    const oldDir = mkdtempSync(join(tmpdir(), 'abc-db-old-'))
+    try {
+      const raw = new Database(join(oldDir, 'old.db'))
+      raw.exec(`CREATE TABLE profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bitbrowser_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        wallet_password TEXT,
+        circuit_breaker_count INTEGER NOT NULL DEFAULT 0
+      )`)
+      raw.prepare(`INSERT INTO profiles (bitbrowser_id, name, wallet_password) VALUES ('bb-1', '旧窗口', 'secret')`).run()
+      raw.close()
+      const migrated = AppDb.open(join(oldDir, 'old.db'))
+      const profiles = migrated.listProfiles(false)
+      expect(profiles).toHaveLength(1)
+      expect(profiles[0].bitbrowserId).toBe('bb-1')
+      expect(profiles[0]).not.toHaveProperty('walletPassword')
+      migrated.close()
+      const verify = new Database(join(oldDir, 'old.db'))
+      const cols = (verify.prepare(`PRAGMA table_info(profiles)`).all() as { name: string }[]).map(c => c.name)
+      verify.close()
+      expect(cols).not.toContain('wallet_password')
+    } finally {
+      rmSync(oldDir, { recursive: true, force: true })
+    }
   })
 })

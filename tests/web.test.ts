@@ -10,7 +10,6 @@ interface MockDeps {
     listProfiles: Mock
     captchaStats: Mock
     setProfileEnabled: Mock
-    setProfileWalletPassword: Mock
     resetCircuitBreaker: Mock
     getTaskEnabled: Mock
     setTaskEnabled: Mock
@@ -35,10 +34,9 @@ function makeDeps(): MockDeps {
         { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
         { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'failed', attempts: 2, error: 'boom', screenshot: 's.png', startedAt: null, finishedAt: null, profileName: '窗口1' },
       ]),
-      listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 1 }]),
+      listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 1 }]),
       captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 230 }),
       setProfileEnabled: vi.fn(),
-      setProfileWalletPassword: vi.fn(),
       resetCircuitBreaker: vi.fn(),
       getTaskEnabled: vi.fn().mockReturnValue(true),
       setTaskEnabled: vi.fn(),
@@ -120,11 +118,11 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.db.setProfileEnabled).toHaveBeenCalledWith(1, false)
   })
 
-  it('PATCH /api/profiles/:id 保存钱包密码', async () => {
+  it('PATCH /api/profiles/:id 忽略 password 字段（仅处理 enabled）', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).patch('/api/profiles/1').send({ password: 'secret' })
     expect(res.body.code).toBe(0)
-    expect(deps.db.setProfileWalletPassword).toHaveBeenCalledWith(1, 'secret')
+    expect(deps.db.setProfileEnabled).not.toHaveBeenCalled()
   })
 
   it('POST /api/profiles/:id/run 入队全部任务', async () => {

@@ -53,6 +53,8 @@ export interface WindowRunnerDeps {
   captcha: CaptchaService | null
   logger: Logger
   artifactsDir: string
+  /** 钱包解锁密码映射（key 为比特窗口 ID，透传给 TaskContext） */
+  walletPasswords: Record<string, string>
 }
 
 export class WindowRunner {
@@ -187,6 +189,7 @@ export class WindowRunner {
           cfg: this.deps.cfg,
           logger,
           artifactsDir: artifacts,
+          walletPasswords: this.deps.walletPasswords,
           captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
           // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）

@@ -22,7 +22,6 @@ export interface ProfileRow {
   name: string
   /** 0/1（SQLite 无布尔，读出保持数字由调用方判断） */
   enabled: number
-  walletPassword: string | null
   circuitBreakerCount: number
 }
 
@@ -58,7 +57,6 @@ CREATE TABLE IF NOT EXISTS profiles (
   bitbrowser_id TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  wallet_password TEXT,
   circuit_breaker_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS runs (
@@ -114,6 +112,12 @@ export class AppDb {
 
   migrate(): void {
     this.raw.exec(SCHEMA)
+    // 迁移：旧版本库的 profiles 表含 wallet_password 列（钱包密码已改为环境变量配置），检测到则删除
+    // better-sqlite3 12 内置 SQLite ≥3.35，支持 ALTER TABLE DROP COLUMN
+    const cols = this.raw.prepare(`PRAGMA table_info(profiles)`).all() as { name: string }[]
+    if (cols.some(c => c.name === 'wallet_password')) {
+      this.raw.exec('ALTER TABLE profiles DROP COLUMN wallet_password')
+    }
   }
 
   close(): void {
@@ -129,25 +133,20 @@ export class AppDb {
       `INSERT INTO profiles (bitbrowser_id, name) VALUES (?, ?)
        ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name`
     ).run(bitbrowserId, name)
-    return this.raw.prepare(`SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE bitbrowser_id = ?`).get(bitbrowserId) as ProfileRow
+    return this.raw.prepare(`SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE bitbrowser_id = ?`).get(bitbrowserId) as ProfileRow
   }
 
   /** 列出窗口；enabledOnly=true 时仅返回启用窗口（调度器触发用） */
   listProfiles(enabledOnly = false): ProfileRow[] {
     const sql = enabledOnly
-      ? `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE enabled = 1 ORDER BY id`
-      : `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, wallet_password AS walletPassword, circuit_breaker_count AS circuitBreakerCount FROM profiles ORDER BY id`
+      ? `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE enabled = 1 ORDER BY id`
+      : `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles ORDER BY id`
     return this.raw.prepare(sql).all() as ProfileRow[]
   }
 
   /** 启用/停用窗口（面板开关） */
   setProfileEnabled(id: number, enabled: boolean): void {
     this.raw.prepare('UPDATE profiles SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
-  }
-
-  /** 设置窗口的钱包解锁密码（null 清除） */
-  setProfileWalletPassword(id: number, walletPassword: string | null): void {
-    this.raw.prepare('UPDATE profiles SET wallet_password = ? WHERE id = ?').run(walletPassword, id)
   }
 
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */

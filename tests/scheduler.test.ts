@@ -23,8 +23,8 @@ describe('staggerToCron', () => {
 describe('Scheduler', () => {
   it('fireNow 将启用窗口的任务入队', () => {
     const rows = [
-      { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 },
-      { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 0, walletPassword: null, circuitBreakerCount: 0 },
+      { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 },
+      { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 0, circuitBreakerCount: 0 },
     ]
     const db = {
       listProfiles: vi.fn().mockImplementation((enabledOnly: boolean) => (enabledOnly ? rows.filter(r => r.enabled === 1) : rows)),
@@ -77,7 +77,7 @@ describe('Scheduler', () => {
   })
 
   it('fireNow 对 deprecated 任务仍可手动触发', () => {
-    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }]), getTaskEnabled: vi.fn().mockReturnValue(true) } as never
+    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }]), getTaskEnabled: vi.fn().mockReturnValue(true) } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['old', { meta: { key: 'old', name: '旧任务', url: 'https://x.io', deprecated: true } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)

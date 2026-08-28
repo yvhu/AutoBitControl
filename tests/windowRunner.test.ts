@@ -6,7 +6,7 @@ import type { AppDb, ProfileRow, RunRow } from '../src/infrastructure/db'
 import type { SiteTask } from '../src/tasks/base'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
-  return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 0, ...over }
+  return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0, ...over }
 }
 
 function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
@@ -47,6 +47,7 @@ const cfg = {
   execution: { probeUrl: 'https://probe.io', taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 60000 },
 } as never
 const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
+const walletPasswords: Record<string, string> = {}
 
 class OkTask implements SiteTask {
   meta = { key: 'ok-task', name: 'OK', url: 'https://x.io' }
@@ -63,7 +64,7 @@ describe('WindowRunner', () => {
 
   it('任务成功后写 success 并关窗', async () => {
     const db = makeDb()
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords })
     await runner.runWindowTasks(makeProfile(), ['ok-task'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toContain('success')
@@ -72,7 +73,7 @@ describe('WindowRunner', () => {
 
   it('任务失败重试后标记 failed', async () => {
     const db = makeDb()
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['fail-task', new FailTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['fail-task', new FailTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords })
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toEqual(['running', 'retry_wait', 'running', 'retry_wait', 'running', 'failed'])
@@ -81,7 +82,7 @@ describe('WindowRunner', () => {
   it('开窗失败重试后跳过窗口', async () => {
     const db = makeDb()
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords })
     await runner.runWindowTasks(makeProfile(), ['ok-task'])
     expect(bb.openBrowser).toHaveBeenCalledTimes(3)
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
@@ -91,7 +92,7 @@ describe('WindowRunner', () => {
   it('IP 探活失败熔断所有任务', async () => {
     const db = makeDb()
     const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords })
     await runner.runWindowTasks(makeProfile(), ['ok-task'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toEqual(['skipped'])
@@ -99,7 +100,7 @@ describe('WindowRunner', () => {
 
   it('CDP 连接失败标记 failed 且不抛异常', async () => {
     const db = makeDb()
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords })
     await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toEqual(['failed'])

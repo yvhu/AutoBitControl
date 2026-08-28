@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       cfg.captcha.taskTypes,
     )
     const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
-    const runner = new WindowRunner({ cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir })
+    const runner = new WindowRunner({ cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords })
     logger.info({ profileId, taskKey }, '开始单任务调试运行')
     await runner.runManual(profileId, taskKey)
     const row = db.listRunsForDate(todayStr()).find(r => r.taskKey === taskKey)
