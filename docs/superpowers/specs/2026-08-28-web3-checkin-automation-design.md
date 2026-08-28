@@ -178,3 +178,4 @@ AutoBitControl/
 4. 调度器 + 队列 + 状态机 + SQLite
 5. Web 面板
 6. 钱包适配器（MetaMask/Phantom 优先，其他按需）
+7. watchdog 自动重启（进程崩溃自愈）
