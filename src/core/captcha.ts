@@ -9,6 +9,14 @@ export interface CaptchaDetected {
 
 export class CaptchaFailure extends Error {}
 
+export const ESTIMATED_COST_POINTS: Record<CaptchaKind, number> = {
+  turnstile: 25,
+  recaptcha_v2: 15,
+  recaptcha_v3: 20,
+  hcaptcha: 30,
+  image: 4,
+}
+
 const DETECTORS: Array<{ kind: CaptchaKind; selector: string; sitekeyAttr: string }> = [
   { kind: 'turnstile', selector: 'iframe[src*="challenges.cloudflare.com"]', sitekeyAttr: 'data-sitekey' },
   { kind: 'recaptcha_v2', selector: 'iframe[src*="recaptcha/api2/anchor"]', sitekeyAttr: 'data-sitekey' },
@@ -107,7 +115,7 @@ export class YesCaptchaClient {
 export class CaptchaService {
   constructor(private client: YesCaptchaClient, private cfg: { maxCostPerTask: number }) {}
 
-  async autoSolve(page: Page, opts: { enabled: boolean; profileId: number | null; taskKey: string | null; onLog: (kind: string, ok: boolean) => void }): Promise<'none' | 'solved' | 'failed'> {
+  async autoSolve(page: Page, opts: { enabled: boolean; profileId: number | null; taskKey: string | null; onLog: (kind: string, ok: boolean, costPoints: number) => void }): Promise<'none' | 'solved' | 'failed'> {
     if (!opts.enabled) return 'none'
     const detected = await detectCaptcha(page)
     if (!detected) return 'none'
@@ -115,10 +123,10 @@ export class CaptchaService {
       await this.client.ensureBalance(this.cfg.maxCostPerTask)
       const token = await this.client.solveCaptcha(detected.kind, detected.sitekey, page.url())
       await this.applyToken(page, detected.kind, token)
-      opts.onLog(detected.kind, true)
+      opts.onLog(detected.kind, true, ESTIMATED_COST_POINTS[detected.kind] ?? 0)
       return 'solved'
     } catch (e) {
-      opts.onLog(detected.kind, false)
+      opts.onLog(detected.kind, false, ESTIMATED_COST_POINTS[detected.kind] ?? 0)
       throw new CaptchaFailure(`验证码处理失败: ${(e as Error).message}`)
     }
   }

@@ -29,6 +29,7 @@ export interface TaskContextDeps {
   artifactsDir: string
   captcha?: CaptchaService
   wallets?: WalletRegistry
+  onCaptchaLog?: (kind: string, ok: boolean, costPoints: number) => void
 }
 
 export abstract class SiteTask {
@@ -54,14 +55,15 @@ export class TaskContext {
   async goto(url?: string): Promise<void> {
     const target = url ?? this.deps.task.meta.url
     if (!target) throw new Error('任务未配置 url')
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await this.page.goto(target, { timeout: 45000, waitUntil: 'domcontentloaded' })
         await Humanizer.sleep(800, 3000)
         return
       } catch (e) {
-        this.deps.logger.warn({ url: target, attempt }, `页面加载失败，重试 ${attempt}/2`)
-        if (attempt === 2) throw e
+        this.deps.logger.warn({ url: target, attempt }, `页面加载失败，重试 ${attempt}/3`)
+        if (attempt === 3) throw e
+        await Humanizer.sleep(2000, 5000)
       }
     }
   }
@@ -92,9 +94,8 @@ export class TaskContext {
       enabled: taskCfg.auto ?? true,
       profileId: this.deps.profile.id,
       taskKey: this.deps.task.meta.key,
-      onLog: (kind, ok) => {
-        const db = (this.deps.cfg as unknown as { db?: { logCaptcha: (p: number, t: string, k: string, c: number, o: boolean) => void } }).db
-        db?.logCaptcha(this.deps.profile.id, this.deps.task.meta.key, kind, 0, ok)
+      onLog: (kind, ok, costPoints) => {
+        this.deps.onCaptchaLog?.(kind, ok, costPoints)
       },
     })
   }
