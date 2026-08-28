@@ -174,7 +174,7 @@ export class AppDb {
       id: 0, profileId, taskKey, date, status: 'pending', attempts: 0,
       error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '',
     }
-    const merged = { ...base, ...patch, status, attempts: existing ? patch.attempts ?? existing.attempts : 0 }
+    const merged = { ...base, ...patch, status, attempts: existing ? patch.attempts ?? existing.attempts : patch.attempts ?? 0 }
     this.raw.prepare(
       `INSERT INTO runs (profile_id, task_key, date, status, attempts, error, screenshot, started_at, finished_at)
        VALUES (@profileId, @taskKey, @date, @status, @attempts, @error, @screenshot, @startedAt, @finishedAt)

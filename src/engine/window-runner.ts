@@ -171,7 +171,8 @@ export class WindowRunner {
   /**
    * 单任务执行：解析任务级参数（覆盖全局默认）→ 建 TaskContext → 超时保护执行 → 落状态
    * 重试不占窗：retry_wait 不 sleep 占窗，交给 deps.scheduleRetry 到期后重新入队（新一轮窗口会话）；
-   * 尝试计数跨会话延续（读上次 retry_wait 记录的 attempts 续跑），保证重试上限始终生效；
+   * 尝试计数跨会话续算（读数据库已有记录的 attempts：上一轮已跑 N 次则本次从 N+1 开始，
+   * attempts=0/首次/终态重跑则从 1），保证重试上限跨会话生效、最终必达 failed；
    * 非首次尝试先复位页面（about:blank），避免上一轮残留 DOM/事件干扰
    * 成功重置熔断计数；终态失败（failed/captcha_failed）熔断计数 +1
    */
@@ -186,9 +187,12 @@ export class WindowRunner {
     const retryMax = task.meta.retry?.max ?? cfg.execution.retryMax
     const backoffSec = task.meta.retry?.backoffSec ?? cfg.execution.retryBackoffSec
     const timeoutSec = task.meta.timeoutSec ?? Math.floor(cfg.execution.taskTimeoutMs / 1000)
-    // 上次会话停在 retry_wait 时从记录的 attempts 续跑（重试上限跨会话生效），否则从头开始
-    const prior = db.getRun(profile.id, taskKey, date)
-    const startAttempt = prior?.status === 'retry_wait' ? (prior.attempts ?? 0) + 1 : 1
+    // 重试轮次跨会话续算：读数据库已有记录的 attempts（attempts=N 表示上一轮已跑 N 次），
+    // 本次会话从 N+1 开始；无记录、attempts=0 或终态行（手动重跑开新一轮）则从 1 开始——
+    // 保证 scheduleRetry 重新入队的新会话最终走到 failed 终态，不会无限重试
+    const existing = db.getRun(profile.id, taskKey, date)
+    const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
+    const startAttempt = existing && !terminal ? (existing.attempts > 0 ? existing.attempts + 1 : 1) : 1
     // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
     try {

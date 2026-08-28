@@ -143,6 +143,31 @@ describe('WindowRunner', () => {
     expect(scheduleRetry).not.toHaveBeenCalled()
   })
 
+  it('重试跨会话续算并最终 failed', async () => {
+    const db = makeDb()
+    const getRun = db.getRun as ReturnType<typeof vi.fn>
+    const task = new FailTask()
+    const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
+    // 第 1 会话：无历史记录 → attempt=1 → retry_wait + scheduleRetry
+    await runner.runWindowTasks(makeProfile(), ['fail-task'])
+    expect(statuses(db)).toEqual(['running', 'retry_wait'])
+    expect(scheduleRetry).toHaveBeenCalledTimes(1)
+    // 第 2 会话：上一轮 attempts=1 → 从 2 续跑 → 再 retry_wait + scheduleRetry
+    getRun.mockReturnValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>)
+    await runner.runWindowTasks(makeProfile(), ['fail-task'])
+    expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait'])
+    expect(scheduleRetry).toHaveBeenCalledTimes(2)
+    // 第 3 会话：上一轮 attempts=2 → 从 3 续跑 → 达上限 failed 终态，不再调度
+    getRun.mockReturnValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>)
+    await runner.runWindowTasks(makeProfile(), ['fail-task'])
+    expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait', 'running', 'failed'])
+    expect(scheduleRetry).toHaveBeenCalledTimes(2)
+    // 三次 running 的 attempts 依次 1/2/3（重试上限跨会话生效，共 3 次尝试）
+    const runningAttempts = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+      .filter(c => c[3] === 'running').map(c => c[4].attempts)
+    expect(runningAttempts).toEqual([1, 2, 3])
+  })
+
   it('开窗失败重试后跳过窗口', async () => {
     const db = makeDb()
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
