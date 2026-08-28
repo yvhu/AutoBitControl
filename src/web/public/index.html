@@ -246,13 +246,14 @@ function renderMatrix() {
       <td><span class="pill ${cls}"><span class="d"></span>${label}</span></td>
       <td>${r.attempts}</td>
       <td class="err-text" title="${esc(r.error ?? '')}">${esc(r.error ?? '—')}</td>
-      <td>${r.screenshot ? `<span class="link" onclick="openShot('${esc(r.screenshot)}')">🖼 查看</span>` : '—'}</td>
+      <td>${r.screenshot ? `<span class="link" onclick="openImage('${esc(r.screenshot)}')">🖼 查看</span>` : '—'}</td>
       <td><span class="link" onclick="rerunOne(${r.profileId}, '${esc(r.taskKey)}')">${['failed','captcha_failed'].includes(r.status) ? '重跑' : '执行'}</span></td>
     </tr>`
   }).join('')
 }
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])) }
+function openImage(path) { window.open('/api/screenshot?path=' + encodeURIComponent(path), '_blank') }
 
 async function loadProfiles() {
   const data = await api(`/api/dashboard?date=${state.date}`)

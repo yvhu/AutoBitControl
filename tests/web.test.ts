@@ -15,7 +15,7 @@ interface MockDeps {
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string } }>
-  cfg: { web: { port: number } }
+  cfg: { web: { port: number }, storage: { screenshotDir: string } }
   bitbrowser: { health: Mock }
   captchaBalance: Mock
 }
@@ -35,7 +35,7 @@ function makeDeps(): MockDeps {
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
-    cfg: { web: { port: 3000 } },
+    cfg: { web: { port: 3000 }, storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' } },
     bitbrowser: { health: vi.fn().mockResolvedValue(true) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
   }
@@ -115,6 +115,12 @@ describe('web panel API', () => {
     expect(res.status).toBe(200)
     expect(res.body.points).toBe(98210)
     expect(res.body.yuan).toBeCloseTo(98.21)
+  })
+
+  it('GET /api/screenshot 拒绝目录穿越', async () => {
+    const app = createApp(makeDeps() as never)
+    const res = await request(app).get('/api/screenshot').query({ path: 'C:/windows/win.ini' })
+    expect(res.status).toBe(404)
   })
 
   it('GET / 返回面板页面', async () => {

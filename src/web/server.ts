@@ -1,5 +1,6 @@
 import express from 'express'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, sep } from 'node:path'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { todayStr, type AppDb, type ProfileRow, type RunStatus } from '../core/db'
 import type { CoalescingEnqueuer } from '../core/queue'
@@ -134,6 +135,17 @@ export function createApp(deps: WebDeps): express.Express {
     } catch {
       res.json({ configured: false, points: 0, yuan: 0 })
     }
+  })
+
+  app.get('/api/screenshot', (req, res) => {
+    const p = typeof req.query.path === 'string' ? req.query.path : ''
+    const root = resolve(deps.cfg.storage.screenshotDir)
+    const target = resolve(p)
+    if (!target.startsWith(root + sep) || !existsSync(target)) {
+      res.status(404).json({ ok: false, error: '截图不存在' })
+      return
+    }
+    res.sendFile(target)
   })
 
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')
