@@ -7,7 +7,7 @@
 import { loadConfig } from './infrastructure/config'
 import { createLogger } from './infrastructure/logger'
 import { AppDb } from './infrastructure/db'
-import { createBitBrowserClient } from './integrations/bitbrowser'
+import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { TaskQueue, CoalescingEnqueuer } from './engine/queue'
 import { Scheduler } from './engine/scheduler'
@@ -17,6 +17,22 @@ import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
 import { loadTasks } from './tasks'
 import { createApp } from './server/app'
+
+/**
+ * 面板依赖的比特浏览器适配：health 探活 + sync 窗口列表同步
+ * 独立导出便于测试（sync 闭包持有 db 做 upsert，路由层不直接依赖 db）
+ */
+export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): { health(): Promise<boolean>; sync(): Promise<number> } {
+  return {
+    health: () => bitbrowser.health(),
+    // 同步窗口列表到 profiles 表（面板"同步比特浏览器"按钮入口；失败向上抛由统一错误处理器转 500）
+    sync: async () => {
+      const list = await bitbrowser.listBrowsers(0, 100)
+      for (const b of list) db.upsertProfile(b.id, b.name)
+      return list.length
+    },
+  }
+}
 
 export async function startApp(): Promise<void> {
   const cfg = loadConfig()
@@ -91,7 +107,7 @@ export async function startApp(): Promise<void> {
     tasks,
     cfg,
     logger,
-    bitbrowser,
+    bitbrowser: buildBitbrowserDeps(bitbrowser, db),
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {
       try {

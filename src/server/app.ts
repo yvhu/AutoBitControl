@@ -34,7 +34,7 @@ export interface ServerDeps {
   tasks: Map<string, SiteTask>
   cfg: AppConfig
   logger: Logger
-  bitbrowser: { health(): Promise<boolean> }
+  bitbrowser: { health(): Promise<boolean>; sync(): Promise<number> }
   captchaBalance: () => Promise<{ points: number } | null>
 }
 
@@ -53,7 +53,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(profilesRouter(deps))
   api.use(runsRouter(deps))
   api.use(captchaRouter(deps))
-  api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health() }))
+  api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())
   // 公开设置：非敏感配置 + 版本号（面板展示，避免前端硬编码）

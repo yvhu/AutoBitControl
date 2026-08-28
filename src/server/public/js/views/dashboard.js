@@ -14,32 +14,40 @@ const PILLS = {
 function openImage(path) { window.open('/api/screenshots?path=' + encodeURIComponent(path), '_blank') }
 
 // 渲染看板：拉仪表盘数据 + 任务列表，更新统计卡片与矩阵
+// in-flight 守卫：轮询触发的重渲染若上一轮尚未完成则跳过，避免慢响应交错覆盖新数据
+let rendering = false
 export async function render({ date, setTasks }) {
-  const data = await get('/api/dashboard?date=' + date)
-  if (setTasks) setTasks(await get('/api/tasks'))
-  const s = data.stats
-  const done = s.success + s.failed + s.captchaFailed + s.skipped
-  const pct = s.total ? Math.round(done / s.total * 100) : 0
-  document.querySelector('#ring-complete').style.setProperty('--p', pct)
-  document.querySelector('#ring-text').textContent = pct + '%'
-  document.querySelector('#stat-complete').textContent = `${done} / ${s.total}`
-  document.querySelector('#st-ok').textContent = s.success
-  document.querySelector('#st-fail').textContent = s.failed
-  document.querySelector('#st-cap').textContent = s.captchaFailed
-  document.querySelector('#st-skip').textContent = s.skipped
-  document.querySelector('#st-running').textContent = s.running
-  document.querySelector('#st-profiles').textContent = `窗口 ${data.profilesTotal} / 启用 ${data.profilesEnabled}`
-  document.querySelector('#st-capcost').textContent = '¥' + (data.captcha.totalCost / 1000).toFixed(2)
-  document.querySelector('#st-capcount').textContent = data.captcha.count + ' 次'
-  const total = s.total || 1
-  document.querySelector('#bar-dist').innerHTML = `<div style="width:${s.success/total*100}%;background:#34D399"></div><div style="width:${s.failed/total*100}%;background:#F87171"></div><div style="width:${s.captchaFailed/total*100}%;background:#38BDF8"></div><div style="width:${s.skipped/total*100}%;background:#334155"></div>`
-  const badge = document.querySelector('#badge-fail')
-  badge.textContent = s.failed + s.captchaFailed
-  badge.style.display = s.failed + s.captchaFailed > 0 ? '' : 'none'
-  const sel = document.querySelector('#filter-task')
-  const tasks = sel.dataset.tasks ? JSON.parse(sel.dataset.tasks) : []
-  sel.innerHTML = '<option value="">全部任务</option>' + tasks.map(t => `<option value="${t.key}">${esc(t.name)}</option>`).join('')
-  renderMatrix(data)
+  if (rendering) return
+  rendering = true
+  try {
+    const data = await get('/api/dashboard?date=' + date)
+    if (setTasks) setTasks(await get('/api/tasks'))
+    const s = data.stats
+    const done = s.success + s.failed + s.captchaFailed + s.skipped
+    const pct = s.total ? Math.round(done / s.total * 100) : 0
+    document.querySelector('#ring-complete').style.setProperty('--p', pct)
+    document.querySelector('#ring-text').textContent = pct + '%'
+    document.querySelector('#stat-complete').textContent = `${done} / ${s.total}`
+    document.querySelector('#st-ok').textContent = s.success
+    document.querySelector('#st-fail').textContent = s.failed
+    document.querySelector('#st-cap').textContent = s.captchaFailed
+    document.querySelector('#st-skip').textContent = s.skipped
+    document.querySelector('#st-running').textContent = s.running
+    document.querySelector('#st-profiles').textContent = `窗口 ${data.profilesTotal} / 启用 ${data.profilesEnabled}`
+    document.querySelector('#st-capcost').textContent = '¥' + (data.captcha.totalCost / 1000).toFixed(2)
+    document.querySelector('#st-capcount').textContent = data.captcha.count + ' 次'
+    const total = s.total || 1
+    document.querySelector('#bar-dist').innerHTML = `<div style="width:${s.success/total*100}%;background:#34D399"></div><div style="width:${s.failed/total*100}%;background:#F87171"></div><div style="width:${s.captchaFailed/total*100}%;background:#38BDF8"></div><div style="width:${s.skipped/total*100}%;background:#334155"></div>`
+    const badge = document.querySelector('#badge-fail')
+    badge.textContent = s.failed + s.captchaFailed
+    badge.style.display = s.failed + s.captchaFailed > 0 ? '' : 'none'
+    const sel = document.querySelector('#filter-task')
+    const tasks = sel.dataset.tasks ? JSON.parse(sel.dataset.tasks) : []
+    sel.innerHTML = '<option value="">全部任务</option>' + tasks.map(t => `<option value="${esc(t.key)}">${esc(t.name)}</option>`).join('')
+    renderMatrix(data)
+  } finally {
+    rendering = false
+  }
 }
 
 // 状态矩阵渲染：按筛选条件过滤运行记录，逐行拼 HTML（所有动态值经 esc 转义）

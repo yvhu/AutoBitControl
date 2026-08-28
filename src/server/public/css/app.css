@@ -50,6 +50,11 @@
   .btn.sm { padding: 4px 10px; font-size: 11px; border-radius: 8px; }
   .select, .input { background: #151D30; color: #E2E8F0; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 7px 12px; font-size: 12px; }
 
+/* ============ 全局错误 toast（app.js 注入） ============ */
+  .toast-host { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 999; }
+  .toast { background: #1E293B; color: #E2E8F0; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 10px 16px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.4); max-width: 320px; animation: toast-in .18s ease; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
 /* ============ 状态矩阵表格 ============ */
   table.mx { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 12px; }
   table.mx th { color: #64748B; font-weight: 500; text-align: left; padding: 2px 10px; font-size: 11px; }

@@ -53,3 +53,5 @@ export async function toggle(id, enabled) { await patch(`/api/profiles/${id}`, {
 export async function runProfile(id) { await post(`/api/profiles/${id}/run`, {}); await render() }
 // 重置熔断计数
 export async function resetBreaker(id) { await post(`/api/profiles/${id}/breaker/reset`, {}); await render() }
+// 同步比特浏览器窗口列表到 profiles 表（返回同步数量，调用方 toast 展示）
+export async function syncProfiles() { const r = await post('/api/bitbrowser/sync', {}); await render(); return r.count }

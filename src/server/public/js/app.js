@@ -6,6 +6,20 @@ import * as profiles from './views/profiles.js'
 import * as tasks from './views/tasks.js'
 import * as settings from './views/settings.js'
 
+// 全局错误 toast：固定容器 append 到 body（样式见 app.css），3.5 秒后自动消失
+const toastHost = document.createElement('div')
+toastHost.className = 'toast-host'
+document.body.appendChild(toastHost)
+function showToast(msg) {
+  const el = document.createElement('div')
+  el.className = 'toast'
+  el.textContent = msg
+  toastHost.appendChild(el)
+  setTimeout(() => el.remove(), 3500)
+}
+// 未处理的 Promise 拒绝兜底提示：api.js 抛 Error 且调用方未 catch 时（如 abcRerun 失败）显示
+window.addEventListener('unhandledrejection', e => showToast(e.reason?.message ?? '操作失败'))
+
 // 全局状态：当前查看日期与任务列表（供筛选下拉与行级重跑使用）
 const state = { date: localToday(), tasks: [] }
 let currentPage = 'dashboard'
@@ -40,6 +54,7 @@ window.abcRerunFailed = () => dashboard.rerunFailed(state.date).then(() => navig
 window.abcTriggerAll = () => dashboard.triggerAll().then(() => navigate('dashboard'))
 window.abcTestBitbrowser = () => settings.testBitbrowser()
 window.abcBalance = () => settings.loadBalance()
+window.abcSyncProfiles = () => profiles.syncProfiles().then(c => showToast('已同步 ' + c + ' 个窗口')).catch(() => {})
 
 // 页面导航：切导航高亮、切页面显隐、按页面类型渲染对应视图
 export async function navigate(page) {

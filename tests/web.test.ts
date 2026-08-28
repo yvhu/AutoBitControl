@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApp } from '../src/server/app'
+import { buildBitbrowserDeps } from '../src/app'
 
 type Mock = ReturnType<typeof vi.fn>
 
@@ -26,7 +27,7 @@ interface MockDeps {
     execution: { timezone: string; concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
     captcha: { clientKey: string }
   }
-  bitbrowser: { health: Mock }
+  bitbrowser: { health: Mock; sync: Mock }
   captchaBalance: Mock
 }
 
@@ -53,7 +54,7 @@ function makeDeps(): MockDeps {
       execution: { timezone: 'Asia/Shanghai', concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
-    bitbrowser: { health: vi.fn().mockResolvedValue(true) },
+    bitbrowser: { health: vi.fn().mockResolvedValue(true), sync: vi.fn().mockResolvedValue(3) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
   }
 }
@@ -165,6 +166,32 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(makeDeps() as never)).post('/api/bitbrowser/test')
     expect(res.body.code).toBe(0)
     expect(res.body.data.ok).toBe(true)
+  })
+
+  it('POST /api/bitbrowser/sync 返回同步数量', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/bitbrowser/sync')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(3)
+    expect(deps.bitbrowser.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it('buildBitbrowserDeps.sync 拉取窗口列表并逐窗口 upsert', async () => {
+    const db = { upsertProfile: vi.fn() }
+    const client = {
+      health: vi.fn().mockResolvedValue(true),
+      listBrowsers: vi.fn().mockResolvedValue([
+        { id: 'b1', name: '窗口1' },
+        { id: 'b2', name: '窗口2' },
+        { id: 'b3', name: '窗口3' },
+      ]),
+    }
+    const deps = buildBitbrowserDeps(client as never, db as never)
+    expect(await deps.sync()).toBe(3)
+    expect(client.listBrowsers).toHaveBeenCalledWith(0, 100)
+    expect(db.upsertProfile).toHaveBeenCalledTimes(3)
+    expect(db.upsertProfile).toHaveBeenCalledWith('b1', '窗口1')
+    expect(await deps.health()).toBe(true)
   })
 
   it('GET /api/captcha/balance 返回点数', async () => {
