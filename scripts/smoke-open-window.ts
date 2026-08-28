@@ -14,11 +14,14 @@ async function main(): Promise<void> {
   const client = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
   const open = await client.openBrowser(profileId)
   logger.info({ open }, '开窗成功')
-  const conn = await new PatchrightDriver().connect(`http://${open.http}`)
-  await conn.page.goto(cfg.execution.probeUrl, { waitUntil: 'domcontentloaded' }).catch(() => {})
-  logger.info({ url: conn.page.url() }, '页面打开成功')
-  await conn.close()
-  await client.closeBrowser(profileId)
+  try {
+    const conn = await new PatchrightDriver().connect(`http://${open.http}`)
+    await conn.page.goto(cfg.execution.probeUrl, { waitUntil: 'domcontentloaded' }).catch(() => {})
+    logger.info({ url: conn.page.url() }, '页面打开成功')
+    await conn.close()
+  } finally {
+    await client.closeBrowser(profileId).catch(() => {})
+  }
   logger.info('冒烟通过')
 }
 

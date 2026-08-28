@@ -23,19 +23,23 @@ async function main(): Promise<void> {
   const adapter = reg.get(walletKey)
 
   const open = await client.openBrowser(profileId)
-  const conn = await new PatchrightDriver().connect(`http://${open.http}`)
-  await conn.page.goto('https://opensea.io').catch(() => {})
-  logger.info('请手动点击页面上的连接钱包按钮（60 秒内）...')
-  const popup = await waitForPopup(conn.page.context(), adapter.extensionUrlPatterns, 60000)
-  if (!popup) {
-    logger.error('未检测到钱包弹窗')
-    process.exit(1)
+  let conn: Awaited<ReturnType<PatchrightDriver['connect']>> | null = null
+  try {
+    conn = await new PatchrightDriver().connect(`http://${open.http}`)
+    await conn.page.goto('https://opensea.io').catch(() => {})
+    logger.info('请手动点击页面上的连接钱包按钮（60 秒内）...')
+    const popup = await waitForPopup(conn.page.context(), adapter.extensionUrlPatterns, 60000)
+    if (!popup) {
+      logger.error('未检测到钱包弹窗')
+      return
+    }
+    logger.info({ url: popup.url() }, '检测到钱包弹窗，尝试自动确认')
+    await adapter.ensureConnected(popup as unknown as PopupPage)
+    logger.info('钱包弹窗处理完成')
+  } finally {
+    await client.closeBrowser(profileId).catch(() => {})
+    await conn?.close().catch(() => {})
   }
-  logger.info({ url: popup.url() }, '检测到钱包弹窗，尝试自动确认')
-  await adapter.ensureConnected(popup as unknown as PopupPage)
-  logger.info('钱包弹窗处理完成')
-  await conn.close()
-  await client.closeBrowser(profileId)
 }
 
 void main()
