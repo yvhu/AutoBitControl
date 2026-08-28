@@ -57,6 +57,16 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 
 注意：`url` 为空字符串的任务不会参与调度（见第 7 章），只能在面板手动触发——示例任务正是如此。
 
+### 任务开发与测试
+
+新任务或改动选择器后，按三层流程验证（从快到真，逐层递进）：
+
+1. **fixture 集成测试**：参考 `tests/task-base.test.ts` 的模式（注入假驱动，秒级反馈）。把选择器换成本地 fixture 页面先验证流程逻辑，不依赖真实站点与窗口。
+2. **单窗口单任务真实验证**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`——只开一个窗口、只跑指定任务、打印结果后退出（脚本：`scripts/run-task.ts`），比面板全量触发轻量。
+3. **面板验证**：面板看板行级「执行」（单窗口单任务）或任务页打开开关后点「立即触发」（全部启用窗口），人工核对截图与日志。
+
+示例任务默认 `enabled: false`（不参与日常执行），调试时在面板任务页打开开关，或直接用第 2 层的 `task:run` 脚本（不受开关限制）。
+
 ---
 
 ## 2. TaskMeta 字段全解
@@ -73,6 +83,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
+| `enabled` | `boolean?` | `true` | 任务总开关：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。运行时可在面板任务页覆盖（覆盖值存 SQLite `task_states` 表，重启后保留） |
 | `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见第 7 章） |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见第 4 章） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
@@ -415,8 +426,11 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 `Scheduler.start()`（`src/engine/scheduler.ts`）按顺序跳过：
 
 1. `deprecated: true` → 告警 `任务已标记失效，跳过调度`；
-2. `url` 为空 → 告警 `任务未配置 url，跳过调度`；
-3. `schedule` 缺失 → 不建 cron（仅能手动触发）。
+2. 停用（`enabled: false` 或面板关闭开关）→ 告警 `任务已停用，跳过调度`；
+3. `url` 为空 → 告警 `任务未配置 url，跳过调度`；
+4. `schedule` 缺失 → 不建 cron（仅能手动触发）。
+
+停用任务不注册 cron；窗口「立即跑」（`POST /api/profiles/:id/run`）也会排除停用任务，返回的 `count` 为实际入队数量。
 
 ### 手动触发
 

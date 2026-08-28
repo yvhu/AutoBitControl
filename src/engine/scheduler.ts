@@ -60,6 +60,10 @@ export class Scheduler {
         this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
         continue
       }
+      if (!this.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true)) {
+        this.logger.warn({ task: task.meta.key }, '任务已停用，跳过调度')
+        continue
+      }
       if (!task.meta.url) {
         this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
         continue

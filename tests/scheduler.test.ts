@@ -61,6 +61,20 @@ describe('Scheduler', () => {
     sched.stop()
   })
 
+  it('停用任务不调度', () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockReturnValue(false) } as never
+    const enqueue = vi.fn()
+    const enq = { enqueue } as never
+    const warn = vi.fn()
+    const logger = { info: vi.fn(), warn, error: vi.fn() } as never
+    const task = { meta: { key: 'off', name: '停用任务', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['off', task]]), enq, logger)
+    sched.start()
+    expect(warn).toHaveBeenCalled()
+    expect(enqueue).not.toHaveBeenCalled()
+    sched.stop()
+  })
+
   it('fireNow 对 deprecated 任务仍可手动触发', () => {
     const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }]) } as never
     const enqueue = vi.fn()

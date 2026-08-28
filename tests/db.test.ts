@@ -56,4 +56,12 @@ describe('AppDb', () => {
     expect(stats.count).toBe(3)
     expect(stats.totalCost).toBeCloseTo(0.11)
   })
+
+  it('任务开关默认值与覆盖读写', () => {
+    expect(db.getTaskEnabled('t-x', true)).toBe(true)
+    db.setTaskEnabled('t-x', false)
+    expect(db.getTaskEnabled('t-x', true)).toBe(false)
+    db.setTaskEnabled('t-x', true)
+    expect(db.getTaskEnabled('t-x', false)).toBe(true)
+  })
 })

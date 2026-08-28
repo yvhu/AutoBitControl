@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS captcha_logs (
   ok INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS task_states (
+  task_key TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
 `
 
 /**
@@ -204,5 +208,16 @@ export class AppDb {
   captchaStats(date: string): { count: number; totalCost: number } {
     const row = this.raw.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at) = ?`).get(date) as { count: number; total: number }
     return { count: row.count, totalCost: row.total }
+  }
+
+  /** 读取任务开关：无覆盖记录时返回代码默认值（meta.enabled ?? true） */
+  getTaskEnabled(taskKey: string, fallback: boolean): boolean {
+    const row = this.raw.prepare('SELECT enabled FROM task_states WHERE task_key = ?').get(taskKey) as { enabled: number } | undefined
+    return row === undefined ? fallback : row.enabled === 1
+  }
+
+  /** 写入任务开关（面板运行时覆盖，重启后保留） */
+  setTaskEnabled(taskKey: string, enabled: boolean): void {
+    this.raw.prepare('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled').run(taskKey, enabled ? 1 : 0)
   }
 }

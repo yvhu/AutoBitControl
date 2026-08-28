@@ -32,9 +32,14 @@ export function profilesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; 
   }))
   router.post('/profiles/:id/run', asyncHandler(async (req, res) => {
     const profile = find(Number(req.params.id))
-    // 整窗口立即跑：全部任务入队（CoalescingEnqueuer 自动合并为一次开窗会话）
-    for (const task of deps.tasks.values()) deps.enqueuer.enqueue(profile, task.meta.key)
-    ok(res, { count: deps.tasks.size })
+    // 整窗口立即跑：全部启用任务入队（停用任务排除；CoalescingEnqueuer 自动合并为一次开窗会话）
+    let count = 0
+    for (const task of deps.tasks.values()) {
+      if (!deps.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true)) continue
+      deps.enqueuer.enqueue(profile, task.meta.key)
+      count++
+    }
+    ok(res, { count })
   }))
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)

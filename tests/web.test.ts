@@ -12,6 +12,8 @@ interface MockDeps {
     setProfileEnabled: Mock
     setProfileWalletPassword: Mock
     resetCircuitBreaker: Mock
+    getTaskEnabled: Mock
+    setTaskEnabled: Mock
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string } }>
@@ -38,6 +40,8 @@ function makeDeps(): MockDeps {
       setProfileEnabled: vi.fn(),
       setProfileWalletPassword: vi.fn(),
       resetCircuitBreaker: vi.fn(),
+      getTaskEnabled: vi.fn().mockReturnValue(true),
+      setTaskEnabled: vi.fn(),
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
@@ -83,6 +87,30 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(makeDeps() as never)).post('/api/tasks/nope/trigger').send({})
     expect([400, 404]).toContain(res.status)
     expect(res.body.code).not.toBe(0)
+  })
+
+  it('PATCH /api/tasks/:key 切换开关', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: false })
+    expect(res.body.code).toBe(0)
+    expect(deps.db.setTaskEnabled).toHaveBeenCalledWith('t1', false)
+  })
+
+  it('停用任务触发返回 409', async () => {
+    const deps = makeDeps()
+    ;(deps.db.getTaskEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(409)
+    expect(res.body.message).toContain('停用')
+  })
+
+  it('窗口立即跑排除停用任务', async () => {
+    const deps = makeDeps()
+    ;(deps.db.getTaskEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(0)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
   it('PATCH /api/profiles/:id 修改启用状态', async () => {

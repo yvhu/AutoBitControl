@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "smoke:window": "tsx scripts/smoke-open-window.ts",
-    "smoke:wallet": "tsx scripts/smoke-wallet.ts"
+    "smoke:wallet": "tsx scripts/smoke-wallet.ts",
+    "task:run": "tsx scripts/run-task.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^9.9.0",
