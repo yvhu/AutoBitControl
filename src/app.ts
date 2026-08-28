@@ -137,6 +137,9 @@ export async function startApp(): Promise<void> {
   const queue = new TaskQueue(cfg.execution.concurrency)
   enqueuer = new CoalescingEnqueuer(queue, runner, logger)
 
+  // scheduler 前置声明：面板任务开关 PATCH 回调闭包引用它（开关切换即时重注册 cron），
+  // 调度器在 createApp 之后才创建，先声明变量再赋值（与 enqueuer 同法）
+  let scheduler: Scheduler | undefined
   const app = createApp({
     db,
     enqueuer,
@@ -144,6 +147,7 @@ export async function startApp(): Promise<void> {
     cfg,
     logger,
     bitbrowser: buildBitbrowserDeps(bitbrowser, db),
+    onToggle: (key) => void scheduler?.refreshTask(key),
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {
       try {
@@ -158,7 +162,7 @@ export async function startApp(): Promise<void> {
     logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, 'Web 面板已启动')
   })
 
-  const scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
+  scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
   await scheduler.start()
 
   // 优雅退出：先停调度器 → server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）

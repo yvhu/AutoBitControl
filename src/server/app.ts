@@ -36,6 +36,8 @@ export interface ServerDeps {
   logger: Logger
   bitbrowser: { health(): Promise<boolean>; sync(): Promise<number> }
   captchaBalance: () => Promise<{ points: number } | null>
+  /** 任务开关 PATCH 成功后回调（key, enabled）：调度器按 key 即时重注册/停止 cron */
+  onToggle?: (key: string, enabled: boolean) => void
 }
 
 /**

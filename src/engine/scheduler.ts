@@ -48,13 +48,14 @@ export function staggerToCron(start: string, end: string): string {
  * deprecated 任务 → 告警跳过；url 为空（文档示例）→ 告警跳过；无 schedule → 仅手动触发
  */
 export class Scheduler {
-  private jobs: Cron[] = []
+  /** 普通 cron 任务的 job（taskKey → cron），refreshTask 按 key 精确停/注册 */
+  private jobs = new Map<string, Cron>()
   /** stagger 任务的当日错峰 cron（key → cron），日更刷新时先停旧的再重建 */
   private staggerJobs = new Map<string, Cron>()
   /** 已注册日更刷新器的任务 key 集合（防止重复注册 00:01 cron） */
   private staggerRefreshKeys = new Set<string>()
-  /** 日更刷新 cron（00:01 触发，为每个 stagger 任务重选当日时间） */
-  private staggerRefreshers: Cron[] = []
+  /** 日更刷新 cron（taskKey → cron，00:01 触发，为每个 stagger 任务重选当日时间） */
+  private staggerRefreshers = new Map<string, Cron>()
 
   constructor(
     private cfg: AppConfig,
@@ -81,52 +82,76 @@ export class Scheduler {
     if (!this.staggerRefreshKeys.has(taskKey)) {
       this.staggerRefreshKeys.add(taskKey)
       const refresher = new Cron('1 0 * * *', { timezone: this.cfg.execution.timezone }, () => this.refreshStagger(taskKey))
-      this.staggerRefreshers.push(refresher)
+      this.staggerRefreshers.set(taskKey, refresher)
     }
     this.logger.info({ task: taskKey, cron }, '任务已调度')
+  }
+
+  /**
+   * 注册单个任务的 cron（start() 遍历调用与 refreshTask 开关恢复时复用）
+   * 跳过规则与 start() 一致：deprecated / 云端停用 / url 空 / 无 schedule
+   */
+  private async registerTask(task: { meta: TaskMeta }): Promise<void> {
+    if (task.meta.deprecated) {
+      this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
+      return
+    }
+    if (!(await this.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true))) {
+      this.logger.warn({ task: task.meta.key }, '任务已停用，跳过调度')
+      return
+    }
+    if (!task.meta.url) {
+      this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
+      return
+    }
+    if (!task.meta.schedule) return
+    if (typeof task.meta.schedule === 'string') {
+      const cron = task.meta.schedule
+      const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireSafely(task.meta.key))
+      this.jobs.set(task.meta.key, job)
+      this.logger.info({ task: task.meta.key, cron }, '任务已调度')
+    } else {
+      this.refreshStagger(task.meta.key)
+    }
+  }
+
+  /**
+   * 任务开关变更后刷新该任务的调度：先按 key 停掉普通 cron、错峰 cron 与 00:01 日更刷新器，
+   * 再重新注册（停用任务跳过注册）——面板切换开关即时生效，无需重启
+   */
+  async refreshTask(taskKey: string): Promise<void> {
+    const job = this.jobs.get(taskKey)
+    if (job) { job.stop(); this.jobs.delete(taskKey) }
+    const stagger = this.staggerJobs.get(taskKey)
+    if (stagger) { stagger.stop(); this.staggerJobs.delete(taskKey) }
+    const refresher = this.staggerRefreshers.get(taskKey)
+    if (refresher) { refresher.stop(); this.staggerRefreshers.delete(taskKey) }
+    this.staggerRefreshKeys.delete(taskKey)
+    const task = this.tasks.get(taskKey)
+    if (task) await this.registerTask(task)
   }
 
   /** 为每个任务建 cron 定时器 */
   async start(): Promise<void> {
     // 重入保护：已注册过任务时先停旧任务再重新注册（保证可重入且不产生重复 cron）
-    if (this.jobs.length > 0 || this.staggerJobs.size > 0) {
+    if (this.jobs.size > 0 || this.staggerJobs.size > 0) {
       this.logger.warn('调度器已启动，先停止旧任务再重新注册')
       this.stop()
     }
     for (const task of this.tasks.values()) {
-      if (task.meta.deprecated) {
-        this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
-        continue
-      }
-      if (!(await this.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true))) {
-        this.logger.warn({ task: task.meta.key }, '任务已停用，跳过调度')
-        continue
-      }
-      if (!task.meta.url) {
-        this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
-        continue
-      }
-      if (!task.meta.schedule) continue
-      if (typeof task.meta.schedule === 'string') {
-        const cron = task.meta.schedule
-        const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireSafely(task.meta.key))
-        this.jobs.push(job)
-        this.logger.info({ task: task.meta.key, cron }, '任务已调度')
-      } else {
-        this.refreshStagger(task.meta.key)
-      }
+      await this.registerTask(task)
     }
   }
 
   /** 停止全部 cron（SIGINT/SIGTERM 时调用）：普通任务 + stagger 任务 + 日更刷新器 */
   stop(): void {
-    for (const j of this.jobs) j.stop()
-    this.jobs = []
+    for (const j of this.jobs.values()) j.stop()
+    this.jobs.clear()
     for (const j of this.staggerJobs.values()) j.stop()
     this.staggerJobs.clear()
     this.staggerRefreshKeys.clear()
-    for (const r of this.staggerRefreshers) r.stop()
-    this.staggerRefreshers = []
+    for (const r of this.staggerRefreshers.values()) r.stop()
+    this.staggerRefreshers.clear()
   }
 
   /**

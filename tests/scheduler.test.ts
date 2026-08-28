@@ -155,4 +155,66 @@ describe('Scheduler', () => {
     sched.stop()
     expect(() => sched.stop()).not.toThrow()
   })
+
+  it('refreshTask 停用任务不注册 cron', async () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockResolvedValue(false) } as never
+    const info = vi.fn()
+    const warn = vi.fn()
+    const logger = { info, warn, error: vi.fn() } as never
+    const task = { meta: { key: 't1', name: 'T1', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['t1', task]]), { enqueue: vi.fn() } as never, logger)
+    await sched.refreshTask('t1')
+    expect(warn).toHaveBeenCalledWith({ task: 't1' }, '任务已停用，跳过调度')
+    expect(info).not.toHaveBeenCalled()
+    sched.stop()
+  })
+
+  it('refreshTask 启用任务立即注册 cron', async () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockResolvedValue(true) } as never
+    const info = vi.fn()
+    const logger = { info, warn: vi.fn(), error: vi.fn() } as never
+    const task = { meta: { key: 't1', name: 'T1', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['t1', task]]), { enqueue: vi.fn() } as never, logger)
+    await sched.refreshTask('t1')
+    expect(info).toHaveBeenCalledWith({ task: 't1', cron: '0 9 * * *' }, '任务已调度')
+    sched.stop()
+  })
+
+  it('refreshTask 对已注册任务先停旧 cron 再重注册（不产生重复）', async () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockResolvedValue(true) } as never
+    const info = vi.fn()
+    const logger = { info, warn: vi.fn(), error: vi.fn() } as never
+    const task = { meta: { key: 't1', name: 'T1', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['t1', task]]), { enqueue: vi.fn() } as never, logger)
+    await sched.start()
+    await sched.refreshTask('t1')
+    const scheduled = () => info.mock.calls.filter(c => c[1] === '任务已调度').length
+    expect(scheduled()).toBe(2)
+    sched.stop()
+    expect(() => sched.stop()).not.toThrow()
+  })
+
+  it('refreshTask 开关切换即时停/恢复 stagger 任务的错峰 cron 与日更刷新器', async () => {
+    let enabled = true
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockImplementation(async () => enabled) } as never
+    const info = vi.fn()
+    const warn = vi.fn()
+    const logger = { info, warn, error: vi.fn() } as never
+    const task = { meta: { key: 'st', name: '错峰', url: 'https://x.io', schedule: { stagger: ['23:00', '01:00'] as [string, string] } } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['st', task]]), { enqueue: vi.fn() } as never, logger)
+    await sched.start()
+    const scheduled = () => info.mock.calls.filter(c => c[1] === '任务已调度').length
+    expect(scheduled()).toBe(1)
+    // 停用：错峰 cron 与日更刷新器按 key 停掉，不再注册
+    enabled = false
+    await sched.refreshTask('st')
+    expect(warn).toHaveBeenCalledWith({ task: 'st' }, '任务已停用，跳过调度')
+    expect(scheduled()).toBe(1)
+    // 重新启用：即时重注册（含 00:01 日更刷新器）
+    enabled = true
+    await sched.refreshTask('st')
+    expect(scheduled()).toBe(2)
+    sched.stop()
+    expect(() => sched.stop()).not.toThrow()
+  })
 })

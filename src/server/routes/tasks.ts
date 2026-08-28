@@ -11,7 +11,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
 
-export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
+export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; onToggle?: (key: string, enabled: boolean) => void }): Router {
   const router = Router()
   router.get('/tasks', asyncHandler(async (req, res) => {
     const list = []
@@ -42,6 +42,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled 必须为布尔值')
     if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
     await deps.db.setTaskEnabled(key, body.enabled)
+    // 通知调度器即时刷新该任务的 cron（停用即停、启用即注册，无需重启）
+    deps.onToggle?.(key, body.enabled)
     ok(res, { key, enabled: body.enabled })
   }))
   router.post('/tasks/:key/trigger', asyncHandler(async (req, res) => {

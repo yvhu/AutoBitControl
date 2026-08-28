@@ -81,10 +81,6 @@
   .progress { height: 5px; border-radius: 99px; background: #1E293B; overflow: hidden; }
   .progress i { display: block; height: 100%; border-radius: 99px; }
 
-/* ============ 窗口详情抽屉 ============ */
-  .drawer { border-left: 1px solid rgba(255,255,255,.08); background: #0D1424; border-radius: 14px; padding: 14px; margin-top: 12px; }
-  .section-tag { display: flex; align-items: center; gap: 8px; color: #818CF8; font-size: 12px; font-weight: 700; margin: 0 0 10px; }
-
 /* ============ 任务卡片与钱包图标 ============ */
   .task-card { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
   .task-card:last-child { border-bottom: 0; }

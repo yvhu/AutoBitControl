@@ -29,6 +29,7 @@ interface MockDeps {
   }
   bitbrowser: { health: Mock; sync: Mock }
   captchaBalance: Mock
+  onToggle: Mock
 }
 
 function makeDeps(): MockDeps {
@@ -56,6 +57,7 @@ function makeDeps(): MockDeps {
     },
     bitbrowser: { health: vi.fn().mockResolvedValue(true), sync: vi.fn().mockResolvedValue(3) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
+    onToggle: vi.fn(),
   }
 }
 
@@ -98,12 +100,15 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data).toEqual({ key: 't1', enabled: false })
     expect(deps.db.setTaskEnabled).toHaveBeenCalledWith('t1', false)
+    expect(deps.onToggle).toHaveBeenCalledWith('t1', false)
   })
 
   it('PATCH /api/tasks/:key 非布尔 enabled 返回 400', async () => {
-    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/t1').send({ enabled: 'no' })
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: 'no' })
     expect(res.status).toBe(400)
     expect(res.body.code).not.toBe(0)
+    expect(deps.onToggle).not.toHaveBeenCalled()
   })
 
   it('PATCH /api/tasks/:key 未知任务返回 404', async () => {
