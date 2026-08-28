@@ -2,10 +2,10 @@ import express from 'express'
 import { join, dirname, resolve, sep } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { todayStr, type AppDb, type ProfileRow, type RunStatus } from '../core/db'
-import type { CoalescingEnqueuer } from '../core/queue'
+import { todayStr, type AppDb, type ProfileRow, type RunStatus } from '../infrastructure/db'
+import type { CoalescingEnqueuer } from '../engine/queue'
 import type { SiteTask } from '../tasks/base'
-import type { AppConfig } from '../core/config'
+import type { AppConfig } from '../infrastructure/config'
 
 export interface WebDeps {
   db: AppDb

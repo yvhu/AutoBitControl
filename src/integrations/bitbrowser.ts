@@ -1,3 +1,5 @@
+import { httpJson } from '../infrastructure/http'
+
 export interface OpenResult {
   http: string
   ws: string
@@ -19,13 +21,7 @@ export class BitBrowserClient {
   constructor(private cfg: { apiBase: string; timeoutMs: number }) {}
 
   private async post(path: string, body: unknown): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.cfg.apiBase}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.cfg.timeoutMs),
-    })
-    const json = (await res.json()) as BitBrowserResp
+    const json = await httpJson<BitBrowserResp>({ baseUrl: this.cfg.apiBase, path, method: 'POST', body, timeoutMs: this.cfg.timeoutMs })
     const ok = json.success === true || json.code === 0
     if (!ok) throw new Error(`比特浏览器 API 失败: ${path} ${json.msg ?? `code=${json.code}`}`)
     return (json.data ?? {}) as Record<string, unknown>

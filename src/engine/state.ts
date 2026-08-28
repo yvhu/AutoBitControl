@@ -1,4 +1,4 @@
-import type { RunStatus } from './db'
+import type { RunStatus } from '../infrastructure/db'
 
 export const VALID_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
   pending: ['running'],

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { TaskQueue, CoalescingEnqueuer } from '../src/core/queue'
+import { TaskQueue, CoalescingEnqueuer } from '../src/engine/queue'
 
 describe('TaskQueue', () => {
   it('并发上限内执行', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import net from 'node:net'
 import { chromium } from 'patchright'
-import { PatchrightDriver } from '../src/core/windowRunner'
+import { PatchrightDriver } from '../src/engine/window-runner'
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

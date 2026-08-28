@@ -1,6 +1,6 @@
 import PQueue from 'p-queue'
-import type { ProfileRow } from './db'
-import type { Logger } from './logger'
+import type { ProfileRow } from '../infrastructure/db'
+import type { Logger } from '../infrastructure/logger'
 
 export class TaskQueue {
   private q: PQueue

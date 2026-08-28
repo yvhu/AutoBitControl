@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { AppDb, type RunStatus } from '../src/core/db'
+import { AppDb, type RunStatus } from '../src/infrastructure/db'
 
 let db: AppDb
 let dir: string

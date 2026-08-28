@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { pickRandomTimeInWindow, staggerToCron, Scheduler } from '../src/core/scheduler'
+import { pickRandomTimeInWindow, staggerToCron, Scheduler } from '../src/engine/scheduler'
 
 describe('pickRandomTimeInWindow', () => {
   it('随机时间落在窗口内', () => {

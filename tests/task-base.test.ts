@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { TaskContext } from '../src/tasks/base'
 import type { SiteTask, TaskMeta } from '../src/tasks/base'
-import { Humanizer } from '../src/core/humanize'
+import { Humanizer } from '../src/automation/humanize'
 
 class FakeTask implements SiteTask {
   meta: TaskMeta = { key: 'fake', name: '假任务', url: '' }

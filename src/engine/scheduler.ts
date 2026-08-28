@@ -1,7 +1,7 @@
 import { Cron } from 'croner'
-import type { AppConfig } from './config'
-import type { Logger } from './logger'
-import type { AppDb, ProfileRow } from './db'
+import type { AppConfig } from '../infrastructure/config'
+import type { Logger } from '../infrastructure/logger'
+import type { AppDb, ProfileRow } from '../infrastructure/db'
 import type { SiteTask, TaskMeta } from '../tasks/base'
 import type { CoalescingEnqueuer } from './queue'
 

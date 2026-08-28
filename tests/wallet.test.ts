@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { MetaMaskAdapter } from '../src/core/wallet/metamask'
-import { PetraAdapter } from '../src/core/wallet/petra'
-import { WalletRegistry, type PopupPage, type PopupLocator } from '../src/core/wallet/types'
-import { matchesWalletUrl, waitForPopup } from '../src/core/wallet/popup'
+import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
+import { PetraAdapter } from '../src/automation/wallet/petra'
+import { WalletRegistry, type PopupPage, type PopupLocator } from '../src/automation/wallet/types'
+import { matchesWalletUrl, waitForPopup } from '../src/automation/wallet/popup'
 
 function makeLocator(over: Partial<PopupLocator> = {}): PopupLocator {
   return { click: async () => {}, fill: async () => {}, press: async () => {}, first() { return this }, ...over }

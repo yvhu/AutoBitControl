@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { YesCaptchaClient } from '../src/core/captcha'
+import { YesCaptchaClient } from '../src/integrations/yescaptcha'
 
 afterEach(() => { vi.unstubAllGlobals() })
 

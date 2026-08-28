@@ -1,7 +1,7 @@
-import { loadConfig } from '../src/core/config'
-import { createLogger } from '../src/core/logger'
-import { createBitBrowserClient } from '../src/core/bitbrowser'
-import { PatchrightDriver } from '../src/core/windowRunner'
+import { loadConfig } from '../src/infrastructure/config'
+import { createLogger } from '../src/infrastructure/logger'
+import { createBitBrowserClient } from '../src/integrations/bitbrowser'
+import { PatchrightDriver } from '../src/engine/window-runner'
 
 async function main(): Promise<void> {
   const profileId = process.env.BITBROWSER_PROFILE_ID

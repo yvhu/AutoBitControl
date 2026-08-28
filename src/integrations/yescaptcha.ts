@@ -1,4 +1,5 @@
 import type { Page } from 'patchright'
+import { httpJson } from '../infrastructure/http'
 
 export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
 
@@ -59,12 +60,7 @@ export class YesCaptchaClient {
   constructor(private cfg: { apiBase: string; clientKey: string; solveTimeoutMs: number; pollIntervalMs: number }, private taskTypes: Record<string, string>) {}
 
   private async call(path: string, body: unknown): Promise<YesCaptchaResp> {
-    const res = await fetch(`${this.cfg.apiBase}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    return (await res.json()) as YesCaptchaResp
+    return httpJson<YesCaptchaResp>({ baseUrl: this.cfg.apiBase, path, method: 'POST', body, timeoutMs: 30000 })
   }
 
   private async createTask(task: Record<string, unknown>): Promise<string> {

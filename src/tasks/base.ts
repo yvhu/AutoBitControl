@@ -1,13 +1,13 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Page } from 'patchright'
-import type { AppConfig } from '../core/config'
-import type { Logger } from '../core/logger'
-import type { ProfileRow } from '../core/db'
-import { Humanizer } from '../core/humanize'
-import { CaptchaService } from '../core/captcha'
-import { WalletRegistry, type PopupPage } from '../core/wallet/types'
-import { waitForPopup } from '../core/wallet/popup'
+import type { AppConfig } from '../infrastructure/config'
+import type { Logger } from '../infrastructure/logger'
+import type { ProfileRow } from '../infrastructure/db'
+import { Humanizer } from '../automation/humanize'
+import { CaptchaService } from '../integrations/yescaptcha'
+import { WalletRegistry, type PopupPage } from '../automation/wallet/types'
+import { waitForPopup } from '../automation/wallet/popup'
 
 export interface TaskMeta {
   key: string

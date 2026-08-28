@@ -1,15 +1,15 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Page } from 'patchright'
-import type { AppConfig } from './config'
-import type { Logger } from './logger'
-import { AppDb, todayStr, type ProfileRow } from './db'
-import type { BitBrowserClient, OpenResult } from './bitbrowser'
+import type { AppConfig } from '../infrastructure/config'
+import type { Logger } from '../infrastructure/logger'
+import { AppDb, todayStr, type ProfileRow } from '../infrastructure/db'
+import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
-import { Humanizer } from './humanize'
-import { CaptchaFailure, CaptchaService } from './captcha'
+import { Humanizer } from '../automation/humanize'
+import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
 import { TaskContext, type SiteTask } from '../tasks/base'
-import type { WalletRegistry } from './wallet/types'
+import type { WalletRegistry } from '../automation/wallet/types'
 
 export interface BrowserDriver {
   connect(endpointUrl: string): Promise<{ page: Page; close(): Promise<void> }>

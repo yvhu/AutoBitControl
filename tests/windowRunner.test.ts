@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { WindowRunner, type BrowserDriver } from '../src/core/windowRunner'
-import type { AppDb, ProfileRow, RunRow } from '../src/core/db'
+import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
+import type { AppDb, ProfileRow, RunRow } from '../src/infrastructure/db'
 import type { SiteTask } from '../src/tasks/base'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {

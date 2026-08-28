@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { BitBrowserClient } from '../src/core/bitbrowser'
+import { BitBrowserClient } from '../src/integrations/bitbrowser'
 
 afterEach(() => { vi.unstubAllGlobals() })
 

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { Humanizer, randomPointInBox } from '../src/core/humanize'
+import { Humanizer, randomPointInBox } from '../src/automation/humanize'
 
 describe('randomPointInBox', () => {
   it('返回点在盒子内部', () => {

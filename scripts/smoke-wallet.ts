@@ -1,11 +1,11 @@
-import { loadConfig } from '../src/core/config'
-import { createLogger } from '../src/core/logger'
-import { createBitBrowserClient } from '../src/core/bitbrowser'
-import { PatchrightDriver } from '../src/core/windowRunner'
-import { waitForPopup } from '../src/core/wallet/popup'
-import { WalletRegistry, type PopupPage } from '../src/core/wallet/types'
-import { MetaMaskAdapter } from '../src/core/wallet/metamask'
-import { PetraAdapter } from '../src/core/wallet/petra'
+import { loadConfig } from '../src/infrastructure/config'
+import { createLogger } from '../src/infrastructure/logger'
+import { createBitBrowserClient } from '../src/integrations/bitbrowser'
+import { PatchrightDriver } from '../src/engine/window-runner'
+import { waitForPopup } from '../src/automation/wallet/popup'
+import { WalletRegistry, type PopupPage } from '../src/automation/wallet/types'
+import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
+import { PetraAdapter } from '../src/automation/wallet/petra'
 
 async function main(): Promise<void> {
   const profileId = process.env.BITBROWSER_PROFILE_ID

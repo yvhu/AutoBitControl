@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadConfig } from '../src/core/config'
+import { loadConfig } from '../src/infrastructure/config'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'abc-config-')) })

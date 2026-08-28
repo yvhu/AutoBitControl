@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { canTransition, nextStateAfterFailure, shouldSkipAfterBreaker } from '../src/core/state'
+import { canTransition, nextStateAfterFailure, shouldSkipAfterBreaker } from '../src/engine/state'
 
 describe('canTransition', () => {
   it('允许 pending→running 与 running→success', () => {
