@@ -20,6 +20,7 @@ interface MockDeps {
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
     execution: { timezone: string; concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
+    captcha: { clientKey: string }
   }
   bitbrowser: { health: Mock }
   captchaBalance: Mock
@@ -45,6 +46,7 @@ function makeDeps(): MockDeps {
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
       execution: { timezone: 'Asia/Shanghai', concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+      captcha: { clientKey: 'test-secret-key-abc123' },
     },
     bitbrowser: { health: vi.fn().mockResolvedValue(true) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
@@ -139,6 +141,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data.bitbrowserApiBase).toBeTruthy()
     expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
     expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
+    expect(JSON.stringify(res.body.data)).not.toContain('test-secret-key-abc123')
     expect(JSON.stringify(res.body.data)).not.toContain('password')
   })
 
