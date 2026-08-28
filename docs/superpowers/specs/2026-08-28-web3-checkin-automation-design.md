@@ -205,3 +205,10 @@ AutoBitControl/
 5. Web 面板
 6. 钱包适配器（Petra、MetaMask 优先，其他按需增加）
 7. watchdog 自动重启（进程崩溃自愈）
+
+## 11. 运行与部署
+
+- **运行方式**：源码模式。`git pull → npm install → 配置 → npm start` 常驻后台；更新即拉代码重启
+- **运行位置**：必须与比特浏览器同一台机器（其 API 仅监听 localhost）
+- **开机自启**：pm2 或 Windows 服务/计划任务注册，机器重启后自动拉起（含 watchdog 兜底）
+- **不做 exe 打包**：开发者需频繁新增任务代码，源码模式迭代最方便
