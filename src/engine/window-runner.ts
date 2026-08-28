@@ -8,7 +8,8 @@ import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { Humanizer } from '../automation/humanize'
 import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
-import { TaskContext, type SiteTask } from '../tasks/base'
+import { TaskContext } from './task-context'
+import type { TaskMeta } from './task'
 import type { WalletRegistry } from '../automation/wallet/types'
 
 export interface BrowserDriver {
@@ -34,7 +35,7 @@ export interface WindowRunnerDeps {
   db: AppDb
   bitbrowser: BitBrowserClient
   driver: BrowserDriver
-  tasks: Map<string, SiteTask>
+  tasks: Map<string, { meta: TaskMeta; run(ctx: TaskContext): Promise<void> }>
   wallets: WalletRegistry
   captcha: CaptchaService | null
   logger: Logger

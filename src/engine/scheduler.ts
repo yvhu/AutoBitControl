@@ -2,7 +2,7 @@ import { Cron } from 'croner'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { AppDb, ProfileRow } from '../infrastructure/db'
-import type { SiteTask, TaskMeta } from '../tasks/base'
+import type { TaskMeta } from './task'
 import type { CoalescingEnqueuer } from './queue'
 
 export function pickRandomTimeInWindow(start: string, end: string, now = new Date()): Date {
@@ -25,7 +25,7 @@ export class Scheduler {
   constructor(
     private cfg: AppConfig,
     private db: AppDb,
-    private tasks: Map<string, SiteTask>,
+    private tasks: Map<string, { meta: TaskMeta }>,
     private enqueuer: CoalescingEnqueuer,
     private logger: Logger,
   ) {}
