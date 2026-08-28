@@ -27,7 +27,7 @@ async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promi
   let total = 0
   while (true) {
     const list = await bitbrowser.listBrowsers(page, 100)
-    for (const b of list) db.upsertProfile(b.id, b.name)
+    for (const b of list) await db.upsertProfile(b.id, b.name)
     total += list.length
     if (list.length < 100) break
     page++
@@ -61,7 +61,18 @@ export async function startApp(): Promise<void> {
     process.exit(1)
   })
 
-  const db = AppDb.open(cfg.storage.dbPath)
+  // 云数据库未配置即快速失败：数据层全部走云端，无 url 无法运行
+  if (!cfg.cloud.url) {
+    logger.error('未配置 TURSO_DATABASE_URL（请在 config/.env 或 config/config.json 的 cloud 段配置云数据库地址）')
+    process.exit(1)
+  }
+  let db: AppDb
+  try {
+    db = await AppDb.open(cfg.cloud)
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, '云数据库连接失败（请检查 TURSO_DATABASE_URL/TURSO_AUTH_TOKEN 与网络）')
+    process.exit(1)
+  }
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
   // 启动时同步窗口列表到 profiles 表（未就绪仅告警，不阻塞启动）
@@ -112,8 +123,14 @@ export async function startApp(): Promise<void> {
     // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试
     scheduleRetry: (profile, taskKey, delayMs) => {
       setTimeout(() => {
-        const p = db.listProfiles(false).find(x => x.id === profile.id)
-        if (p) enqueuer.enqueue(p, taskKey)
+        void (async () => {
+          try {
+            const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
+            if (p) enqueuer.enqueue(p, taskKey)
+          } catch (e) {
+            logger.warn({ err: (e as Error).message }, '重试到期查询窗口失败，放弃本次重试')
+          }
+        })()
       }, delayMs)
     },
   })

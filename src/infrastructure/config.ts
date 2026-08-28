@@ -51,6 +51,12 @@ export interface WebConfig {
   port: number
 }
 
+/** Turso 云数据库配置（libsql 协议，数据层全部走云端） */
+export interface CloudConfig {
+  url: string
+  authToken: string
+}
+
 /** 存储路径与日志级别配置（相对路径在 loadConfig 中解析为绝对路径） */
 export interface StorageConfig {
   dbPath: string
@@ -74,6 +80,7 @@ export interface AppConfig {
   execution: ExecutionConfig
   captcha: CaptchaConfig
   web: WebConfig
+  cloud: CloudConfig
   storage: StorageConfig
   wallet: WalletConfig
 }
@@ -128,6 +135,8 @@ const defaults: AppConfig = {
   },
   // 仅监听本机：面板不对外网暴露
   web: { host: '127.0.0.1', port: 3000 },
+  // 云数据库默认空：必须由 config 文件 cloud 段或环境变量提供，未配置时启动报错退出
+  cloud: { url: '', authToken: '' },
   storage: {
     dbPath: join(DEFAULT_ROOT, 'data', 'app.db'),
     screenshotDir: join(DEFAULT_ROOT, 'data', 'screenshots'),
@@ -192,6 +201,9 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
   if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
+  // 云数据库：TURSO_DATABASE_URL/TURSO_AUTH_TOKEN 环境变量覆盖配置文件的 cloud 段（与 clientKey 同模式）
+  if (env.TURSO_DATABASE_URL) cfg.cloud.url = env.TURSO_DATABASE_URL
+  if (env.TURSO_AUTH_TOKEN) cfg.cloud.authToken = env.TURSO_AUTH_TOKEN
   // WEB_PORT 非法值（NaN/小数/越界）静默忽略并保留默认端口（config 层无 logger，不做告警）
   if (env.WEB_PORT) {
     const port = Number(env.WEB_PORT)

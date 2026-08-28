@@ -28,7 +28,11 @@ async function main(): Promise<void> {
     console.error(`任务未注册: ${taskKey}（可用: ${[...tasks.keys()].join(', ')}）`)
     process.exit(1)
   }
-  const db = AppDb.open(cfg.storage.dbPath)
+  if (!cfg.cloud.url) {
+    console.error('未配置 TURSO_DATABASE_URL（请在 config/.env 或 config/config.json 的 cloud 段配置云数据库地址）')
+    process.exit(1)
+  }
+  const db = await AppDb.open(cfg.cloud)
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
@@ -42,7 +46,7 @@ async function main(): Promise<void> {
   /** 单次运行：跑完查记录打印结果；终态时关库退出，retry_wait 时保持存活等重试定时器 */
   const runOnce = async (): Promise<void> => {
     await runner.runManual(profileId, taskKey)
-    const row = db.listRunsForDate(todayStr()).find(r => r.taskKey === taskKey)
+    const row = (await db.listRunsForDate(todayStr())).find(r => r.taskKey === taskKey)
     if (row) {
       logger.info({ status: row.status, error: row.error, screenshot: row.screenshot }, '任务运行结果')
     } else {

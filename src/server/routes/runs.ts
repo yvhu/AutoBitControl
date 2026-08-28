@@ -16,9 +16,10 @@ export function runsRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer }): R
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
     const body = (req.body ?? {}) as { date?: unknown }
     const date = typeof body.date === 'string' ? body.date : todayStr()
-    const failed = deps.db.listRunsForDate(date).filter(r => r.status === 'failed' || r.status === 'captcha_failed')
+    const failed = (await deps.db.listRunsForDate(date)).filter(r => r.status === 'failed' || r.status === 'captcha_failed')
+    const profiles = await deps.db.listProfiles(false)
     for (const r of failed) {
-      const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.id === r.profileId)
+      const profile = profiles.find((p: ProfileRow) => p.id === r.profileId)
       // 窗口已删除则跳过（重跑只对现存窗口生效）
       if (profile) deps.enqueuer.enqueue(profile, r.taskKey)
     }

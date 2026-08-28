@@ -13,24 +13,24 @@ import type { SiteTask } from '../../tasks/base'
 export function profilesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   /** 按内部 id 查窗口，不存在抛 404（各端点共用） */
-  const find = (id: number): ProfileRow => {
-    const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.id === id)
+  const find = async (id: number): Promise<ProfileRow> => {
+    const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.id === id)
     if (!profile) throw new HttpError(404, `窗口不存在: ${id}`)
     return profile
   }
-  router.get('/profiles', (req, res) => {
-    ok(res, deps.db.listProfiles(false))
-  })
+  router.get('/profiles', asyncHandler(async (req, res) => {
+    ok(res, await deps.db.listProfiles(false))
+  }))
   router.patch('/profiles/:id', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)
-    const profile = find(id)
+    const profile = await find(id)
     const body = req.body as { enabled?: boolean } ?? {}
     // 只更新显式传入的字段：enabled 开关（钱包密码已改为环境变量 WALLET_PASSWORDS 配置，不在此处修改）
-    if (typeof body.enabled === 'boolean') deps.db.setProfileEnabled(id, body.enabled)
+    if (typeof body.enabled === 'boolean') await deps.db.setProfileEnabled(id, body.enabled)
     ok(res, profile)
   }))
   router.post('/profiles/:id/run', asyncHandler(async (req, res) => {
-    const profile = find(Number(req.params.id))
+    const profile = await find(Number(req.params.id))
     // 整窗口立即跑：全部启用任务入队（停用任务排除；CoalescingEnqueuer 自动合并为一次开窗会话）
     let count = 0
     for (const task of deps.tasks.values()) {
@@ -42,9 +42,9 @@ export function profilesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; 
   }))
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)
-    find(id)
+    await find(id)
     // 手动重置熔断：面板详情抽屉入口（连续失败恢复后放行）
-    deps.db.resetCircuitBreaker(id)
+    await deps.db.resetCircuitBreaker(id)
     ok(res)
   }))
   return router

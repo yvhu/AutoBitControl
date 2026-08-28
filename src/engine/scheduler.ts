@@ -76,7 +76,7 @@ export class Scheduler {
     const cron = staggerToCron(start, end)
     const old = this.staggerJobs.get(taskKey)
     if (old) old.stop()
-    const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(taskKey))
+    const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireSafely(taskKey))
     this.staggerJobs.set(taskKey, job)
     if (!this.staggerRefreshKeys.has(taskKey)) {
       this.staggerRefreshKeys.add(taskKey)
@@ -109,7 +109,7 @@ export class Scheduler {
       if (!task.meta.schedule) continue
       if (typeof task.meta.schedule === 'string') {
         const cron = task.meta.schedule
-        const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(task.meta.key))
+        const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireSafely(task.meta.key))
         this.jobs.push(job)
         this.logger.info({ task: task.meta.key, cron }, '任务已调度')
       } else {
@@ -135,17 +135,24 @@ export class Scheduler {
    * 保证已注册 cron 在关停后到点也不会执行
    * @param taskKey 任务 key
    */
-  fireNow(taskKey: string): void {
+  async fireNow(taskKey: string): Promise<void> {
     const task = this.tasks.get(taskKey)
     if (!task) return
     if (task.meta.enabled === false) {
       this.logger.warn({ task: taskKey }, '任务已停用，跳过本次触发')
       return
     }
-    const profiles: ProfileRow[] = this.db.listProfiles(true)
+    const profiles: ProfileRow[] = await this.db.listProfiles(true)
     for (const p of profiles) {
       this.enqueuer.enqueue(p, taskKey)
     }
     this.logger.info({ task: taskKey, profiles: profiles.length }, '触发任务')
+  }
+
+  /** cron 回调入口：fireNow 异步化后统一捕获云库异常，不抛向定时器 */
+  private fireSafely(taskKey: string): void {
+    void this.fireNow(taskKey).catch(e => {
+      this.logger.warn({ task: taskKey, err: (e as Error).message }, '触发任务失败（数据库读取异常）')
+    })
   }
 }

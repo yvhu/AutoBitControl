@@ -66,6 +66,19 @@ export class WindowRunner {
   constructor(private deps: WindowRunnerDeps) {}
 
   /**
+   * 降级策略：任务执行中的数据库写失败不能杀死执行（云库抖动/断网时任务照跑）
+   * try/catch + logger.warn 后返回 fallback，读取路径按"无记录"处理（fallback null）
+   */
+  private async safeDb<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await fn()
+    } catch (e) {
+      this.deps.logger.warn({ err: (e as Error).message }, '数据库操作失败，已降级继续执行')
+      return fallback
+    }
+  }
+
+  /**
    * 跑一个窗口的一次会话：本窗口当日所有 taskKeys 依次执行
    * 异常分区（见文件头注释）：开窗失败全部 skipped；连接失败全部 failed；
    * IP 探活失败全部 skipped；熔断中的任务逐个 skipped；其余逐任务执行
@@ -79,7 +92,7 @@ export class WindowRunner {
       open = await this.openWithRetry(profile.bitbrowserId)
     } catch (e) {
       for (const key of taskKeys) {
-        db.upsertRun(profile.id, key, date, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+        await this.safeDb(() => db.upsertRun(profile.id, key, date, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() }), null)
       }
       logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
       return
@@ -92,7 +105,7 @@ export class WindowRunner {
         connected = await this.deps.driver.connect(`http://${open.http}`)
       } catch (e) {
         for (const key of taskKeys) {
-          db.upsertRun(profile.id, key, date, 'failed', { error: `CDP 连接失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+          await this.safeDb(() => db.upsertRun(profile.id, key, date, 'failed', { error: `CDP 连接失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() }), null)
         }
         logger.error({ profile: profile.name }, `CDP 连接失败: ${(e as Error).message}`)
         return
@@ -101,7 +114,7 @@ export class WindowRunner {
       // IP 探活：代理 IP 未生效时整窗口跳过，避免用错误 IP 跑任务触发风控
       const probeOk = await this.probe(page)
       if (!probeOk) {
-        for (const key of taskKeys) db.upsertRun(profile.id, key, date, 'skipped', { error: 'IP 探活失败', finishedAt: new Date().toISOString() })
+        for (const key of taskKeys) await this.safeDb(() => db.upsertRun(profile.id, key, date, 'skipped', { error: 'IP 探活失败', finishedAt: new Date().toISOString() }), null)
         logger.warn({ profile: profile.name }, 'IP 探活失败，本轮跳过')
         return
       }
@@ -112,14 +125,14 @@ export class WindowRunner {
         const key = taskKeys[i]
         if (Date.now() >= deadline) {
           for (const rest of taskKeys.slice(i)) {
-            db.upsertRun(profile.id, rest, date, 'skipped', { error: '窗口超时', finishedAt: new Date().toISOString() })
+            await this.safeDb(() => db.upsertRun(profile.id, rest, date, 'skipped', { error: '窗口超时', finishedAt: new Date().toISOString() }), null)
           }
           logger.warn({ profile: profile.name }, '窗口超时，剩余任务跳过')
           break
         }
         // 窗口级熔断：计数达阈值后当日不再跑（成功一次即重置，见 runTask）
         if (shouldSkipAfterBreaker(profile.circuitBreakerCount, cfg.execution.circuitBreakerThreshold)) {
-          db.upsertRun(profile.id, key, date, 'skipped', { error: '窗口熔断', finishedAt: new Date().toISOString() })
+          await this.safeDb(() => db.upsertRun(profile.id, key, date, 'skipped', { error: '窗口熔断', finishedAt: new Date().toISOString() }), null)
           logger.warn({ profile: profile.name, task: key }, '窗口熔断，跳过任务')
           continue
         }
@@ -134,7 +147,8 @@ export class WindowRunner {
 
   /** 手动触发入口（面板单窗口执行）：按 bitbrowserId 找窗口记录再跑一次会话 */
   async runManual(bitbrowserId: string, taskKey: string): Promise<void> {
-    const profile = this.deps.db.listProfiles(false).find(p => p.bitbrowserId === bitbrowserId)
+    const profiles = await this.safeDb(() => this.deps.db.listProfiles(false), [] as ProfileRow[])
+    const profile = profiles.find(p => p.bitbrowserId === bitbrowserId)
     if (!profile) throw new Error(`窗口不存在: ${bitbrowserId}`)
     await this.runWindowTasks(profile, [taskKey])
   }
@@ -180,7 +194,7 @@ export class WindowRunner {
     const { cfg, db, logger } = this.deps
     const task = this.deps.tasks.get(taskKey)
     if (!task) {
-      db.upsertRun(profile.id, taskKey, date, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt: new Date().toISOString() })
+      await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt: new Date().toISOString() }), null)
       return
     }
     // 任务级参数优先，缺省回落全局默认（任务 meta 未配置时用 execution.*）
@@ -190,12 +204,12 @@ export class WindowRunner {
     // 重试轮次跨会话续算：读数据库已有记录的 attempts（attempts=N 表示上一轮已跑 N 次），
     // 本次会话从 N+1 开始；无记录、attempts=0 或终态行（手动重跑开新一轮）则从 1 开始——
     // 保证 scheduleRetry 重新入队的新会话最终走到 failed 终态，不会无限重试
-    const existing = db.getRun(profile.id, taskKey, date)
+    const existing = await this.safeDb(() => db.getRun(profile.id, taskKey, date), null)
     const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
     const startAttempt = existing && !terminal ? (existing.attempts > 0 ? existing.attempts + 1 : 1) : 1
     // 超界钳制：历史 attempts 已耗尽重试预算（startAttempt > retryMax + 1）直接落 failed，不进执行循环
     if (startAttempt > retryMax + 1) {
-      db.upsertRun(profile.id, taskKey, date, 'failed', { error: '重试次数已耗尽', finishedAt: new Date().toISOString() })
+      await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'failed', { error: '重试次数已耗尽', finishedAt: new Date().toISOString() }), null)
       return
     }
     // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
@@ -203,7 +217,7 @@ export class WindowRunner {
     try {
       mkdirSync(artifacts, { recursive: true })
     } catch (e) {
-      db.upsertRun(profile.id, taskKey, date, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() }), null)
       return
     }
 
@@ -212,7 +226,7 @@ export class WindowRunner {
       if (attempt > 1) {
         await page.goto('about:blank', { timeout: 10000 }).catch(() => {})
       }
-      db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() })
+      await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() }), null)
       try {
         const ctx = new TaskContext({
           page,
@@ -225,15 +239,15 @@ export class WindowRunner {
           walletPasswords: this.deps.walletPasswords,
           captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
-          // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）
+          // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
           onCaptchaLog: (kind, ok, costPoints) => {
-            db.logCaptcha(profile.id, taskKey, kind, costPoints, ok)
+            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, kind, costPoints, ok), undefined)
           },
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
         const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
-        db.upsertRun(profile.id, taskKey, date, 'success', { error: null, screenshot: shot, finishedAt: new Date().toISOString() })
-        db.resetCircuitBreaker(profile.id)
+        await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'success', { error: null, screenshot: shot, finishedAt: new Date().toISOString() }), null)
+        await this.safeDb(() => db.resetCircuitBreaker(profile.id), undefined)
         logger.info({ profile: profile.name, task: taskKey }, '签到成功')
         return
       } catch (e) {
@@ -241,7 +255,7 @@ export class WindowRunner {
         const status = nextStateAfterFailure(attempt, retryMax + 1, isCaptcha ? 'captcha' : 'error')
         // 失败截图留档（含验证码失败现场），供面板"查看"排障
         const shot = await page.screenshot({ path: join(artifacts, `${date}-attempt${attempt}.png`) }).then(() => join(artifacts, `${date}-attempt${attempt}.png`)).catch(() => null)
-        db.upsertRun(profile.id, taskKey, date, status, { error: (e as Error).message, screenshot: shot, finishedAt: new Date().toISOString() })
+        await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, status, { error: (e as Error).message, screenshot: shot, finishedAt: new Date().toISOString() }), null)
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')
         if (status === 'retry_wait') {
           // 重试不占窗：退避期不 sleep，立即返回让窗口继续处理下一个任务/正常关窗；
@@ -250,7 +264,7 @@ export class WindowRunner {
           return
         }
         // 终态失败：熔断计数 +1（达阈值后本窗口当日不再跑）
-        db.incrCircuitBreaker(profile.id)
+        await this.safeDb(() => db.incrCircuitBreaker(profile.id), profile.circuitBreakerCount)
         return
       }
     }

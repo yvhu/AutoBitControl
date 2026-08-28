@@ -1,12 +1,11 @@
 /**
- * 持久层（infrastructure）：SQLite 数据访问（profiles 窗口 / runs 运行记录 / captcha_logs 打码日志）
- * 依赖方向：仅依赖 better-sqlite3，被 engine/server 层依赖；RunStatus 类型被全局引用
- * 设计思路：WAL 模式提升并发读写；UNIQUE(profile_id, task_key, date) 保证每窗口每天每任务一行；
+ * 持久层（infrastructure）：Turso 云数据库数据访问（profiles 窗口 / runs 运行记录 / captcha_logs 打码日志）
+ * 依赖方向：仅依赖 @libsql/client，被 engine/server 层依赖；RunStatus 类型被全局引用
+ * 设计思路：全部数据层走云端（libsql 协议，file: URL 供测试使用本地引擎）；
+ *           UNIQUE(profile_id, task_key, date) 保证每窗口每天每任务一行；
  *           库内字段用 snake_case、读出时映射为 camelCase
  */
-import Database from 'better-sqlite3'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { createClient, type Client, type Row } from '@libsql/client'
 
 /**
  * 运行状态（状态机转移规则见 engine/state.ts）：
@@ -50,160 +49,165 @@ export function todayStr(now = new Date()): string {
   return `${y}-${m}-${d}`
 }
 
-// 幂等建表（IF NOT EXISTS），可在任意版本数据库上安全重复执行
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS profiles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  bitbrowser_id TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  circuit_breaker_count INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  profile_id INTEGER NOT NULL REFERENCES profiles(id),
-  task_key TEXT NOT NULL,
-  date TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  screenshot TEXT,
-  started_at TEXT,
-  finished_at TEXT,
-  UNIQUE(profile_id, task_key, date)
-);
-CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date);
-CREATE TABLE IF NOT EXISTS captcha_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  profile_id INTEGER,
-  task_key TEXT,
-  kind TEXT NOT NULL,
-  cost REAL NOT NULL DEFAULT 0,
-  ok INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-`
+/** AppDb.open 的参数（cloud 配置段；file: URL 为测试/本地引擎，无需 authToken） */
+export interface AppDbOpenConfig {
+  url: string
+  authToken: string
+}
+
+// 幂等建表（IF NOT EXISTS）：云库首次启动自动建表，可重复执行
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bitbrowser_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    circuit_breaker_count INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL REFERENCES profiles(id),
+    task_key TEXT NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    screenshot TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE(profile_id, task_key, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
+  `CREATE TABLE IF NOT EXISTS captcha_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    task_key TEXT,
+    kind TEXT NOT NULL,
+    cost REAL NOT NULL DEFAULT 0,
+    ok INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+]
+
+const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id`
+
+/** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
+type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
 
 /**
- * SQLite 数据访问门面：私有构造 + open 工厂，保证打开即迁移
+ * 云数据库访问门面：私有构造 + 异步 open 工厂，保证打开即迁移
  * 设计权衡：不用 ORM——表结构固定、查询简单，原生 SQL 更可控且无额外依赖
  */
 export class AppDb {
-  private constructor(private raw: Database.Database) {}
+  private constructor(private client: Client) {}
 
   /**
-   * 打开数据库（自动创建目录、启用 WAL、执行迁移）
-   * @param dbPath 数据库文件绝对路径
-   * @returns 就绪的 AppDb 实例
+   * 打开数据库（创建 client 并执行建表迁移）
+   * @param cfg 云配置（url + authToken）；file:/file::memory: 走本地引擎（测试用，无需 authToken）
+   * @returns 就绪的 AppDb 实例（网络不通/凭据错误时抛错，由调用方处理退出）
    */
-  static open(dbPath: string): AppDb {
-    mkdirSync(dirname(dbPath), { recursive: true })
-    const raw = new Database(dbPath)
-    // WAL：写不阻塞读，配合面板轮询与调度器并发访问
-    raw.pragma('journal_mode = WAL')
-    const db = new AppDb(raw)
-    db.migrate()
+  static async open(cfg: AppDbOpenConfig): Promise<AppDb> {
+    const local = cfg.url.startsWith('file:')
+    const client = createClient(local ? { url: cfg.url } : { url: cfg.url, authToken: cfg.authToken })
+    const db = new AppDb(client)
+    await db.migrate()
     return db
   }
 
-  migrate(): void {
-    this.raw.exec(SCHEMA)
-    // 迁移：任务开关已改为纯代码 meta.enabled，旧库遗留的 task_states 表直接删除
-    this.raw.exec('DROP TABLE IF EXISTS task_states')
-    // 迁移：旧版本库的 profiles 表含 wallet_password 列（钱包密码已改为环境变量配置），检测到则删除
-    // better-sqlite3 12 内置 SQLite ≥3.35，支持 ALTER TABLE DROP COLUMN
-    const cols = this.raw.prepare(`PRAGMA table_info(profiles)`).all() as { name: string }[]
-    if (cols.some(c => c.name === 'wallet_password')) {
-      this.raw.exec('ALTER TABLE profiles DROP COLUMN wallet_password')
-    }
+  async migrate(): Promise<void> {
+    for (const stmt of SCHEMA) await this.client.execute(stmt)
   }
 
   close(): void {
-    this.raw.close()
+    this.client.close()
+  }
+
+  /** 统一执行辅助：绑定参数形式执行 SQL（避免字符串拼接），返回结果行 */
+  private async exec(sql: string, args: DbArg[] = []): Promise<Row[]> {
+    const rs = await this.client.execute({ sql, args })
+    return rs.rows
   }
 
   /**
    * 幂等写入窗口（比特浏览器同步列表时调用：存在则更新名称）
    * @returns 落库后的完整行
    */
-  upsertProfile(bitbrowserId: string, name: string): ProfileRow {
-    this.raw.prepare(
+  async upsertProfile(bitbrowserId: string, name: string): Promise<ProfileRow> {
+    await this.exec(
       `INSERT INTO profiles (bitbrowser_id, name) VALUES (?, ?)
-       ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name`
-    ).run(bitbrowserId, name)
-    return this.raw.prepare(`SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE bitbrowser_id = ?`).get(bitbrowserId) as ProfileRow
+       ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name`,
+      [bitbrowserId, name],
+    )
+    const rows = await this.exec(`${SELECT_PROFILE} WHERE bitbrowser_id = ?`, [bitbrowserId])
+    return rows[0] as unknown as ProfileRow
   }
 
   /** 列出窗口；enabledOnly=true 时仅返回启用窗口（调度器触发用） */
-  listProfiles(enabledOnly = false): ProfileRow[] {
+  async listProfiles(enabledOnly = false): Promise<ProfileRow[]> {
     const sql = enabledOnly
-      ? `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles WHERE enabled = 1 ORDER BY id`
-      : `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles ORDER BY id`
-    return this.raw.prepare(sql).all() as ProfileRow[]
+      ? `${SELECT_PROFILE} WHERE enabled = 1 ORDER BY id`
+      : `${SELECT_PROFILE} ORDER BY id`
+    return (await this.exec(sql)) as unknown as ProfileRow[]
   }
 
   /** 启用/停用窗口（面板开关） */
-  setProfileEnabled(id: number, enabled: boolean): void {
-    this.raw.prepare('UPDATE profiles SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id)
+  async setProfileEnabled(id: number, enabled: boolean): Promise<void> {
+    await this.exec('UPDATE profiles SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id])
   }
 
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */
-  incrCircuitBreaker(profileId: number): number {
-    this.raw.prepare('UPDATE profiles SET circuit_breaker_count = circuit_breaker_count + 1 WHERE id = ?').run(profileId)
-    const row = this.raw.prepare('SELECT circuit_breaker_count FROM profiles WHERE id = ?').get(profileId) as { circuit_breaker_count: number }
-    return row.circuit_breaker_count
+  async incrCircuitBreaker(profileId: number): Promise<number> {
+    await this.exec('UPDATE profiles SET circuit_breaker_count = circuit_breaker_count + 1 WHERE id = ?', [profileId])
+    const rows = await this.exec('SELECT circuit_breaker_count FROM profiles WHERE id = ?', [profileId])
+    return (rows[0]?.circuit_breaker_count as number | undefined) ?? 0
   }
 
   /** 熔断计数清零（任务成功或面板手动重置） */
-  resetCircuitBreaker(profileId: number): void {
-    this.raw.prepare('UPDATE profiles SET circuit_breaker_count = 0 WHERE id = ?').run(profileId)
+  async resetCircuitBreaker(profileId: number): Promise<void> {
+    await this.exec('UPDATE profiles SET circuit_breaker_count = 0 WHERE id = ?', [profileId])
   }
 
   /**
-   * 幂等写入运行记录（无则插入、有则更新）
+   * 幂等写入运行记录（无则插入、有则更新），单条 UPSERT 完成
    * @param patch 可选字段补丁（error/screenshot/attempts 等）
    * @returns 合并后的最新行（含 profileName）
    * 设计权衡：ON CONFLICT 更新时 started_at/finished_at 用 COALESCE 保留——
    * started_at 取首次值（标记真正开始时刻），finished_at 保留已有值不被中间状态覆盖
    */
-  upsertRun(profileId: number, taskKey: string, date: string, status: RunStatus, patch: Partial<RunRow> = {}): RunRow {
-    const existing = this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow | undefined
-    const base: RunRow = existing ?? {
-      id: 0, profileId, taskKey, date, status: 'pending', attempts: 0,
-      error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '',
-    }
-    const merged = { ...base, ...patch, status, attempts: existing ? patch.attempts ?? existing.attempts : patch.attempts ?? 0 }
-    this.raw.prepare(
+  async upsertRun(profileId: number, taskKey: string, date: string, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
+    await this.exec(
       `INSERT INTO runs (profile_id, task_key, date, status, attempts, error, screenshot, started_at, finished_at)
-       VALUES (@profileId, @taskKey, @date, @status, @attempts, @error, @screenshot, @startedAt, @finishedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date) DO UPDATE SET
          status = excluded.status, attempts = excluded.attempts, error = excluded.error,
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
-         finished_at = COALESCE(excluded.finished_at, runs.finished_at)`
-    ).run(merged)
-    return this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow
+         finished_at = COALESCE(excluded.finished_at, runs.finished_at)`,
+      [profileId, taskKey, date, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
+    )
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`, [profileId, taskKey, date])
+    return rows[0] as unknown as RunRow
   }
 
   /** 查询单条运行记录（不存在返回 null） */
-  getRun(profileId: number, taskKey: string, date: string): RunRow | null {
-    return (this.raw.prepare(`SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`).get(profileId, taskKey, date) as RunRow | null) ?? null
+  async getRun(profileId: number, taskKey: string, date: string): Promise<RunRow | null> {
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`, [profileId, taskKey, date])
+    return (rows[0] as unknown as RunRow | undefined) ?? null
   }
 
   /** 某天的全部运行记录（面板矩阵/统计用，按窗口与任务排序） */
-  listRunsForDate(date: string): RunRow[] {
-    return this.raw.prepare(
-      `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id WHERE r.date = ? ORDER BY p.id, r.task_key`
-    ).all(date) as RunRow[]
+  async listRunsForDate(date: string): Promise<RunRow[]> {
+    return (await this.exec(`${SELECT_RUN} WHERE r.date = ? ORDER BY p.id, r.task_key`, [date])) as unknown as RunRow[]
   }
 
   /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示） */
-  logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): void {
-    this.raw.prepare('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok) VALUES (?, ?, ?, ?, ?)').run(profileId, taskKey, kind, cost, ok ? 1 : 0)
+  async logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): Promise<void> {
+    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok) VALUES (?, ?, ?, ?, ?)', [profileId, taskKey, kind, cost, ok ? 1 : 0])
   }
 
   /** 某天的打码统计：次数与总费用（点）；created_at 为 UTC 存储，按本地日期过滤（与 todayStr 口径一致） */
-  captchaStats(date: string): { count: number; totalCost: number } {
-    const row = this.raw.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at, 'localtime') = ?`).get(date) as { count: number; total: number }
-    return { count: row.count, totalCost: row.total }
+  async captchaStats(date: string): Promise<{ count: number; totalCost: number }> {
+    const rows = await this.exec(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at, 'localtime') = ?`, [date])
+    return { count: (rows[0]?.count as number | undefined) ?? 0, totalCost: (rows[0]?.total as number | undefined) ?? 0 }
   }
 }

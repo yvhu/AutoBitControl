@@ -6,6 +6,7 @@ Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化 + yescaptch
 
 - Windows 10/11，Node 20.x，比特浏览器（本机运行中）
 - 比特浏览器 API 已开启（默认 http://127.0.0.1:54345，可在 config 修改）
+- Turso 云数据库（数据层全部走云端，无需本地数据文件；首次启动自动建表）
 
 ## 安装
 
@@ -13,7 +14,7 @@ Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化 + yescaptch
 npm install
 npx patchright install chromium
 Copy-Item config/.env.example config/.env
-# 编辑 config/.env 填入 CAPTCHA_CLIENT_KEY
+# 编辑 config/.env 填入 CAPTCHA_CLIENT_KEY、TURSO_DATABASE_URL、TURSO_AUTH_TOKEN
 ```
 
 ## 运行
@@ -38,6 +39,7 @@ pm2 startup   # 按提示执行输出的命令
 ## 配置
 
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
+云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs）。
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按窗口配置（JSON 映射，`{"窗口ID":"密码",...}`，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 
 ## 冒烟测试

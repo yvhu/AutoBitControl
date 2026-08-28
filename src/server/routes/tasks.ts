@@ -42,14 +42,14 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     const body = (req.body ?? {}) as { bitbrowserId?: string }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）
     if (body.bitbrowserId) {
-      const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)
+      const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)
       if (!profile) throw new HttpError(404, `窗口不存在: ${body.bitbrowserId}`)
       deps.enqueuer.enqueue(profile, key)
       ok(res, { scope: 'single' })
       return
     }
     // 未指定：全部启用窗口触发
-    for (const p of deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key)
+    for (const p of await deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key)
     ok(res, { scope: 'all' })
   }))
   return router

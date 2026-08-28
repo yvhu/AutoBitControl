@@ -12,9 +12,9 @@ export function dashboardRouter(deps: { db: AppDb }): Router {
   router.get('/dashboard', asyncHandler(async (req, res) => {
     // date 查询参数缺省为今天（面板日期切换用）
     const date = typeof req.query.date === 'string' ? req.query.date : todayStr()
-    const runs = deps.db.listRunsForDate(date)
+    const runs = await deps.db.listRunsForDate(date)
     const count = (s: RunStatus) => runs.filter(r => r.status === s).length
-    const profiles = deps.db.listProfiles(false)
+    const profiles = await deps.db.listProfiles(false)
     ok(res, {
       date,
       stats: {
@@ -29,7 +29,7 @@ export function dashboardRouter(deps: { db: AppDb }): Router {
       },
       runs,
       profiles,
-      captcha: deps.db.captchaStats(date),
+      captcha: await deps.db.captchaStats(date),
       profilesTotal: profiles.length,
       profilesEnabled: profiles.filter(p => p.enabled === 1).length,
     })
