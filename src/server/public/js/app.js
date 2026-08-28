@@ -54,7 +54,7 @@ window.abcRerunFailed = () => dashboard.rerunFailed(state.date).then(() => navig
 window.abcTriggerAll = () => dashboard.triggerAll().then(() => navigate('dashboard'))
 window.abcTestBitbrowser = () => settings.testBitbrowser()
 window.abcBalance = () => settings.loadBalance()
-window.abcSyncProfiles = () => profiles.syncProfiles().then(c => showToast('已同步 ' + c + ' 个窗口')).catch(() => {})
+window.abcSyncProfiles = () => profiles.syncProfiles().then(c => showToast('已同步 ' + c + ' 个窗口')).catch(e => showToast(e.message))
 
 // 页面导航：切导航高亮、切页面显隐、按页面类型渲染对应视图
 export async function navigate(page) {

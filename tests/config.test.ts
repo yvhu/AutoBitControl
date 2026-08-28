@@ -44,7 +44,7 @@ describe('loadConfig', () => {
   })
 
   it('WEB_PORT 非法值静默忽略并保留默认端口', () => {
-    for (const bad of ['not-a-number', '0', '-1', '']) {
+    for (const bad of ['not-a-number', '0', '-1', '', '3.5', '65536', '999999', 'Infinity']) {
       const cfg = loadConfig({ rootDir: dir, env: { WEB_PORT: bad } })
       expect(cfg.web.port).toBe(3000)
     }
@@ -88,5 +88,14 @@ describe('loadConfig', () => {
     }))
     const cfg = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: 'not-json' } })
     expect(cfg.wallet.passwords).toEqual({ 'bb-1': 'file-pw' })
+  })
+
+  it('WALLET_PASSWORDS 非法 JSON 置 parseError 标记，合法 JSON 不置', () => {
+    const bad = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: 'not-json' } })
+    expect(bad.wallet.parseError).toBe(true)
+    const ok = loadConfig({ rootDir: dir, env: { WALLET_PASSWORDS: '{"bb-2":"env-pw"}' } })
+    expect(ok.wallet.parseError).toBe(false)
+    const none = loadConfig({ rootDir: dir })
+    expect(none.wallet.parseError).toBeUndefined()
   })
 })

@@ -29,6 +29,16 @@ describe('pickRandomTimeInWindow', () => {
       }
     }
   })
+
+  it('等值窗口（start===end）退化为固定点而非全时段随机', () => {
+    const base = new Date(2026, 7, 28, 0, 0, 0)
+    for (let i = 0; i < 50; i++) {
+      const t = pickRandomTimeInWindow('09:30', '09:30', base)
+      expect(t.getHours()).toBe(9)
+      expect(t.getMinutes()).toBe(30)
+      expect(t.getDate()).toBe(28)
+    }
+  })
 })
 
 describe('staggerToCron', () => {

@@ -104,7 +104,8 @@ export class YesCaptchaClient {
   /** 创建识别任务，返回 taskId */
   private async createTask(task: Record<string, unknown>): Promise<string> {
     const resp = await this.call('/createTask', { clientKey: this.cfg.clientKey, task })
-    if (resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 创建任务失败: ${resp.errorCode ?? resp.errorId}`)
+    // errorId 判空避免平台省略该字段时被误判为失败（与 getResult 口径一致）
+    if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 创建任务失败: ${resp.errorCode ?? resp.errorId}`)
     return resp.taskId!
   }
 

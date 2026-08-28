@@ -13,15 +13,15 @@ import type { CoalescingEnqueuer } from './queue'
 
 /**
  * 在 [start, end] 分钟区间内随机取一分钟（含两端），返回"今天"该时刻的 Date
- * endMin <= startMin 视为跨天窗口（如 23:00-01:00）：随机点取 [startMin, 1440) ∪ [0, endMin]（均匀），
- * 落点早于 startMin 时日期加一天（即次日凌晨）
+ * endMin < startMin 视为跨天窗口（如 23:00-01:00）：随机点取 [startMin, 1440) ∪ [0, endMin]（均匀），
+ * 落点早于 startMin 时日期加一天（即次日凌晨）；start === end 时退化为固定点 startMin（非全时段随机）
  */
 export function pickRandomTimeInWindow(start: string, end: string, now = new Date()): Date {
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
   const startMin = sh * 60 + sm
   const endMin = eh * 60 + em
-  const crossDay = endMin <= startMin
+  const crossDay = endMin < startMin
   let picked: number
   if (crossDay) {
     // 跨天：[startMin, 1440) 与 [0, endMin] 两段连续拼接后均匀随机

@@ -109,7 +109,7 @@ meta: TaskMeta = {
 }
 ```
 
-**错峰写法**：`{ stagger: ['09:00', '11:00'] }` 表示每天在 9 点到 11 点之间随机取一个分钟级时间点执行（含两端，进程启动时定一次，重启会重新随机）。
+**错峰写法**：`{ stagger: ['09:00', '11:00'] }` 表示每天在 9 点到 11 点之间随机取一个分钟级时间点执行（含两端）。时间点每日 00:01 重新随机（进程启动时定一次，重启与每日刷新都会重新随机），支持跨天窗口——结束时间早于开始时间视为跨天（如 `['23:00', '01:00']` 随机落在当晚 23:00-24:00 或次日 00:00-01:00）。
 
 **cron 写法**：5 段式 `分 时 日 月 周`，由 croner 解析，时区取 `execution.timezone`（默认 `Asia/Shanghai`）：
 
@@ -402,7 +402,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
-| `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
+| `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms（区间由 `execution.humanize` 配置）→ 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
 | `type` | `type(selector, text): Promise<void>` | 先 click 聚焦，再逐键输入：每键延迟 40-130ms；约 3% 概率按 Backspace、停顿 100-300ms 后重输该键（模拟错键回删） |
 | `moveTo` | `moveTo(x, y): Promise<void>` | ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8~23ms；记住终点作为鼠标当前位置 |
 | `scroll` | `scroll(deltaY): Promise<void>` | 在鼠标当前位置派发滚轮事件，随后停顿 100-400ms |
@@ -433,10 +433,10 @@ await Humanizer.sleep(1000, 2000)           // 随机停顿 1-2 秒
 
 ```ts
 schedule: '0 9 * * *'                      // cron：每天 9:00
-schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分钟（含两端）
+schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分钟（含两端，每日 00:01 重随机）
 ```
 
-错峰在进程启动时用 `staggerToCron` 定一次具体分钟，生成普通 cron（重启服务会重新随机）。cron 时区为 `execution.timezone`（默认 `Asia/Shanghai`），由 croner 解析。
+错峰在进程启动时用 `staggerToCron` 定一次具体分钟，生成普通 cron（重启服务与每日 00:01 都会重新随机）；结束早于开始视为跨天窗口（如 `['23:00', '01:00']`，随机落点覆盖当晚与次日凌晨）。cron 时区为 `execution.timezone`（默认 `Asia/Shanghai`），由 croner 解析。
 
 ### 跳过规则
 
@@ -505,6 +505,12 @@ await ctx.clickCheckin('#step-next', { assert: '#step-2' })
 ### 条件分支与抛错重试
 
 `run` 内抛任意 `Error` 都会触发失败处理：按 `retry` 配置重试（总尝试 `max + 1` 次，间隔 `backoffSec` 秒），状态流转 `running → retry_wait → running → … → failed`；最终失败时窗口熔断计数 +1。验证码失败（`CaptchaFailure`）不重试，直接 `captcha_failed`。
+
+重试要点：
+
+- **重试不占窗**：进入 `retry_wait` 后立即释放窗口（不 sleep 占并发名额），当前窗口会话正常继续处理其他任务或关闭；退避到期由调度器重新入队，开新一轮窗口会话从续跑轮次开始执行。
+- **跨会话续算**：尝试计数存在数据库 run 记录里（`attempts=N` 表示已跑 N 次），重启服务后到期的重试仍从 N+1 续跑，重试上限跨会话生效，最终必达 `failed`，不会无限重试。
+- 重试前页面自动复位（`about:blank`），避免上一轮残留 DOM/事件干扰。
 
 ### 成功断言写法
 

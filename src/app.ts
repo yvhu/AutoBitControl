@@ -19,6 +19,23 @@ import { loadTasks } from './tasks'
 import { createApp } from './server/app'
 
 /**
+ * 分页同步比特浏览器窗口列表到 profiles 表（每页 100，page 从 0 起）
+ * 返回同步总数；供面板"同步"按钮与启动同步两处复用
+ */
+async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promise<number> {
+  let page = 0
+  let total = 0
+  while (true) {
+    const list = await bitbrowser.listBrowsers(page, 100)
+    for (const b of list) db.upsertProfile(b.id, b.name)
+    total += list.length
+    if (list.length < 100) break
+    page++
+  }
+  return total
+}
+
+/**
  * 面板依赖的比特浏览器适配：health 探活 + sync 窗口列表同步
  * 独立导出便于测试（sync 闭包持有 db 做 upsert，路由层不直接依赖 db）
  */
@@ -26,11 +43,7 @@ export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): { 
   return {
     health: () => bitbrowser.health(),
     // 同步窗口列表到 profiles 表（面板"同步比特浏览器"按钮入口；失败向上抛由统一错误处理器转 500）
-    sync: async () => {
-      const list = await bitbrowser.listBrowsers(0, 100)
-      for (const b of list) db.upsertProfile(b.id, b.name)
-      return list.length
-    },
+    sync: () => syncBrowsersPaged(bitbrowser, db),
   }
 }
 
@@ -57,13 +70,15 @@ export async function startApp(): Promise<void> {
     if (!healthy) {
       logger.warn('比特浏览器本地 API 未就绪（请确认比特浏览器已登录且 API 地址正确）')
     } else {
-      const list = await bitbrowser.listBrowsers(0, 100)
-      for (const b of list) db.upsertProfile(b.id, b.name)
-      logger.info({ count: list.length }, '已同步比特浏览器窗口列表')
+      const count = await syncBrowsersPaged(bitbrowser, db)
+      logger.info({ count }, '已同步比特浏览器窗口列表')
     }
   } catch (e) {
     logger.warn({ err: (e as Error).message }, '同步窗口列表失败（请确认比特浏览器已启动）')
   }
+
+  // 钱包密码环境变量解析失败告警（config 层无 logger，此处统一提示）
+  if (cfg.wallet.parseError) logger.warn('WALLET_PASSWORDS 环境变量解析失败，已忽略（请检查 JSON 格式）')
 
   const tasks = loadTasks()
   const wallets = new WalletRegistry()
@@ -93,9 +108,13 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
-    // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗
+    // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗；
+    // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试
     scheduleRetry: (profile, taskKey, delayMs) => {
-      setTimeout(() => enqueuer.enqueue(profile, taskKey), delayMs)
+      setTimeout(() => {
+        const p = db.listProfiles(false).find(x => x.id === profile.id)
+        if (p) enqueuer.enqueue(p, taskKey)
+      }, delayMs)
     },
   })
   const queue = new TaskQueue(cfg.execution.concurrency)

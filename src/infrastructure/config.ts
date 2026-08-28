@@ -62,6 +62,8 @@ export interface StorageConfig {
 /** 钱包配置：窗口解锁密码映射（key 为比特窗口 ID，值环境变量 WALLET_PASSWORDS 优先） */
 export interface WalletConfig {
   passwords: Record<string, string>
+  /** WALLET_PASSWORDS 存在但解析失败时为 true（启动时告警提示检查 JSON 格式） */
+  parseError?: boolean
 }
 
 /** 全应用配置聚合 */
@@ -188,23 +190,25 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
   if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
-  // WEB_PORT 非法值（NaN/非正数）静默忽略并保留默认端口（config 层无 logger，不做告警）
+  // WEB_PORT 非法值（NaN/小数/越界）静默忽略并保留默认端口（config 层无 logger，不做告警）
   if (env.WEB_PORT) {
     const port = Number(env.WEB_PORT)
-    if (Number.isFinite(port) && port > 0) cfg.web.port = port
+    if (Number.isInteger(port) && port > 0 && port < 65536) cfg.web.port = port
   }
   // 钱包密码：WALLET_PASSWORDS 为 JSON 映射字符串（{"窗口ID":"密码"}），解析成功时与配置文件值合并（env 覆盖同名 key）
-  // 解析失败静默忽略并保留配置值（config 层无 logger，直接忽略非法 JSON）
+  // 解析失败不抛错，保留配置值并置 parseError 标记（app 启动时告警提示检查 JSON 格式）
   if (env.WALLET_PASSWORDS) {
     try {
       const parsed = JSON.parse(env.WALLET_PASSWORDS)
+      cfg.wallet.parseError = false
       if (isPlainObject(parsed)) {
         for (const [k, v] of Object.entries(parsed)) {
           if (typeof v === 'string') cfg.wallet.passwords[k] = v
         }
       }
     } catch {
-      // 非法 JSON：忽略 env 值，保留配置文件中的密码
+      // 非法 JSON：忽略 env 值，保留配置文件中的密码，启动时告警
+      cfg.wallet.parseError = true
     }
   }
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落

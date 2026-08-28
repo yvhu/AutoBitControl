@@ -194,6 +194,21 @@ describe('server API（RESTful + envelope）', () => {
     expect(await deps.health()).toBe(true)
   })
 
+  it('buildBitbrowserDeps.sync 超过一页时翻页同步直到不足整页', async () => {
+    const db = { upsertProfile: vi.fn() }
+    const page0 = Array.from({ length: 100 }, (_, i) => ({ id: `b${i}`, name: `窗口${i}` }))
+    const page1 = Array.from({ length: 7 }, (_, i) => ({ id: `b${100 + i}`, name: `窗口${100 + i}` }))
+    const client = {
+      health: vi.fn().mockResolvedValue(true),
+      listBrowsers: vi.fn().mockResolvedValueOnce(page0).mockResolvedValueOnce(page1),
+    }
+    const deps = buildBitbrowserDeps(client as never, db as never)
+    expect(await deps.sync()).toBe(107)
+    expect(client.listBrowsers).toHaveBeenNthCalledWith(1, 0, 100)
+    expect(client.listBrowsers).toHaveBeenNthCalledWith(2, 1, 100)
+    expect(db.upsertProfile).toHaveBeenCalledTimes(107)
+  })
+
   it('GET /api/captcha/balance 返回点数', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/captcha/balance')
     expect(res.body.code).toBe(0)
