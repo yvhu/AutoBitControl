@@ -45,6 +45,7 @@
 | 键盘拟人 | Playwright 原生 `keyboard.type` | 内置 | delay + 逐键；随机错键回删为参数化小工具函数 |
 | 钱包弹窗 | 自研薄适配器（`src/core/wallet/`） | 每个钱包约 100-200 行 | Petra、MetaMask 优先；选择器参考 Synpress/Chainwright 开源实现 |
 | 验证码识别 | yescaptcha 官方 REST API | — | 全类型：Turnstile / reCAPTCHA v2/v3 / hCaptcha / 图片类 |
+| 随机人设数据 | `@faker-js/faker` | — | 铸币网站填写代币信息（名称/符号/描述等）时生成拟人化随机数据 |
 | 调度 | `croner` | — | cron + 错峰窗口 |
 | 并发队列 | `p-queue` | — | 窗口并发上限 5-10 |
 | 存储 | `better-sqlite3` | — | 同步 API，单进程无并发问题 |
