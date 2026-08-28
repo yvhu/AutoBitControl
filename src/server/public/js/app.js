@@ -85,6 +85,9 @@ loadSettings().then(s => {
   document.querySelector('#side-version').textContent = 'v' + s.version
   document.querySelector('#side-timezone').textContent = s.timezone
 }).catch(() => {})
+// 顶栏全局状态芯片：启动即刷新（比特浏览器连接状态 + yescaptcha 余额）
+settings.testBitbrowser().catch(() => {})
+settings.loadBalance().catch(() => {})
 // 15 秒轮询：仅当停留在看板页时刷新数据，不劫持其他页面的导航
 setInterval(() => {
   if (currentPage === 'dashboard') navigate('dashboard')

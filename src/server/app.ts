@@ -53,7 +53,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(profilesRouter(deps))
   api.use(runsRouter(deps))
   api.use(captchaRouter(deps))
-  api.use(bitbrowserRouter({ health: deps.bitbrowser.health }))
+  api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())
   // 公开设置：非敏感配置 + 版本号（面板展示，避免前端硬编码）
