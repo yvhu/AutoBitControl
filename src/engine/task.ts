@@ -23,7 +23,7 @@ export interface TaskMeta {
   category?: 'checkin' | 'faucet' | 'mint' | 'other'
   lastUpdated?: string
   deprecated?: boolean
-  /** 任务开关：false 时调度器跳过、窗口"立即跑"排除、手动触发接口拒绝；面板可运行时覆盖 */
+  /** 任务开关（纯代码开关）：false 时调度器跳过、窗口"立即跑"排除、手动触发接口 409；改后需重启生效 */
   enabled?: boolean
   schedule?: string | { stagger: [string, string] }
   /** 登录用钱包的 key（对应 WalletRegistry 注册表） */

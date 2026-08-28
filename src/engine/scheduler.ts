@@ -98,7 +98,7 @@ export class Scheduler {
         this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
         continue
       }
-      if (!this.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true)) {
+      if (task.meta.enabled === false) {
         this.logger.warn({ task: task.meta.key }, '任务已停用，跳过调度')
         continue
       }
@@ -131,14 +131,14 @@ export class Scheduler {
 
   /**
    * 立即触发某任务：推给所有启用窗口（cron 到点与代码内触发共用此入口）
-   * 守卫：任务未注册静默忽略；任务已停用（含面板运行时关停）告警跳过，
+   * 守卫：任务未注册静默忽略；任务已停用（meta.enabled === false）告警跳过，
    * 保证已注册 cron 在关停后到点也不会执行
    * @param taskKey 任务 key
    */
   fireNow(taskKey: string): void {
     const task = this.tasks.get(taskKey)
     if (!task) return
-    if (!this.db.getTaskEnabled(taskKey, task.meta.enabled ?? true)) {
+    if (task.meta.enabled === false) {
       this.logger.warn({ task: taskKey }, '任务已停用，跳过本次触发')
       return
     }

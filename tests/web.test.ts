@@ -15,11 +15,9 @@ interface MockDeps {
     captchaStats: Mock
     setProfileEnabled: Mock
     resetCircuitBreaker: Mock
-    getTaskEnabled: Mock
-    setTaskEnabled: Mock
   }
   enqueuer: { enqueue: Mock }
-  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string } }>
+  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string; enabled?: boolean } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
@@ -42,8 +40,6 @@ function makeDeps(): MockDeps {
       captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 230 }),
       setProfileEnabled: vi.fn(),
       resetCircuitBreaker: vi.fn(),
-      getTaskEnabled: vi.fn().mockReturnValue(true),
-      setTaskEnabled: vi.fn(),
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
@@ -91,16 +87,14 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
-  it('PATCH /api/tasks/:key 切换开关', async () => {
-    const deps = makeDeps()
-    const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: false })
-    expect(res.body.code).toBe(0)
-    expect(deps.db.setTaskEnabled).toHaveBeenCalledWith('t1', false)
+  it('PATCH /api/tasks/:key 已移除（任务开关改为纯代码）', async () => {
+    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/t1').send({ enabled: false })
+    expect(res.status).toBe(404)
   })
 
   it('停用任务触发返回 409', async () => {
     const deps = makeDeps()
-    ;(deps.db.getTaskEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    deps.tasks.set('t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *', enabled: false } })
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
     expect(res.status).toBe(409)
     expect(res.body.message).toContain('停用')
@@ -108,7 +102,7 @@ describe('server API（RESTful + envelope）', () => {
 
   it('窗口立即跑排除停用任务', async () => {
     const deps = makeDeps()
-    ;(deps.db.getTaskEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    deps.tasks.set('t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *', enabled: false } })
     const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
     expect(res.body.code).toBe(0)
     expect(res.body.data.count).toBe(0)

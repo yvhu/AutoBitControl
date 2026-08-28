@@ -57,12 +57,24 @@ describe('AppDb', () => {
     expect(stats.totalCost).toBeCloseTo(0.11)
   })
 
-  it('任务开关默认值与覆盖读写', () => {
-    expect(db.getTaskEnabled('t-x', true)).toBe(true)
-    db.setTaskEnabled('t-x', false)
-    expect(db.getTaskEnabled('t-x', true)).toBe(false)
-    db.setTaskEnabled('t-x', true)
-    expect(db.getTaskEnabled('t-x', false)).toBe(true)
+  it('旧库含 task_states 表时打开自动 DROP', () => {
+    // 用独立临时目录构造旧版库（含 task_states 表与数据）再走 open 迁移
+    const oldDir = mkdtempSync(join(tmpdir(), 'abc-db-old-'))
+    try {
+      const raw = new Database(join(oldDir, 'old.db'))
+      raw.exec('CREATE TABLE task_states (task_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1)')
+      raw.prepare('INSERT INTO task_states (task_key, enabled) VALUES (?, ?)').run('t-x', 0)
+      raw.close()
+      const migrated = AppDb.open(join(oldDir, 'old.db'))
+      migrated.close()
+      const verify = new Database(join(oldDir, 'old.db'))
+      const tables = (verify.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as { name: string }[]).map(t => t.name)
+      verify.close()
+      expect(tables).not.toContain('task_states')
+      expect(tables).toContain('runs')
+    } finally {
+      rmSync(oldDir, { recursive: true, force: true })
+    }
   })
 
   it('旧库含 wallet_password 列时打开自动 DROP 该列', () => {

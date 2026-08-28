@@ -1,5 +1,5 @@
 // 任务视图：任务卡片列表渲染与触发
-import { get, post, patch, esc } from '../api.js'
+import { get, post, esc } from '../api.js'
 
 // 钱包图标与分类徽章映射
 const WALLET_ICON = { metamask: '<div class="wallet-ico mm">🦊</div>', petra: '<div class="wallet-ico pt">🐍</div>' }
@@ -24,7 +24,6 @@ export async function render() {
         ${t.note ? `<div class="meta" style="color:#94A3B8">📝 ${esc(t.note)}</div>` : ''}
         ${t.sourceUrl ? `<div class="meta"><span class="link" onclick="window.open('${esc(t.sourceUrl)}')">🔗 来源页</span></div>` : ''}
       </div>
-      <span class="toggle ${t.enabled ? '' : 'off'}" onclick="window.abcToggleTask('${esc(t.key)}', ${t.enabled ? 0 : 1})"></span>
       ${t.enabled ? `<button class="btn primary sm" onclick="window.abcTriggerTask('${esc(t.key)}')">立即触发</button>` : ''}
     </div>`
   }).join('')
@@ -32,6 +31,3 @@ export async function render() {
 
 // 触发单个任务（全部启用窗口）
 export async function triggerTask(key) { await post(`/api/tasks/${encodeURIComponent(key)}/trigger`, {}) }
-
-// 切换任务开关（写入 SQLite 运行时覆盖，重启后保留）
-export async function toggleTask(key, enabled) { await patch(`/api/tasks/${encodeURIComponent(key)}`, { enabled: Boolean(enabled) }); await render() }
