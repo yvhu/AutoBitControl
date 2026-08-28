@@ -96,4 +96,13 @@ describe('WindowRunner', () => {
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toEqual(['skipped'])
   })
+
+  it('CDP 连接失败标记 failed 且不抛异常', async () => {
+    const db = makeDb()
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bitbrowser as never, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir })
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
+    expect(calls).toEqual(['failed'])
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
 })

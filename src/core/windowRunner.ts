@@ -51,16 +51,26 @@ export class WindowRunner {
     const { cfg, db, bitbrowser, logger } = this.deps
     const date = todayStr()
     let open: OpenResult | null = null
-    let connected: { page: Page; close(): Promise<void> } | null = null
     try {
       open = await this.openWithRetry(profile.bitbrowserId)
     } catch (e) {
-      for (const key of taskKeys) db.upsertRun(profile.id, key, date, 'skipped', { error: (e as Error).message, finishedAt: new Date().toISOString() })
-      logger.warn({ profile: profile.name, err: (e as Error).message }, '开窗失败，本轮跳过')
+      for (const key of taskKeys) {
+        db.upsertRun(profile.id, key, date, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      }
+      logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
       return
     }
+    let connected: { page: Page; close(): Promise<void> } | null = null
     try {
-      connected = await this.deps.driver.connect(`http://${open.http}`)
+      try {
+        connected = await this.deps.driver.connect(`http://${open.http}`)
+      } catch (e) {
+        for (const key of taskKeys) {
+          db.upsertRun(profile.id, key, date, 'failed', { error: `CDP 连接失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+        }
+        logger.error({ profile: profile.name }, `CDP 连接失败: ${(e as Error).message}`)
+        return
+      }
       const page = connected.page
       const probeOk = await this.probe(page)
       if (!probeOk) {
@@ -123,7 +133,12 @@ export class WindowRunner {
     const backoffSec = task.meta.retry?.backoffSec ?? cfg.execution.retryBackoffSec
     const timeoutSec = task.meta.timeoutSec ?? Math.floor(cfg.execution.taskTimeoutMs / 1000)
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
-    mkdirSync(artifacts, { recursive: true })
+    try {
+      mkdirSync(artifacts, { recursive: true })
+    } catch (e) {
+      db.upsertRun(profile.id, taskKey, date, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      return
+    }
 
     for (let attempt = 1; attempt <= retryMax + 1; attempt++) {
       db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() })
