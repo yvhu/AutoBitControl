@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<body>
+  <button id="btn" style="width:120px;height:40px">签到</button>
+  <input id="input" />
+  <div id="result">0</div>
+  <script>
+    document.getElementById('btn').addEventListener('click', () => {
+      document.getElementById('result').textContent = String(Number(document.getElementById('result').textContent) + 1)
+    })
+  </script>
+</body>
+</html>
