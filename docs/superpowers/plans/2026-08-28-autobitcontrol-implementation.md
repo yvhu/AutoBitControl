@@ -23,6 +23,56 @@
 - 每个任务结束必须 commit（commit message 风格见各任务）
 - 代码中不得出现 TODO/TBD/占位符
 
+## 外部接口参考（全部已核实官方文档，2026-08-28）
+
+### 比特浏览器本地 API
+
+官方文档：https://doc.bitbrowser.cn/api-jie-kou-wen-dang/ben-di-fu-wu-zhi-nan.md 、https://doc.bitbrowser.cn/api-jie-kou-wen-dang/liu-lan-qi-jie-kou.md
+
+- 地址：本机 HTTP，实际地址在客户端「系统设置」中查看（社区默认 http://127.0.0.1:54345，官方未写死，config 可配）；必须登录比特客户端后才可用；无需额外开关
+- 全部为 POST + JSON body；限流 1 秒最多 10 个请求
+- 成功约定：`{"success": true, "data": {...}}`；失败：`{"success": false, "msg": "错误信息"}`（旧版本为 code=0/-1 约定，客户端需兼容两种）
+- 健康检查：`POST /health`，无 body
+- 开窗：`POST /browser/open`，body `{"id": "窗口id", "args": [], "loadExtensions": true, "extractIp": true}`；响应 `data.ws`（WebSocket 调试地址）、`data.http`（`"127.0.0.1:50106"` 格式的 host:port，CDP 调试地址 = `http://` + 该值）。官方现行文档无 debugPort 字段，兼容旧版可尝试 `data.debugPort`
+- 关窗：`POST /browser/close`，body `{"id": "窗口id"}`
+- 列表：`POST /browser/list`，body `{"page": 0, "pageSize": 100}`（**page 从 0 开始，pageSize 最大 100**，可加 name/groupId 过滤）；响应结构官方无示例，按 `data.list` 数组解析（元素含 id/name/seq），实现需兼容 `data.page`
+- 批量关窗：`POST /browser/close/byseqs` body `{"seqs": [...]}`（备用）
+
+### yescaptcha API
+
+官方文档：https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/63897603/YesCaptcha+API
+
+- Base URL：国际 `https://api.yescaptcha.com`，国内 `https://cn.yescaptcha.com`（config 可配）
+- 创建任务：`POST /createTask` body `{"clientKey": "...", "task": {"type": "...", "websiteURL": "...", "websiteKey": "..."}}` → `{"errorId": 0, "taskId": "..."}`
+- 查询结果：`POST /getTaskResult` body `{"clientKey", "taskId"}` → `{"status": "processing" | "ready", "solution": {...}}`
+  - reCAPTCHA V2/V3/hCaptcha → `solution.gRecaptchaResponse`；Turnstile → `solution.token`；图片 → `solution.text`
+- 余额：`POST /getBalance` body `{"clientKey"}` → `{"errorId": 0, "balance": <点数>}`，1000 点 = ¥1
+- 任务类型精确拼写：Turnstile=`TurnstileTaskProxyless`(25点)、V2=`NoCaptchaTaskProxyless`(15点)、V2 Enterprise=`RecaptchaV2EnterpriseTaskProxyless`(20点)、V3=`RecaptchaV3TaskProxyless`(20点，建议带 pageAction)、hCaptcha=`HCaptchaTaskProxyless`(30点，建议带 userAgent)、图片=`ImageToTextTask`(4点，异步)
+- **极验 GeeTest 官方不支持**，已从方案移除；如遇极验站点需换打码平台（后续可选集成）
+- V2 invisible 需 `isInvisible: true`；hCaptcha token 回填需写入 `textarea#h-captcha-response`（同时保留 g-recaptcha 兼容）
+- 硬限制：**每账号同时只能 1 个识别任务（必须串行排队）**；每任务最多查 120 次；任务创建后 5 分钟内有效；识别 120 秒超时；结果 120 秒内有效（60 秒内用完）
+
+### patchright（Node 版）
+
+官方：https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-nodejs 、https://www.npmjs.com/package/patchright
+
+- `npm i patchright@1.62.1`；浏览器安装 `npx patchright install chromium`（CLI 子命令存在）；Node ≥ 20 满足；ESM import 与内置 TS 类型均支持
+- 与 Playwright drop-in：`chromium.launch` / `chromium.connectOverCDP(endpointURL, options?)` 均可用；endpointURL 接受 http 或 ws 地址
+- 已知坑（本计划已规避）：
+  - Console API 被禁用：`page.on('console')` 等不可用 → 计划中未依赖 console 事件
+  - `page.evaluate` 默认在**隔离世界**执行；给站点主世界回填验证码 token 时必须 `page.evaluate(fn, arg, { isolatedContext: false })`
+  - initScript 对 about:blank/data:URI 无效（本计划不使用 initScript）
+  - 仅 Chromium 系有补丁；Firefox/WebKit 不支持
+  - 反检测启动参数（--enable-automation 移除、--disable-extensions 移除）是启动 flag 级，CDP 接管比特浏览器时不生效——由比特浏览器自身反检测承担；驱动层补丁（Runtime.enable 泄露、Console 泄露、闭包 Shadow DOM）在 CDP 连接下仍生效
+
+### npm 库版本约束（2026-08-28 核实）
+
+- **better-sqlite3 必须锁 `@12.2.0`**：latest v13 要求 Node ≥ 22，Node 20.9.0 装不上；v12.2.0 官方 release 含 Node 20 (ABI 115) Windows x64 预编译包，无需编译器
+- p-queue latest v9.3.3（纯 ESM，Node ≥ 20 满足）：默认导出；`add(fn)` 在任务完成时 resolve；`onIdle()` 存在；`size`/`pending` 属性存在
+- croner latest v10.0.1：`import { Cron } from 'croner'`；`new Cron(pattern, { timezone: 'Asia/Shanghai' }, fn)` 可用；5 段 cron 支持；`stop()` 永久停止
+- pino v10 + pino-pretty v13：`transport.targets` 多目标写法成立；注意多 target 下每个 target 默认只收 info 及以上
+- dotenv v17：`config({ path, quiet })` 可用；v17 的 config() 成功时会打印一行注入信息，`quiet: true` 可关（计划已用）
+
 ---
 
 ### Task 1: 项目骨架 + 配置加载
@@ -45,11 +95,11 @@
 
 ```powershell
 npm init -y
-npm i patchright@1.62.1 ghost-cursor@1.4.2 croner p-queue better-sqlite3 pino express dotenv @faker-js/faker
+npm i patchright@1.62.1 ghost-cursor@1.4.2 croner p-queue@9 better-sqlite3@12.2.0 pino express dotenv @faker-js/faker
 npm i -D typescript tsx vitest @types/node @types/express @types/better-sqlite3 supertest @types/supertest pino-pretty
 ```
 
-风险：`better-sqlite3` 若无预编译包会触发 node-gyp 编译（需 VS Build Tools）。预期 Node 20 有 prebuild，直接成功。若编译失败，先 `npm i -g windows-build-tools` 再重试。
+注意：`better-sqlite3` 必须锁 `@12.2.0`（v13 要求 Node≥22）；p-queue 锁 `@9`。Windows 下 better-sqlite3 v12 有 Node 20 预编译包，直接安装成功。
 
 - [ ] **Step 2: 编写 package.json（覆盖 npm init 生成的）**
 
@@ -233,13 +283,12 @@ const defaults: AppConfig = {
     clientKey: '',
     solveTimeoutMs: 120000,
     pollIntervalMs: 3000,
-    maxCostPerTask: 1.5,
+    maxCostPerTask: 1500,
     taskTypes: {
       turnstile: 'TurnstileTaskProxyless',
       recaptcha_v2: 'NoCaptchaTaskProxyless',
       recaptcha_v3: 'RecaptchaV3TaskProxyless',
       hcaptcha: 'HCaptchaTaskProxyless',
-      geetest: 'GeeTestTaskProxyless',
       image: 'ImageToTextTask',
     },
   },
@@ -343,13 +392,12 @@ export function createLogger(cfg: AppConfig): Logger {
     "clientKey": "",
     "solveTimeoutMs": 120000,
     "pollIntervalMs": 3000,
-    "maxCostPerTask": 1.5,
+    "maxCostPerTask": 1500,
     "taskTypes": {
       "turnstile": "TurnstileTaskProxyless",
       "recaptcha_v2": "NoCaptchaTaskProxyless",
       "recaptcha_v3": "RecaptchaV3TaskProxyless",
       "hcaptcha": "HCaptchaTaskProxyless",
-      "geetest": "GeeTestTaskProxyless",
       "image": "ImageToTextTask"
     }
   },
@@ -760,15 +808,13 @@ git commit -m "feat: run status state machine with retry and circuit breaker rul
 
 **Interfaces:**
 - Consumes: `BitBrowserConfig`（Task 1）
-- Produces: `BitBrowserClient` 类：`openBrowser(id): Promise<OpenResult>`、`closeBrowser(id): Promise<void>`、`listBrowsers(page, pageSize): Promise<BrowserInfo[]>`；`OpenResult { debugPort, ws, http }`、`BrowserInfo { id, name }`（Task 8/12 依赖）
+- Produces: `BitBrowserClient` 类：`health(): Promise<boolean>`、`openBrowser(id): Promise<OpenResult>`、`closeBrowser(id): Promise<void>`、`listBrowsers(page, pageSize): Promise<BrowserInfo[]>`；`OpenResult { http, ws }`（`http` 为 `"127.0.0.1:50106"` 格式 host:port）、`BrowserInfo { id, name }`（Task 8/12 依赖）
 
 - [ ] **Step 1: 写失败测试 tests/bitbrowser.test.ts**
 
 ```ts
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { BitBrowserClient } from '../src/core/bitbrowser'
-
-const originalFetch = globalThis.fetch
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -779,21 +825,32 @@ function mockFetchOnce(handler: (url: string, init: RequestInit) => Response) {
 describe('BitBrowserClient', () => {
   const client = new BitBrowserClient({ apiBase: 'http://127.0.0.1:54345', timeoutMs: 5000 })
 
-  it('openBrowser 解析 debugPort 与 ws', async () => {
+  it('openBrowser 解析 data.http 与 ws', async () => {
     mockFetchOnce((url, init) => {
       expect(url).toBe('http://127.0.0.1:54345/browser/open')
       expect(init.method).toBe('POST')
       expect(JSON.parse(String(init.body)).id).toBe('abc')
-      return new Response(JSON.stringify({ code: 0, data: { debugPort: 61234, ws: 'ws://127.0.0.1:61234/x', http: 'http://127.0.0.1:61234' } }), { status: 200 })
+      return new Response(JSON.stringify({ success: true, data: { ws: 'ws://127.0.0.1:50106/devtools/browser/x', http: '127.0.0.1:50106' } }), { status: 200 })
     })
     const r = await client.openBrowser('abc')
-    expect(r.debugPort).toBe('61234')
+    expect(r.http).toBe('127.0.0.1:50106')
     expect(r.ws).toContain('ws://')
   })
 
-  it('openBrowser 业务错误抛异常', async () => {
-    mockFetchOnce(() => new Response(JSON.stringify({ code: -1, msg: '浏览器不存在' }), { status: 200 }))
+  it('openBrowser 兼容旧版 debugPort 字段', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ success: true, data: { ws: 'ws://x', debugPort: 61234 } }), { status: 200 }))
+    const r = await client.openBrowser('abc')
+    expect(r.http).toBe('127.0.0.1:61234')
+  })
+
+  it('openBrowser 业务失败抛异常（success=false）', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ success: false, msg: '浏览器不存在' }), { status: 200 }))
     await expect(client.openBrowser('nope')).rejects.toThrow('浏览器不存在')
+  })
+
+  it('openBrowser 兼容旧版 code 约定', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ code: -1, msg: '旧版错误' }), { status: 200 }))
+    await expect(client.openBrowser('nope')).rejects.toThrow('旧版错误')
   })
 
   it('closeBrowser 调用正确端点', async () => {
@@ -802,19 +859,30 @@ describe('BitBrowserClient', () => {
       called = true
       expect(url).toBe('http://127.0.0.1:54345/browser/close')
       expect(JSON.parse(String(init.body)).id).toBe('abc')
-      return new Response(JSON.stringify({ code: 0 }), { status: 200 })
+      return new Response(JSON.stringify({ success: true }), { status: 200 })
     })
     await client.closeBrowser('abc')
     expect(called).toBe(true)
   })
 
-  it('listBrowsers 解析列表', async () => {
-    mockFetchOnce((url) => {
-      expect(url).toContain('/browser/list?page=1&pageSize=100')
-      return new Response(JSON.stringify({ code: 0, data: { list: [{ id: 'a1', name: '窗口1' }, { id: 'a2', name: '窗口2' }] } }), { status: 200 })
+  it('listBrowsers 为 POST 且 page 从 0 开始', async () => {
+    mockFetchOnce((url, init) => {
+      expect(init.method).toBe('POST')
+      expect(JSON.parse(String(init.body))).toEqual({ page: 0, pageSize: 100 })
+      return new Response(JSON.stringify({ success: true, data: { list: [{ id: 'a1', name: '窗口1' }, { id: 'a2', name: '窗口2' }] } }), { status: 200 })
     })
-    const list = await client.listBrowsers(1, 100)
+    const list = await client.listBrowsers(0, 100)
     expect(list).toEqual([{ id: 'a1', name: '窗口1' }, { id: 'a2', name: '窗口2' }])
+  })
+
+  it('health 返回 true', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
+    expect(await client.health()).toBe(true)
+  })
+
+  it('health 网络失败返回 false', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
+    expect(await client.health()).toBe(false)
   })
 })
 ```
@@ -828,9 +896,8 @@ Expected: FAIL（模块不存在）
 
 ```ts
 export interface OpenResult {
-  debugPort: string
-  ws: string
   http: string
+  ws: string
 }
 
 export interface BrowserInfo {
@@ -839,7 +906,8 @@ export interface BrowserInfo {
 }
 
 interface BitBrowserResp {
-  code: number
+  success?: boolean
+  code?: number
   msg?: string
   data?: Record<string, unknown>
 }
@@ -855,25 +923,37 @@ export class BitBrowserClient {
       signal: AbortSignal.timeout(this.cfg.timeoutMs),
     })
     const json = (await res.json()) as BitBrowserResp
-    if (json.code !== 0) throw new Error(`比特浏览器 API 失败: ${path} code=${json.code} ${json.msg ?? ''}`)
+    const ok = json.success === true || json.code === 0
+    if (!ok) throw new Error(`比特浏览器 API 失败: ${path} ${json.msg ?? `code=${json.code}`}`)
     return (json.data ?? {}) as Record<string, unknown>
+  }
+
+  async health(): Promise<boolean> {
+    try {
+      await this.post('/health', {})
+      return true
+    } catch {
+      return false
+    }
   }
 
   async openBrowser(id: string): Promise<OpenResult> {
     const d = await this.post('/browser/open', { id })
-    const debugPort = String(d.debugPort ?? d.debug_port ?? '')
-    if (!debugPort) throw new Error(`开窗失败: 未返回调试端口, data=${JSON.stringify(d)}`)
-    return { debugPort, ws: String(d.ws ?? ''), http: String(d.http ?? '') }
+    const http = String(d.http ?? '')
+    const legacy = String(d.debugPort ?? d.debug_port ?? '')
+    const httpField = http || (legacy ? `127.0.0.1:${legacy}` : '')
+    if (!httpField) throw new Error(`开窗失败: 未返回调试端口, data=${JSON.stringify(d)}`)
+    return { http: httpField, ws: String(d.ws ?? '') }
   }
 
   async closeBrowser(id: string): Promise<void> {
     await this.post('/browser/close', { id })
   }
 
-  async listBrowsers(page = 1, pageSize = 100): Promise<BrowserInfo[]> {
-    const d = await this.post(`/browser/list?page=${page}&pageSize=${pageSize}`, {})
-    const list = (d.list ?? []) as Array<{ id: string | number; name?: string }>
-    return list.map(l => ({ id: String(l.id), name: l.name ?? String(l.id) }))
+  async listBrowsers(page = 0, pageSize = 100): Promise<BrowserInfo[]> {
+    const d = await this.post('/browser/list', { page, pageSize })
+    const raw = (d.list ?? d.page ?? []) as Array<{ id: string | number; name?: string }>
+    return raw.map(l => ({ id: String(l.id), name: l.name ?? String(l.id) }))
   }
 }
 
@@ -1121,12 +1201,12 @@ git commit -m "feat: humanize layer with ghost-cursor CDP mouse and typing simul
 
 **Interfaces:**
 - Consumes: `CaptchaConfig`（Task 1）
-- Produces: `CaptchaKind`、`CaptchaDetected { kind, sitekey }`、`CaptchaFailure`、`detectCaptcha(page, timeoutMs): Promise<CaptchaDetected | null>`、`YesCaptchaClient`（`createTask`、`getResult`、`getBalance`、`solveCaptcha(kind, sitekey, pageUrl)`）、`CaptchaService`（`autoSolve(page, opts): Promise<'none'|'solved'|'failed'>`）（Task 7/8 依赖）
+- Produces: `CaptchaKind`、`CaptchaDetected { kind, sitekey }`、`CaptchaFailure`、`detectCaptcha(page, timeoutMs): Promise<CaptchaDetected | null>`、`YesCaptchaClient`（`createTask`、`getResult`、`getBalance`、`ensureBalance`、`solveCaptcha(kind, sitekey, pageUrl, extra?)`，内部串行排队保证每账号 1 并发识别）、`CaptchaService`（`autoSolve(page, opts): Promise<'none'|'solved'|'failed'>`）（Task 7/8 依赖）
 
 - [ ] **Step 1: 写失败测试 tests/captcha.test.ts**
 
 ```ts
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { YesCaptchaClient } from '../src/core/captcha'
 
 afterEach(() => { vi.unstubAllGlobals() })
@@ -1139,18 +1219,19 @@ const cfg = {
 }
 
 describe('YesCaptchaClient', () => {
-  it('solveCaptcha 创建任务并轮询到结果', async () => {
-    let calls = 0
+  it('solveCaptcha 创建任务并轮询到 turnstile token', async () => {
+    let polls = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body))
       if (String(url).includes('createTask')) {
         expect(body.task.type).toBe('TurnstileTaskProxyless')
         expect(body.task.websiteKey).toBe('sk123')
+        expect(body.task.websiteURL).toBe('https://x.io')
         return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
       }
-      calls++
+      polls++
       return new Response(JSON.stringify(
-        calls === 1
+        polls === 1
           ? { errorId: 0, status: 'processing' }
           : { errorId: 0, status: 'ready', solution: { token: 'tok-abc' } }
       ), { status: 200 })
@@ -1158,6 +1239,37 @@ describe('YesCaptchaClient', () => {
     const client = new YesCaptchaClient(cfg, { turnstile: 'TurnstileTaskProxyless' })
     const token = await client.solveCaptcha('turnstile', 'sk123', 'https://x.io')
     expect(token).toBe('tok-abc')
+  })
+
+  it('reCAPTCHA 类任务从 solution.gRecaptchaResponse 取结果', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { gRecaptchaResponse: 'resp-abc' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, { recaptcha_v2: 'NoCaptchaTaskProxyless' })
+    const token = await client.solveCaptcha('recaptcha_v2', 'sk', 'https://x.io')
+    expect(token).toBe('resp-abc')
+  })
+
+  it('同时两个 solveCaptcha 串行执行（每账号 1 并发限制）', async () => {
+    let inFlight = 0
+    let peak = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        await new Promise(r => setTimeout(r, 50))
+        inFlight--
+        return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { token: 't' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, { turnstile: 'TurnstileTaskProxyless' })
+    await Promise.all([
+      client.solveCaptcha('turnstile', 'sk1', 'https://x.io'),
+      client.solveCaptcha('turnstile', 'sk2', 'https://x.io'),
+    ])
+    expect(peak).toBe(1)
   })
 
   it('超时抛 CaptchaFailure', async () => {
@@ -1170,9 +1282,21 @@ describe('YesCaptchaClient', () => {
   })
 
   it('余额不足抛 CaptchaFailure', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ errorId: 0, balance: 0.01 }), { status: 200 })))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ errorId: 0, balance: 100 }), { status: 200 })))
     const client = new YesCaptchaClient(cfg, { turnstile: 'TurnstileTaskProxyless' })
-    await expect(client.ensureBalance(0.5)).rejects.toThrow(/余额不足/)
+    await expect(client.ensureBalance(500)).rejects.toThrow(/余额不足/)
+  })
+
+  it('extra 参数透传（isInvisible）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (String(url).includes('createTask')) {
+        expect(JSON.parse(String(init.body)).task.isInvisible).toBe(true)
+        return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { gRecaptchaResponse: 'r' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, { recaptcha_v2: 'NoCaptchaTaskProxyless' })
+    await client.solveCaptcha('recaptcha_v2', 'sk', 'https://x.io', { isInvisible: true })
   })
 })
 ```
@@ -1187,7 +1311,7 @@ Expected: FAIL（模块不存在）
 ```ts
 import type { Page } from 'patchright'
 
-export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'geetest' | 'image'
+export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
 
 export interface CaptchaDetected {
   kind: CaptchaKind
@@ -1233,6 +1357,8 @@ interface YesCaptchaResp {
 }
 
 export class YesCaptchaClient {
+  private chain: Promise<unknown> = Promise.resolve()
+
   constructor(private cfg: { apiBase: string; clientKey: string; solveTimeoutMs: number; pollIntervalMs: number }, private taskTypes: Record<string, string>) {}
 
   private async call(path: string, body: unknown): Promise<YesCaptchaResp> {
@@ -1250,10 +1376,13 @@ export class YesCaptchaClient {
     return resp.taskId!
   }
 
-  private async getResult(taskId: string): Promise<string | null> {
+  private async getResult(taskId: string, kind: CaptchaKind): Promise<string | null> {
     const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
-    if (resp.status === 'ready') return resp.solution?.token ?? resp.solution?.gRecaptchaResponse ?? resp.solution?.text ?? null
-    return null
+    if (resp.status !== 'ready') return null
+    const s = resp.solution ?? {}
+    if (kind === 'turnstile') return s.token ?? null
+    if (kind === 'image') return s.text ?? null
+    return s.gRecaptchaResponse ?? null
   }
 
   async getBalance(): Promise<number> {
@@ -1263,21 +1392,26 @@ export class YesCaptchaClient {
 
   async ensureBalance(minAmount: number): Promise<void> {
     const balance = await this.getBalance()
-    if (balance < minAmount) throw new CaptchaFailure(`yescaptcha 余额不足: ${balance} < ${minAmount}`)
+    if (balance < minAmount) throw new CaptchaFailure(`yescaptcha 余额不足: ${balance} 点 < ${minAmount} 点`)
   }
 
-  async solveCaptcha(kind: CaptchaKind, sitekey: string | null, pageUrl: string): Promise<string> {
-    if (!sitekey) throw new CaptchaFailure('验证码未找到 sitekey')
-    const taskType = this.taskTypes[kind]
-    if (!taskType) throw new CaptchaFailure(`不支持的验证码类型: ${kind}`)
-    const taskId = await this.createTask({ type: taskType, websiteURL: pageUrl, websiteKey: sitekey })
-    const deadline = Date.now() + this.cfg.solveTimeoutMs
-    while (Date.now() < deadline) {
-      const token = await this.getResult(taskId)
-      if (token) return token
-      await new Promise(r => setTimeout(r, this.cfg.pollIntervalMs))
+  solveCaptcha(kind: CaptchaKind, sitekey: string | null, pageUrl: string, extra: Record<string, unknown> = {}): Promise<string> {
+    const run = async (): Promise<string> => {
+      if (!sitekey) throw new CaptchaFailure('验证码未找到 sitekey')
+      const taskType = this.taskTypes[kind]
+      if (!taskType) throw new CaptchaFailure(`不支持的验证码类型: ${kind}`)
+      const taskId = await this.createTask({ type: taskType, websiteURL: pageUrl, websiteKey: sitekey, ...extra })
+      const deadline = Date.now() + this.cfg.solveTimeoutMs
+      while (Date.now() < deadline) {
+        const token = await this.getResult(taskId, kind)
+        if (token) return token
+        await new Promise(r => setTimeout(r, this.cfg.pollIntervalMs))
+      }
+      throw new CaptchaFailure(`yescaptcha 解题超时: taskId=${taskId}`)
     }
-    throw new CaptchaFailure(`yescaptcha 解题超时: taskId=${taskId}`)
+    const result = this.chain.then(run, run)
+    this.chain = result.catch(() => {})
+    return result
   }
 }
 
@@ -1308,15 +1442,28 @@ export class CaptchaService {
           input.value = t
           input.dispatchEvent(new Event('input', { bubbles: true }))
         }
-      }, token)
+      }, token, { isolatedContext: false })
+    } else if (kind === 'hcaptcha') {
+      await page.evaluate((t) => {
+        const h = document.querySelector<HTMLTextAreaElement>('textarea[name="h-captcha-response"]')
+        if (h) {
+          h.value = t
+          h.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        const g = document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
+        if (g) {
+          g.value = t
+          g.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+      }, token, { isolatedContext: false })
     } else {
       await page.evaluate((t) => {
-        const textarea = document.querySelector<HTMLTextAreaElement>('#g-recaptcha-response')
+        const textarea = document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
         if (textarea) {
           textarea.value = t
           textarea.dispatchEvent(new Event('input', { bubbles: true }))
         }
-      }, token)
+      }, token, { isolatedContext: false })
     }
   }
 }
@@ -1326,6 +1473,8 @@ export class CaptchaService {
 
 Run: `npm test`
 Expected: PASS
+
+注意：`page.evaluate(fn, arg, { isolatedContext: false })` 的第三个参数是 patchright 扩展，用于把 token 写入站点主世界（否则站点 JS 看不到回填值）。
 
 - [ ] **Step 5: Commit**
 
@@ -1803,7 +1952,7 @@ function makeDriver(over: Partial<BrowserDriver> = {}): BrowserDriver {
   } as unknown as BrowserDriver
 }
 
-const open = { debugPort: '61234', ws: '', http: '' }
+const open = { http: '127.0.0.1:61234', ws: '' }
 const bitbrowser = {
   openBrowser: vi.fn().mockResolvedValue(open),
   closeBrowser: vi.fn().mockResolvedValue(undefined),
@@ -1933,14 +2082,14 @@ import { TaskContext, type SiteTask } from '../tasks/base'
 import type { WalletRegistry } from './wallet/types'
 
 export interface BrowserDriver {
-  connect(debugPort: string): Promise<{ page: Page; close(): Promise<void> }>
+  connect(endpointUrl: string): Promise<{ page: Page; close(): Promise<void> }>
 }
 
 export class PatchrightDriver implements BrowserDriver {
   private browser: Browser | null = null
 
-  async connect(debugPort: string): Promise<{ page: Page; close(): Promise<void> }> {
-    this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`)
+  async connect(endpointUrl: string): Promise<{ page: Page; close(): Promise<void> }> {
+    this.browser = await chromium.connectOverCDP(endpointUrl)
     const context = this.browser.contexts()[0] ?? (await this.browser.newContext())
     const page = context.pages()[0] ?? (await context.newPage())
     return {
@@ -1975,7 +2124,7 @@ export class WindowRunner {
     let connected: { page: Page; close(): Promise<void> } | null = null
     try {
       open = await this.openWithRetry(profile.bitbrowserId)
-      connected = await this.deps.driver.connect(open.debugPort)
+      connected = await this.deps.driver.connect(`http://${open.http}`)
       const page = connected.page
       const probeOk = await this.probe(page)
       if (!probeOk) {
@@ -2739,9 +2888,14 @@ async function main(): Promise<void> {
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
   try {
-    const list = await bitbrowser.listBrowsers(1, 100)
-    for (const b of list) db.upsertProfile(b.id, b.name)
-    logger.info({ count: list.length }, '已同步比特浏览器窗口列表')
+    const healthy = await bitbrowser.health()
+    if (!healthy) {
+      logger.warn('比特浏览器本地 API 未就绪（请确认比特浏览器已登录且 API 地址正确）')
+    } else {
+      const list = await bitbrowser.listBrowsers(0, 100)
+      for (const b of list) db.upsertProfile(b.id, b.name)
+      logger.info({ count: list.length }, '已同步比特浏览器窗口列表')
+    }
   } catch (e) {
     logger.warn({ err: (e as Error).message }, '同步窗口列表失败（请确认比特浏览器已启动）')
   }
@@ -2813,7 +2967,7 @@ async function main(): Promise<void> {
   const client = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
   const open = await client.openBrowser(profileId)
   logger.info({ open }, '开窗成功')
-  const conn = await new PatchrightDriver().connect(open.debugPort)
+  const conn = await new PatchrightDriver().connect(`http://${open.http}`)
   await conn.page.goto(cfg.execution.probeUrl, { waitUntil: 'domcontentloaded' }).catch(() => {})
   logger.info({ url: conn.page.url() }, '页面打开成功')
   await conn.close()
@@ -2852,7 +3006,7 @@ async function main(): Promise<void> {
   const adapter = reg.get(walletKey)
 
   const open = await client.openBrowser(profileId)
-  const conn = await new PatchrightDriver().connect(open.debugPort)
+  const conn = await new PatchrightDriver().connect(`http://${open.http}`)
   await conn.page.goto('https://opensea.io').catch(() => {})
   logger.info('请手动点击页面上的连接钱包按钮（60 秒内）...')
   const popup = await waitForPopup(conn.page.context(), adapter.extensionUrlPatterns, 60000)
@@ -2975,5 +3129,7 @@ git commit -m "feat: application entrypoint, smoke scripts, pm2 config and readm
 ## Self-Review 记录
 
 - 规格覆盖：spec 第 2 节架构→Task 8/12；第 3 节组件→Task 1/5/6/11；第 4 节任务模型→Task 7；第 5 节拟人化→Task 5；第 6 节验证码→Task 6；第 7 节稳定性/状态机/SQLite/面板→Task 2/3/8/10；第 8 节配置→Task 1；第 10 节 MVP 顺序→Task 编号顺序；第 11 节运行部署→Task 12
-- 类型一致性：`RunStatus`（Task 2）在 Task 3/8 引用一致；`Humanizer` 接口 Task 5 定义、Task 7/8 使用一致；`WalletRegistry`/`WalletAdapter` Task 7 定义、Task 8/11/12 使用一致；`CoalescingEnqueuer.enqueue(profile, taskKey)` Task 8 定义、Task 9/10/12 调用一致
+- 类型一致性：`RunStatus`（Task 2）在 Task 3/8 引用一致；`Humanizer` 接口 Task 5 定义、Task 7/8 使用一致；`WalletRegistry`/`WalletAdapter` Task 7 定义、Task 8/11/12 使用一致；`CoalescingEnqueuer.enqueue(profile, taskKey)` Task 8 定义、Task 9/10/12 调用一致；`OpenResult { http, ws }`（Task 4）与 Task 8/12 的 `connect(\`http://${open.http}\`)` 用法一致
+- 外部接口全部按官方文档核实（见「外部接口参考」一节）：比特浏览器 success/msg 约定与 `data.http` 调试地址、yescaptcha 任务类型精确拼写与 1 并发硬限制（客户端串行排队）、patchright `isolatedContext: false` 回填 token、better-sqlite3 锁 v12
 - 已知偏差：设计文档 7.3 节 profiles 表含"绑定任务"字段，实施中简化为"所有启用窗口跑所有注册任务"（MVP），按任务过滤留待后续加 `task_keys` 列；README 已同步此语义
+- 已知偏差 2：yescaptcha 官方不支持极验 GeeTest，设计文档 6 节中的"极验等"改为实际支持范围（Turnstile/reCAPTCHA/hCaptcha/图片），遇极验站点需后续接其他打码平台
