@@ -2239,6 +2239,9 @@ export class WindowRunner {
           artifactsDir: artifacts,
           captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
+          onCaptchaLog: (kind, ok, costPoints) => {
+            db.logCaptcha(profile.id, taskKey, kind, costPoints, ok)
+          },
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
         const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
