@@ -57,6 +57,8 @@ export interface StorageConfig {
   screenshotDir: string
   logDir: string
   logLevel: string
+  /** 终端日志颜色：true/false 强制开关，缺省按终端能力自动检测（Git Bash/WT 有色，老式 PowerShell 无色） */
+  prettyColorize?: boolean
 }
 
 /** 钱包配置：窗口解锁密码映射（key 为比特窗口 ID，值环境变量 WALLET_PASSWORDS 优先） */
