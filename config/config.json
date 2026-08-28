@@ -1,0 +1,39 @@
+{
+  "bitbrowser": {
+    "apiBase": "http://127.0.0.1:54345",
+    "openTimeoutMs": 30000,
+    "maxRetries": 3,
+    "retryBackoffMs": [5000, 30000, 120000]
+  },
+  "execution": {
+    "concurrency": 6,
+    "windowTimeoutMs": 900000,
+    "taskTimeoutMs": 180000,
+    "retryMax": 2,
+    "retryBackoffSec": 600,
+    "circuitBreakerThreshold": 2,
+    "probeUrl": "https://api.ipify.org",
+    "timezone": "Asia/Shanghai"
+  },
+  "captcha": {
+    "apiBase": "https://api.yescaptcha.com",
+    "clientKey": "",
+    "solveTimeoutMs": 120000,
+    "pollIntervalMs": 3000,
+    "maxCostPerTask": 1500,
+    "taskTypes": {
+      "turnstile": "TurnstileTaskProxyless",
+      "recaptcha_v2": "NoCaptchaTaskProxyless",
+      "recaptcha_v3": "RecaptchaV3TaskProxyless",
+      "hcaptcha": "HCaptchaTaskProxyless",
+      "image": "ImageToTextTask"
+    }
+  },
+  "web": { "host": "127.0.0.1", "port": 3000 },
+  "storage": {
+    "dbPath": "data/app.db",
+    "screenshotDir": "data/screenshots",
+    "logDir": "data/logs",
+    "logLevel": "info"
+  }
+}
