@@ -1,17 +1,13 @@
 /**
  * 看板路由（server 层）：今日运行统计与矩阵数据
- * 依赖方向：依赖 infrastructure/db 与 tasks 类型；被 app 装配
+ * 依赖方向：依赖 infrastructure/db；被 app 装配
  * 设计思路：一次请求返回看板所需的全部数据（统计/矩阵/窗口/打码成本），前端一次渲染
  */
 import { Router } from 'express'
 import { todayStr, type AppDb, type RunStatus } from '../../infrastructure/db'
-import type { SiteTask } from '../../tasks/base'
 import { ok, asyncHandler } from '../http/response'
 
-// 计入统计的全部状态（终态 + 进行中 + 待执行）
-const COUNTED: RunStatus[] = ['success', 'failed', 'captcha_failed', 'skipped', 'running', 'retry_wait', 'pending']
-
-export function dashboardRouter(deps: { db: AppDb; tasks: Map<string, SiteTask> }): Router {
+export function dashboardRouter(deps: { db: AppDb }): Router {
   const router = Router()
   router.get('/dashboard', asyncHandler(async (req, res) => {
     // date 查询参数缺省为今天（面板日期切换用）

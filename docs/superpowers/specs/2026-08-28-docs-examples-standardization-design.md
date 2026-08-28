@@ -72,7 +72,7 @@ tests/                     # 测试平铺不变（更新 import 路径），web.
 
 ### 1.2 依赖方向规则
 
-`tasks → engine → {integrations, automation} → infrastructure`；`server → {engine, infrastructure}`；`app.ts` 组装一切。禁止下层 import 上层。
+`tasks → engine → {integrations, automation} → infrastructure`；`server → {engine, infrastructure}`；`app.ts` 组装一切。禁止下层 import 上层。例外（已批准）：server 层允许对 tasks 层做 type-only import（`import type { SiteTask }`），因为任务注册表本身就是 API 层的数据来源；engine 层对 tasks 层的 type-only import 已被移除，不在此列。
 
 ### 1.3 统一封装
 

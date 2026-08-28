@@ -374,9 +374,9 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
-| `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周留 15% 边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
+| `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
 | `type` | `type(selector, text): Promise<void>` | 先 click 聚焦，再逐键输入：每键延迟 40-130ms；约 3% 概率按 Backspace、停顿 100-300ms 后重输该键（模拟错键回删） |
-| `moveTo` | `moveTo(x, y): Promise<void>` | ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8-15ms；记住终点作为鼠标当前位置 |
+| `moveTo` | `moveTo(x, y): Promise<void>` | ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8~23ms；记住终点作为鼠标当前位置 |
 | `scroll` | `scroll(deltaY): Promise<void>` | 在鼠标当前位置派发滚轮事件，随后停顿 100-400ms |
 | `sleep` | `static sleep(minMs, maxMs): Promise<void>` | 区间内均匀随机停顿 |
 | `randomMicroMove` | `randomMicroMove(): Promise<void>` | 在当前位置 ±60px 内随机微移（模拟真实用户小动作） |
@@ -393,7 +393,7 @@ await Humanizer.sleep(1000, 2000)           // 随机停顿 1-2 秒
 
 所有鼠标/滚轮事件通过 `page.context().newCDPSession(page)` 拿到 CDP 会话后用 `Input.dispatchMouseEvent` 直接派发给渲染进程，而不是用 Playwright/Patchright 原生的 `page.mouse`：
 
-1. **轨迹可控**：原生 `mouse.move` 一步到位，而这里用 ghost-cursor 生成人类手抖的贝塞尔曲线，逐点以 8-15ms 间隔派发。
+1. **轨迹可控**：原生 `mouse.move` 一步到位，而这里用 ghost-cursor 生成人类手抖的贝塞尔曲线，逐点以 8~23ms 间隔派发。
 2. **事件可信**：CDP 层派发的输入事件在页面侧 `isTrusted` 语义与真实输入一致，不易被站点的反自动化脚本标记。
 3. **模型统一**：与比特浏览器的 CDP 连接模型一致，行为在不同窗口/内核间一致。
 
@@ -423,7 +423,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | 入口 | 接口 | 语义 |
 | --- | --- | --- |
 | 面板任务页「立即触发」 | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId? }` | 带 `bitbrowserId` → 只跑该窗口（窗口不存在返回 404）；不带 → 全部启用窗口 |
-| 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 每个启用窗口跑全部任务 |
+| 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 任意窗口 id（含禁用窗口，find 基于 listProfiles(false)）跑全部任务 |
 | 面板看板「重跑今日失败」 | `POST /api/runs/rerun-failed`，body `{ date }` | 当日失败行重新入队 |
 | 代码内 `Scheduler.fireNow(taskKey)` | — | 对**全部启用窗口**逐窗口入队（与 `POST /api/tasks/:key/trigger` 不带 body 等价） |
 

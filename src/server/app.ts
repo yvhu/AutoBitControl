@@ -43,7 +43,7 @@ export function createApp(deps: ServerDeps): express.Express {
 
   const api = express.Router()
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
-  api.use(dashboardRouter({ db: deps.db, tasks: deps.tasks }))
+  api.use(dashboardRouter({ db: deps.db }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
   api.use(runsRouter(deps))

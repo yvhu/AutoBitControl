@@ -28,7 +28,7 @@ export interface Box {
 }
 
 /**
- * 在元素盒内取随机落点：四周各留 15% 边距，
+ * 在元素盒内取随机落点：四周各留 7.5% 边距（margin 0.15 合计 15%），
  * 避开边缘（点击边缘易误触相邻元素或超出点击区）
  */
 export function randomPointInBox(box: Box): Point {
@@ -73,7 +73,7 @@ export class Humanizer {
 
   /**
    * 沿贝塞尔轨迹移动鼠标到目标点：
-   * ghost-cursor 生成轨迹点 → CDP mouseMoved 逐点派发（间隔 8-15ms 模拟手速抖动）
+   * ghost-cursor 生成轨迹点 → CDP mouseMoved 逐点派发（间隔 8~23ms 模拟手速抖动）
    */
   async moveTo(x: number, y: number): Promise<void> {
     const points = ghostPath(this.last, { x, y }, { spreadOverride: 25 }) as Point[]

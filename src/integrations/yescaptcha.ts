@@ -185,7 +185,7 @@ export class CaptchaService {
 
   /**
    * 把 token 回填到站点表单并派发 input 事件（触发站点 JS 校验）
-   * 关键设计：evaluate 第三参 { isolatedContext: false } 是 patchright 扩展，
+   * 关键设计：evaluate 第三参 {}、第四参 false（isolatedContext: false）是 patchright 扩展，
    * 把值写进站点主世界——默认隔离世界写的值站点 JS 读不到
    */
   private async applyToken(page: Page, kind: CaptchaKind, token: string): Promise<void> {
