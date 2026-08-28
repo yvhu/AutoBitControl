@@ -22,7 +22,8 @@ export function createLogger(cfg: AppConfig): Logger {
     transport: {
       targets: [
         { target: 'pino/file', options: { destination: join(cfg.storage.logDir, 'app.log'), mkdir: true } },
-        { target: 'pino-pretty', options: { translateTime: 'SYS:yyyy-mm-dd HH:MM:ss' } },
+        // colorize 关闭：Windows PowerShell 5.1 控制台不支持 ANSI 转义，会输出 [39m 之类的乱码
+        { target: 'pino-pretty', options: { translateTime: 'SYS:yyyy-mm-dd HH:MM:ss', colorize: false } },
       ],
     },
   })
