@@ -119,16 +119,22 @@ export class Scheduler {
    * 任务开关变更后刷新该任务的调度：先按 key 停掉普通 cron、错峰 cron 与 00:01 日更刷新器，
    * 再重新注册（停用任务跳过注册）——面板切换开关即时生效，无需重启
    */
-  async refreshTask(taskKey: string): Promise<void> {
-    const job = this.jobs.get(taskKey)
-    if (job) { job.stop(); this.jobs.delete(taskKey) }
-    const stagger = this.staggerJobs.get(taskKey)
-    if (stagger) { stagger.stop(); this.staggerJobs.delete(taskKey) }
-    const refresher = this.staggerRefreshers.get(taskKey)
-    if (refresher) { refresher.stop(); this.staggerRefreshers.delete(taskKey) }
-    this.staggerRefreshKeys.delete(taskKey)
-    const task = this.tasks.get(taskKey)
-    if (task) await this.registerTask(task)
+  refreshTask(taskKey: string): void {
+    void (async () => {
+      try {
+        const job = this.jobs.get(taskKey)
+        if (job) { job.stop(); this.jobs.delete(taskKey) }
+        const stagger = this.staggerJobs.get(taskKey)
+        if (stagger) { stagger.stop(); this.staggerJobs.delete(taskKey) }
+        const refresher = this.staggerRefreshers.get(taskKey)
+        if (refresher) { refresher.stop(); this.staggerRefreshers.delete(taskKey) }
+        this.staggerRefreshKeys.delete(taskKey)
+        const task = this.tasks.get(taskKey)
+        if (task) await this.registerTask(task)
+      } catch (e) {
+        this.logger.warn({ task: taskKey, err: (e as Error).message }, '刷新任务调度失败')
+      }
+    })()
   }
 
   /** 为每个任务建 cron 定时器 */

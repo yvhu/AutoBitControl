@@ -217,4 +217,16 @@ describe('Scheduler', () => {
     sched.stop()
     expect(() => sched.stop()).not.toThrow()
   })
+
+  it('refreshTask 云库读取失败时自吞错并告警（不抛向调用方）', async () => {
+    const db = { listProfiles: vi.fn().mockReturnValue([]), getTaskEnabled: vi.fn().mockRejectedValue(new Error('cloud blip')) } as never
+    const warn = vi.fn()
+    const logger = { info: vi.fn(), warn, error: vi.fn() } as never
+    const task = { meta: { key: 't1', name: 'T1', url: 'https://x.io', schedule: '0 9 * * *' } }
+    const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['t1', task]]), { enqueue: vi.fn() } as never, logger)
+    expect(() => sched.refreshTask('t1')).not.toThrow()
+    await new Promise(r => setTimeout(r, 0))
+    expect(warn).toHaveBeenCalledWith({ task: 't1', err: 'cloud blip' }, '刷新任务调度失败')
+    sched.stop()
+  })
 })
