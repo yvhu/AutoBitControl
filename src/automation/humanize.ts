@@ -1,8 +1,17 @@
+/**
+ * 拟人化交互层（automation 层）：人类手感的鼠标轨迹/点击/键入/滚动
+ * 依赖方向：依赖 ghost-cursor 与 patchright 类型，被 engine/task-context 依赖
+ * 设计思路：ghost-cursor 只负责生成贝塞尔轨迹，事件派发走 CDP Input.dispatchMouseEvent——
+ *   原生 page.mouse 一步到位是直线，逐点派发轨迹可控、isTrusted 语义与真实输入一致，
+ *   且与比特浏览器 CDP 连接模型统一（详见 docs/API-GUIDE.md「CDP 派发原理」）
+ */
 import { path as ghostPath } from 'ghost-cursor'
 import type { Page, CDPSession } from 'patchright'
 
 export interface HumanizeOptions {
+  /** 移动类动作的最小停顿（毫秒） */
   minDelayMs?: number
+  /** 移动类动作的最大停顿（毫秒） */
   maxDelayMs?: number
 }
 
@@ -18,6 +27,10 @@ export interface Box {
   height: number
 }
 
+/**
+ * 在元素盒内取随机落点：四周各留 15% 边距，
+ * 避开边缘（点击边缘易误触相邻元素或超出点击区）
+ */
 export function randomPointInBox(box: Box): Point {
   const margin = 0.15
   const w = box.width * (1 - margin)
@@ -28,27 +41,40 @@ export function randomPointInBox(box: Box): Point {
   }
 }
 
+/**
+ * 拟人操作器：所有交互都带随机节奏（停顿区间随机），
+ * 静态方法可直接调用（任务里 Humanizer.sleep 做拟人等待）
+ */
 export class Humanizer {
+  /** CDP 会话懒创建并复用（每页面一个，避免重复握手开销） */
   private session: CDPSession | null = null
+  /** 鼠标当前位置：作为下一次轨迹的起点与滚轮派发位置 */
   private last: Point = { x: 200, y: 200 }
   private minDelay: number
   private maxDelay: number
 
   constructor(private page: Page, opts: HumanizeOptions = {}) {
+    // 默认 0.8-3s：停顿过短像脚本，过长拖慢整体节奏
     this.minDelay = opts.minDelayMs ?? 800
     this.maxDelay = opts.maxDelayMs ?? 3000
   }
 
+  /** 区间内均匀随机停顿 */
   static async sleep(minMs: number, maxMs: number): Promise<void> {
     const ms = minMs + Math.random() * (maxMs - minMs)
     await new Promise(r => setTimeout(r, ms))
   }
 
+  /** 获取（或创建）本页面的 CDP 会话 */
   private async cdp(): Promise<CDPSession> {
     if (!this.session) this.session = await this.page.context().newCDPSession(this.page)
     return this.session
   }
 
+  /**
+   * 沿贝塞尔轨迹移动鼠标到目标点：
+   * ghost-cursor 生成轨迹点 → CDP mouseMoved 逐点派发（间隔 8-15ms 模拟手速抖动）
+   */
   async moveTo(x: number, y: number): Promise<void> {
     const points = ghostPath(this.last, { x, y }, { spreadOverride: 25 }) as Point[]
     for (const p of points) {
@@ -59,6 +85,11 @@ export class Humanizer {
     this.last = { x, y }
   }
 
+  /**
+   * 拟人点击：hover 预热（失败容错，部分元素无 hover 态）→ 轨迹移动 →
+   * 短暂停顿 → 按下/抬起（间隔 40-150ms 模拟真实按压时长）
+   * @throws 元素不存在（boundingBox 为空）
+   */
   async click(selector: string): Promise<void> {
     const box = await this.page.locator(selector).first().boundingBox()
     if (!box) throw new Error(`点击失败: 找不到元素 ${selector}`)
@@ -72,6 +103,10 @@ export class Humanizer {
     await s.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 })
   }
 
+  /**
+   * 拟人键入：先点击聚焦，逐键 40-130ms 延迟；
+   * 3% 概率错键后回删重打（模拟真实手误，降低键入节奏的规律性）
+   */
   async type(selector: string, text: string): Promise<void> {
     await this.click(selector)
     for (const ch of text) {
@@ -84,12 +119,14 @@ export class Humanizer {
     }
   }
 
+  /** 在鼠标当前位置派发滚轮事件（正数向下滚），随后随机停顿 */
   async scroll(deltaY: number): Promise<void> {
     const s = await this.cdp()
     await s.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: this.last.x, y: this.last.y, deltaX: 0, deltaY })
     await Humanizer.sleep(100, 400)
   }
 
+  /** 在当前位置 ±60px 内随机微移（模拟真实用户无目的的小动作） */
   async randomMicroMove(): Promise<void> {
     const dx = (Math.random() - 0.5) * 120
     const dy = (Math.random() - 0.5) * 120

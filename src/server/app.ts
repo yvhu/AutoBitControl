@@ -1,3 +1,9 @@
+/**
+ * Web 服务装配（server 层）：express 应用与路由挂载
+ * 依赖方向：server 层依赖 engine/infrastructure，不反向；被 src/app.ts 调用
+ * 设计思路：所有业务依赖经 ServerDeps 注入，各路由声明最小依赖子集；
+ * /api 前缀统一挂载；静态面板文件由 public 目录直出（单页多视图）
+ */
 import express from 'express'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +22,7 @@ import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
 import { notFoundHandler, errorHandler } from './http/error'
 
+/** createApp 的依赖集（app.ts 装配时全部提供） */
 export interface ServerDeps {
   db: AppDb
   enqueuer: CoalescingEnqueuer
@@ -26,11 +33,16 @@ export interface ServerDeps {
   captchaBalance: () => Promise<{ points: number } | null>
 }
 
+/**
+ * 构建 express 应用（不 listen，测试用 supertest 直接注入）
+ * 挂载顺序：json 解析 → 各业务子路由 → /api 404 兜底 → 统一错误处理器
+ */
 export function createApp(deps: ServerDeps): express.Express {
   const app = express()
   app.use(express.json())
 
   const api = express.Router()
+  // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
   api.use(dashboardRouter({ db: deps.db, tasks: deps.tasks }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
@@ -41,8 +53,10 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(docsRouter())
   app.use('/api', api)
 
+  // 前端静态资源：面板页面 + js/css/vendor
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')
   app.use(express.static(publicDir))
+  // 错误处理链：/api 未匹配路由 → 404；其余异常 → 统一 500/业务状态码
   app.use('/api', notFoundHandler())
   app.use(errorHandler(deps.logger))
   return app

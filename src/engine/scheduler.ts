@@ -1,3 +1,9 @@
+/**
+ * 调度器（engine 层）：把 TaskMeta.schedule 转为 cron 定时触发
+ * 依赖方向：依赖 croner 与基础设施类型，被 app 顶层装配
+ * 设计思路：cron 字符串原样使用；stagger 窗口在启动时随机定一个分钟再生成 cron
+ * （重启会重新随机，多个窗口实例错开可分散站点压力）
+ */
 import { Cron } from 'croner'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
@@ -5,6 +11,10 @@ import type { AppDb, ProfileRow } from '../infrastructure/db'
 import type { TaskMeta } from './task'
 import type { CoalescingEnqueuer } from './queue'
 
+/**
+ * 在 [start, end] 分钟区间内随机取一分钟（含两端），返回"今天"该时刻的 Date
+ * 注意：返回的是今天的时间，跨零点窗口（如 23:00-01:00）不在此支持范围
+ */
 export function pickRandomTimeInWindow(start: string, end: string, now = new Date()): Date {
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
@@ -14,11 +24,17 @@ export function pickRandomTimeInWindow(start: string, end: string, now = new Dat
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(picked / 60), picked % 60, 0, 0)
 }
 
+/** 把错峰窗口转成 croner 五段式 "分 时 * * *"（随机分钟固化在进程生命周期内） */
 export function staggerToCron(start: string, end: string): string {
   const t = pickRandomTimeInWindow(start, end)
   return `${t.getMinutes()} ${t.getHours()} * * *`
 }
 
+/**
+ * 调度器：start() 遍历任务注册表建 cron，stop() 全部停止（进程退出时调用）
+ * 跳过规则（与 docs/API-GUIDE.md「跳过规则」一致）：
+ * deprecated 任务 → 告警跳过；url 为空（文档示例）→ 告警跳过；无 schedule → 仅手动触发
+ */
 export class Scheduler {
   private jobs: Cron[] = []
 
@@ -30,12 +46,14 @@ export class Scheduler {
     private logger: Logger,
   ) {}
 
+  /** 解析任务的调度表达式：cron 字符串直接用；stagger 转成错峰 cron */
   private scheduleOf(meta: TaskMeta): string | null {
     if (!meta.schedule) return null
     if (typeof meta.schedule === 'string') return meta.schedule
     return staggerToCron(meta.schedule.stagger[0], meta.schedule.stagger[1])
   }
 
+  /** 为每个任务建 cron 定时器 */
   start(): void {
     for (const task of this.tasks.values()) {
       if (task.meta.deprecated) {
@@ -54,11 +72,16 @@ export class Scheduler {
     }
   }
 
+  /** 停止全部 cron（SIGINT/SIGTERM 时调用） */
   stop(): void {
     for (const j of this.jobs) j.stop()
     this.jobs = []
   }
 
+  /**
+   * 立即触发某任务：推给所有启用窗口（cron 到点与 API 手动触发共用此入口）
+   * @param taskKey 任务 key（未注册静默忽略）
+   */
   fireNow(taskKey: string): void {
     const task = this.tasks.get(taskKey)
     if (!task) return

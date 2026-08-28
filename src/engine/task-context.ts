@@ -1,3 +1,9 @@
+/**
+ * 任务上下文（engine 层）：任务编写者唯一接触的运行环境接口
+ * 依赖方向：依赖 automation/integrations/infrastructure，被 tasks 层依赖
+ * 设计思路：把页面/拟人/钱包/验证码/截图封装成语义化方法，
+ * 任务代码不直接碰 patchright 细节（选择器查找等见 docs/API-GUIDE.md）
+ */
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Page } from 'patchright'
@@ -10,6 +16,7 @@ import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import { waitForPopup } from '../automation/wallet/popup'
 import type { TaskRef } from './task'
 
+/** TaskContext 依赖集（window-runner 创建并注入） */
 export interface TaskContextDeps {
   page: Page
   task: TaskRef
@@ -26,18 +33,25 @@ export interface TaskContextDeps {
 export class TaskContext {
   constructor(private deps: TaskContextDeps) {}
 
+  /** 当前页面（任务侧只读使用） */
   get page(): Page {
     return this.deps.page
   }
 
+  /** 拟人操作器（移动/点击/键入统一走它） */
   get human(): Humanizer {
     return this.deps.human
   }
 
+  /** 当前窗口记录（钱包密码/熔断计数等） */
   get profile(): ProfileRow {
     return this.deps.profile
   }
 
+  /**
+   * 打开任务页面（默认 meta.url，可覆盖）
+   * @throws 无 url 配置；3 次重试（2-5s 随机退避）后仍失败抛出最后一次错误
+   */
   async goto(url?: string): Promise<void> {
     const target = url ?? this.deps.task.meta.url
     if (!target) throw new Error('任务未配置 url')
@@ -54,6 +68,12 @@ export class TaskContext {
     }
   }
 
+  /**
+   * 拟人点击签到按钮，可选断言后续元素出现
+   * @param opts.assert 成功后应出现的标志元素（徽章/成功文案），宁严勿松
+   * @param opts.assertTimeoutMs 断言超时（默认 10s）
+   * @throws 断言超时抛错（任务失败进入重试）
+   */
   async clickCheckin(selector: string, opts: { assert?: string; assertTimeoutMs?: number } = {}): Promise<void> {
     await this.human.click(selector)
     if (opts.assert) {
@@ -61,6 +81,7 @@ export class TaskContext {
     }
   }
 
+  /** 等待元素可见；超时抛错（失败原因带上选择器便于排障） */
   async assertVisible(selector: string, timeoutMs = 10000): Promise<void> {
     try {
       await this.page.locator(selector).first().waitFor({ state: 'visible', timeout: timeoutMs })
@@ -69,10 +90,15 @@ export class TaskContext {
     }
   }
 
+  /** 拟人键入文本（邮箱/数量等表单字段） */
   async typeInto(selector: string, text: string): Promise<void> {
     await this.human.type(selector, text)
   }
 
+  /**
+   * 在当前页面检测并处理验证码（调用处即检测点）
+   * @returns 'none' 未注入服务或任务关闭自动处理；'solved' 成功；失败抛 CaptchaFailure
+   */
   async solveCaptcha(): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
     const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
@@ -86,6 +112,7 @@ export class TaskContext {
     })
   }
 
+  /** 截图存到产物目录，返回文件绝对路径（面板按路径取图） */
   async screenshot(name: string): Promise<string> {
     mkdirSync(this.deps.artifactsDir, { recursive: true })
     const file = join(this.deps.artifactsDir, `${name}.png`)
@@ -93,6 +120,10 @@ export class TaskContext {
     return file
   }
 
+  /**
+   * 钱包登录全流程：等钱包弹窗 → 有密码则解锁 → 点连接确认
+   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 15s 内未出现
+   */
   async loginByWallet(): Promise<void> {
     const walletKey = this.deps.task.meta.wallet
     if (!walletKey) throw new Error('任务未配置钱包')
@@ -106,11 +137,13 @@ export class TaskContext {
     await adapter.ensureConnected(popup)
   }
 
+  /** 页面上是否出现某文案（模糊匹配，任务里做状态判断） */
   async textPresent(text: string): Promise<boolean> {
     const count = await this.page.getByText(text, { exact: false }).count()
     return count > 0
   }
 
+  /** 当前 URL 是否包含某片段（判断登录跳转结果用） */
   async urlIncludes(part: string): Promise<boolean> {
     return this.page.url().includes(part)
   }

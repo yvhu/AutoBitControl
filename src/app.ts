@@ -1,3 +1,9 @@
+/**
+ * 应用装配（顶层）：startApp 按依赖顺序组装全部模块并启动
+ * 依赖方向：顶层依赖所有层，仅被 index.ts 调用（唯一的组装点，compose root）
+ * 装配顺序即依赖顺序：配置/日志 → 数据库 → 比特浏览器同步 → 任务/钱包/打码 →
+ * 执行器/队列 → Web 服务 → 调度器
+ */
 import { loadConfig } from './infrastructure/config'
 import { createLogger } from './infrastructure/logger'
 import { AppDb } from './infrastructure/db'
@@ -16,6 +22,7 @@ export async function startApp(): Promise<void> {
   const cfg = loadConfig()
   const logger = createLogger(cfg)
 
+  // 快速失败策略：未捕获异常直接退出（挂着的半死进程比重启更危险）
   process.on('uncaughtException', (err) => {
     logger.error({ err }, '未捕获异常，进程退出')
     process.exit(1)
@@ -28,6 +35,7 @@ export async function startApp(): Promise<void> {
   const db = AppDb.open(cfg.storage.dbPath)
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
+  // 启动时同步窗口列表到 profiles 表（未就绪仅告警，不阻塞启动）
   try {
     const healthy = await bitbrowser.health()
     if (!healthy) {
@@ -50,6 +58,7 @@ export async function startApp(): Promise<void> {
     { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
     cfg.captcha.taskTypes,
   )
+  // clientKey 未配置时 captcha 为 null：任务侧 solveCaptcha 直接返回 none，无 Key 也能跑
   const captcha = cfg.captcha.clientKey
     ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask })
     : null
@@ -75,6 +84,7 @@ export async function startApp(): Promise<void> {
     cfg,
     logger,
     bitbrowser,
+    // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板）
     captchaBalance: async () => {
       if (!yescaptcha) return null
       try {
@@ -91,6 +101,7 @@ export async function startApp(): Promise<void> {
   const scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
   scheduler.start()
 
+  // 优雅退出：先停调度器再关数据库（顺序反了会有写入风险）
   const shutdown = () => {
     logger.info('正在关闭...')
     scheduler.stop()

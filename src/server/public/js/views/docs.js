@@ -1,7 +1,9 @@
+// 文档视图：手册（markdown 渲染）与示例源码（代码视图）的双栏浏览
 import { get } from '../api.js'
 
 let markedLoaded = null
 
+// 懒加载 marked 库（一次加载缓存，加载失败静默——回退纯文本展示）
 function ensureMarked() {
   if (markedLoaded) return markedLoaded
   markedLoaded = new Promise(resolve => {
@@ -15,6 +17,7 @@ function ensureMarked() {
   return markedLoaded
 }
 
+// markdown 渲染（marked 未就绪时回退为转义后的 pre 文本）
 function renderMarkdown(content) {
   if (window.marked) {
     return window.marked.parse(content)
@@ -22,6 +25,7 @@ function renderMarkdown(content) {
   return '<pre>' + content.replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])) + '</pre>'
 }
 
+// 源码视图：逐行带行号渲染（HTML 转义后展示）
 function renderSource(content) {
   const lines = content.split('\n')
   return '<div class="code-view">' + lines.map((l, i) =>
@@ -29,6 +33,7 @@ function renderSource(content) {
   ).join('') + '</div>'
 }
 
+// 渲染文档页：左侧目录 + 右侧内容（首次进入默认打开手册）
 export async function render() {
   const side = document.querySelector('#doc-side')
   const content = document.querySelector('#doc-content')

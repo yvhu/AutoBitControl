@@ -1,3 +1,9 @@
+/**
+ * 任务路由（server 层）：任务列表与手动触发
+ * 依赖方向：依赖 engine/infrastructure；被 app 装配
+ * 设计思路：GET 返回 meta 全字段（缺省字段补 null 保证前端取值的稳定性）；
+ * POST trigger 支持单窗口（bitbrowserId）或全部启用窗口两种范围
+ */
 import { Router } from 'express'
 import { ok, fail, asyncHandler } from '../http/response'
 import { HttpError } from '../http/error'
@@ -31,6 +37,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     const key = String(req.params.key)
     if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
     const { bitbrowserId } = req.body as { bitbrowserId?: string } ?? {}
+    // 指定窗口：单窗口触发（面板矩阵行级重跑）
     if (bitbrowserId) {
       const profile = deps.db.listProfiles(false).find((p: ProfileRow) => p.bitbrowserId === bitbrowserId)
       if (!profile) throw new HttpError(404, `窗口不存在: ${bitbrowserId}`)
@@ -38,6 +45,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
       ok(res, { scope: 'single' })
       return
     }
+    // 未指定：全部启用窗口触发
     for (const p of deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key)
     ok(res, { scope: 'all' })
   }))

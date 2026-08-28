@@ -1,8 +1,11 @@
+// 任务视图：任务卡片列表渲染与触发
 import { get, post, esc } from '../api.js'
 
+// 钱包图标与分类徽章映射
 const WALLET_ICON = { metamask: '<div class="wallet-ico mm">🦊</div>', petra: '<div class="wallet-ico pt">🐍</div>' }
 const CATEGORY_BADGE = { checkin: ['签到', '#34D399'], faucet: ['领水', '#38BDF8'], mint: ['铸币', '#FBBF24'], other: ['其他', '#94A3B8'] }
 
+// 渲染任务卡片：名称/key/调度/钱包/重试/验证码/备注/来源页/触发按钮
 export async function render() {
   const tasks = await get('/api/tasks')
   document.querySelector('#task-cards').innerHTML = tasks.map(t => {
@@ -25,4 +28,5 @@ export async function render() {
   }).join('')
 }
 
+// 触发单个任务（全部启用窗口）
 export async function triggerTask(key) { await post(`/api/tasks/${encodeURIComponent(key)}/trigger`, {}) }

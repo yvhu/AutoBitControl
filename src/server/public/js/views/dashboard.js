@@ -1,14 +1,19 @@
+// 看板视图：统计卡片、状态矩阵与筛选（导出 state 供 app.js 的筛选控件读写）
 import { get, post, esc } from '../api.js'
 
+// 筛选状态（app.js 的按钮/下拉/输入框直接改这里再重渲染）
 export const state = { filter: 'all', taskFilter: '', profileSearch: '' }
 
+// 状态徽章样式映射：状态 → [样式类, 文案]
 const PILLS = {
   success: ['ok', '成功'], failed: ['fail', '失败'], captcha_failed: ['cap', '验证码失败'],
   running: ['run', '执行中'], retry_wait: ['run', '重试中'], skipped: ['skip', '跳过'], pending: ['skip', '待执行'],
 }
 
+// 截图新标签页打开（路径经 encodeURIComponent 防注入）
 function openImage(path) { window.open('/api/screenshots?path=' + encodeURIComponent(path), '_blank') }
 
+// 渲染看板：拉仪表盘数据 + 任务列表，更新统计卡片与矩阵
 export async function render({ date, setTasks }) {
   const data = await get('/api/dashboard?date=' + date)
   if (setTasks) setTasks(await get('/api/tasks'))
@@ -37,6 +42,7 @@ export async function render({ date, setTasks }) {
   renderMatrix(data)
 }
 
+// 状态矩阵渲染：按筛选条件过滤运行记录，逐行拼 HTML（所有动态值经 esc 转义）
 function renderMatrix(data) {
   const rows = data.runs.filter(r => {
     if (state.filter === 'failed' && !['failed','captcha_failed'].includes(r.status)) return false
@@ -63,12 +69,14 @@ function renderMatrix(data) {
   }).join('')
 }
 
+// 触发当前筛选任务（全部启用窗口）
 export async function triggerAll() {
   const taskKey = document.querySelector('#filter-task').value
   if (!taskKey) { alert('请先选择一个任务'); return }
   await post(`/api/tasks/${encodeURIComponent(taskKey)}/trigger`, {})
 }
 
+// 重跑当日全部失败（failed/captcha_failed）
 export async function rerunFailed(date) {
   await post('/api/runs/rerun-failed', { date })
 }

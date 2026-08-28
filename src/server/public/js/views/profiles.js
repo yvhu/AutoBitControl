@@ -1,5 +1,7 @@
+// 窗口视图：窗口列表渲染 + 详情抽屉（密码设置/熔断重置）+ 行级操作
 import { get, post, patch, esc } from '../api.js'
 
+// 渲染窗口表格（搜索框过滤名字/窗口 ID）
 export async function render() {
   const profiles = await get('/api/profiles')
   const data = await get('/api/dashboard')
@@ -20,6 +22,7 @@ export async function render() {
   }).join('')
 }
 
+// 打开详情抽屉：今日运行时间线 + 钱包密码 + 熔断状态
 export async function openDrawer(id) {
   const profiles = await get('/api/profiles')
   const data = await get('/api/dashboard')
@@ -43,9 +46,13 @@ export async function openDrawer(id) {
     </div>`
 }
 
+// 启用/停用开关（行内 toggle 控件调用）
 export async function toggle(id, enabled) { await patch(`/api/profiles/${id}`, { enabled: Boolean(enabled) }); await render() }
+// 整窗口立即跑全部任务
 export async function runProfile(id) { await post(`/api/profiles/${id}/run`, {}); await render() }
+// 重置熔断计数
 export async function resetBreaker(id) { await post(`/api/profiles/${id}/breaker/reset`, {}); await render() }
+// 设置钱包解锁密码（prompt 交互；留空清除）
 export async function setPassword(id) {
   const password = prompt('输入该窗口的钱包解锁密码（留空清除）')
   if (password === null) return
