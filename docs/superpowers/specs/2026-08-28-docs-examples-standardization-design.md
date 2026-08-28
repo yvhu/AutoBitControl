@@ -144,13 +144,29 @@ export interface TaskMeta {
 8. 常用模式：签到成功/频率限制/维护中的状态判断写法、faker 填表单、多步骤流程、条件分支重试
 9. 排错：选择器失效怎么办（sourceUrl 回溯）、钱包弹窗不出现、打码失败/余额、熔断与重跑
 
-### 3.2 示例任务（每个都是逐行中文注释的文档）
+### 3.3 手册与示例上线到 Web 面板
+
+单一事实来源仍是 `docs/API-GUIDE.md` 与 `src/tasks/*.ts` 源码文件，面板只是渲染它们（不做内容复制）：
+
+- **面板新增第 5 个导航项「文档」**，两个 tab：
+  - **使用手册**：渲染 API-GUIDE.md 全文（Markdown 渲染，代码块带等宽样式；渲染器用 vendored 的 `marked`，本地文件不依赖 CDN/网络）
+  - **任务示例**：左侧列出示例任务源码文件，右侧展示源码全文（行号 + 保留中文注释）
+- **新增路由**（server/routes/docs.ts）：
+  | 方法 | 路径 | 说明 |
+  |---|---|---|
+  | GET | /api/docs/guide | 返回 API-GUIDE.md 的 markdown 原文 |
+  | GET | /api/docs/examples | 返回示例任务文件清单（文件名+显示名） |
+  | GET | /api/docs/examples/:name | 返回指定示例源文件内容（白名单校验，仅允许 src/tasks 下的 .ts 文件，防目录穿越） |
+- **前端**：新增 `views/docs.js`；`marked` 以 `public/js/vendor/marked.min.js` 形式入库（npm i marked 后拷贝产物，无构建步骤）
+- 导航项与页面视觉沿用现有深色主题；新增路由与白名单校验的测试
+
+### 3.4 示例任务（每个都是逐行中文注释的文档）
 
 - `tasks/example-checkin.ts` 重写：标准签到闭环参考实现，注释写明每一步为什么这么写、选择器怎么找、断言怎么配
 - `tasks/faucet-example.ts` 新增：领水流程——goto → 状态判断 → faker 生成邮箱 → 拟人填写 → 验证码处理 → 点击领取 → 断言余额/成功文案
 - `tasks/mint-example.ts` 新增：铸币流程——钱包登录（弹窗+密码）→ faker 生成代币名称/符号/描述 → 多步骤表单 → 钱包确认 → 断言链上结果提示
 
-三个示例在 `index.ts` 注册（deprecated 示例不注册或标注），供面板查看与手动触发验证。
+三个示例在 `index.ts` 注册（deprecated 示例不注册或标注），供面板查看与手动触发验证。手册与示例均上线到面板「文档」页（见 3.3），查文档不离开面板。
 
 ## 4. A 全代码中文注释（最后实施，覆盖终态）
 
@@ -167,7 +183,7 @@ export interface TaskMeta {
 |---|---|---|
 | 1 | D 分层重构（移动+import 更新+http.ts+envelope+前端拆分） | 原测试改写路径后全绿 + 新路由/封装测试 + tsc |
 | 2 | B TaskMeta 扩展 | 新增字段测试 + 面板手测 |
-| 3 | C 手册+示例 | 示例任务集成测试（fixture 页模拟）+ 手册链接自检 |
+| 3 | C 手册+示例+面板文档页（docs 路由 + marked 渲染 + 白名单） | docs 路由测试（含穿越防护）+ 示例任务集成测试 + 面板手测 |
 | 4 | A 全代码注释 | tsc + 全量测试不回归 |
 
 每步一个提交（可含多个 commit），最终跑一次全量 `npm test` + `npm run typecheck`。
