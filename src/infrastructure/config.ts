@@ -31,6 +31,8 @@ export interface ExecutionConfig {
   circuitBreakerThreshold: number
   probeUrl: string
   timezone: string
+  /** 拟人化交互延迟区间（点击前犹豫的随机停顿范围） */
+  humanize: { minDelayMs: number; maxDelayMs: number }
 }
 
 /** 验证码打码服务配置 */
@@ -99,6 +101,8 @@ const defaults: AppConfig = {
     probeUrl: 'https://api.ipify.org',
     // croner 解析调度时间的时区
     timezone: 'Asia/Shanghai',
+    // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
+    humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },
   captcha: {
     apiBase: 'https://api.yescaptcha.com',

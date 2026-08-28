@@ -102,6 +102,15 @@ describe('YesCaptchaClient', () => {
     await expect(client.solveCaptcha('turnstile', 'sk', 'https://x.io')).rejects.toThrow(/ERROR_KEY_DOES_NOT_EXIST/)
     expect(polls).toBe(1)
   })
+
+  it('平台省略 errorId 字段时按成功处理（不误判失败）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
+      return new Response(JSON.stringify({ status: 'ready', solution: { gRecaptchaResponse: 'resp-ok' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, { recaptcha_v2: 'NoCaptchaTaskProxyless' })
+    await expect(client.solveCaptcha('recaptcha_v2', 'sk', 'https://x.io')).resolves.toBe('resp-ok')
+  })
 })
 
 /** 最小 fake page：locator 按选择器分派 count/getAttribute，evaluate 仅记录调用不执行 DOM */
@@ -136,6 +145,13 @@ describe('detectCaptcha', () => {
       'script[src*="recaptcha/api.js"]': { count: 1, attrs: { src: 'https://www.google.com/recaptcha/api.js?render=6LcV3abcXYZ' } },
     })
     await expect(detectCaptcha(page as never)).resolves.toEqual({ kind: 'recaptcha_v3', sitekey: '6LcV3abcXYZ' })
+  })
+
+  it('render=explicit 是 v2 显式渲染模式，不误判为 v3（落到底返回 null）', async () => {
+    const { page } = makeFakePage({
+      'script[src*="recaptcha/api.js"]': { count: 1, attrs: { src: 'https://www.google.com/recaptcha/api.js?render=explicit' } },
+    })
+    await expect(detectCaptcha(page as never, 50)).resolves.toBeNull()
   })
 
   it('超时窗口内未检测到返回 null', async () => {

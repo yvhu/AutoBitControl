@@ -168,6 +168,20 @@ describe('WindowRunner', () => {
     expect(runningAttempts).toEqual([1, 2, 3])
   })
 
+  it('历史 attempts 已耗尽重试预算时直接 failed 且不调度重试', async () => {
+    const db = makeDb({
+      getRun: vi.fn().mockReturnValue({ status: 'retry_wait', attempts: 3 } as Partial<RunRow>),
+    })
+    const task = new FailTask()
+    const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
+    await runner.runWindowTasks(makeProfile(), ['fail-task'])
+    // retryMax=2 时预算为 3 次尝试，attempts=3 已耗尽：不跑任务、不进循环
+    expect(statuses(db)).toEqual(['failed'])
+    expect(task.run).not.toHaveBeenCalled()
+    expect(scheduleRetry).not.toHaveBeenCalled()
+    expect(db.incrCircuitBreaker).not.toHaveBeenCalled()
+  })
+
   it('开窗失败重试后跳过窗口', async () => {
     const db = makeDb()
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }

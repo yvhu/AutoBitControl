@@ -398,6 +398,8 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 
 `Humanizer`（`src/automation/humanize.ts`）负责所有拟人化输入。构造：`new Humanizer(page, { minDelayMs = 800, maxDelayMs = 3000 })`（延迟选项为通用默认值）。
 
+点击前犹豫的停顿区间由全局配置 `execution.humanize`（`config/config.json`）注入（`src/engine/window-runner.ts` 构造时传入 `cfg.execution.humanize`），默认 `{ "minDelayMs": 800, "maxDelayMs": 3000 }`，可按需调整快慢；未配置时回落构造函数默认值（同样为 800/3000ms）。
+
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
 | `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |

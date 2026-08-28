@@ -61,11 +61,14 @@ export async function detectCaptcha(page: Page, timeoutMs = 5000): Promise<Captc
       }
     }
     // recaptcha v3 无可见 iframe：靠 api.js 脚本的 render 参数识别 sitekey
+    // render=explicit 是 v2 显式渲染模式（非 v3），不视为 v3 检测结果
     const script = page.locator('script[src*="recaptcha/api.js"]').first()
     if (await script.count() > 0) {
       const src = (await script.getAttribute('src')) ?? ''
-      const render = src.match(/[?&]render=([^&]+)/)
-      if (render) return { kind: 'recaptcha_v3', sitekey: render[1] }
+      const sitekey = src.match(/[?&]render=([^&]+)/)?.[1] ?? null
+      if (sitekey && sitekey !== 'explicit') {
+        return { kind: 'recaptcha_v3', sitekey }
+      }
     }
     await new Promise(r => setTimeout(r, 300))
   }
@@ -111,8 +114,9 @@ export class YesCaptchaClient {
    */
   private async getResult(taskId: string, kind: CaptchaKind): Promise<string | null> {
     const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
-    // 轮询失败快速失败：平台明确报错（key 无效/任务不存在等）再等也等不出结果
-    if (resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询结果失败: ${resp.errorCode ?? resp.errorId}`)
+    // 轮询失败快速失败：平台明确报错（key 无效/任务不存在等）再等也等不出结果；
+    // errorId 判空避免平台省略该字段时被误判为失败
+    if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询结果失败: ${resp.errorCode ?? resp.errorId}`)
     if (resp.status !== 'ready') return null
     const s = resp.solution ?? {}
     if (kind === 'turnstile') return s.token ?? null

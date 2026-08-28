@@ -193,6 +193,11 @@ export class WindowRunner {
     const existing = db.getRun(profile.id, taskKey, date)
     const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
     const startAttempt = existing && !terminal ? (existing.attempts > 0 ? existing.attempts + 1 : 1) : 1
+    // 超界钳制：历史 attempts 已耗尽重试预算（startAttempt > retryMax + 1）直接落 failed，不进执行循环
+    if (startAttempt > retryMax + 1) {
+      db.upsertRun(profile.id, taskKey, date, 'failed', { error: '重试次数已耗尽', finishedAt: new Date().toISOString() })
+      return
+    }
     // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
     try {
@@ -212,7 +217,7 @@ export class WindowRunner {
         const ctx = new TaskContext({
           page,
           task,
-          human: new Humanizer(page),
+          human: new Humanizer(page, this.deps.cfg.execution.humanize),
           profile,
           cfg: this.deps.cfg,
           logger,
