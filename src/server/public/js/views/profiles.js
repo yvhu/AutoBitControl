@@ -24,14 +24,14 @@ export async function render() {
   }).join('')
 }
 
-// 打开详情抽屉：今日运行时间线 + 熔断状态
+// 打开详情弹窗：今日运行时间线 + 熔断状态
 export async function openDrawer(id) {
   const profiles = await get('/api/profiles')
   const data = await get('/api/dashboard')
   const p = profiles.find(x => x.id === id)
   const mine = data.runs.filter(r => r.profileId === id)
-  document.querySelector('#profile-drawer').style.display = ''
-  document.querySelector('#drawer-title').textContent = `详情抽屉 · ${p.name}`
+  document.querySelector('#profile-drawer').style.display = 'flex'
+  document.querySelector('#drawer-title').textContent = `详情 · ${p.name}`
   const PILLS = { success: ['ok', '成功'], failed: ['fail', '失败'], captcha_failed: ['cap', '验证码失败'], running: ['run', '执行中'], retry_wait: ['run', '重试中'], skipped: ['skip', '跳过'], pending: ['skip', '待执行'] }
   document.querySelector('#drawer-body').innerHTML = `
     <div style="border-left:2px solid #1E293B;padding-left:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
@@ -49,6 +49,8 @@ export async function openDrawer(id) {
 
 // 启用/停用开关（行内 toggle 控件调用）
 export async function toggle(id, enabled) { await patch(`/api/profiles/${id}`, { enabled: Boolean(enabled) }); await render() }
+// 关闭详情弹窗
+export function closeDrawer() { document.querySelector('#profile-drawer').style.display = 'none' }
 // 整窗口立即跑全部任务
 export async function runProfile(id) { await post(`/api/profiles/${id}/run`, {}); await render() }
 // 重置熔断计数

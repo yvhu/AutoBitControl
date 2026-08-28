@@ -159,7 +159,7 @@ export async function startApp(): Promise<void> {
   })
 
   const scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
-  scheduler.start()
+  await scheduler.start()
 
   // 优雅退出：先停调度器 → server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
   let finishing = false

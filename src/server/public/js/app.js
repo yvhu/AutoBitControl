@@ -47,8 +47,10 @@ window.abcRerun = async (profileId, taskKey) => {
 window.abcToggle = (id, enabled) => profiles.toggle(id, enabled)
 window.abcRunProfile = (id) => profiles.runProfile(id)
 window.abcDrawer = (id) => profiles.openDrawer(id)
+window.abcCloseDrawer = () => profiles.closeDrawer()
 window.abcResetBreaker = (id) => profiles.resetBreaker(id)
 window.abcTriggerTask = (key) => tasks.triggerTask(key).then(() => navigate('tasks'))
+window.abcToggleTask = (key, enabled) => tasks.toggleTask(key, enabled)
 window.abcRerunFailed = () => dashboard.rerunFailed(state.date).then(() => navigate('dashboard'))
 window.abcTriggerAll = () => dashboard.triggerAll().then(() => navigate('dashboard'))
 window.abcTestBitbrowser = () => settings.testBitbrowser()
@@ -92,6 +94,8 @@ document.querySelector('#seg-filter').addEventListener('click', e => {
 document.querySelector('#filter-task').addEventListener('change', e => { dashboard.state.taskFilter = e.target.value; navigate('dashboard') })
 document.querySelector('#filter-profile').addEventListener('input', e => { dashboard.state.profileSearch = e.target.value; navigate('dashboard') })
 document.querySelector('#profile-search').addEventListener('input', () => profiles.render())
+// 详情弹窗：点击遮罩空白处关闭（点击内容区不关闭）
+document.querySelector('#profile-drawer').addEventListener('click', e => { if (e.target === e.currentTarget) profiles.closeDrawer() })
 
 navigate('dashboard')
 // 侧栏版本/时区来自后端公开设置（启动时填一次，失败保持占位符）

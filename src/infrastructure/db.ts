@@ -87,6 +87,10 @@ const SCHEMA = [
     ok INTEGER NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS task_states (
+    task_key TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1
+  )`,
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles`
@@ -116,8 +120,6 @@ export class AppDb {
   }
 
   async migrate(): Promise<void> {
-    // 清理历史遗留表（task_states 已废弃：任务开关改为纯代码 meta.enabled）
-    await this.client.execute('DROP TABLE IF EXISTS task_states')
     for (const stmt of SCHEMA) await this.client.execute(stmt)
   }
 
@@ -156,6 +158,18 @@ export class AppDb {
   /** 启用/停用窗口（面板开关） */
   async setProfileEnabled(id: number, enabled: boolean): Promise<void> {
     await this.exec('UPDATE profiles SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id])
+  }
+
+  /** 读取任务开关：无覆盖记录时返回代码默认值（meta.enabled ?? true） */
+  async getTaskEnabled(taskKey: string, fallback: boolean): Promise<boolean> {
+    const rows = await this.exec('SELECT enabled FROM task_states WHERE task_key = ?', [taskKey])
+    if (rows.length === 0) return fallback
+    return rows[0].enabled === 1
+  }
+
+  /** 写入任务开关（面板运行时覆盖，云端持久，跨机器生效） */
+  async setTaskEnabled(taskKey: string, enabled: boolean): Promise<void> {
+    await this.exec('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled', [taskKey, enabled ? 1 : 0])
   }
 
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */

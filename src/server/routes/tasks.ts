@@ -13,10 +13,11 @@ import type { SiteTask } from '../../tasks/base'
 
 export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
-  router.get('/tasks', (req, res) => {
-    ok(res, [...deps.tasks.values()].map(t => {
+  router.get('/tasks', asyncHandler(async (req, res) => {
+    const list = []
+    for (const t of deps.tasks.values()) {
       const m = t.meta
-      return {
+      list.push({
         key: m.key,
         name: m.name,
         url: m.url,
@@ -25,19 +26,28 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         category: m.category ?? null,
         lastUpdated: m.lastUpdated ?? null,
         deprecated: m.deprecated ?? false,
-        enabled: m.enabled ?? true,
+        enabled: await deps.db.getTaskEnabled(m.key, m.enabled ?? true),
         wallet: m.wallet ?? null,
         schedule: m.schedule ?? null,
         timeoutSec: m.timeoutSec ?? null,
         retry: m.retry ?? null,
         captcha: m.captcha ?? null,
-      }
-    }))
-  })
+      })
+    }
+    ok(res, list)
+  }))
+  router.patch('/tasks/:key', asyncHandler(async (req, res) => {
+    const key = String(req.params.key)
+    const body = (req.body ?? {}) as { enabled?: unknown }
+    if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled 必须为布尔值')
+    if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
+    await deps.db.setTaskEnabled(key, body.enabled)
+    ok(res, { key, enabled: body.enabled })
+  }))
   router.post('/tasks/:key/trigger', asyncHandler(async (req, res) => {
     const key = String(req.params.key)
     if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
-    if (deps.tasks.get(key)!.meta.enabled === false) throw new HttpError(409, '任务已停用')
+    if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, '任务已停用')
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
     const body = (req.body ?? {}) as { bitbrowserId?: string }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）

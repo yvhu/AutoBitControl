@@ -83,7 +83,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
-| `enabled` | `boolean?` | `true` | 任务总开关（纯代码）：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。改代码后需重启服务生效；面板任务页只读展示「已停用」徽章，无运行时切换入口 |
+| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效、跨机器生效、重启保留） |
 | `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见第 7 章） |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见第 4 章） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
@@ -443,11 +443,15 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 `Scheduler.start()`（`src/engine/scheduler.ts`）按顺序跳过：
 
 1. `deprecated: true` → 告警 `任务已标记失效，跳过调度`；
-2. 停用（`enabled: false`）→ 告警 `任务已停用，跳过调度`；
+2. 停用 → 告警 `任务已停用，跳过调度`（开关读取云端 `task_states` 覆盖，代码 `enabled: false` 为默认值）；
 3. `url` 为空 → 告警 `任务未配置 url，跳过调度`；
 4. `schedule` 缺失 → 不建 cron（仅能手动触发）。
 
 停用任务不注册 cron；窗口「立即跑」（`POST /api/profiles/:id/run`）也会排除停用任务，返回的 `count` 为实际入队数量。
+
+### 面板运行时覆盖
+
+面板任务页每张卡片的开关为**运行时覆盖**：点开关调用 `PATCH /api/tasks/:key`，写入云端 `task_states` 表（`key → enabled`），**立即生效**（无需重启服务）：调度器启动与到点触发、手动触发接口、窗口「立即跑」都会实时读取；覆盖值云端持久，重启保留、多台机器部署同库时跨机器生效。无覆盖记录时回落到代码 `meta.enabled ?? true`。
 
 ### 手动触发
 

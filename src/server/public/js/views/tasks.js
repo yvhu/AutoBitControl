@@ -1,5 +1,5 @@
 // 任务视图：任务卡片列表渲染与触发
-import { get, post, esc } from '../api.js'
+import { get, post, patch, esc } from '../api.js'
 
 // 钱包图标与分类徽章映射
 const WALLET_ICON = { metamask: '<div class="wallet-ico mm">🦊</div>', petra: '<div class="wallet-ico pt">🐍</div>' }
@@ -24,10 +24,12 @@ export async function render() {
         ${t.note ? `<div class="meta" style="color:#94A3B8">📝 ${esc(t.note)}</div>` : ''}
         ${t.sourceUrl ? `<div class="meta"><span class="link" onclick="window.open('${esc(t.sourceUrl)}')">🔗 来源页</span></div>` : ''}
       </div>
-      ${t.enabled ? `<button class="btn primary sm" onclick="window.abcTriggerTask('${esc(t.key)}')">立即触发</button>` : ''}
+      ${t.enabled ? `<span class="toggle" style="margin-right:10px" onclick="window.abcToggleTask('${esc(t.key)}', 0)"></span><button class="btn primary sm" onclick="window.abcTriggerTask('${esc(t.key)}')">立即触发</button>` : `<span class="toggle off" style="margin-right:10px" onclick="window.abcToggleTask('${esc(t.key)}', 1)"></span>`}
     </div>`
   }).join('')
 }
 
 // 触发单个任务（全部启用窗口）
 export async function triggerTask(key) { await post(`/api/tasks/${encodeURIComponent(key)}/trigger`, {}) }
+// 面板任务开关：云端覆盖（立即生效、跨机器生效、重启保留）
+export async function toggleTask(key, enabled) { await patch(`/api/tasks/${encodeURIComponent(key)}`, { enabled: Boolean(enabled) }); await render() }

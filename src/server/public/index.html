@@ -80,10 +80,6 @@
           <thead><tr><th>窗口</th><th>今日结果</th><th>熔断计数</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="profile-table"></tbody>
         </table>
-        <div class="drawer" id="profile-drawer" style="display:none">
-          <div class="card-title" id="drawer-title">详情</div>
-          <div id="drawer-body"></div>
-        </div>
       </div>
     </div>
 
@@ -121,6 +117,15 @@
         <div style="color:#64748B;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）</div>
       </div>
     </div>
+  </div>
+</div>
+<div class="modal-overlay" id="profile-drawer" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="card-title" id="drawer-title">详情</div>
+      <button class="btn ghost sm" onclick="window.abcCloseDrawer()">✕ 关闭</button>
+    </div>
+    <div id="drawer-body"></div>
   </div>
 </div>
 <script type="module" src="/js/app.js"></script>

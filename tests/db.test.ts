@@ -43,6 +43,22 @@ describe('AppDb', () => {
     expect(enabled.map(p => p.bitbrowserId)).toEqual(['bb-2'])
   })
 
+  it('getTaskEnabled 无覆盖记录时返回 fallback', async () => {
+    expect(await db.getTaskEnabled('task-a', true)).toBe(true)
+    expect(await db.getTaskEnabled('task-a', false)).toBe(false)
+  })
+
+  it('setTaskEnabled 写入 false 后读回 false', async () => {
+    await db.setTaskEnabled('task-a', false)
+    expect(await db.getTaskEnabled('task-a', true)).toBe(false)
+  })
+
+  it('setTaskEnabled 改回 true 覆盖之前的值', async () => {
+    await db.setTaskEnabled('task-a', false)
+    await db.setTaskEnabled('task-a', true)
+    expect(await db.getTaskEnabled('task-a', false)).toBe(true)
+  })
+
   it('熔断计数递增与重置', async () => {
     const p = await db.upsertProfile('bb-1', 'A')
     expect(await db.incrCircuitBreaker(p.id)).toBe(1)

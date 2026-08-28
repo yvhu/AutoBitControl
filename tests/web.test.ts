@@ -15,6 +15,8 @@ interface MockDeps {
     captchaStats: Mock
     setProfileEnabled: Mock
     resetCircuitBreaker: Mock
+    getTaskEnabled: Mock
+    setTaskEnabled: Mock
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string; enabled?: boolean } }>
@@ -40,6 +42,8 @@ function makeDeps(): MockDeps {
       captchaStats: vi.fn().mockResolvedValue({ count: 5, totalCost: 230 }),
       setProfileEnabled: vi.fn().mockResolvedValue(undefined),
       resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+      getTaskEnabled: vi.fn().mockResolvedValue(true),
+      setTaskEnabled: vi.fn().mockResolvedValue(undefined),
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
@@ -87,22 +91,38 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
-  it('PATCH /api/tasks/:key 已移除（任务开关改为纯代码）', async () => {
-    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/t1').send({ enabled: false })
-    expect(res.status).toBe(404)
+  it('PATCH /api/tasks/:key 写入云端任务开关并返回 key/enabled', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: false })
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ key: 't1', enabled: false })
+    expect(deps.db.setTaskEnabled).toHaveBeenCalledWith('t1', false)
   })
 
-  it('停用任务触发返回 409', async () => {
+  it('PATCH /api/tasks/:key 非布尔 enabled 返回 400', async () => {
+    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/t1').send({ enabled: 'no' })
+    expect(res.status).toBe(400)
+    expect(res.body.code).not.toBe(0)
+  })
+
+  it('PATCH /api/tasks/:key 未知任务返回 404', async () => {
+    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/nope').send({ enabled: true })
+    expect(res.status).toBe(404)
+    expect(res.body.code).not.toBe(0)
+  })
+
+  it('停用任务触发返回 409（云端开关覆盖为 false）', async () => {
     const deps = makeDeps()
-    deps.tasks.set('t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *', enabled: false } })
+    deps.db.getTaskEnabled.mockResolvedValue(false)
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
     expect(res.status).toBe(409)
     expect(res.body.message).toContain('停用')
   })
 
-  it('窗口立即跑排除停用任务', async () => {
+  it('窗口立即跑排除停用任务（云端开关覆盖为 false）', async () => {
     const deps = makeDeps()
-    deps.tasks.set('t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *', enabled: false } })
+    deps.db.getTaskEnabled.mockResolvedValue(false)
     const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
     expect(res.body.code).toBe(0)
     expect(res.body.data.count).toBe(0)

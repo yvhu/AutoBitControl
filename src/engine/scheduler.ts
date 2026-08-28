@@ -87,7 +87,7 @@ export class Scheduler {
   }
 
   /** 为每个任务建 cron 定时器 */
-  start(): void {
+  async start(): Promise<void> {
     // 重入保护：已注册过任务时先停旧任务再重新注册（保证可重入且不产生重复 cron）
     if (this.jobs.length > 0 || this.staggerJobs.size > 0) {
       this.logger.warn('调度器已启动，先停止旧任务再重新注册')
@@ -98,7 +98,7 @@ export class Scheduler {
         this.logger.warn({ task: task.meta.key }, '任务已标记失效，跳过调度')
         continue
       }
-      if (task.meta.enabled === false) {
+      if (!(await this.db.getTaskEnabled(task.meta.key, task.meta.enabled ?? true))) {
         this.logger.warn({ task: task.meta.key }, '任务已停用，跳过调度')
         continue
       }
@@ -131,14 +131,14 @@ export class Scheduler {
 
   /**
    * 立即触发某任务：推给所有启用窗口（cron 到点与代码内触发共用此入口）
-   * 守卫：任务未注册静默忽略；任务已停用（meta.enabled === false）告警跳过，
+   * 守卫：任务未注册静默忽略；任务已停用（云端开关或 meta.enabled === false）告警跳过，
    * 保证已注册 cron 在关停后到点也不会执行
    * @param taskKey 任务 key
    */
   async fireNow(taskKey: string): Promise<void> {
     const task = this.tasks.get(taskKey)
     if (!task) return
-    if (task.meta.enabled === false) {
+    if (!(await this.db.getTaskEnabled(taskKey, task.meta.enabled ?? true))) {
       this.logger.warn({ task: taskKey }, '任务已停用，跳过本次触发')
       return
     }
