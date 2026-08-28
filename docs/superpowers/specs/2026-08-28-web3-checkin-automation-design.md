@@ -144,8 +144,29 @@ pending ──▶ running ──▶ success
 
 - 看板：今日完成率、窗口×任务矩阵、失败列表（附截图）、验证码消费统计
 - 操作：手动触发（指定窗口×任务）、重跑今日全部失败、暂停/恢复窗口
+- **调用链路**：页面只请求同源的本服务 API（`http://127.0.0.1:<面板端口>`）；比特浏览器本地 API、yescaptcha、SQLite、开窗跑任务全部由 Node 后端进程执行，页面不直接触碰任何本地 API，不存在跨域/混合内容问题
+- 面板仅监听 `127.0.0.1`，不上公网
 
-## 8. 目录结构
+## 8. 配置管理（尽量配置化）
+
+原则：**能配置的不写死**。三层配置 + 环境变量覆盖：
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| 通用配置 | `config/config.json` | 非敏感参数，可提交（含示例值） |
+| 本地覆盖 | `config/config.local.json` | 本机实际值，gitignore，覆盖 config.json |
+| 密钥 | `config/.env` | yescaptcha clientKey 等，gitignore |
+
+主要配置参数：
+
+- **比特浏览器**：API 地址（默认 `http://127.0.0.1:54345`）、开窗参数、超时、重试次数与退避间隔
+- **执行**：并发窗口数（5-10）、每窗口任务超时、失败重试次数、窗口熔断阈值、探活 URL、错峰窗口
+- **验证码**：yescaptcha API 地址、clientKey、打码超时、单任务费用上限
+- **面板**：监听地址/端口
+- **存储**：SQLite 路径、截图/日志目录、日志级别
+- **钱包解锁密码**：按窗口存在 SQLite（`profiles` 表），不进配置文件
+
+## 9. 目录结构
 
 ```
 AutoBitControl/
@@ -158,6 +179,7 @@ AutoBitControl/
 │   │   ├── humanize.ts         # ghost-cursor CDP 适配 + 延迟/输入工具
 │   │   ├── captcha.ts          # 验证码检测 + yescaptcha 客户端
 │   │   ├── wallet/             # 钱包适配器（petra.ts / metamask.ts，可扩展）
+│   │   ├── config.ts           # 配置加载与合并（config.json + local + .env）
 │   │   ├── db.ts               # better-sqlite3
 │   │   └── state.ts            # 状态机
 │   ├── tasks/
@@ -166,14 +188,15 @@ AutoBitControl/
 │   ├── web/                    # Express 面板 + 静态页
 │   └── index.ts                # 入口
 ├── config/
-│   ├── config.json             # BitBrowser API、并发数、探活 URL
-│   └── .env                    # yescaptcha key 等敏感信息
+│   ├── config.json             # 通用配置模板
+│   ├── config.local.json       # 本机覆盖（gitignore）
+│   └── .env                    # 敏感密钥（gitignore）
 ├── data/                       # SQLite、截图、日志（gitignore）
 ├── package.json
 └── tsconfig.json
 ```
 
-## 9. 实施顺序（MVP 优先）
+## 10. 实施顺序（MVP 优先）
 
 1. 骨架 + BitBrowser 开窗/CDP 接管 + 关窗
 2. 任务基类 + ctx（拟人层、断言、截图）+ 1 个示例任务跑通
