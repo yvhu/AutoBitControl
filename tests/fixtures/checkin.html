@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<body>
+  <button id="checkin-btn" style="width:150px;height:40px">每日签到</button>
+  <script>
+    document.getElementById('checkin-btn').addEventListener('click', () => {
+      const badge = document.createElement('div')
+      badge.id = 'checked-badge'
+      badge.textContent = '已签到'
+      document.body.appendChild(badge)
+    })
+  </script>
+</body>
+</html>
