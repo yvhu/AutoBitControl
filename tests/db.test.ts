@@ -27,6 +27,14 @@ describe('AppDb', () => {
     expect(list[0].screenshot).toBe('s.png')
   })
 
+  it('更新省略 attempts 时保留原值', async () => {
+    const p = await db.upsertProfile('bb-1', 'A')
+    await db.upsertRun(p.id, 't', '2026-08-28', 'running', { attempts: 2 })
+    await db.upsertRun(p.id, 't', '2026-08-28', 'retry_wait')
+    const r = await db.getRun(p.id, 't', '2026-08-28')
+    expect(r!.attempts).toBe(2)
+  })
+
   it('listProfiles 过滤启用状态', async () => {
     const p1 = await db.upsertProfile('bb-1', 'A')
     await db.upsertProfile('bb-2', 'B')

@@ -85,7 +85,7 @@ const SCHEMA = [
     kind TEXT NOT NULL,
     cost REAL NOT NULL DEFAULT 0,
     ok INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL
   )`,
 ]
 
@@ -180,7 +180,9 @@ export class AppDb {
       `INSERT INTO runs (profile_id, task_key, date, status, attempts, error, screenshot, started_at, finished_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date) DO UPDATE SET
-         status = excluded.status, attempts = excluded.attempts, error = excluded.error,
+         status = excluded.status,
+         attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
+         error = excluded.error,
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at)`,
       [profileId, taskKey, date, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
@@ -200,14 +202,16 @@ export class AppDb {
     return (await this.exec(`${SELECT_RUN} WHERE r.date = ? ORDER BY p.id, r.task_key`, [date])) as unknown as RunRow[]
   }
 
-  /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示） */
+  /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；created_at 存本地墙钟时间字符串（与 runs.date 同口径） */
   async logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): Promise<void> {
-    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok) VALUES (?, ?, ?, ?, ?)', [profileId, taskKey, kind, cost, ok ? 1 : 0])
+    const now = new Date()
+    const localWall = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace('T', ' ')
+    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?)', [profileId, taskKey, kind, cost, ok ? 1 : 0, localWall])
   }
 
-  /** 某天的打码统计：次数与总费用（点）；created_at 为 UTC 存储，按本地日期过滤（与 todayStr 口径一致） */
+  /** 某天的打码统计：次数与总费用（点）；created_at 为本地墙钟时间，直接按日期前缀过滤（与 todayStr 口径一致） */
   async captchaStats(date: string): Promise<{ count: number; totalCost: number }> {
-    const rows = await this.exec(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at, 'localtime') = ?`, [date])
+    const rows = await this.exec(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at) = ?`, [date])
     return { count: (rows[0]?.count as number | undefined) ?? 0, totalCost: (rows[0]?.total as number | undefined) ?? 0 }
   }
 }
