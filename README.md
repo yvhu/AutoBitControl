@@ -39,7 +39,7 @@ pm2 startup   # 按提示执行输出的命令
 ## 配置
 
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
-云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs）。
+云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs/task_states）。
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按窗口配置（JSON 映射，`{"窗口ID":"密码",...}`，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 
 ## 冒烟测试
@@ -57,15 +57,20 @@ BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run
 
 ## Windows 中文乱码
 
-npm 脚本已内置 `chcp 65001`，正常无需手动设置；若仍出现乱码，在 PowerShell 中执行：
+Git Bash 原生 UTF-8，无需处理。PowerShell 5.1 默认 GBK 代码页会乱码，运行前执行一次：
 
 ```powershell
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+chcp 65001
 ```
+
+或一劳永逸写入 PowerShell 配置文件（`$PROFILE`）：`[Console]::OutputEncoding = [Text.Encoding]::UTF8`。
 
 ## 新增任务
 
 在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts`），在 `src/tasks/index.ts` 的 ALL 数组注册。
+
+- **任务开关**：代码 `meta.enabled`（默认开启）是出厂默认值；面板任务页可拨动开关，写入云端 `task_states` 覆盖并立即生效（调度/窗口跑/手动触发同步感知），跨机器保留
+- 新任务无需任何数据库操作，注册代码后重启即可（无云端行时跟随代码默认值）
 
 ## 测试
 
