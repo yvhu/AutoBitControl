@@ -3262,7 +3262,7 @@ import { describe, it, expect } from 'vitest'
 import { MetaMaskAdapter } from '../src/core/wallet/metamask'
 import { PetraAdapter } from '../src/core/wallet/petra'
 import { WalletRegistry, type PopupPage, type PopupLocator } from '../src/core/wallet/types'
-import { matchesWalletUrl } from '../src/core/wallet/popup'
+import { matchesWalletUrl, waitForPopup } from '../src/core/wallet/popup'
 
 function makeLocator(over: Partial<PopupLocator> = {}): PopupLocator {
   return { click: async () => {}, fill: async () => {}, press: async () => {}, first() { return this }, ...over }
@@ -3334,6 +3334,49 @@ describe('WalletRegistry', () => {
     expect(() => reg.get('nope')).toThrow(/未注册/)
   })
 })
+
+describe('waitForPopup', () => {
+  function makeContext(pages: Array<{ url(): string }>, onPage: (fn: (p: unknown) => void) => void) {
+    return {
+      pages: () => pages as never,
+      on: (event: string, fn: (p: unknown) => void) => { if (event === 'page') onPage(fn) },
+      off: () => {},
+    } as never
+  }
+
+  it('页面在订阅后才出现也能被轮询发现', async () => {
+    const pages: Array<{ url(): string }> = []
+    let handler: ((p: unknown) => void) | null = null
+    const context = makeContext(pages, fn => { handler = fn })
+    const promise = waitForPopup(context, ['chrome-extension://.*/home.html'], 2000)
+    setTimeout(() => { pages.push({ url: () => 'chrome-extension://abc/home.html' }) }, 150)
+    const popup = await promise
+    expect(popup).not.toBeNull()
+  })
+
+  it('超时返回 null', async () => {
+    const context = makeContext([], () => {})
+    const popup = await waitForPopup(context, ['chrome-extension://.*/home.html'], 300)
+    expect(popup).toBeNull()
+  })
+})
+
+describe('ensureConnected 重试循环', () => {
+  it('弹窗未关闭时多次点击直到关闭', async () => {
+    const adapter = new MetaMaskAdapter()
+    let clicks = 0
+    let closes = 0
+    const popup = makePopup({
+      getByRole: () => makeLocator({ click: async () => { clicks++ } }),
+      waitForEvent: async () => {
+        closes++
+        if (closes < 2) throw new Error('未关闭')
+      },
+    })
+    await adapter.ensureConnected(popup)
+    expect(clicks).toBe(2)
+  })
+})
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -3351,21 +3394,27 @@ export function matchesWalletUrl(url: string, patterns: string[]): boolean {
 }
 
 export async function waitForPopup(context: BrowserContext, patterns: string[], timeoutMs: number): Promise<Page | null> {
-  const existing = context.pages().find(p => matchesWalletUrl(p.url(), patterns))
+  const find = () => context.pages().find(p => matchesWalletUrl(p.url(), patterns))
+  const existing = find()
   if (existing) return existing
   return new Promise(resolve => {
-    const timer = setTimeout(() => {
+    let settled = false
+    const finish = (p: Page | null) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
       context.off('page', handler)
-      resolve(null)
-    }, timeoutMs)
+      resolve(p)
+    }
     const handler = (p: Page) => {
-      if (matchesWalletUrl(p.url(), patterns)) {
-        clearTimeout(timer)
-        context.off('page', handler)
-        resolve(p)
-      }
+      if (matchesWalletUrl(p.url(), patterns)) finish(p)
     }
     context.on('page', handler)
+    const timer = setInterval(() => {
+      const p = find()
+      if (p) finish(p)
+    }, 100)
+    setTimeout(() => finish(null), timeoutMs)
   })
 }
 ```
