@@ -73,6 +73,25 @@
 - pino v10 + pino-pretty v13：`transport.targets` 多目标写法成立；注意多 target 下每个 target 默认只收 info 及以上
 - dotenv v17：`config({ path, quiet })` 可用；v17 的 config() 成功时会打印一行注入信息，`quiet: true` 可关（计划已用）
 
+### 功能点 → 实现思路 → 验证方式 总览
+
+| # | 功能点 | 实现思路 | 验证方式（自动化 + 手动） |
+|---|---|---|---|
+| 1 | 配置加载 | 三层合并：config.json → config.local.json → .env/env 覆盖；deepMerge + 内置默认值 | vitest 单测（默认值/合并覆盖/环境变量）；`npx tsc --noEmit` 无错误 |
+| 2 | 日志 | pino v10 `transport.targets` 双目标（pino/file 写 app.log + pino-pretty 控制台），日志目录自动创建 | 单测后启动进程，检查 `data/logs/app.log` 有中文日志输出 |
+| 3 | SQLite 数据层 | better-sqlite3 v12（锁版本，Node 20 预编译）同步 API；WAL 模式；runs 表 UPSERT 幂等（窗口×任务×日期唯一） | vitest 单测（写入读回/UPSERT 不重复/聚合统计/熔断计数） |
+| 4 | 运行状态机 | 纯函数转移表：pending→running→success/failed/captcha_failed/retry_wait；重试上限与熔断阈值纯函数判定 | vitest 单测覆盖全部转移路径（含非法转移拒绝） |
+| 5 | BitBrowser 客户端 | POST JSON；`success:true`/`code:0` 双兼容；CDP 地址取 `data.http`（兼容旧版 debugPort）；列表 page 从 0 起 | mock fetch 单测（端点/请求体/响应解析/错误兼容）+ 真实冒烟 `npm run smoke:window`（需比特浏览器运行） |
+| 6 | 拟人鼠标/键盘 | 鼠标：ghost-cursor `path()` 生成贝塞尔轨迹 → CDP `Input.dispatchMouseEvent` 逐点派发（不用 Playwright 原生 mouse 的直线移动）；键盘：`keyboard.type` 逐键 delay + 3% 概率错键回删 | 单测（落点随机在元素内）；集成测试（patchright headless 打开 fixture 页，human.click 触发点击、human.type 输入正确）；手动：有头模式目测轨迹像人手 |
+| 7 | 验证码检测+打码 | 轮询扫描 Turnstile/reCAPTCHA/hCaptcha iframe 提取 sitekey → yescaptcha 客户端（内部 promise 链串行，满足每账号 1 并发硬限制）createTask/getTaskResult → token 用 `evaluate(..., { isolatedContext: false })` 写入主世界对应 input/textarea | mock fetch 单测（任务类型精确拼写/solution 字段取值/串行性/超时/余额不足/extra 透传）；手动：真实 clientKey 跑一次真实站点验证打码-回填-提交链路 |
+| 8 | 任务框架 | SiteTask：meta 声明（url/cron/钱包/重试/验证码上限）+ run() 写流程；TaskContext 封装 goto（2 次重试）、clickCheckin（点击+显式成功断言）、screenshot、loginByWallet | fixture 页集成测试（成功断言通过/断言超时抛错）；新增任务后 tsc + 该任务的 fixture 测试 |
+| 9 | 窗口执行器 | 开窗指数退避重试 3 次 → CDP 接管 → IP 探活（probeUrl 失败则本轮全跳过）→ 顺序跑任务（状态机+重试+每窗口熔断）→ finally 兜底关窗；withTimeout race 控制单任务超时 | mock driver 单测（成功路径/重试序列/开窗失败跳过/探活失败跳过/熔断跳过/关窗被调用）+ 真实窗口冒烟 |
+| 10 | 队列合并 | p-queue 并发上限；CoalescingEnqueuer：同一窗口短时间多次入队合并为一次开窗会话 | vitest 单测（合并后只开一次窗且 taskKeys 完整/不同窗口独立） |
+| 11 | 调度+错峰 | croner v10 注册每任务 cron（timezone: Asia/Shanghai）；错峰任务每日在窗口内随机取分时生成 cron；fireNow 遍历启用窗口入队 | 单测（随机点落窗口内/入队数量/未注册任务安全）；手动：临时配 1 分钟后 cron，观察日志触发与窗口动作 |
+| 12 | Web 面板 | Express 同源 API（dashboard/trigger/rerun-failed/toggle）+ 静态中文页；页面只调本服务，本地 API 全由后端执行 | supertest 单测（各端点/参数校验）；手动：浏览器开 http://127.0.0.1:3000 点"执行"观察真实开窗跑任务 |
+| 13 | 钱包弹窗 | 扩展 URL 正则识别弹窗页 → 解锁（密码按窗口存 SQLite）→ 循环点 connect/approve/sign 直到弹窗关闭；选择器按钱包版本维护在适配器常量 | 单测（fake popup 的 fill/click 调用断言）；手动 `npm run smoke:wallet`：真实比特窗口+真实钱包验证整链路 |
+| 14 | 入口装配+watchdog | 启动顺序：配置→日志→DB→同步窗口列表→注册钱包/任务→队列→面板→调度；uncaughtException 记录后退出，由 pm2（restart_delay 5s）拉起 | 全量 `npm test` + tsc；手动：kill 进程验证 pm2 自动重启；重启机器验证 pm2 startup 生效 |
+
 ---
 
 ### Task 1: 项目骨架 + 配置加载
@@ -1476,7 +1495,11 @@ Expected: PASS
 
 注意：`page.evaluate(fn, arg, { isolatedContext: false })` 的第三个参数是 patchright 扩展，用于把 token 写入站点主世界（否则站点 JS 看不到回填值）。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: 手动真实验证（可选，建议做一次）**
+
+配置 `config/.env` 填入真实 `CAPTCHA_CLIENT_KEY`，用临时脚本或面板触发一个带 Turnstile 的站点任务，观察日志：检测到 kind → createTask 成功 → 轮询到 token → 回填 → 站点继续流程。同时确认 yescaptcha 后台余额扣减（Turnstile 25 点/次）。此步不写代码，仅验证链路。
+
+- [ ] **Step 6: Commit**
 
 ```powershell
 git add src/core/captcha.ts tests/captcha.test.ts
@@ -2393,7 +2416,11 @@ export class Scheduler {
 Run: `npm test`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: 手动验证调度触发（不写代码）**
+
+临时把 `example-checkin` 任务的 schedule 改为 1 分钟后（如当前 10:30，改成 `31 10 * * *`），`npm run dev` 启动，观察日志出现「触发任务」，若比特浏览器在运行则窗口实际打开。验证后改回。此步验证 croner 注册与 fireNow→入队→开窗链路。
+
+- [ ] **Step 6: Commit**
 
 ```powershell
 git add src/core/scheduler.ts tests/scheduler.test.ts
@@ -2640,7 +2667,11 @@ export function createApp(deps: WebDeps): express.Express {
 Run: `npm test`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: 手动验证面板（不写代码）**
+
+`npm run dev` 启动后浏览器打开 http://127.0.0.1:3000：确认看板渲染今日数据、选任务点「全部窗口执行」后比特浏览器窗口真实打开并执行、点「重跑今日失败」入队。同时确认面板无跨域报错（同源）。
+
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add src/web/server.ts src/web/public/index.html tests/web.test.ts
