@@ -1,5 +1,13 @@
 // 设置视图：比特浏览器连接测试与打码余额展示
 import { get, post } from '../api.js'
+import { loadSettings } from '../settings-store.js'
+
+// 渲染运行参数信息（来自后端公开配置，无硬编码）
+export async function renderSettingsInfo() {
+  const s = await loadSettings()
+  document.querySelector('#set-bb-url').textContent = s.bitbrowserApiBase
+  document.querySelector('#set-exec').textContent = `并发 ${s.concurrency} · 探活 ${s.probeUrl} · 时区 ${s.timezone}`
+}
 
 // 测试比特浏览器连接（状态点 + 文案）
 export async function testBitbrowser() {

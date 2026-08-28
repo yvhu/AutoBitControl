@@ -5,6 +5,7 @@
  * /api 前缀统一挂载；静态面板文件由 public 目录直出（单页多视图）
  */
 import express from 'express'
+import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AppDb } from '../infrastructure/db'
@@ -20,7 +21,11 @@ import { captchaRouter } from './routes/captcha'
 import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
+import { settingsRouter } from './routes/settings'
 import { notFoundHandler, errorHandler } from './http/error'
+
+// 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
+const APP_VERSION = (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf-8')) as { version: string }).version
 
 /** createApp 的依赖集（app.ts 装配时全部提供） */
 export interface ServerDeps {
@@ -51,6 +56,8 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(bitbrowserRouter({ health: deps.bitbrowser.health }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())
+  // 公开设置：非敏感配置 + 版本号（面板展示，避免前端硬编码）
+  api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION }))
   app.use('/api', api)
 
   // 前端静态资源：面板页面 + js/css/vendor

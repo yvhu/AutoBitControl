@@ -15,7 +15,12 @@ interface MockDeps {
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string } }>
-  cfg: { web: { port: number }; storage: { screenshotDir: string } }
+  cfg: {
+    web: { port: number }
+    storage: { screenshotDir: string }
+    bitbrowser: { apiBase: string }
+    execution: { timezone: string; concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
+  }
   bitbrowser: { health: Mock }
   captchaBalance: Mock
 }
@@ -35,7 +40,12 @@ function makeDeps(): MockDeps {
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
-    cfg: { web: { port: 3000 }, storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' } },
+    cfg: {
+      web: { port: 3000 },
+      storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
+      bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
+      execution: { timezone: 'Asia/Shanghai', concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+    },
     bitbrowser: { health: vi.fn().mockResolvedValue(true) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
   }
@@ -120,6 +130,16 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data.points).toBe(98210)
     expect(res.body.data.yuan).toBeCloseTo(98.21)
+  })
+
+  it('GET /api/settings 返回非敏感配置且不含 clientKey', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).get('/api/settings')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.bitbrowserApiBase).toBeTruthy()
+    expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
+    expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
+    expect(JSON.stringify(res.body.data)).not.toContain('password')
   })
 
   it('GET /api/screenshots 拒绝目录穿越', async () => {

@@ -16,7 +16,7 @@
       <div class="nav-item" data-page="docs"><span>📖</span>文档</div>
       <div class="nav-item" data-page="settings"><span>⚙</span>设置</div>
     </div>
-    <div class="side-foot">v0.1.0<br>本地服务<br>时区 Asia/Shanghai</div>
+    <div class="side-foot"><span id="side-version">—</span><br>本地服务<br>时区 <span id="side-timezone">—</span></div>
   </div>
   <div class="main">
     <div class="topbar">
@@ -104,13 +104,13 @@
       <div class="card">
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
           <div style="width:120px;color:#94A3B8;font-size:12px">比特浏览器</div>
-          <span class="kbd" id="set-bb-url">http://127.0.0.1:54345</span>
+          <span class="kbd" id="set-bb-url">—</span>
           <button class="btn ghost sm" onclick="window.abcTestBitbrowser()">测试连接</button>
           <span class="chip"><span class="dot err" id="set-bb-dot"></span><span id="set-bb-text">未检测</span></span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
           <div style="width:120px;color:#94A3B8;font-size:12px">执行参数</div>
-          <span class="kbd" id="set-exec">并发见 config.json</span>
+          <span class="kbd" id="set-exec">—</span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
           <div style="width:120px;color:#94A3B8;font-size:12px">yescaptcha</div>

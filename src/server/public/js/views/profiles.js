@@ -1,8 +1,10 @@
 // 窗口视图：窗口列表渲染 + 详情抽屉（密码设置/熔断重置）+ 行级操作
 import { get, post, patch, esc } from '../api.js'
+import { loadSettings } from '../settings-store.js'
 
 // 渲染窗口表格（搜索框过滤名字/窗口 ID）
 export async function render() {
+  const settings = await loadSettings()
   const profiles = await get('/api/profiles')
   const data = await get('/api/dashboard')
   const q = document.querySelector('#profile-search').value.trim()
@@ -15,7 +17,7 @@ export async function render() {
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:8px"><div class="avatar">${String(p.id).padStart(2,'0')}</div><div><div>${esc(p.name)}</div><div style="font-size:10px;color:#64748B">${esc(p.bitbrowserId)}</div></div></div></td>
       <td><span style="color:#34D399">${okCount} ✓</span>${fail ? ` <span style="color:#F87171">${fail} ✗</span>` : ''}</td>
-      <td><span style="color:${p.circuitBreakerCount > 0 ? '#FBBF24' : '#64748B'};font-size:11px">${p.circuitBreakerCount}/2</span></td>
+      <td><span style="color:${p.circuitBreakerCount > 0 ? '#FBBF24' : '#64748B'};font-size:11px">${p.circuitBreakerCount}/${settings.circuitBreakerThreshold}</span></td>
       <td><span class="toggle ${p.enabled ? '' : 'off'}" onclick="window.abcToggle(${p.id}, ${p.enabled ? 0 : 1})"></span></td>
       <td><span class="link" onclick="window.abcRunProfile(${p.id})">立即跑</span> · <span class="link" onclick="window.abcDrawer(${p.id})">详情</span></td>
     </tr>`

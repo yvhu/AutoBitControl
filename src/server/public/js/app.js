@@ -1,5 +1,6 @@
 // 面板主模块：路由导航、全局状态、页面视图调度与事件绑定（入口文件）
 import { get, post } from './api.js'
+import { loadSettings } from './settings-store.js'
 import * as dashboard from './views/dashboard.js'
 import * as profiles from './views/profiles.js'
 import * as tasks from './views/tasks.js'
@@ -52,7 +53,7 @@ export async function navigate(page) {
       await dashboard.render({ date: state.date, setTasks: (t) => { state.tasks = t; document.querySelector('#filter-task').dataset.tasks = JSON.stringify(t) } })
     } else if (page === 'profiles') await profiles.render()
     else if (page === 'tasks') await tasks.render()
-    else if (page === 'settings') { await settings.testBitbrowser(); await settings.loadBalance() }
+    else if (page === 'settings') { await settings.renderSettingsInfo(); await settings.testBitbrowser(); await settings.loadBalance() }
     else if (page === 'docs') await docsRender()
   } catch (e) {
     console.error('页面渲染失败:', e)
@@ -79,6 +80,11 @@ document.querySelector('#filter-profile').addEventListener('input', e => { dashb
 document.querySelector('#profile-search').addEventListener('input', () => profiles.render())
 
 navigate('dashboard')
+// 侧栏版本/时区来自后端公开设置（启动时填一次，失败保持占位符）
+loadSettings().then(s => {
+  document.querySelector('#side-version').textContent = 'v' + s.version
+  document.querySelector('#side-timezone').textContent = s.timezone
+}).catch(() => {})
 // 15 秒轮询：仅当停留在看板页时刷新数据，不劫持其他页面的导航
 setInterval(() => {
   if (currentPage === 'dashboard') navigate('dashboard')
