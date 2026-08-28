@@ -116,7 +116,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   const root = opts.rootDir ?? DEFAULT_ROOT
   const env = opts.env ?? process.env
   loadDotenv({ path: join(root, 'config', '.env'), quiet: true })
-  let cfg = defaults
+  let cfg = structuredClone(defaults)
   const base = join(root, 'config', 'config.json')
   if (existsSync(base)) {
     cfg = deepMerge(cfg, JSON.parse(readFileSync(base, 'utf-8')))
