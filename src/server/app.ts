@@ -13,6 +13,7 @@ import { runsRouter } from './routes/runs'
 import { captchaRouter } from './routes/captcha'
 import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
+import { docsRouter } from './routes/docs'
 import { notFoundHandler, errorHandler } from './http/error'
 
 export interface ServerDeps {
@@ -37,6 +38,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(captchaRouter(deps))
   api.use(bitbrowserRouter({ health: deps.bitbrowser.health }))
   api.use(screenshotsRouter(deps))
+  api.use(docsRouter())
   app.use('/api', api)
 
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')

@@ -128,6 +128,30 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
+  it('GET /api/docs/guide 返回手册 markdown', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/guide')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.content).toContain('# AutoBitControl API 使用手册')
+  })
+
+  it('GET /api/docs/examples 返回示例清单', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/examples')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('GET /api/docs/examples/:name 返回源码', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/examples/example-checkin.ts')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.content).toContain('class')
+  })
+
+  it('GET /api/docs/examples/:name 白名单拒绝穿越', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/examples/..%2F..%2Fpackage.json')
+    expect([400, 404]).toContain(res.status)
+    expect(res.body.code).not.toBe(0)
+  })
+
   it('GET / 返回面板页面', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/')
     expect(res.status).toBe(200)
