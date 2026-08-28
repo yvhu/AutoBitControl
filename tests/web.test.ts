@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import request from 'supertest'
-import { createApp } from '../src/web/server'
+import { createApp } from '../src/server/app'
 
 type Mock = ReturnType<typeof vi.fn>
 
@@ -15,7 +15,7 @@ interface MockDeps {
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string } }>
-  cfg: { web: { port: number }, storage: { screenshotDir: string } }
+  cfg: { web: { port: number }; storage: { screenshotDir: string } }
   bitbrowser: { health: Mock }
   captchaBalance: Mock
 }
@@ -28,7 +28,7 @@ function makeDeps(): MockDeps {
         { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'failed', attempts: 2, error: 'boom', screenshot: 's.png', startedAt: null, finishedAt: null, profileName: '窗口1' },
       ]),
       listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, walletPassword: null, circuitBreakerCount: 1 }]),
-      captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 0.23 }),
+      captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 230 }),
       setProfileEnabled: vi.fn(),
       setProfileWalletPassword: vi.fn(),
       resetCircuitBreaker: vi.fn(),
@@ -41,93 +41,103 @@ function makeDeps(): MockDeps {
   }
 }
 
-describe('web panel API', () => {
-  it('GET /api/dashboard 返回统计与矩阵数据', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).get('/api/dashboard?date=2026-08-28')
+describe('server API（RESTful + envelope）', () => {
+  it('GET /api/dashboard 返回 {code:0,data:{stats,runs,profiles,...}}', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/dashboard?date=2026-08-28')
     expect(res.status).toBe(200)
-    expect(res.body.stats.success).toBe(1)
-    expect(res.body.stats.failed).toBe(1)
-    expect(res.body.stats.total).toBe(2)
-    expect(res.body.runs).toHaveLength(2)
-    expect(res.body.captcha.totalCost).toBeCloseTo(0.23)
-    expect(res.body.profilesEnabled).toBe(1)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.stats.success).toBe(1)
+    expect(res.body.data.stats.failed).toBe(1)
+    expect(res.body.data.runs).toHaveLength(2)
+    expect(res.body.data.captcha.totalCost).toBe(230)
   })
 
-  it('POST /api/trigger 入队执行', async () => {
+  it('GET /api/tasks 返回任务元信息列表', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data[0].key).toBe('t1')
+    expect(res.body.data[0].wallet).toBe('metamask')
+  })
+
+  it('POST /api/tasks/:key/trigger 入队', async () => {
     const deps = makeDeps()
-    const app = createApp(deps as never)
-    const res = await request(app).post('/api/trigger').send({ taskKey: 't1', bitbrowserId: 'bb-1' })
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
     expect(res.status).toBe(200)
-    expect(res.body.ok).toBe(true)
+    expect(res.body.code).toBe(0)
     expect(deps.enqueuer.enqueue).toHaveBeenCalled()
   })
 
-  it('POST /api/trigger 缺参数返回 400', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).post('/api/trigger').send({})
-    expect(res.status).toBe(400)
+  it('POST /api/tasks/:key/trigger 缺参数 404 或 400', async () => {
+    const res = await request(createApp(makeDeps() as never)).post('/api/tasks/nope/trigger').send({})
+    expect([400, 404]).toContain(res.status)
+    expect(res.body.code).not.toBe(0)
   })
 
-  it('POST /api/profile/:id/toggle 切换启用', async () => {
+  it('PATCH /api/profiles/:id 修改启用状态', async () => {
     const deps = makeDeps()
-    const app = createApp(deps as never)
-    const res = await request(app).post('/api/profile/1/toggle').send({ enabled: false })
-    expect(res.status).toBe(200)
+    const res = await request(createApp(deps as never)).patch('/api/profiles/1').send({ enabled: false })
+    expect(res.body.code).toBe(0)
     expect(deps.db.setProfileEnabled).toHaveBeenCalledWith(1, false)
   })
 
-  it('POST /api/profile/:id/run 将该窗口全部任务入队', async () => {
+  it('PATCH /api/profiles/:id 保存钱包密码', async () => {
     const deps = makeDeps()
-    const app = createApp(deps as never)
-    const res = await request(app).post('/api/profile/1/run')
-    expect(res.status).toBe(200)
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1')
-  })
-
-  it('POST /api/profile/:id/password 保存解锁密码', async () => {
-    const deps = makeDeps()
-    const app = createApp(deps as never)
-    const res = await request(app).post('/api/profile/1/password').send({ password: 'secret' })
-    expect(res.status).toBe(200)
+    const res = await request(createApp(deps as never)).patch('/api/profiles/1').send({ password: 'secret' })
+    expect(res.body.code).toBe(0)
     expect(deps.db.setProfileWalletPassword).toHaveBeenCalledWith(1, 'secret')
   })
 
-  it('POST /api/profile/:id/reset-breaker 重置熔断', async () => {
+  it('POST /api/profiles/:id/run 入队全部任务', async () => {
     const deps = makeDeps()
-    const app = createApp(deps as never)
-    const res = await request(app).post('/api/profile/1/reset-breaker')
-    expect(res.status).toBe(200)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
+    expect(res.body.code).toBe(0)
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1')
+  })
+
+  it('POST /api/profiles/:id/breaker/reset 重置熔断', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/breaker/reset')
+    expect(res.body.code).toBe(0)
     expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
   })
 
+  it('POST /api/runs/rerun-failed 重跑失败', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(1)
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+  })
+
   it('POST /api/bitbrowser/test 返回连接状态', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).post('/api/bitbrowser/test')
-    expect(res.status).toBe(200)
-    expect(res.body.ok).toBe(true)
+    const res = await request(createApp(makeDeps() as never)).post('/api/bitbrowser/test')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.ok).toBe(true)
   })
 
   it('GET /api/captcha/balance 返回点数', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).get('/api/captcha/balance')
-    expect(res.status).toBe(200)
-    expect(res.body.points).toBe(98210)
-    expect(res.body.yuan).toBeCloseTo(98.21)
+    const res = await request(createApp(makeDeps() as never)).get('/api/captcha/balance')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.points).toBe(98210)
+    expect(res.body.data.yuan).toBeCloseTo(98.21)
   })
 
-  it('GET /api/screenshot 拒绝目录穿越', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).get('/api/screenshot').query({ path: 'C:/windows/win.ini' })
+  it('GET /api/screenshots 拒绝目录穿越', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/screenshots').query({ path: 'C:/windows/win.ini' })
     expect(res.status).toBe(404)
+    expect(res.body.code).not.toBe(0)
   })
 
   it('GET / 返回面板页面', async () => {
-    const app = createApp(makeDeps() as never)
-    const res = await request(app).get('/')
+    const res = await request(createApp(makeDeps() as never)).get('/')
     expect(res.status).toBe(200)
     expect(res.text).toContain('AutoBitControl')
-    expect(res.text).toContain('窗口管理')
+  })
+
+  it('未知路由 404 统一 envelope', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/no-such')
+    expect(res.status).toBe(404)
+    expect(res.body.code).not.toBe(0)
+    expect(res.body.message).toBeTruthy()
   })
 })

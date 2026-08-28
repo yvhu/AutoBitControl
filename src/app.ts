@@ -10,7 +10,7 @@ import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
 import { loadTasks } from './tasks'
-import { createApp } from './web/server'
+import { createApp } from './server/app'
 
 export async function startApp(): Promise<void> {
   const cfg = loadConfig()
@@ -73,6 +73,7 @@ export async function startApp(): Promise<void> {
     enqueuer,
     tasks,
     cfg,
+    logger,
     bitbrowser,
     captchaBalance: async () => {
       if (!yescaptcha) return null
