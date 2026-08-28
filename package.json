@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/set-utf8.mjs && tsx src/index.ts",
-    "start": "node scripts/set-utf8.mjs && tsx src/index.ts",
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "smoke:window": "node scripts/set-utf8.mjs && tsx scripts/smoke-open-window.ts",
-    "smoke:wallet": "node scripts/set-utf8.mjs && tsx scripts/smoke-wallet.ts",
-    "task:run": "node scripts/set-utf8.mjs && tsx scripts/run-task.ts"
+    "smoke:window": "tsx scripts/smoke-open-window.ts",
+    "smoke:wallet": "tsx scripts/smoke-wallet.ts",
+    "task:run": "tsx scripts/run-task.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^9.9.0",
