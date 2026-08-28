@@ -43,10 +43,8 @@
 | 反检测驱动 | `patchright` (npm) | 1.62.1 | 官方 NodeJS 包，Playwright 补丁版；通过 CDP 接管比特浏览器窗口 |
 | 鼠标拟人 | `ghost-cursor` | 1.4.2 | 只取轨迹生成，经 CDP `Input.dispatchMouseEvent` 派发（约 40 行适配） |
 | 键盘拟人 | Playwright 原生 `keyboard.type` | 内置 | delay + 逐键；随机错键回删为参数化小工具函数 |
-| 钱包弹窗 | `@synthetixio/synpress` | 4.1.2 | 官方 Playwright 支持；复用钱包交互逻辑，跳过其浏览器启动 |
-| 钱包插件包 | `@synthetixio/synpress-metamask` / `@synthetixio/synpress-phantom` | 0.0.14 | MetaMask、Phantom 官方适配 |
+| 钱包弹窗 | 自研薄适配器（`src/core/wallet/`） | 每个钱包约 100-200 行 | Petra、MetaMask 优先；选择器参考 Synpress/Chainwright 开源实现 |
 | 验证码识别 | yescaptcha 官方 REST API | — | 全类型：Turnstile / reCAPTCHA v2/v3 / hCaptcha / 图片类 |
-| 随机人设数据 | `@faker-js/faker` | — | 领水注册等场景 |
 | 调度 | `croner` | — | cron + 错峰窗口 |
 | 并发队列 | `p-queue` | — | 窗口并发上限 5-10 |
 | 存储 | `better-sqlite3` | — | 同步 API，单进程无并发问题 |
@@ -57,7 +55,7 @@
 ### 3.1 已确认的三个边界（避免踩坑）
 
 1. **patchright 补丁分两层**：驱动层补丁（Runtime.enable 泄露、Console.enable 泄露、闭包 Shadow DOM）走 CDP 连接依然生效；浏览器启动 flags 由比特浏览器决定——比特浏览器本身是指纹浏览器，自带反检测，两者互补。
-2. **Synpress 仅官方支持 MetaMask/Phantom**。它是"自己启动浏览器+测试"的框架，本项目只复用其钱包页面操作逻辑（选择器/交互流程）。Rabby、OKX 等钱包的确认弹窗适配器需手写（约 100-200 行/个，按需增加）。
+2. **钱包弹窗无对口的现成库**：Synpress 仅官方支持 MetaMask/Phantom，chainwright 支持 Petra 但两者都是"自己启动浏览器+导入助记词"的测试框架，且写死钱包扩展版本（chainwright 要求 Node ≥ 22.18，与当前 Node 20 不兼容）。本项目的钱包是真实钱包、已装在比特浏览器里，因此钱包弹窗适配器自研（Petra、MetaMask 优先，每个约 100-200 行），写时可参考这两个库的开源选择器。这是唯一绕不开的自研点。
 3. **验证码检测无现成库**：检测页面出现哪种验证码并提取 sitekey 需自写扫描逻辑（几十行）；打码本身是 yescaptcha 现成服务。
 
 ## 4. 任务模型
@@ -137,7 +135,11 @@ pending ──▶ running ──▶ success
 - `runs`：窗口×任务×日期 → 状态、时间、重试次数、截图路径
 - `captcha_logs`：每次打码的时间、类型、费用、结果
 
-### 7.4 Web 面板
+### 7.4 错峰窗口（防风控）
+
+同一站点的 100 个窗口不在同一秒集中访问。任务 cron 可配置为错峰窗口（如 `9:00-11:00`），每个窗口在该区间内随机取一个时间点执行，站点看到的是自然分散的访问节奏。
+
+### 7.5 Web 面板
 
 - 看板：今日完成率、窗口×任务矩阵、失败列表（附截图）、验证码消费统计
 - 操作：手动触发（指定窗口×任务）、重跑今日全部失败、暂停/恢复窗口
@@ -154,7 +156,7 @@ AutoBitControl/
 │   │   ├── windowRunner.ts     # 开窗→CDP接管→顺序跑任务→关窗
 │   │   ├── humanize.ts         # ghost-cursor CDP 适配 + 延迟/输入工具
 │   │   ├── captcha.ts          # 验证码检测 + yescaptcha 客户端
-│   │   ├── wallet/             # 钱包适配器（synpress 复用 + 自定义）
+│   │   ├── wallet/             # 钱包适配器（petra.ts / metamask.ts，可扩展）
 │   │   ├── db.ts               # better-sqlite3
 │   │   └── state.ts            # 状态机
 │   ├── tasks/
@@ -177,5 +179,5 @@ AutoBitControl/
 3. 验证码检测 + yescaptcha 接入
 4. 调度器 + 队列 + 状态机 + SQLite
 5. Web 面板
-6. 钱包适配器（MetaMask/Phantom 优先，其他按需）
+6. 钱包适配器（Petra、MetaMask 优先，其他按需增加）
 7. watchdog 自动重启（进程崩溃自愈）
