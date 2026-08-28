@@ -1,10 +1,11 @@
-import { get } from './api.js'
+import { get, post } from './api.js'
 import * as dashboard from './views/dashboard.js'
 import * as profiles from './views/profiles.js'
 import * as tasks from './views/tasks.js'
 import * as settings from './views/settings.js'
 
 const state = { date: localToday(), tasks: [] }
+let currentPage = 'dashboard'
 const TITLES = {
   dashboard: ['看板', '今日运行总览'],
   profiles: ['窗口', '窗口管理与详情'],
@@ -15,7 +16,14 @@ const TITLES = {
 
 function localToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 
-window.abcRerun = (profileId, taskKey) => { dashboard.rerunFailed(state.date).then(() => navigate('dashboard')) }
+// 行级操作：单窗口单任务触发（RESTful 语义，非整日重跑）
+window.abcRerun = async (profileId, taskKey) => {
+  const profiles = await get('/api/profiles')
+  const p = profiles.find(x => x.id === profileId)
+  if (!p) return
+  await post(`/api/tasks/${encodeURIComponent(taskKey)}/trigger`, { bitbrowserId: p.bitbrowserId })
+  navigate('dashboard')
+}
 window.abcToggle = (id, enabled) => profiles.toggle(id, enabled)
 window.abcRunProfile = (id) => profiles.runProfile(id)
 window.abcDrawer = (id) => profiles.openDrawer(id)
@@ -28,6 +36,7 @@ window.abcTestBitbrowser = () => settings.testBitbrowser()
 window.abcBalance = () => settings.loadBalance()
 
 export async function navigate(page) {
+  currentPage = page
   document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.page === page))
   document.querySelectorAll('.page').forEach(x => x.classList.toggle('on', x.id === 'page-' + page))
   document.querySelector('#page-title').textContent = TITLES[page][0]
@@ -62,4 +71,7 @@ document.querySelector('#filter-profile').addEventListener('input', e => { dashb
 document.querySelector('#profile-search').addEventListener('input', () => profiles.render())
 
 navigate('dashboard')
-setInterval(() => navigate('dashboard'), 15000)
+// 15 秒轮询：仅当停留在看板页时刷新数据，不劫持其他页面的导航
+setInterval(() => {
+  if (currentPage === 'dashboard') navigate('dashboard')
+}, 15000)
