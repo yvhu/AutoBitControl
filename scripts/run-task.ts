@@ -48,7 +48,8 @@ async function main(): Promise<void> {
     } else {
       logger.error('未找到运行记录')
     }
-    process.exit(row && row.status === 'success' ? 0 : 1)
+    process.exitCode = row && row.status === 'success' ? 0 : 1
+    return
   } finally {
     db.close()
   }
