@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as loadDotenv } from 'dotenv'
 
@@ -128,5 +128,9 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
   if (env.WEB_PORT) cfg.web.port = Number(env.WEB_PORT)
+  for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
+    const p = cfg.storage[key]
+    if (!isAbsolute(p)) cfg.storage[key] = resolve(root, p)
+  }
   return cfg
 }

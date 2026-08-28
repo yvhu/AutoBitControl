@@ -7,6 +7,7 @@ import type { ProfileRow } from '../core/db'
 import { Humanizer } from '../core/humanize'
 import { CaptchaService } from '../core/captcha'
 import { WalletRegistry, type PopupPage } from '../core/wallet/types'
+import { waitForPopup } from '../core/wallet/popup'
 
 export interface TaskMeta {
   key: string
@@ -112,7 +113,7 @@ export class TaskContext {
     if (!walletKey) throw new Error('任务未配置钱包')
     if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(walletKey)
-    const popup = await waitForWalletPopup(this.page, adapter.extensionUrlPatterns, 15000)
+    const popup = (await waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 15000)) as PopupPage | null
     if (!popup) throw new Error('钱包弹窗未出现')
     if (this.deps.profile.walletPassword && adapter.unlock) {
       await adapter.unlock(popup, this.deps.profile.walletPassword)
@@ -128,25 +129,4 @@ export class TaskContext {
   async urlIncludes(part: string): Promise<boolean> {
     return this.page.url().includes(part)
   }
-}
-
-export async function waitForWalletPopup(page: Page, patterns: string[], timeoutMs: number): Promise<PopupPage | null> {
-  const context = page.context()
-  const match = (p: Page) => patterns.some(pat => new RegExp(pat).test(p.url()))
-  const existing = context.pages().find(match)
-  if (existing) return existing as unknown as PopupPage
-  return new Promise(resolve => {
-    const timer = setTimeout(() => {
-      context.off('page', handler)
-      resolve(null)
-    }, timeoutMs)
-    const handler = (p: Page) => {
-      if (match(p)) {
-        clearTimeout(timer)
-        context.off('page', handler)
-        resolve(p as unknown as PopupPage)
-      }
-    }
-    context.on('page', handler)
-  })
 }

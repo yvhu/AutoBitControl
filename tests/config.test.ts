@@ -37,4 +37,14 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir, env: { CAPTCHA_CLIENT_KEY: 'abc123' } })
     expect(cfg.captcha.clientKey).toBe('abc123')
   })
+
+  it('相对存储路径解析为 root 下的绝对路径', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      storage: { dbPath: 'data/app.db' },
+    }))
+    const cfg = loadConfig({ rootDir: dir })
+    expect(cfg.storage.dbPath).toBe(join(dir, 'data', 'app.db'))
+  })
 })

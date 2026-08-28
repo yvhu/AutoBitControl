@@ -38,6 +38,10 @@ export class Scheduler {
 
   start(): void {
     for (const task of this.tasks.values()) {
+      if (!task.meta.url) {
+        this.logger.warn({ task: task.meta.key }, '任务未配置 url，跳过调度')
+        continue
+      }
       const cron = this.scheduleOf(task.meta)
       if (!cron) continue
       const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireNow(task.meta.key))
