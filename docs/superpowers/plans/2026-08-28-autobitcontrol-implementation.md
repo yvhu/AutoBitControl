@@ -1927,10 +1927,12 @@ describe('TaskQueue', () => {
 })
 
 describe('CoalescingEnqueuer', () => {
+  const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
+
   it('同一窗口多次 enqueue 合并为一次执行', async () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
-    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
     const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
     enq.enqueue(profile, 'task-a')
     enq.enqueue(profile, 'task-b')
@@ -1943,12 +1945,44 @@ describe('CoalescingEnqueuer', () => {
   it('不同窗口分别执行', async () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
-    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
     const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, walletPassword: null, circuitBreakerCount: 0 })
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
     await q.onIdle()
     expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it('运行中再次 enqueue 排队为第二批且不与第一批并发', async () => {
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    const run = vi.fn((profile: { id: number }, taskKeys: string[]) => {
+      if (profile.id === 1 && run.mock.calls.length === 1) return firstGate.then(() => undefined)
+      return Promise.resolve(undefined)
+    })
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
+    enq.enqueue(profile, 'task-a')
+    await new Promise(r => setTimeout(r, 10))
+    expect(run).toHaveBeenCalledTimes(1)
+    enq.enqueue(profile, 'task-b')
+    await new Promise(r => setTimeout(r, 10))
+    expect(run).toHaveBeenCalledTimes(1)
+    releaseFirst()
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][1]).toEqual(['task-b'])
+  })
+
+  it('runner 抛错不会产生未处理的 rejection', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('boom'))
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, walletPassword: null, circuitBreakerCount: 0 }
+    enq.enqueue(profile, 'task-a')
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })
 ```
@@ -2047,6 +2081,15 @@ describe('WindowRunner', () => {
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
     expect(calls).toEqual(['skipped'])
   })
+
+  it('CDP 连接失败标记 failed 且不抛异常', async () => {
+    const db = makeDb()
+    const runner = new WindowRunner({ cfg, db, bitbrowser, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir: '' })
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
+    expect(calls).toEqual(['failed'])
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
 })
 ```
 
@@ -2060,6 +2103,7 @@ Expected: FAIL（模块不存在）
 ```ts
 import PQueue from 'p-queue'
 import type { ProfileRow } from './db'
+import type { Logger } from './logger'
 
 export class TaskQueue {
   private q: PQueue
@@ -2081,22 +2125,51 @@ export class TaskQueue {
   }
 }
 
-export class CoalescingEnqueuer {
-  private pending = new Map<number, { profile: ProfileRow; taskKeys: Set<string> }>()
+interface Entry {
+  profile: ProfileRow
+  taskKeys: Set<string>
+}
 
-  constructor(private queue: TaskQueue, private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<void> }) {}
+export class CoalescingEnqueuer {
+  private pending = new Map<number, Entry>()
+  private running = new Set<number>()
+  private followUp = new Map<number, Entry>()
+
+  constructor(
+    private queue: TaskQueue,
+    private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<void> },
+    private logger: Logger,
+  ) {}
 
   enqueue(profile: ProfileRow, taskKey: string): void {
+    if (this.running.has(profile.id)) {
+      const fu = this.followUp.get(profile.id) ?? { profile, taskKeys: new Set<string>() }
+      fu.taskKeys.add(taskKey)
+      this.followUp.set(profile.id, fu)
+      return
+    }
     const entry = this.pending.get(profile.id)
     if (entry) {
       entry.taskKeys.add(taskKey)
       return
     }
-    const fresh = { profile, taskKeys: new Set([taskKey]) }
+    const fresh: Entry = { profile, taskKeys: new Set([taskKey]) }
     this.pending.set(profile.id, fresh)
     void this.queue.add(async () => {
+      await Promise.resolve()
       this.pending.delete(profile.id)
-      await this.runner.runWindowTasks(fresh.profile, [...fresh.taskKeys])
+      this.running.add(profile.id)
+      try {
+        await this.runner.runWindowTasks(fresh.profile, [...fresh.taskKeys])
+      } catch (e) {
+        this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
+      }
+      this.running.delete(profile.id)
+      const fu = this.followUp.get(profile.id)
+      if (fu) {
+        this.followUp.delete(profile.id)
+        for (const k of fu.taskKeys) this.enqueue(fu.profile, k)
+      }
     })
   }
 }
@@ -2158,10 +2231,26 @@ export class WindowRunner {
     const { cfg, db, bitbrowser, logger } = this.deps
     const date = todayStr()
     let open: OpenResult | null = null
-    let connected: { page: Page; close(): Promise<void> } | null = null
     try {
       open = await this.openWithRetry(profile.bitbrowserId)
+    } catch (e) {
+      for (const key of taskKeys) {
+        db.upsertRun(profile.id, key, date, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      }
+      logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
+      return
+    }
+    let connected: { page: Page; close(): Promise<void> } | null = null
+    try {
       connected = await this.deps.driver.connect(`http://${open.http}`)
+    } catch (e) {
+      for (const key of taskKeys) {
+        db.upsertRun(profile.id, key, date, 'failed', { error: `CDP 连接失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      }
+      logger.error({ profile: profile.name }, `CDP 连接失败: ${(e as Error).message}`)
+      return
+    }
+    try {
       const page = connected.page
       const probeOk = await this.probe(page)
       if (!probeOk) {
@@ -2224,7 +2313,12 @@ export class WindowRunner {
     const backoffSec = task.meta.retry?.backoffSec ?? cfg.execution.retryBackoffSec
     const timeoutSec = task.meta.timeoutSec ?? Math.floor(cfg.execution.taskTimeoutMs / 1000)
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
-    mkdirSync(artifacts, { recursive: true })
+    try {
+      mkdirSync(artifacts, { recursive: true })
+    } catch (e) {
+      db.upsertRun(profile.id, taskKey, date, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() })
+      return
+    }
 
     for (let attempt = 1; attempt <= retryMax + 1; attempt++) {
       db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() })
@@ -3405,7 +3499,7 @@ async function main(): Promise<void> {
     artifactsDir: cfg.storage.screenshotDir,
   })
   const queue = new TaskQueue(cfg.execution.concurrency)
-  const enqueuer = new CoalescingEnqueuer(queue, runner)
+  const enqueuer = new CoalescingEnqueuer(queue, runner, logger)
 
   const app = createApp({
     db,
