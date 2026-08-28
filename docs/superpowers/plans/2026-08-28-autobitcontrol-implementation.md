@@ -2662,6 +2662,12 @@ describe('web panel API', () => {
     expect(res.text).toContain('AutoBitControl')
     expect(res.text).toContain('窗口管理')
   })
+
+  it('GET /api/screenshot 拒绝目录穿越', async () => {
+    const app = createApp(makeDeps() as never)
+    const res = await request(app).get('/api/screenshot').query({ path: 'C:/windows/win.ini' })
+    expect(res.status).toBe(404)
+  })
 })
 ```
 
@@ -2674,7 +2680,8 @@ Expected: FAIL（模块不存在）
 
 ```ts
 import express from 'express'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, sep } from 'node:path'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { todayStr, type AppDb, type ProfileRow, type RunStatus } from '../core/db'
 import type { CoalescingEnqueuer } from '../core/queue'
@@ -2713,6 +2720,7 @@ export function createApp(deps: WebDeps): express.Express {
         pending: count('pending'),
       },
       runs,
+      profiles,
       captcha: deps.db.captchaStats(date),
       profilesTotal: profiles.length,
       profilesEnabled: profiles.filter(p => p.enabled === 1).length,
@@ -2808,6 +2816,17 @@ export function createApp(deps: WebDeps): express.Express {
     } catch {
       res.json({ configured: false, points: 0, yuan: 0 })
     }
+  })
+
+  app.get('/api/screenshot', (req, res) => {
+    const p = typeof req.query.path === 'string' ? req.query.path : ''
+    const root = resolve(deps.cfg.storage.screenshotDir)
+    const target = resolve(p)
+    if (!target.startsWith(root + sep) || !existsSync(target)) {
+      res.status(404).json({ ok: false, error: '截图不存在' })
+      return
+    }
+    res.sendFile(target)
   })
 
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')
@@ -3067,13 +3086,14 @@ function renderMatrix() {
       <td><span class="pill ${cls}"><span class="d"></span>${label}</span></td>
       <td>${r.attempts}</td>
       <td class="err-text" title="${esc(r.error ?? '')}">${esc(r.error ?? '—')}</td>
-      <td>${r.screenshot ? `<span class="link" onclick="openShot('${esc(r.screenshot)}')">🖼 查看</span>` : '—'}</td>
+      <td>${r.screenshot ? `<span class="link" onclick="openImage('${esc(r.screenshot)}')">🖼 查看</span>` : '—'}</td>
       <td><span class="link" onclick="rerunOne(${r.profileId}, '${esc(r.taskKey)}')">${['failed','captcha_failed'].includes(r.status) ? '重跑' : '执行'}</span></td>
     </tr>`
   }).join('')
 }
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])) }
+function openImage(path) { window.open('/api/screenshot?path=' + encodeURIComponent(path), '_blank') }
 
 async function loadProfiles() {
   const data = await api(`/api/dashboard?date=${state.date}`)
