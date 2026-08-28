@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { MetaMaskAdapter } from '../src/core/wallet/metamask'
 import { PetraAdapter } from '../src/core/wallet/petra'
 import { WalletRegistry, type PopupPage, type PopupLocator } from '../src/core/wallet/types'
-import { matchesWalletUrl } from '../src/core/wallet/popup'
+import { matchesWalletUrl, waitForPopup } from '../src/core/wallet/popup'
 
 function makeLocator(over: Partial<PopupLocator> = {}): PopupLocator {
   return { click: async () => {}, fill: async () => {}, press: async () => {}, first() { return this }, ...over }
@@ -23,6 +23,49 @@ describe('matchesWalletUrl', () => {
   it('按正则匹配扩展 URL', () => {
     expect(matchesWalletUrl('chrome-extension://xyz/home.html#connect', ['chrome-extension://.*/home.html'])).toBe(true)
     expect(matchesWalletUrl('https://site.io', ['chrome-extension://.*/home.html'])).toBe(false)
+  })
+})
+
+describe('waitForPopup', () => {
+  function makeContext(pages: Array<{ url(): string }>, onPage: (fn: (p: unknown) => void) => void) {
+    return {
+      pages: () => pages as never,
+      on: (event: string, fn: (p: unknown) => void) => { if (event === 'page') onPage(fn) },
+      off: () => {},
+    } as never
+  }
+
+  it('页面在订阅后才出现也能被轮询发现', async () => {
+    const pages: Array<{ url(): string }> = []
+    let handler: ((p: unknown) => void) | null = null
+    const context = makeContext(pages, fn => { handler = fn })
+    const promise = waitForPopup(context, ['chrome-extension://.*/home.html'], 2000)
+    setTimeout(() => { pages.push({ url: () => 'chrome-extension://abc/home.html' }) }, 150)
+    const popup = await promise
+    expect(popup).not.toBeNull()
+  })
+
+  it('超时返回 null', async () => {
+    const context = makeContext([], () => {})
+    const popup = await waitForPopup(context, ['chrome-extension://.*/home.html'], 300)
+    expect(popup).toBeNull()
+  })
+})
+
+describe('ensureConnected 重试循环', () => {
+  it('弹窗未关闭时多次点击直到关闭', async () => {
+    const adapter = new MetaMaskAdapter()
+    let clicks = 0
+    let closes = 0
+    const popup = makePopup({
+      getByRole: () => makeLocator({ click: async () => { clicks++ } }),
+      waitForEvent: async () => {
+        closes++
+        if (closes < 2) throw new Error('未关闭')
+      },
+    })
+    await adapter.ensureConnected(popup)
+    expect(clicks).toBe(2)
   })
 })
 
