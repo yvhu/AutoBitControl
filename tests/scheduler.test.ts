@@ -48,30 +48,30 @@ describe('staggerToCron', () => {
 })
 
 describe('Scheduler', () => {
-  it('fireNow 将启用窗口的任务入队', () => {
+  it('fireNow 将启用窗口的任务入队', async () => {
     const rows = [
       { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 },
       { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 0, circuitBreakerCount: 0 },
     ]
     const db = {
-      listProfiles: vi.fn().mockImplementation((enabledOnly: boolean) => (enabledOnly ? rows.filter(r => r.enabled === 1) : rows)),
+      listProfiles: vi.fn().mockImplementation(async (enabledOnly: boolean) => (enabledOnly ? rows.filter(r => r.enabled === 1) : rows)),
     } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const task = { meta: { key: 't1', name: 'T1', url: '', schedule: '0 9 * * *' }, run: async () => {} }
     const sched = new Scheduler({} as never, db, new Map([['t1', task]]), enq, { info: () => {} } as never)
-    sched.fireNow('t1')
+    await sched.fireNow('t1')
     expect(enqueue).toHaveBeenCalledTimes(1)
     expect(enqueue.mock.calls[0][0].id).toBe(1)
     expect(enqueue.mock.calls[0][1]).toBe('t1')
   })
 
-  it('fireNow 对未注册任务安全返回', () => {
-    const db = { listProfiles: vi.fn().mockReturnValue([]) } as never
+  it('fireNow 对未注册任务安全返回', async () => {
+    const db = { listProfiles: vi.fn().mockResolvedValue([]) } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const sched = new Scheduler({} as never, db, new Map(), enq, { info: () => {} } as never)
-    sched.fireNow('nope')
+    await sched.fireNow('nope')
     expect(enqueue).not.toHaveBeenCalled()
   })
 
@@ -102,21 +102,21 @@ describe('Scheduler', () => {
     sched.stop()
   })
 
-  it('fireNow 对 deprecated 任务仍可手动触发', () => {
-    const db = { listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }]) } as never
+  it('fireNow 对 deprecated 任务仍可手动触发', async () => {
+    const db = { listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }]) } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['old', { meta: { key: 'old', name: '旧任务', url: 'https://x.io', deprecated: true } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
-    sched.fireNow('old')
+    await sched.fireNow('old')
     expect(enqueue).toHaveBeenCalledTimes(1)
   })
 
-  it('fireNow 对停用任务不触发', () => {
+  it('fireNow 对停用任务不触发', async () => {
     const db = { listProfiles: vi.fn() } as never
     const enqueue = vi.fn()
     const enq = { enqueue } as never
     const sched = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([['off', { meta: { key: 'off', name: '停用', url: 'https://x.io', enabled: false } }]]), enq, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
-    sched.fireNow('off')
+    await sched.fireNow('off')
     expect(enqueue).not.toHaveBeenCalled()
   })
 

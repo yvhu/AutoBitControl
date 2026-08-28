@@ -11,11 +11,11 @@ function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
 
 function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
   return {
-    upsertRun: vi.fn(),
-    resetCircuitBreaker: vi.fn(),
-    incrCircuitBreaker: vi.fn(),
-    listProfiles: vi.fn().mockReturnValue([]),
-    getRun: vi.fn().mockReturnValue(null),
+    upsertRun: vi.fn().mockResolvedValue(null),
+    resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+    incrCircuitBreaker: vi.fn().mockResolvedValue(0),
+    listProfiles: vi.fn().mockResolvedValue([]),
+    getRun: vi.fn().mockResolvedValue(null),
     ...over,
   } as unknown as AppDb
 }
@@ -109,7 +109,7 @@ describe('WindowRunner', () => {
 
   it('重试会话从上次 attempts 继续并先复位页面', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockReturnValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>),
+      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const page = { ...okPage, goto: vi.fn().mockResolvedValue(undefined) }
@@ -133,7 +133,7 @@ describe('WindowRunner', () => {
 
   it('最后一次尝试失败标记 failed 且不再调度重试', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockReturnValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>),
+      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
@@ -153,12 +153,12 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['running', 'retry_wait'])
     expect(scheduleRetry).toHaveBeenCalledTimes(1)
     // 第 2 会话：上一轮 attempts=1 → 从 2 续跑 → 再 retry_wait + scheduleRetry
-    getRun.mockReturnValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>)
+    getRun.mockResolvedValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>)
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait'])
     expect(scheduleRetry).toHaveBeenCalledTimes(2)
     // 第 3 会话：上一轮 attempts=2 → 从 3 续跑 → 达上限 failed 终态，不再调度
-    getRun.mockReturnValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>)
+    getRun.mockResolvedValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>)
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait', 'running', 'failed'])
     expect(scheduleRetry).toHaveBeenCalledTimes(2)
@@ -170,7 +170,7 @@ describe('WindowRunner', () => {
 
   it('历史 attempts 已耗尽重试预算时直接 failed 且不调度重试', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockReturnValue({ status: 'retry_wait', attempts: 3 } as Partial<RunRow>),
+      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 3 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })

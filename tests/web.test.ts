@@ -32,14 +32,14 @@ interface MockDeps {
 function makeDeps(): MockDeps {
   return {
     db: {
-      listRunsForDate: vi.fn().mockReturnValue([
+      listRunsForDate: vi.fn().mockResolvedValue([
         { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
         { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'failed', attempts: 2, error: 'boom', screenshot: 's.png', startedAt: null, finishedAt: null, profileName: '窗口1' },
       ]),
-      listProfiles: vi.fn().mockReturnValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 1 }]),
-      captchaStats: vi.fn().mockReturnValue({ count: 5, totalCost: 230 }),
-      setProfileEnabled: vi.fn(),
-      resetCircuitBreaker: vi.fn(),
+      listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 1 }]),
+      captchaStats: vi.fn().mockResolvedValue({ count: 5, totalCost: 230 }),
+      setProfileEnabled: vi.fn().mockResolvedValue(undefined),
+      resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
@@ -147,7 +147,7 @@ describe('server API（RESTful + envelope）', () => {
 
   it('POST /api/runs/rerun-failed 无失败记录返回 count 0', async () => {
     const deps = makeDeps()
-    ;(deps.db.listRunsForDate as Mock).mockReturnValue([
+    ;(deps.db.listRunsForDate as Mock).mockResolvedValue([
       { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
     ])
     const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
