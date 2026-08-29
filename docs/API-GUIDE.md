@@ -458,7 +458,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | 入口 | 接口 | 语义 |
 | --- | --- | --- |
 | 面板任务页「立即触发」 | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId? }` | 带 `bitbrowserId` → 只跑该窗口（窗口不存在返回 404）；不带 → 全部启用窗口 |
-| 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 任意窗口 id（含禁用窗口，find 基于 listProfiles(false)）跑全部任务 |
+| 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 任意窗口 id（含禁用窗口，find 基于 listProfiles(false)）跑该窗口全部**启用**任务（停用任务排除，见跳过规则） |
 | 面板看板「重跑今日失败」 | `POST /api/runs/rerun-failed`，body `{ date }` | 当日失败行重新入队 |
 | 代码内 `Scheduler.fireNow(taskKey)` | — | 对**全部启用窗口**逐窗口入队（与 `POST /api/tasks/:key/trigger` 不带 body 等价） |
 
