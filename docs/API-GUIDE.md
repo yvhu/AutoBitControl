@@ -832,7 +832,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | --- | --- | --- |
 | `cloud` | `url`、`authToken` | 云数据库（Turso/libsql）连接信息。**必须配置，否则启动报错退出**；`npm run task:run` 脚本同样需要，缺了直接退出。环境变量 `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` 覆盖配置文件同名字段 |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
-| `execution` | `concurrency`、`windowTimeoutMs`、`probeUrl`、`timezone`、`humanize` | 执行引擎：窗口并发默认 6；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`timezone` 是 cron 时区；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
+| `execution` | `concurrency`、`windowTimeoutMs`、`probeUrl`、`timezone`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：窗口并发默认 6；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`timezone` 是 cron 时区；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
 | `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
 | `wallet` | `passwords` | 窗口解锁密码映射（比特窗口 ID → 密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |

@@ -41,6 +41,6 @@ export class ExampleCheckinTask extends SiteTask {
     // 选择器查找：DevTools 右键按钮 → Copy → Copy selector
     // 断言元素选成功后才出现的标志（徽章/文案），宁严勿松
     await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
-    // 更多状态判断示例见 faucet-example.ts 与 API 手册第 8 章
+    // 更多状态判断示例见 faucet-example.ts 与 API 手册第 9 章
   }
 }
