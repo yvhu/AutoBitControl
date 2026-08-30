@@ -8,18 +8,6 @@
 - 示例任务位于 `src/tasks/`：`example-checkin.ts`（签到）、`faucet-example.ts`（领水）、`mint-example.ts`（铸币）。
 - 新增任务从复制 `src/tasks/example-checkin.ts` 改起最快。
 
-## 目录
-
-- [1. 快速开始](#1-快速开始)（含[任务开发与测试](#任务开发与测试)三层流程）
-- [2. TaskMeta 字段全解](#2-taskmeta-字段全解) —— 任务元信息/开关/调度声明
-- [3. TaskContext 方法全解](#3-taskcontext-方法全解) —— 任务里能调用的全部 API（goto / clickCheckin / assertVisible / typeInto / solveCaptcha / screenshot / loginByWallet / textPresent / urlIncludes / [选择器查找技巧](#选择器查找技巧)）
-- [4. 钱包弹窗](#4-钱包弹窗) —— 密码配置 / [弹窗识别机制](#弹窗识别机制) / [新增钱包适配器](#新增钱包适配器步骤)
-- [5. 验证码](#5-验证码) —— 支持类型 / auto 模式 / 手动时机 / 费用与失败行为
-- [6. 拟人接口（Humanizer）](#6-拟人接口humanizer) —— 鼠标键盘拟人化 API
-- [7. 调度](#7-调度) —— cron/错峰写法 / 跳过规则 / 面板开关覆盖 / 手动触发
-- [8. 常用模式](#8-常用模式) —— 签到状态判断 / faker 表单 / 多步骤 / 断言写法
-- [9. 排错](#9-排错) —— 选择器失效 / 弹窗不出现 / 打码失败 / 熔断 / 截图与日志
-
 ---
 
 ## 1. 快速开始

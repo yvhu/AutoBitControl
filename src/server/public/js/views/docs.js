@@ -35,6 +35,26 @@ function injectHeadingIds(root) {
   })
 }
 
+// 栏目树：从已渲染的 h2（章）/h3（节）提取树形导航，点击滚动到对应标题
+function buildChapterTree(root, side) {
+  const items = []
+  root.querySelectorAll('h2, h3').forEach(h => {
+    items.push({ level: h.tagName === 'H2' ? 2 : 3, id: h.id, text: h.textContent.trim() })
+  })
+  if (items.length === 0) return
+  const html = items.map(it => {
+    const pad = it.level === 3 ? 'padding-left:22px;' : ''
+    return `<div class="doc-toc-item" data-target="${it.id}" style="${pad}">${it.text}</div>`
+  }).join('')
+  side.innerHTML += `<div class="doc-toc" id="doc-toc">${html}</div>`
+  side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', () => {
+    side.querySelectorAll('.doc-toc-item').forEach(x => x.classList.remove('on'))
+    el.classList.add('on')
+    const target = root.querySelector('#' + el.dataset.target) ?? root.querySelector(`[id="${CSS.escape(el.dataset.target)}"]`)
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }))
+}
+
 // 源码视图：逐行带行号渲染（HTML 转义后展示）
 function renderSource(content) {
   const lines = content.split('\n')
@@ -43,7 +63,7 @@ function renderSource(content) {
   ).join('') + '</div>'
 }
 
-// 渲染文档页：左侧目录 + 右侧内容（首次进入默认打开手册）
+// 渲染文档页：左侧栏目（手册/示例页签 + 章节目录树）+ 右侧内容（首次进入默认打开手册）
 export async function render() {
   const side = document.querySelector('#doc-side')
   const content = document.querySelector('#doc-content')
@@ -57,6 +77,8 @@ export async function render() {
   side.querySelectorAll('.doc-tab').forEach(tab => tab.addEventListener('click', async () => {
     side.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('on'))
     tab.classList.add('on')
+    const toc = side.querySelector('#doc-toc')
+    if (toc) toc.remove()
     const kind = tab.dataset.kind
     if (kind === 'source') {
       const r = await get('/api/docs/examples/' + tab.dataset.doc)
@@ -69,6 +91,7 @@ export async function render() {
       await ensureMarked()
       content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
       injectHeadingIds(content)
+      buildChapterTree(content, side)
     }
   }))
   const first = side.querySelector('[data-doc="guide"]')
