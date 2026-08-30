@@ -372,6 +372,7 @@ describe('OpenAPI 文档与统一错误码', () => {
       '/api/bitbrowser/test',
       '/api/bitbrowser/sync',
       '/api/settings',
+      '/api/datasource/reload',
       '/api/screenshots',
       '/api/docs/guide',
       '/api/docs/examples',

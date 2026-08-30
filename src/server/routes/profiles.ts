@@ -57,7 +57,7 @@ import type { SiteTask } from '../../tasks/base'
  *               enabled: { type: boolean }
  *     responses:
  *       '200':
- *         description: 更新后的窗口记录
+ *         description: 当前窗口记录快照（更新前的字段值）
  *         content:
  *           application/json:
  *             schema:

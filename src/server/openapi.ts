@@ -4,6 +4,11 @@
  * 设计思路：注解直接写在路由旁（apis: routes/*.ts），改接口时同步改文档；Task 2 前端类型生成依赖此 spec
  */
 import swaggerJsdoc from 'swagger-jsdoc'
+import { dirname, join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// glob v11 把 \ 当转义符：绝对路径须转成正斜杠（否则 Windows 下匹配为空）
+const routesGlob = join(dirname(fileURLToPath(import.meta.url)), 'routes', '*.ts').split(sep).join('/')
 
 export const openapiSpec = swaggerJsdoc({
   definition: {
@@ -11,5 +16,5 @@ export const openapiSpec = swaggerJsdoc({
     info: { title: 'AutoBitControl API', version: '0.1.0', description: '面板与自动化引擎的全部接口' },
     servers: [{ url: 'http://127.0.0.1:3000' }],
   },
-  apis: ['src/server/routes/*.ts'],
+  apis: [routesGlob],
 })

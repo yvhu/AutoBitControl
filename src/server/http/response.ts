@@ -11,7 +11,7 @@ export function ok(res: Response, data: unknown = null): void {
   res.json({ code: 0, message: 'ok', data })
 }
 
-/** 失败响应：code 与 HTTP 状态码同值（简化前端与测试的断言） */
+/** 失败响应：code 为业务错误码（见 http/errors.ts ERROR_CODES） */
 export function fail(res: Response, status: number, code: number, message: string): void {
   res.status(status).json({ code, message, data: null })
 }

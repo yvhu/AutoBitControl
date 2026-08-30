@@ -62,6 +62,31 @@ export interface PublicSettings {
  *                           items: { type: string }
  */
 
+/**
+ * @swagger
+ * /api/datasource/reload:
+ *   post:
+ *     summary: 重载数据源
+ *     responses:
+ *       '200':
+ *         description: 重载后的数据源信息
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     available: { type: boolean }
+ *                     rows: { type: integer }
+ *                     columns:
+ *                       type: array
+ *                       items: { type: string }
+ */
+
 export function settingsRouter(deps: {
   cfg: AppConfig
   version: string
