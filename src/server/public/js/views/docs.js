@@ -25,6 +25,29 @@ function renderMarkdown(content) {
   return '<pre>' + content.replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])) + '</pre>'
 }
 
+// 代码块折叠：手册里的代码框默认收起，点击头部展开/收起（头部标注语言）
+function makeCodeBlocksCollapsible(root) {
+  root.querySelectorAll('.doc-md pre').forEach(pre => {
+    const code = pre.querySelector('code')
+    const langMatch = code?.className.match(/language-([\w-]+)/)
+    const lang = langMatch ? langMatch[1] : '代码'
+    const wrap = document.createElement('div')
+    wrap.className = 'code-collapse'
+    const head = document.createElement('div')
+    head.className = 'code-collapse-head'
+    head.textContent = `▸ ${lang}`
+    pre.parentNode.insertBefore(wrap, pre)
+    wrap.appendChild(head)
+    wrap.appendChild(pre)
+    head.addEventListener('click', () => {
+      const collapsed = pre.style.display === 'none'
+      pre.style.display = collapsed ? '' : 'none'
+      head.textContent = `${collapsed ? '▾' : '▸'} ${lang}`
+    })
+    pre.style.display = 'none'
+  })
+}
+
 // 标题锚点：marked 不生成标题 id，渲染后按目录约定补上（小写、去符号、空格转连字符、保留中文）
 function injectHeadingIds(root) {
   root.querySelectorAll('h1, h2, h3').forEach(h => {
@@ -151,6 +174,7 @@ export async function render() {
   await ensureMarked()
   content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
   injectHeadingIds(content)
+  makeCodeBlocksCollapsible(content)
   buildDocTree(side, content, extractChapterTree(content), examples)
   attachScrollSpy(side, content)
 }
