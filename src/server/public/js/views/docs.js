@@ -50,7 +50,7 @@ function buildChapterTree(root, side) {
   side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', () => {
     side.querySelectorAll('.doc-toc-item').forEach(x => x.classList.remove('on'))
     el.classList.add('on')
-    const target = root.querySelector('#' + el.dataset.target) ?? root.querySelector(`[id="${CSS.escape(el.dataset.target)}"]`)
+    const target = document.getElementById(el.dataset.target)
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }))
 }
