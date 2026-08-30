@@ -7,6 +7,7 @@
 import { loadConfig } from './infrastructure/config'
 import { createLogger } from './infrastructure/logger'
 import { AppDb } from './infrastructure/db'
+import { DataSource } from './infrastructure/datasource'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { TaskQueue, CoalescingEnqueuer } from './engine/queue'
@@ -91,6 +92,11 @@ export async function startApp(): Promise<void> {
   // 钱包密码环境变量解析失败告警（config 层无 logger，此处统一提示）
   if (cfg.wallet.parseError) logger.warn('WALLET_PASSWORDS 环境变量解析失败，已忽略（请检查 JSON 格式）')
 
+  // 数据源（Excel 账号表）：加载失败仅告警（数据源是可选增强，任务侧 faker 兜底）
+  const datasource = new DataSource()
+  await datasource.load(cfg.dataSource.path)
+  if (!datasource.available) logger.warn({ path: cfg.dataSource.path, err: datasource.error }, '数据源不可用（未配置/文件不存在/解析失败），任务将以 faker 兜底')
+
   const tasks = loadTasks()
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
@@ -119,6 +125,11 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
+    // 数据源行解析：有窗口列按窗口名/ID 匹配，无窗口列按窗口列表顺序取行（list 顺序=面板顺序）
+    accountResolver: async (profile) => {
+      if (!datasource.available) return null
+      return datasource.rowFor(profile, await db.listProfiles(false))?.values ?? null
+    },
     // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗；
     // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试
     scheduleRetry: (profile, taskKey, delayMs) => {
@@ -147,6 +158,14 @@ export async function startApp(): Promise<void> {
     cfg,
     logger,
     bitbrowser: buildBitbrowserDeps(bitbrowser, db),
+    // 面板数据源展示/重载：闭包包住 datasource（reload = 重新 load 配置路径）
+    datasource: {
+      summary: () => datasource.summary(),
+      reload: () => datasource.load(cfg.dataSource.path),
+      get available() { return datasource.available },
+      get error() { return datasource.error },
+      path: cfg.dataSource.path,
+    },
     onToggle: (key) => void scheduler?.refreshTask(key),
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {

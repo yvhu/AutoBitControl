@@ -29,6 +29,13 @@ interface MockDeps {
   }
   bitbrowser: { health: Mock; sync: Mock }
   captchaBalance: Mock
+  datasource: {
+    summary: Mock
+    reload: Mock
+    available: boolean
+    error: string
+    path: string
+  }
   onToggle: Mock
 }
 
@@ -57,6 +64,13 @@ function makeDeps(): MockDeps {
     },
     bitbrowser: { health: vi.fn().mockResolvedValue(true), sync: vi.fn().mockResolvedValue(3) },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
+    datasource: {
+      summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
+      reload: vi.fn().mockResolvedValue(undefined),
+      available: true,
+      error: '',
+      path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx',
+    },
     onToggle: vi.fn(),
   }
 }
@@ -244,6 +258,28 @@ describe('server API（RESTful + envelope）', () => {
     expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
     expect(JSON.stringify(res.body.data)).not.toContain('test-secret-key-abc123')
     expect(JSON.stringify(res.body.data)).not.toContain('password')
+  })
+
+  it('GET /api/settings 含 datasource 字段（available/error/path/rows/columns）', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).get('/api/settings')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.datasource.available).toBe(true)
+    expect(res.body.data.datasource.error).toBe('')
+    expect(res.body.data.datasource.path).toContain('accounts.xlsx')
+    expect(res.body.data.datasource.rows).toBe(2)
+    expect(res.body.data.datasource.columns).toEqual(['窗口', '邮箱'])
+    expect(deps.datasource.summary).toHaveBeenCalled()
+  })
+
+  it('POST /api/datasource/reload 调用 reload 并返回最新摘要', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/datasource/reload')
+    expect(res.body.code).toBe(0)
+    expect(deps.datasource.reload).toHaveBeenCalledTimes(1)
+    expect(res.body.data.available).toBe(true)
+    expect(res.body.data.rows).toBe(2)
+    expect(res.body.data.columns).toEqual(['窗口', '邮箱'])
   })
 
   it('GET /api/screenshots 拒绝目录穿越', async () => {

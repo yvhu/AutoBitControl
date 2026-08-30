@@ -114,7 +114,12 @@
           <button class="btn ghost sm" onclick="window.abcBalance()">查询余额</button>
           <span class="chip"><span class="dot ok"></span><span id="set-balance">—</span></span>
         </div>
-        <div style="color:#64748B;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
+          <div style="width:120px;color:#94A3B8;font-size:12px">数据源</div>
+          <button class="btn ghost sm" onclick="window.abcReloadDatasource()">重载</button>
+          <span class="chip"><span class="dot err" id="set-ds-dot"></span><span id="set-datasource">—</span></span>
+        </div>
+        <div style="color:#64748B;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）；数据源改完 xlsx 点「重载」即时生效</div>
       </div>
     </div>
   </div>

@@ -76,6 +76,7 @@ AutoBitControl 一共三块，分工如下：
 | 窗口 | Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 |
 | 退避 | Backoff | 重试前的等待时间；失败越多往往等得越久，给站点限流留冷却时间 |
 | 探活 | Probe | 开窗后先访问一个探活地址，确认代理 IP 已生效再跑任务 |
+| 数据源 | DataSource | 预先准备的账号/素材 Excel 表格（`config/accounts.xlsx`），每个窗口按行领取自己的数据（邮箱/邀请码/图片等） |
 | 调度器 | Scheduler | 框架里「看表的人」：到点把任务推进执行队列，到点前啥也不干 |
 | patchright | patchright | 我们用的「隐形浏览器驱动」，自动屏蔽自动化痕迹 |
 | croner | croner | 实现定时任务的库 |
@@ -130,6 +131,8 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 ```
 
 注意：`url` 为空字符串的任务不会参与调度（见第 7 章），只能在面板手动触发——示例任务正是如此。
+
+> 填表数据有讲究：需要「每个窗口用自己预先准备的数据」时用**数据源**（`ctx.account('列名')`，见第 3 章与第 9 章「数据源与 faker」）；内容无所谓时用 faker 随机。
 
 ### 写好之后怎么验证
 
@@ -198,7 +201,7 @@ meta: TaskMeta = {
 
 ## 3. TaskContext 方法全解
 
-`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有三个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见第 6 章）、`ctx.profile`（当前窗口记录，含熔断计数等）。
+`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见第 6 章）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文「accountRow」）。
 
 下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。
 
@@ -281,6 +284,63 @@ await ctx.typeInto('input[name="amount"]', '100')                  // 往数量�
 ```
 
 - **注意什么**：内部先点击聚焦，再**逐键**输入（每键 40-130ms 随机延迟，约 3% 概率错键回删重输，模拟真人手误）。它和 `pressKey` 的分工：**往框里打字用 typeInto，按一个键（如 Enter 提交）用 pressKey**。
+
+### account
+
+```ts
+async account(key: string): Promise<string>
+```
+
+- **是什么**：从**数据源**（预先准备的 Excel 账号表格）里取**当前窗口对应行**的某一列值。严格模式：行不存在、列缺失、值为空都会抛错（错误信息带窗口名与列名）。
+- **什么时候用**：任务需要「每个窗口用自己预先准备好的数据」时——邮箱、邀请码、用户名、收款地址等。这是替代 faker 随机现编的方案（数据源 vs faker 的关系见第 9 章「数据源与 faker」）。
+- **怎么用**：
+
+```ts
+// 数据源（config/accounts.xlsx）长这样：第一行表头，每行一个窗口的数据
+// | 窗口   | 邮箱              | 邀请码   |
+// | 窗口01 | a@example.com    | CODE001 |
+const email = await ctx.account('邮箱')          // 取当前窗口的邮箱列
+const code = await ctx.account('邀请码')          // 取当前窗口的邀请码列
+await ctx.typeInto('input[name="email"]', email)
+```
+
+- **注意什么**：三个失败形态的报错都带提示——「数据源无当前窗口对应的行（窗口: X）」= 表里没有这一行；「数据源缺少列: X（可用列: …）」= 表头没这一列；「数据源列 X 在窗口 Y 的行为空」= 该单元格是空的。报错即任务失败（进入重试流程），**这通常正是你想要的**——数据没备齐就不该硬跑。只想「有就用、没有就随机」请用宽松的 `accountRow`（见下）。
+
+### accountRow
+
+```ts
+get accountRow(): Record<string, string> | null
+```
+
+- **是什么**：只读访问器，返回当前窗口在数据源中的**整行**（列名 → 字符串值）；数据源不可用或该窗口无映射时为 `null`。
+- **什么时候用**：需要**宽松取值**时——数据源有值用数据源的，没有就用 faker 兜底，不让任务失败。
+- **怎么用**：
+
+```ts
+// 数据源优先、faker 兜底：数据源没配这窗口/这列时自动随机一个
+const email = ctx.accountRow?.['邮箱'] || faker.internet.email()
+await ctx.typeInto('input[name="email"]', email)
+```
+
+- **注意什么**：与 `account` 的取舍——`account` 严格（缺数据即失败，适合「数据必须备齐」的场景），`accountRow` 宽松（缺数据静默兜底，适合「数据可有可无」的场景）。`accountRow` 的值是**整行拷贝**，改它不影响数据源；值是去首尾空格后的字符串，空串会保留（`''` 会被 `||` 判为假而走兜底）。
+
+### uploadFile
+
+```ts
+async uploadFile(selector: string, value: string): Promise<void>
+```
+
+- **是什么**：往 file 输入框上传一个文件（头像、身份证、附件等）。`value` 支持两种：**http(s) URL**（自动下载到临时文件再上传）或**本地文件路径**。
+- **什么时候用**：站点要求上传图片/文件且文件内容来自数据源——典型场景是「每个窗口上传自己的头像」，头像地址预先写在数据表的「图片地址」列里。
+- **怎么用**：
+
+```ts
+// 数据源里的图片地址列 + uploadFile 一行搞定头像上传
+await ctx.uploadFile('input[type="file"]', await ctx.account('图片地址'))   // 值可以是 http(s) URL
+await ctx.uploadFile('input[type="file"]', 'D:/avatars/my-avatar.png')     // 也可以是本地路径
+```
+
+- **注意什么**：URL 形式下载失败（如 HTTP 404）会抛 `图片下载失败: <url> (HTTP <状态码>)`（任务进入失败流程）；下载的临时文件扩展名取自 URL（取不到时回落 `png`），存放在系统临时目录 `abc-uploads/` 下，不占项目目录。它内部用 `setInputFiles` 直接设置文件，**不需要**逐键打字，也不用担心弹系统文件选择框。
 
 ### pressKey
 
@@ -837,6 +897,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
 | `wallet` | `passwords` | 窗口解锁密码映射（比特窗口 ID → 密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`screenshotDir`、`logDir` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是**遗留字段**——数据层已全走云端数据库，云库模式下不生效，无需配置 |
+| `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口名/比特 ID 匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见第 9 章「数据源与 faker」）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 
 ### 8.2 面板使用
 
@@ -846,7 +907,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）；「同步比特浏览器」按钮把比特客户端里的窗口列表拉取入库；每行有启用开关；「立即跑」= 跑该窗口的全部启用任务；「详情」打开**弹窗**，展示该窗口今日任务时间线与「重置熔断」按钮。
 - **任务页**：每张任务卡片显示分类徽章（签到/领水/铸币/其他）、备注、来源页链接；卡片开关写入云端 `task_states` 表，切换**立即生效**（停用即停 cron、重新启用即重注册 cron，无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍。
 - **文档页**：左侧目录树（本手册章节树 ＋ 三个示例任务源码），右侧渲染本手册正文；代码块默认折叠，点头部展开；正文滚动时目录自动高亮当前章节（滚动联动）。
-- **设置页**：只读展示运行参数（比特 API 地址、并发、探活地址、时区等）；「测试连接」按钮验证比特浏览器本地 API 是否可达；「查询余额」展示 yescaptcha 剩余点数。
+- **设置页**：只读展示运行参数（比特 API 地址、并发、探活地址、时区等）；「测试连接」按钮验证比特浏览器本地 API 是否可达；「查询余额」展示 yescaptcha 剩余点数；「数据源」行展示账号表加载状态（N 行 + 列名 / 未配置），改完 xlsx 点「重载」即时生效（无需重启）。
 
 ### 8.3 REST 接口总表
 
@@ -866,7 +927,8 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | GET | `/api/captcha/balance` | 打码余额（`{ configured, points, yuan }`） |
 | POST | `/api/bitbrowser/test` | 比特浏览器连接测试（`{ ok }`） |
 | POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库（`{ count }`） |
-| GET | `/api/settings` | 公开只读设置（不含任何密钥） |
+| GET | `/api/settings` | 公开只读设置（不含任何密钥），含 `datasource` 状态（`{ available, error, path, rows, columns }`） |
+| POST | `/api/datasource/reload` | 重载数据源 Excel（改完 xlsx 后点面板「设置」页「重载」，返回 `{ available, rows, columns }`，无需重启服务） |
 | GET | `/api/screenshots` | 取截图文件，`?path=` 传截图目录内的相对路径 |
 | GET | `/api/docs/guide`、`/api/docs/examples`、`/api/docs/examples/:name` | 本手册 markdown 原文、示例文件清单、单个示例源码（白名单限定三个示例文件） |
 
@@ -939,15 +1001,43 @@ if (await ctx.textPresent('操作过于频繁')) return      // 视为当日已�
 if (await ctx.textPresent('维护中')) throw new Error('站点维护中') // 抛错 → 面板可见错误与截图
 ```
 
-### faker 填表单
+### 数据源与 faker
+
+填表单的数据从哪来？两个来源，职责互补：
+
+- **数据源（预先准备）**：账号/素材先写在 `config/accounts.xlsx`（表头 + 每窗口一行），任务运行时每个窗口**领走自己那一行**。适合「数据必须真实、固定、可追溯」的场景——注册好的邮箱、邀请码、钱包地址、头像图片。
+- **faker（随机现编）**：任务运行时现场随机生成。适合「数据内容无所谓、只要不重复」的场景——代币名、描述、金额等。
+
+**写法一：数据源优先、faker 兜底（推荐，任务不因数据缺档而失败）**：
 
 ```ts
-const email = faker.internet.email()                     // 拟人化邮箱（随机真实域名）
+// 数据源里配了这窗口的「邮箱」列就用它，没配/没这列就 faker 随机一个
+const email = ctx.accountRow?.['邮箱'] || faker.internet.email()
+await ctx.typeInto('input[name="email"]', email)
+
+// 纯随机场景继续用 faker
 const tokenName = faker.word.words(2)                    // 代币名
 const tokenSymbol = tokenName.replace(/[aeiou]/gi, '').slice(0, 4).toUpperCase() // 去元音做符号
 await ctx.typeInto('textarea[name="description"]', faker.lorem.sentence())
 await ctx.typeInto('input[name="amount"]', String(faker.number.int({ min: 1, max: 100 })))
 ```
+
+**写法二：严格取数（数据必须备齐，缺了宁可失败）**：
+
+```ts
+// account 严格模式：行不存在/列缺失/值为空都会抛错（任务失败进入重试）
+const email = await ctx.account('邮箱')
+await ctx.typeInto('input[name="email"]', email)
+```
+
+**图片上传场景（数据源 + uploadFile）**：
+
+```ts
+// 「图片地址」列里写 http(s) URL（或本地路径），uploadFile 自动下载（或直接读）并上传
+await ctx.uploadFile('input[type="file"]', await ctx.account('图片地址'))
+```
+
+数据源文件改完不用重启服务：面板「设置」页点「重载」即时生效（`POST /api/datasource/reload`）。示例表见 `config/accounts.example.xlsx`。
 
 ### 多步骤流程
 

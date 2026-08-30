@@ -74,6 +74,11 @@ export interface WalletConfig {
   parseError?: boolean
 }
 
+/** 数据源配置：每个窗口按行领取账号/素材的 Excel 表格路径（相对路径在 loadConfig 中解析为绝对路径） */
+export interface DataSourceConfig {
+  path: string
+}
+
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -83,6 +88,7 @@ export interface AppConfig {
   cloud: CloudConfig
   storage: StorageConfig
   wallet: WalletConfig
+  dataSource: DataSourceConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -145,6 +151,8 @@ const defaults: AppConfig = {
   },
   // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供
   wallet: { passwords: {} },
+  // 账号数据源：默认 config/accounts.xlsx（文件不存在时仅告警，任务用 faker 兜底）
+  dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */
@@ -230,5 +238,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     const p = cfg.storage[key]
     if (!isAbsolute(p)) cfg.storage[key] = resolve(root, p)
   }
+  // 数据源路径同样解析为绝对路径（与存储路径同法）
+  if (!isAbsolute(cfg.dataSource.path)) cfg.dataSource.path = resolve(root, cfg.dataSource.path)
   return cfg
 }

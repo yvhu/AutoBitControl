@@ -36,6 +36,8 @@ export interface ServerDeps {
   logger: Logger
   bitbrowser: { health(): Promise<boolean>; sync(): Promise<number> }
   captchaBalance: () => Promise<{ points: number } | null>
+  /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
+  datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 任务开关 PATCH 成功后回调（key, enabled）：调度器按 key 即时重注册/停止 cron */
   onToggle?: (key: string, enabled: boolean) => void
 }
@@ -58,8 +60,8 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())
-  // 公开设置：非敏感配置 + 版本号（面板展示，避免前端硬编码）
-  api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION }))
+  // 公开设置：非敏感配置 + 版本号 + 数据源状态（面板展示，避免前端硬编码）
+  api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
   app.use('/api', api)
 
   // 前端静态资源：面板页面 + js/css/vendor

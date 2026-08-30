@@ -6,6 +6,7 @@
 import { loadConfig } from '../src/infrastructure/config'
 import { createLogger } from '../src/infrastructure/logger'
 import { AppDb, todayStr } from '../src/infrastructure/db'
+import { DataSource } from '../src/infrastructure/datasource'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
 import { YesCaptchaClient, CaptchaService } from '../src/integrations/yescaptcha'
 import { WalletRegistry } from '../src/automation/wallet/types'
@@ -34,6 +35,10 @@ async function main(): Promise<void> {
   }
   const db = await AppDb.open(cfg.cloud)
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
+  // 数据源（与 app.ts 同逻辑就地建）：不可用仅告警，任务以 faker 兜底
+  const datasource = new DataSource()
+  await datasource.load(cfg.dataSource.path)
+  if (!datasource.available) logger.warn({ path: cfg.dataSource.path, err: datasource.error }, '数据源不可用，任务将以 faker 兜底')
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
@@ -61,6 +66,11 @@ async function main(): Promise<void> {
   }
   runner = new WindowRunner({
     cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords,
+    // 数据源行解析：与 app.ts 同逻辑（有窗口列按名匹配，无窗口列按窗口列表顺序取行）
+    accountResolver: async (profile) => {
+      if (!datasource.available) return null
+      return datasource.rowFor(profile, await db.listProfiles(false))?.values ?? null
+    },
     // 脚本场景无队列：退避到期直接重跑该任务（定时器不 unref，保持进程存活等待重试）
     scheduleRetry: (profile, taskKey, delayMs) => {
       setTimeout(() => { void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) }) }, delayMs)

@@ -60,6 +60,11 @@ export interface WindowRunnerDeps {
    * 当前窗口立即继续下一个任务/正常关窗
    */
   scheduleRetry: (profile: ProfileRow, taskKey: string, delayMs: number) => void
+  /**
+   * 数据源行解析（app 层装配注入）：按窗口取数据源行（列名 -> 值）；
+   * 返回 null 表示无映射（任务侧 faker 兜底）；未注入时任务 accountRow 恒为 null
+   */
+  accountResolver?: (profile: ProfileRow) => Promise<Record<string, string> | null>
 }
 
 export class WindowRunner {
@@ -227,6 +232,15 @@ export class WindowRunner {
         await page.goto('about:blank', { timeout: 10000 }).catch(() => {})
       }
       await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, 'running', { attempts: attempt, error: null, startedAt: new Date().toISOString() }), null)
+      // 数据源行解析：失败 catch → null + warn（数据源是可选增强，不阻断任务执行）
+      let accountRow: Record<string, string> | null = null
+      if (this.deps.accountResolver) {
+        try {
+          accountRow = await this.deps.accountResolver(profile)
+        } catch (e) {
+          this.deps.logger.warn({ profile: profile.name, err: (e as Error).message }, '数据源行解析失败，任务将以 faker 兜底')
+        }
+      }
       try {
         const ctx = new TaskContext({
           page,
@@ -239,6 +253,7 @@ export class WindowRunner {
           walletPasswords: this.deps.walletPasswords,
           captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
+          accountRow,
           // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
           onCaptchaLog: (kind, ok, costPoints) => {
             void this.safeDb(() => db.logCaptcha(profile.id, taskKey, kind, costPoints, ok), undefined)

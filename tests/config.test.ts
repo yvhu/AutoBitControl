@@ -60,6 +60,18 @@ describe('loadConfig', () => {
     expect(cfg.storage.dbPath).toBe(join(dir, 'data', 'app.db'))
   })
 
+  it('相对数据源路径解析为 root 下的绝对路径（默认 config/accounts.xlsx）', () => {
+    // 默认值已是绝对路径（指向默认项目根，与 storage 默认值同法）
+    expect(loadConfig({ rootDir: dir }).dataSource.path).toMatch(/accounts\.xlsx$/)
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      dataSource: { path: 'config/accounts.xlsx' },
+    }))
+    const cfg = loadConfig({ rootDir: dir })
+    expect(cfg.dataSource.path).toBe(join(dir, 'config', 'accounts.xlsx'))
+  })
+
   it('WALLET_PASSWORDS env JSON 解析并与配置文件 wallet.passwords 合并', () => {
     const configDir = join(dir, 'config')
     mkdirSync(configDir, { recursive: true })

@@ -4,8 +4,9 @@
  * 设计思路：把页面/拟人/钱包/验证码/截图封装成语义化方法，
  * 任务代码不直接碰 patchright 细节（选择器查找等见 docs/API-GUIDE.md）
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Page } from 'patchright'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
@@ -30,6 +31,8 @@ export interface TaskContextDeps {
   captcha?: CaptchaService
   wallets?: WalletRegistry
   onCaptchaLog?: (kind: string, ok: boolean, costPoints: number) => void
+  /** 当前窗口在数据源中的行（列名 -> 值）；无映射为 null（任务可用 faker 兜底） */
+  accountRow?: Record<string, string> | null
 }
 
 export class TaskContext {
@@ -48,6 +51,44 @@ export class TaskContext {
   /** 当前窗口记录（熔断计数等） */
   get profile(): ProfileRow {
     return this.deps.profile
+  }
+
+  /** 当前窗口在数据源中的行（列名 -> 值；无映射为 null，任务可 `ctx.accountRow?.['邮箱'] ?? faker...` 兜底） */
+  get accountRow(): Record<string, string> | null {
+    return this.deps.accountRow ?? null
+  }
+
+  /**
+   * 从数据源取当前窗口对应行的列值（严格模式：行不存在/列缺失/值为空都会抛错，错误带窗口名与列名提示）
+   * 例：const email = await ctx.account('邮箱')
+   */
+  async account(key: string): Promise<string> {
+    const row = this.deps.accountRow
+    if (!row) throw new Error(`数据源无当前窗口对应的行（窗口: ${this.deps.profile.name}）`)
+    const v = row[key]
+    if (v === undefined) throw new Error(`数据源缺少列: ${key}（可用列: ${Object.keys(row).join(', ')}）`)
+    if (v === '') throw new Error(`数据源列 ${key} 在窗口 ${this.deps.profile.name} 的行为空`)
+    return v
+  }
+
+  /**
+   * 上传文件到 file 输入框（头像等）：值支持 http(s) URL（自动下载到临时文件）或本地路径
+   * 例：await ctx.uploadFile('input[type="file"]', await ctx.account('图片地址'))
+   */
+  async uploadFile(selector: string, value: string): Promise<void> {
+    const loc = this.page.locator(selector).first()
+    if (/^https?:\/\//i.test(value)) {
+      const res = await fetch(value)
+      if (!res.ok) throw new Error(`图片下载失败: ${value} (HTTP ${res.status})`)
+      const buf = Buffer.from(await res.arrayBuffer())
+      const ext = (value.split('?')[0].match(/\.(\w+)$/)?.[1] ?? 'png').slice(0, 10)
+      mkdirSync(join(tmpdir(), 'abc-uploads'), { recursive: true })
+      const file = join(tmpdir(), 'abc-uploads', `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`)
+      writeFileSync(file, buf)
+      await loc.setInputFiles(file)
+      return
+    }
+    await loc.setInputFiles(value)
   }
 
   /**

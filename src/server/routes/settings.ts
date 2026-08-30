@@ -1,6 +1,6 @@
 /**
  * 设置路由（server 层）：公开非敏感配置（面板展示用）
- * 依赖方向：只读注入的 AppConfig 与版本号；被 app 装配
+ * 依赖方向：只读注入的 AppConfig、数据源状态与版本号；被 app 装配
  * 安全约束：只暴露非敏感项，绝不包含 captcha clientKey / 钱包密码等密钥
  */
 import { Router } from 'express'
@@ -16,11 +16,23 @@ export interface PublicSettings {
   circuitBreakerThreshold: number
   probeUrl: string
   version: string
+  datasource: {
+    available: boolean
+    error: string
+    path: string
+    rows: number
+    columns: string[]
+  }
 }
 
-export function settingsRouter(deps: { cfg: AppConfig; version: string }): Router {
+export function settingsRouter(deps: {
+  cfg: AppConfig
+  version: string
+  datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
+}): Router {
   const router = Router()
   router.get('/settings', (req, res) => {
+    const s = deps.datasource.summary()
     ok(res, {
       bitbrowserApiBase: deps.cfg.bitbrowser.apiBase,
       webPort: deps.cfg.web.port,
@@ -29,7 +41,21 @@ export function settingsRouter(deps: { cfg: AppConfig; version: string }): Route
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
       probeUrl: deps.cfg.execution.probeUrl,
       version: deps.version,
+      // 数据源状态：面板设置页展示（行数/列名/可用性），路径仅提示用途不泄密
+      datasource: {
+        available: deps.datasource.available,
+        error: deps.datasource.error,
+        path: deps.datasource.path,
+        rows: s.rows,
+        columns: s.columns,
+      },
     } satisfies PublicSettings)
+  })
+  // 数据源重载：面板改完 xlsx 后点「重载」即时生效（无需重启服务）
+  router.post('/datasource/reload', async (req, res) => {
+    await deps.datasource.reload()
+    const s = deps.datasource.summary()
+    ok(res, { available: deps.datasource.available, rows: s.rows, columns: s.columns })
   })
   return router
 }
