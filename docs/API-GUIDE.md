@@ -77,6 +77,10 @@ AutoBitControl 一共三块，分工如下：
 | 退避 | Backoff | 重试前的等待时间；失败越多往往等得越久，给站点限流留冷却时间 |
 | 探活 | Probe | 开窗后先访问一个探活地址，确认代理 IP 已生效再跑任务 |
 | 调度器 | Scheduler | 框架里「看表的人」：到点把任务推进执行队列，到点前啥也不干 |
+| patchright | patchright | 我们用的「隐形浏览器驱动」，自动屏蔽自动化痕迹 |
+| croner | croner | 实现定时任务的库 |
+| ghost-cursor | ghost-cursor | 生成人类鼠标轨迹的库 |
+| pino | pino | 写日志的库 |
 
 ---
 
@@ -160,7 +164,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
 | `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见第 5 章）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
 
-字段齐全的示例（摘自 `src/tasks/example-checkin.ts`）：
+示例（省略了部分可选字段，完整字段见上表；摘自 `src/tasks/example-checkin.ts`）：
 
 ```ts
 meta: TaskMeta = {
@@ -269,6 +273,7 @@ async typeInto(selector: string, text: string): Promise<void>
 - **怎么用**：
 
 ```ts
+// faker（生成假数据的库：随机邮箱/名字/句子，避免每个窗口都用同一份数据）
 await ctx.typeInto('input[name="email"]', faker.internet.email())  // 往邮箱框里打字
 await ctx.typeInto('input[name="amount"]', '100')                  // 往数量框里打字
 ```
@@ -304,7 +309,7 @@ async solveCaptcha(): Promise<'none' | 'solved' | 'failed'>
 - **怎么用**：
 
 ```ts
-await ctx.typeInto('input[name="email"]', email)
+await ctx.typeInto('input[name="email"]', 'my-email@example.com')
 await ctx.solveCaptcha()                                   // 此时才检测 + 解题（可能要花钱）
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
@@ -628,7 +633,7 @@ wallets.register(new PhantomAdapter())
 `meta.captcha.auto`（默认 `true`）控制 `solveCaptcha()` 调用时是否实际打码：`auto: false` 时直接返回 `'none'`，不产生费用。**打码只发生在任务显式调用 `ctx.solveCaptcha()` 的位置**——框架不会在 `goto` 后自动打码。任务应在验证码可能出现的位置（通常就在点击提交按钮之前）调用一次：
 
 ```ts
-await ctx.typeInto('input[name="email"]', email)
+await ctx.typeInto('input[name="email"]', 'my-email@example.com')
 await ctx.solveCaptcha()                                  // 此时才检测 + 解题
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
