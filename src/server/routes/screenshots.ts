@@ -9,6 +9,28 @@ import { resolve, sep } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
 import type { AppConfig } from '../../infrastructure/config'
 import { fail, asyncHandler } from '../http/response'
+import { ERROR_CODES } from '../http/errors'
+
+/**
+ * @swagger
+ * /api/screenshots:
+ *   get:
+ *     summary: 取截图文件（path 传截图目录内相对路径，双层防护防目录穿越）
+ *     parameters:
+ *       - in: query
+ *         name: path
+ *         required: true
+ *         schema: { type: string }
+ *         description: 截图目录内的相对路径
+ *     responses:
+ *       '200':
+ *         description: 截图文件二进制流
+ *         content:
+ *           image/png:
+ *             schema: { type: string, format: binary }
+ *       '404':
+ *         description: 截图不存在或路径越界（业务码 40403）
+ */
 
 export function screenshotsRouter(deps: { cfg: AppConfig }): Router {
   const router = Router()
@@ -23,12 +45,12 @@ export function screenshotsRouter(deps: { cfg: AppConfig }): Router {
       rootReal = realpathSync(root)
       targetReal = realpathSync(target)
     } catch {
-      fail(res, 404, 404, '截图不存在')
+      fail(res, 404, ERROR_CODES.SCREENSHOT_NOT_FOUND, '截图不存在')
       return
     }
     // 前缀校验 + sep + 统一小写：防 /data/screenshots-evil 前缀绕过与盘符大小写差异
     if (!targetReal.toLowerCase().startsWith((rootReal + sep).toLowerCase()) || !existsSync(target)) {
-      fail(res, 404, 404, '截图不存在')
+      fail(res, 404, ERROR_CODES.SCREENSHOT_NOT_FOUND, '截图不存在')
       return
     }
     res.sendFile(target)

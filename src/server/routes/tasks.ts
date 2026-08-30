@@ -5,11 +5,128 @@
  * POST trigger 支持单窗口（bitbrowserId）或全部启用窗口两种范围
  */
 import { Router } from 'express'
-import { ok, fail, asyncHandler } from '../http/response'
-import { HttpError } from '../http/error'
+import { ok, asyncHandler } from '../http/response'
+import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
+
+/**
+ * @swagger
+ * /api/tasks:
+ *   get:
+ *     summary: 任务列表（meta 全字段 + 云端开关状态）
+ *     responses:
+ *       '200':
+ *         description: 任务元信息列表
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       key: { type: string }
+ *                       name: { type: string }
+ *                       url: { type: string }
+ *                       sourceUrl: { type: string, nullable: true }
+ *                       note: { type: string, nullable: true }
+ *                       category: { type: string, nullable: true }
+ *                       lastUpdated: { type: string, nullable: true }
+ *                       deprecated: { type: boolean }
+ *                       enabled: { type: boolean }
+ *                       wallet: { type: string, nullable: true }
+ *                       schedule: { type: string, nullable: true }
+ *                       timeoutSec: { type: integer, nullable: true }
+ *                       retry: { type: integer, nullable: true }
+ *                       captcha: { type: boolean, nullable: true }
+ */
+
+/**
+ * @swagger
+ * /api/tasks/{key}:
+ *   patch:
+ *     summary: 任务开关（写云端 task_states，立即生效无需重启）
+ *     parameters:
+ *       - in: path
+ *         name: key
+ *         required: true
+ *         schema: { type: string }
+ *         description: 任务全局唯一 key
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *             required: [enabled]
+ *     responses:
+ *       '200':
+ *         description: 开关已写入
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     key: { type: string }
+ *                     enabled: { type: boolean }
+ *       '400':
+ *         description: enabled 非布尔值（业务码 40000）
+ *       '404':
+ *         description: 任务不存在（业务码 40401）
+ */
+
+/**
+ * @swagger
+ * /api/tasks/{key}/trigger:
+ *   post:
+ *     summary: 手动触发任务（可选指定单窗口）
+ *     parameters:
+ *       - in: path
+ *         name: key
+ *         required: true
+ *         schema: { type: string }
+ *         description: 任务全局唯一 key
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               bitbrowserId:
+ *                 type: string
+ *                 description: 指定窗口 id（缺省跑全部启用窗口）
+ *     responses:
+ *       '200':
+ *         description: 入队成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     scope: { type: string, enum: [single, all] }
+ *       '404':
+ *         description: 任务或窗口不存在（业务码 40401/40402）
+ *       '409':
+ *         description: 任务已停用（业务码 40901）
+ */
 
 export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; onToggle?: (key: string, enabled: boolean) => void }): Router {
   const router = Router()
@@ -39,8 +156,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
   router.patch('/tasks/:key', asyncHandler(async (req, res) => {
     const key = String(req.params.key)
     const body = (req.body ?? {}) as { enabled?: unknown }
-    if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled 必须为布尔值')
-    if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
+    if (typeof body.enabled !== 'boolean') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'enabled 必须为布尔值')
+    if (!deps.tasks.has(key)) throw new HttpError(404, ERROR_CODES.TASK_NOT_FOUND, `任务不存在: ${key}`)
     await deps.db.setTaskEnabled(key, body.enabled)
     // 通知调度器即时刷新该任务的 cron（停用即停、启用即注册，无需重启）
     deps.onToggle?.(key, body.enabled)
@@ -48,14 +165,14 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
   }))
   router.post('/tasks/:key/trigger', asyncHandler(async (req, res) => {
     const key = String(req.params.key)
-    if (!deps.tasks.has(key)) throw new HttpError(404, `任务不存在: ${key}`)
-    if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, '任务已停用')
+    if (!deps.tasks.has(key)) throw new HttpError(404, ERROR_CODES.TASK_NOT_FOUND, `任务不存在: ${key}`)
+    if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, ERROR_CODES.TASK_DISABLED, '任务已停用')
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
     const body = (req.body ?? {}) as { bitbrowserId?: string }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）
     if (body.bitbrowserId) {
       const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)
-      if (!profile) throw new HttpError(404, `窗口不存在: ${body.bitbrowserId}`)
+      if (!profile) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${body.bitbrowserId}`)
       deps.enqueuer.enqueue(profile, key)
       ok(res, { scope: 'single' })
       return

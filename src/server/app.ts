@@ -5,6 +5,7 @@
  * /api 前缀统一挂载；静态面板文件由 public 目录直出（单页多视图）
  */
 import express from 'express'
+import swaggerUi from 'swagger-ui-express'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,7 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { CoalescingEnqueuer } from '../engine/queue'
 import type { SiteTask } from '../tasks/base'
+import { openapiSpec } from './openapi'
 import { dashboardRouter } from './routes/dashboard'
 import { tasksRouter } from './routes/tasks'
 import { profilesRouter } from './routes/profiles'
@@ -67,6 +69,9 @@ export function createApp(deps: ServerDeps): express.Express {
   // 前端静态资源：面板页面 + js/css/vendor
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), 'public')
   app.use(express.static(publicDir))
+  // OpenAPI 文档：spec json 供 Task 2 类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）
+  app.get('/api/docs/openapi.json', (req, res) => res.json(openapiSpec))
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiSpec))
   // 错误处理链：/api 未匹配路由 → 404；其余异常 → 统一 500/业务状态码
   app.use('/api', notFoundHandler())
   app.use(errorHandler(deps.logger))

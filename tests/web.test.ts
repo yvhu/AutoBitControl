@@ -345,3 +345,82 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.message).toBeTruthy()
   })
 })
+
+describe('OpenAPI 文档与统一错误码', () => {
+  it('GET /api/docs/openapi.json 返回合法 OpenAPI spec', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/openapi.json')
+    expect(res.status).toBe(200)
+    expect(res.body.openapi).toMatch(/^3\.0/)
+    expect(res.body.info.title).toBe('AutoBitControl API')
+    expect(Object.keys(res.body.paths)).toContain('/api/tasks')
+  })
+
+  it('openapi.json 覆盖全部业务接口路径', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/openapi.json')
+    const paths = Object.keys(res.body.paths)
+    const expected = [
+      '/api/dashboard',
+      '/api/tasks',
+      '/api/tasks/{key}',
+      '/api/tasks/{key}/trigger',
+      '/api/profiles',
+      '/api/profiles/{id}',
+      '/api/profiles/{id}/run',
+      '/api/profiles/{id}/breaker/reset',
+      '/api/runs/rerun-failed',
+      '/api/captcha/balance',
+      '/api/bitbrowser/test',
+      '/api/bitbrowser/sync',
+      '/api/settings',
+      '/api/screenshots',
+      '/api/docs/guide',
+      '/api/docs/examples',
+      '/api/docs/examples/{name}',
+    ]
+    for (const p of expected) expect(paths).toContain(p)
+  })
+
+  it('GET /api-docs/ 返回 swagger-ui 页面', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api-docs/')
+    expect(res.status).toBe(200)
+    expect(res.text).toContain('swagger-ui')
+  })
+
+  it('任务不存在返回业务码 40401', async () => {
+    const res = await request(createApp(makeDeps() as never)).patch('/api/tasks/nope').send({ enabled: true })
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40401)
+  })
+
+  it('窗口不存在返回业务码 40402', async () => {
+    const res = await request(createApp(makeDeps() as never)).post('/api/profiles/999/run')
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40402)
+  })
+
+  it('停用任务触发返回业务码 40901', async () => {
+    const deps = makeDeps()
+    deps.db.getTaskEnabled.mockResolvedValue(false)
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe(40901)
+  })
+
+  it('截图缺失返回业务码 40403', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/screenshots').query({ path: 'no-such.png' })
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40403)
+  })
+
+  it('示例白名单外返回业务码 40404', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/docs/examples/nope.ts')
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40404)
+  })
+
+  it('未知路由 404 返回业务码 40400', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/no-such')
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40400)
+  })
+})

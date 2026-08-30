@@ -7,6 +7,74 @@ import { Router } from 'express'
 import { todayStr, type AppDb, type RunStatus } from '../../infrastructure/db'
 import { ok, asyncHandler } from '../http/response'
 
+/**
+ * @swagger
+ * /api/dashboard:
+ *   get:
+ *     summary: 看板全部数据（统计/矩阵/窗口/打码成本）
+ *     parameters:
+ *       - in: query
+ *         name: date
+ *         schema: { type: string, format: date }
+ *         description: 查询日期 YYYY-MM-DD（缺省今天）
+ *     responses:
+ *       '200':
+ *         description: 看板数据
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     date: { type: string, format: date }
+ *                     stats:
+ *                       type: object
+ *                       properties:
+ *                         total: { type: integer }
+ *                         success: { type: integer }
+ *                         failed: { type: integer }
+ *                         captchaFailed: { type: integer }
+ *                         skipped: { type: integer }
+ *                         running: { type: integer }
+ *                         pending: { type: integer }
+ *                     runs:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           profileId: { type: integer }
+ *                           taskKey: { type: string }
+ *                           date: { type: string }
+ *                           status: { type: string, enum: [pending, running, success, failed, captcha_failed, skipped, retry_wait] }
+ *                           attempts: { type: integer }
+ *                           error: { type: string, nullable: true }
+ *                           screenshot: { type: string, nullable: true }
+ *                           startedAt: { type: string, nullable: true }
+ *                           finishedAt: { type: string, nullable: true }
+ *                           profileName: { type: string }
+ *                     profiles:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           bitbrowserId: { type: string }
+ *                           name: { type: string }
+ *                           enabled: { type: integer, description: '0/1 开关' }
+ *                           circuitBreakerCount: { type: integer }
+ *                     captcha:
+ *                       type: object
+ *                       properties:
+ *                         count: { type: integer }
+ *                         totalCost: { type: number }
+ *                     profilesTotal: { type: integer }
+ *                     profilesEnabled: { type: integer }
+ */
 export function dashboardRouter(deps: { db: AppDb }): Router {
   const router = Router()
   router.get('/dashboard', asyncHandler(async (req, res) => {

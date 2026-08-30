@@ -5,6 +5,48 @@
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 
+/**
+ * @swagger
+ * /api/bitbrowser/test:
+ *   post:
+ *     summary: 比特浏览器本地 API 连接测试（失败不抛错，返回 ok:false）
+ *     responses:
+ *       '200':
+ *         description: 连接状态
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     ok: { type: boolean }
+ */
+
+/**
+ * @swagger
+ * /api/bitbrowser/sync:
+ *   post:
+ *     summary: 拉取比特浏览器窗口列表并写入 profiles 表
+ *     responses:
+ *       '200':
+ *         description: 同步数量
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     count: { type: integer, description: 同步入库的窗口数 }
+ */
+
 export function bitbrowserRouter(deps: { health: () => Promise<boolean>; sync: () => Promise<number> }): Router {
   const router = Router()
   // 面板"设置"页连接测试按钮：健康检查失败不抛错，返回 ok:false

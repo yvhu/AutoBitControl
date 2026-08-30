@@ -9,6 +9,37 @@ import { todayStr, type AppDb, type ProfileRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import { ok, asyncHandler } from '../http/response'
 
+/**
+ * @swagger
+ * /api/runs/rerun-failed:
+ *   post:
+ *     summary: 当日失败记录重新入队（failed/captcha_failed 两类终态）
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               date:
+ *                 type: string
+ *                 format: date
+ *                 description: 指定日期 YYYY-MM-DD（缺省今天）
+ *     responses:
+ *       '200':
+ *         description: 重跑条数
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     count: { type: integer, description: 重新入队的失败条数 }
+ */
+
 export function runsRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer }): Router {
   const router = Router()
   router.post('/runs/rerun-failed', asyncHandler(async (req, res) => {

@@ -7,6 +7,29 @@
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 
+/**
+ * @swagger
+ * /api/captcha/balance:
+ *   get:
+ *     summary: 打码余额（未配置 clientKey 或查询失败时 configured=false）
+ *     responses:
+ *       '200':
+ *         description: 余额信息
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     configured: { type: boolean }
+ *                     points: { type: number }
+ *                     yuan: { type: number, description: '1000 点 = ¥1' }
+ */
+
 export function captchaRouter(deps: { captchaBalance: () => Promise<{ points: number } | null> }): Router {
   const router = Router()
   router.get('/captcha/balance', asyncHandler(async (req, res) => {

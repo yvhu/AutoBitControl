@@ -25,6 +25,43 @@ export interface PublicSettings {
   }
 }
 
+/**
+ * @swagger
+ * /api/settings:
+ *   get:
+ *     summary: 公开只读设置（不含任何密钥）+ 数据源状态
+ *     responses:
+ *       '200':
+ *         description: 非敏感配置项
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     bitbrowserApiBase: { type: string }
+ *                     webPort: { type: integer }
+ *                     timezone: { type: string }
+ *                     concurrency: { type: integer }
+ *                     circuitBreakerThreshold: { type: integer }
+ *                     probeUrl: { type: string }
+ *                     version: { type: string }
+ *                     datasource:
+ *                       type: object
+ *                       properties:
+ *                         available: { type: boolean }
+ *                         error: { type: string }
+ *                         path: { type: string }
+ *                         rows: { type: integer }
+ *                         columns:
+ *                           type: array
+ *                           items: { type: string }
+ */
+
 export function settingsRouter(deps: {
   cfg: AppConfig
   version: string

@@ -5,17 +5,139 @@
  */
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
-import { HttpError } from '../http/error'
+import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
+
+/**
+ * @swagger
+ * /api/profiles:
+ *   get:
+ *     summary: 窗口列表（含启用状态与熔断计数）
+ *     responses:
+ *       '200':
+ *         description: 窗口列表
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       bitbrowserId: { type: string }
+ *                       name: { type: string }
+ *                       enabled: { type: integer, description: '0/1 开关' }
+ *                       circuitBreakerCount: { type: integer }
+ */
+
+/**
+ * @swagger
+ * /api/profiles/{id}:
+ *   patch:
+ *     summary: 窗口开关（只更新显式传入的 enabled 字段）
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 窗口内部 id
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *     responses:
+ *       '200':
+ *         description: 更新后的窗口记录
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     bitbrowserId: { type: string }
+ *                     name: { type: string }
+ *                     enabled: { type: integer }
+ *                     circuitBreakerCount: { type: integer }
+ *       '404':
+ *         description: 窗口不存在（业务码 40402）
+ */
+
+/**
+ * @swagger
+ * /api/profiles/{id}/run:
+ *   post:
+ *     summary: 该窗口跑全部启用任务（停用任务排除，返回实际入队数）
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 窗口内部 id
+ *     responses:
+ *       '200':
+ *         description: 入队完成
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     count: { type: integer, description: 实际入队任务数 }
+ *       '404':
+ *         description: 窗口不存在（业务码 40402）
+ */
+
+/**
+ * @swagger
+ * /api/profiles/{id}/breaker/reset:
+ *   post:
+ *     summary: 重置该窗口熔断计数
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 窗口内部 id
+ *     responses:
+ *       '200':
+ *         description: 已重置
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data: { nullable: true }
+ *       '404':
+ *         description: 窗口不存在（业务码 40402）
+ */
 
 export function profilesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   /** 按内部 id 查窗口，不存在抛 404（各端点共用） */
   const find = async (id: number): Promise<ProfileRow> => {
     const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.id === id)
-    if (!profile) throw new HttpError(404, `窗口不存在: ${id}`)
+    if (!profile) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${id}`)
     return profile
   }
   router.get('/profiles', asyncHandler(async (req, res) => {
