@@ -119,6 +119,23 @@ describe('TaskContext 场景方法集成', () => {
     }
   })
 
+  it('typeInto 键入文本 + pressKey 按 Enter 提交表单（#enter-result 出现"已提交"）', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(baseUrl)
+      // 等待全屏 loading 遮罩消失，避免遮挡输入框（遮罩 3 秒后移除）
+      await ctx.waitForGone('#loading-mask', 6000)
+      await ctx.typeInto('#enter-input', 'hello')
+      await ctx.pressKey('Enter')
+      await ctx.waitForText('已提交')
+      expect(await page.locator('#enter-result').textContent()).toContain('已提交')
+    } finally {
+      await browser.close()
+    }
+  })
+
   it('waitForGone 等待 loading 遮罩消失；从未存在的选择器立即返回', async () => {
     const browser = await chromium.launch({ headless: true })
     try {

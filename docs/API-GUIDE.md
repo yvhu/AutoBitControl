@@ -1,6 +1,6 @@
-# AutoBitControl API 使用手册
+# AutoBitControl API 使用手册（小白友好版）
 
-本文档是 AutoBitControl 的任务开发手册，覆盖任务模型（`TaskMeta`）、运行时上下文（`TaskContext`）、拟人化输入（`Humanizer`）、钱包弹窗、验证码、调度与排错。所有签名与默认值以仓库当前代码为准。
+> 目标读者：第一次接触自动化的你。本文按「是什么 → 什么时候用 → 怎么用 → 注意什么」的顺序讲解，不预设任何编程背景。所有代码签名、默认值与报错文案，均以仓库当前代码为准（`src/engine/task-context.ts`、`src/automation/humanize.ts`、`src/engine/task.ts`、`src/engine/scheduler.ts`、`src/integrations/yescaptcha.ts`、`src/server/routes/*`）。
 
 配套资源：
 
@@ -10,15 +10,85 @@
 
 ---
 
+## 先读我（5 分钟）
+
+### 这个系统里，谁负责什么
+
+AutoBitControl 一共三块，分工如下：
+
+| 部件 | 大白话解释 |
+| --- | --- |
+| **任务文件**（`src/tasks/*.ts`） | 一份「操作说明书」。你用代码写下：打开哪个网址、点哪个按钮、怎么算成功 |
+| **框架**（引擎 + 调度器 + 浏览器） | 替你操作浏览器的「手」。它读你的说明书，定时开窗口、真的去点网页、失败还会重试 |
+| **面板**（Web 界面） | 看结果的地方。哪个任务成功、哪个失败、现场截图长什么样，都在这里看 |
+
+### 写一个任务的心智模型
+
+```
+写任务（写说明书） → 试跑（本地单窗口验证） → 上线（面板开开关，交给调度器）
+```
+
+1. **写任务**：复制示例文件，改两处——`meta`（这任务叫什么、几点跑、要不要钱包）和 `run`（具体操作步骤）。
+2. **试跑**：先跑本地测试（秒级反馈）→ 再用 `npm run task:run` 单窗口真跑一次 → 看截图确认没点错。
+3. **上线**：面板任务页打开开关，调度器（Scheduler，负责「到点自动开跑」的组件）每天准时执行，看板自动记录结果。
+
+一个完整的「9 点签到站点」任务长什么样，见第 8 章开头的完整示例。
+
+### 三句话记住怎么用
+
+1. 所有操作都通过 `ctx.` 开头的方法完成：`ctx.goto()` 打开页面，`ctx.clickCheckin()` 点按钮，`ctx.waitForText()` 等结果。
+2. 任何一步抛错（throw）都等于「这次任务失败」，框架按重试配置自动再跑，并在面板留档。
+3. 成功与否由**断言**说了算（检查「该出现的东西出现了没有」），而不是「点到了按钮」就算数。
+
+---
+
+## 名词表
+
+正文中出现的黑话都在这里。第一次看按 Ctrl+F 查这个词即可。
+
+| 名词 | 英文 | 一句话大白话 |
+| --- | --- | --- |
+| 任务 | Task | 一个站点的自动化流程（如「每天去 X 站签到」），对应 `src/tasks/` 里一个文件 |
+| 任务文件 | Task file | 上面说的那份「操作说明书」，含 `meta`（基本信息）和 `run`（操作步骤） |
+| 选择器 | Selector | 用来「定位」网页上某个元素的规则，比如 `#checkin-btn` 表示 id 为 `checkin-btn` 的按钮 |
+| 断言 | Assertion | 检查「该出现的东西出现了没有」，没出现就报错 |
+| cron | cron | 一种定时表达式，`0 9 * * *` 表示每天 9:00（写法见第 2/7 章） |
+| 错峰 | Stagger | 不写死几点，而是在一个时间段里随机挑一分钟（多窗口不扎堆、站点压力分散） |
+| 弹窗 | Popup | 网页上浮出来的小窗口（公告、通知、新手引导） |
+| 遮罩 | Mask | 弹窗背后盖住整页的半透明灰层，挡住页面、逼你先处理弹窗 |
+| 钱包弹窗 | Wallet popup | 浏览器钱包插件（如 MetaMask）弹出的确认小窗口（解锁、连接） |
+| 验证码 | CAPTCHA | 「证明你是人」的验证（Cloudflare 转圈、九宫格点图等），由打码平台代答 |
+| DOM | DOM | 网页的「零件清单」。浏览器把网页解析成一棵树，每个元素都能按规则定位 |
+| URL | URL | 网址/链接，浏览器地址栏那一串 |
+| 接口 | API | 网页背后偷偷发的数据请求；「接口返回 ok」＝服务器说操作成功 |
+| 隔离世界 / 主世界 | Isolated / Main world | 两个平行宇宙：自动化工具默认在隔离世界看网页，站点自己注入的全局变量只能进主世界读 |
+| CDP | CDP | 浏览器调试协议；本框架模拟鼠标键盘，就是通过它把「真事件」直接派发给页面 |
+| 代理 | Proxy | 每个窗口独立的 IP 出口，避免所有窗口同一个 IP |
+| 指纹 | Fingerprint | 浏览器可被识别的特征（版本、语言、插件等），窗口之间要各不相同 |
+| 熔断 | Circuit Breaker | 保险丝：一个窗口连续失败 N 次后，当天不再跑任何任务（保护站点账号） |
+| 重试 | Retry | 任务失败后自动再跑，次数与间隔可配置 |
+| 超时 | Timeout | 最多等多久；超过就按失败处理 |
+| sitekey | sitekey | 验证码的「身份证号」，站点注册验证码服务时分配；打码平台必须带上它 |
+| token | token | 打码平台解完题返回的「通过凭证」，回填进页面后站点才放行 |
+| 回落 / 兜底 | Fallback | 主方案失败时用的备选方案（如 `closeModal` 点按钮失败 → 点遮罩 → 按 Esc） |
+| 拟人化 | Humanize | 让点击/移动/打字像真人（随机轨迹、随机停顿），降低被站点识别为脚本的风险 |
+| 贝塞尔轨迹 | Bezier path | 一种像人手抖出来的平滑曲线，鼠标移动沿它逐点走 |
+| 窗口 | Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 |
+| 退避 | Backoff | 重试前的等待时间；失败越多往往等得越久，给站点限流留冷却时间 |
+| 探活 | Probe | 开窗后先访问一个探活地址，确认代理 IP 已生效再跑任务 |
+| 调度器 | Scheduler | 框架里「看表的人」：到点把任务推进执行队列，到点前啥也不干 |
+
+---
+
 ## 1. 快速开始
 
 新增一个签到任务共 5 步：
 
 **第 1 步：建文件** `src/tasks/my-checkin.ts`。
 
-**第 2 步：写 meta**（任务元信息，字段含义见第 2 章）。
+**第 2 步：写 meta**（任务的基本信息：叫什么、几点跑、要不要钱包，字段含义见第 2 章）。
 
-**第 3 步：写 run**（任务流程，可用方法见第 3 章）。
+**第 3 步：写 run**（具体操作步骤，可用方法见第 3 章）。
 
 **第 4 步：注册** 在 `src/tasks/index.ts` 的 `ALL` 数组中加入实例。
 
@@ -31,15 +101,15 @@ import { SiteTask, TaskContext, type TaskMeta } from './base'
 
 export class MyCheckinTask extends SiteTask {
   meta: TaskMeta = {
-    key: 'my-checkin',        // 全局唯一，API 与数据库都用它标识任务
-    name: '我的签到',          // 面板显示名
-    url: 'https://example.com/', // 任务入口页（从这里开始）
-    wallet: 'metamask',       // 登录用的钱包适配器 key
+    key: 'my-checkin',              // 全局唯一名字，面板与数据库都用它标识任务
+    name: '我的签到',               // 面板上显示的名字
+    url: 'https://example.com/',    // 任务入口页（从这里开始）
+    wallet: 'metamask',             // 登录用的钱包适配器 key（见第 4 章）
   }
 
   async run(ctx: TaskContext): Promise<void> {
-    await ctx.goto()                              // 打开 url（失败自动重试 3 次）
-    await ctx.loginByWallet()                     // 等钱包弹窗 → 解锁 → 连接
+    await ctx.goto()                                          // 打开 url（失败自动重试 3 次）
+    await ctx.loginByWallet()                                 // 等钱包弹窗 → 解锁 → 点连接
     await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' }) // 点击 + 断言成功标志
   }
 }
@@ -57,11 +127,11 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 
 注意：`url` 为空字符串的任务不会参与调度（见第 7 章），只能在面板手动触发——示例任务正是如此。
 
-### 任务开发与测试
+### 写好之后怎么验证
 
 新任务或改动选择器后，按三层流程验证（从快到真，逐层递进）：
 
-1. **fixture 集成测试**：参考 `tests/task-base.test.ts` 的模式（注入假驱动，秒级反馈）。把选择器换成本地 fixture 页面先验证流程逻辑，不依赖真实站点与窗口。
+1. **本地测试**：参考 `tests/task-base.test.ts` 的模式（注入假驱动，秒级反馈）。把选择器换成本地 fixture 页面先验证流程逻辑，不依赖真实站点与窗口。
 2. **单窗口单任务真实验证**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`——只开一个窗口、只跑指定任务、打印结果后退出（脚本：`scripts/run-task.ts`），比面板全量触发轻量。
 3. **面板验证**：面板看板行级「执行」（单窗口单任务）或任务页「立即触发」（全部启用窗口），人工核对截图与日志。
 
@@ -122,7 +192,9 @@ meta: TaskMeta = {
 
 ## 3. TaskContext 方法全解
 
-`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口。另有只读访问器：`ctx.page`（patchright `Page`）、`ctx.human`（`Humanizer`，见第 6 章）、`ctx.profile`（窗口行 `ProfileRow`）。
+`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有三个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见第 6 章）、`ctx.profile`（当前窗口记录，含熔断计数等）。
+
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。
 
 ### goto
 
@@ -130,15 +202,16 @@ meta: TaskMeta = {
 async goto(url?: string): Promise<void>
 ```
 
-打开页面。`url` 缺省时取 `meta.url`；两者皆空抛 `任务未配置 url`。内部行为：
-
-- `page.goto(target, { timeout: 45000, waitUntil: 'domcontentloaded' })`，随后拟人停顿 0.8s-3s。
-- **失败自动重试 3 次**，每次间隔 2s-5s；第 3 次仍失败则原样抛出，任务进入失败/重试流程。
+- **是什么**：打开网页。
+- **什么时候用**：任务第一步（进入站点入口页）；流程中途要跳到另一个页面时。
+- **怎么用**：
 
 ```ts
-await ctx.goto()                    // 打开 meta.url
+await ctx.goto()                    // 打开 meta.url（最常见）
 await ctx.goto('https://a.com/b')   // 打开指定页（适合流程中的跳转）
 ```
+
+- **注意什么**：页面加载失败**自动重试 3 次**，每次间隔 2-5 秒随机退避，第 3 次仍失败才把错误抛出来（任务进入失败/重试流程）；成功后会拟人停顿 0.8-3 秒再继续。**打开页面 ≠ 签到成功**，goto 只保证页面到达，签到结果要靠后续的断言方法确认。
 
 ### clickCheckin
 
@@ -146,7 +219,20 @@ await ctx.goto('https://a.com/b')   // 打开指定页（适合流程中的跳�
 async clickCheckin(selector: string, opts?: { assert?: string; assertTimeoutMs?: number }): Promise<void>
 ```
 
-拟人点击（见第 6 章 `Humanizer.click`），点击后若给了 `assert`，等待该元素可见。`assertTimeoutMs` 默认 `10000`。
+- **是什么**：拟人地点击签到按钮（见第 6 章 `Humanizer.click`），点击后可选地断言「成功标志元素」出现。
+- **什么时候用**：站点有一个明确的「签到/领取」按钮时——这是最常用的方法。
+- **怎么用**：
+
+```ts
+// 只点，不检查结果
+await ctx.clickCheckin('#checkin-btn')
+
+// 点了之后必须看到"成功徽章"（宁严勿松）
+await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
+
+// 成功文案出来得慢，把断言等待拉长到 30 秒
+await ctx.clickCheckin('#claim-btn', { assert: '.success-toast', assertTimeoutMs: 30000 })
+```
 
 | 参数 | 含义 |
 | --- | --- |
@@ -154,10 +240,7 @@ async clickCheckin(selector: string, opts?: { assert?: string; assertTimeoutMs?:
 | `opts.assert` | 点击后应出现的成功标志元素；断言失败抛 `断言超时: 元素 X 未出现` |
 | `opts.assertTimeoutMs` | 断言等待时长（毫秒），默认 10000 |
 
-```ts
-await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
-await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
-```
+- **注意什么**：断言元素选「成功后才会出现」的标志（徽章/文案），不要选「点击前就存在」的元素——否则断言形同虚设。点击后可能弹验证码，这类站点在点之前先调 `solveCaptcha()`（见第 5 章）。
 
 ### assertVisible
 
@@ -165,11 +248,15 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 async assertVisible(selector: string, timeoutMs = 10000): Promise<void>
 ```
 
-等待 `locator(selector).first()` 可见；超时抛 `断言超时: 元素 X 未出现`。适合等待异步结果（如链上交易确认）：
+- **是什么**：蹲点等某个元素出现，等到就正常返回，超时就报错 `断言超时: 元素 X 未出现`。
+- **什么时候用**：等待异步结果——点击后要过一会儿才出现的东西（链上交易确认、接口返回后才渲染的提示）。
+- **怎么用**：
 
 ```ts
-await ctx.assertVisible('.tx-success', 30000)
+await ctx.assertVisible('.tx-success', 30000)   // 等链上交易成功标志，最长 30 秒
 ```
+
+- **注意什么**：它等的是「出现」，元素「消失」要用 `waitForGone`（见后文对比表）。超时抛错意味着任务失败，会进入重试流程。
 
 ### typeInto
 
@@ -177,11 +264,34 @@ await ctx.assertVisible('.tx-success', 30000)
 async typeInto(selector: string, text: string): Promise<void>
 ```
 
-拟人输入：先点击聚焦，逐键输入（每键 40-130ms 随机延迟，约 3% 概率错键回删重输，见第 6 章）。
+- **是什么**：往输入框里打字。
+- **什么时候用**：填表单——邮箱、数量、金额、描述等任何「要输入一串文字」的场景。
+- **怎么用**：
 
 ```ts
-await ctx.typeInto('input[name="email"]', faker.internet.email())
+await ctx.typeInto('input[name="email"]', faker.internet.email())  // 往邮箱框里打字
+await ctx.typeInto('input[name="amount"]', '100')                  // 往数量框里打字
 ```
+
+- **注意什么**：内部先点击聚焦，再**逐键**输入（每键 40-130ms 随机延迟，约 3% 概率错键回删重输，模拟真人手误）。它和 `pressKey` 的分工：**往框里打字用 typeInto，按一个键（如 Enter 提交）用 pressKey**。
+
+### pressKey
+
+```ts
+async pressKey(key: string): Promise<void>
+```
+
+- **是什么**：按一下键盘键（按下 + 抬起）。
+- **什么时候用**：按 Enter 提交表单、按 Escape 关闭浮层、按 Tab 切换焦点等**单个按键**的场景。
+- **怎么用**：
+
+```ts
+await ctx.typeInto('#search-input', 'hello')  // 1. 先往搜索框打字（会自动聚焦输入框）
+await ctx.pressKey('Enter')                   // 2. 按回车提交（表单的 keydown 监听收到 Enter）
+await ctx.waitForText('提交成功')              // 3. 蹲点等结果文案出现
+```
+
+- **注意什么**：这是纯键盘操作，焦点在哪它就发给谁——按 Enter 之前要确保焦点在目标输入框里（`typeInto` 已经帮你聚焦了）。**只按一个键**，要输入一串文字请用 `typeInto`。按键名写键盘标准名：`'Enter'`、`'Escape'`、`'Tab'`、`'ArrowDown'`、`'Backspace'` 等。
 
 ### solveCaptcha
 
@@ -189,11 +299,17 @@ await ctx.typeInto('input[name="email"]', faker.internet.email())
 async solveCaptcha(): Promise<'none' | 'solved' | 'failed'>
 ```
 
-处理验证码，详见第 5 章。返回语义：
+- **是什么**：在**当前页面**检测验证码（CAPTCHA），检测到就交给打码平台解题并回填，详见第 5 章。
+- **什么时候用**：验证码可能出现的时刻——通常就在点击提交按钮**之前**（很多站点点击时才弹出验证码）。
+- **怎么用**：
 
-- `'none'` — 未注入验证码服务、`captcha.auto` 为 false、或页面上未检测到验证码。
-- `'solved'` — 检测到并解题成功（token 已回填页面）。
-- `'failed'` — 类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed`，见第 5/8 章）。
+```ts
+await ctx.typeInto('input[name="email"]', email)
+await ctx.solveCaptcha()                                   // 此时才检测 + 解题（可能要花钱）
+await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
+```
+
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见第 5/8 章）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
 
 ### screenshot
 
@@ -201,11 +317,15 @@ async solveCaptcha(): Promise<'none' | 'solved' | 'failed'>
 async screenshot(name: string): Promise<string>
 ```
 
-截当前视口保存为 `${name}.png`（`fullPage: false`），返回绝对路径。存档目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`。
+- **是什么**：把当前视口截成 `${name}.png` 存到产物目录，返回文件绝对路径（面板按路径取图）。
+- **什么时候用**：流程关键节点留档，方便事后人工核对。
+- **怎么用**：
 
 ```ts
-await ctx.screenshot('faucet-success')
+await ctx.screenshot('faucet-success')   // 存一张名为 faucet-success.png 的截图
 ```
+
+- **注意什么**：截图目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败的截图框架会自动补拍（见第 8 章「成功断言写法」），无需在每个任务里手调。
 
 ### loginByWallet
 
@@ -213,13 +333,16 @@ await ctx.screenshot('faucet-success')
 async loginByWallet(): Promise<void>
 ```
 
-等待站点唤起钱包弹窗并完成连接，详见第 4 章：
+- **是什么**：完成「站点唤起钱包弹窗 → 解锁（若配了密码）→ 点连接确认」全流程，详见第 4 章。
+- **什么时候用**：站点要求钱包登录时，一般紧跟 `goto()` 之后。
+- **怎么用**：
 
-1. 取 `meta.wallet` 作为适配器 key（未配置抛 `任务未配置钱包`）。
-2. 从 `WalletRegistry` 取适配器（未注册抛 `未注册的钱包适配器: X`）。
-3. `waitForPopup(context, adapter.extensionUrlPatterns, 15000)` 等待弹窗（15 秒超时，未出现抛 `钱包弹窗未出现`）。
-4. 若该窗口配置了钱包解锁密码（`WALLET_PASSWORDS` 环境变量映射，见第 4 章）且适配器实现了 `unlock`，先解锁。
-5. `adapter.ensureConnected(popup)` 点连接/确认按钮。
+```ts
+await ctx.goto()
+await ctx.loginByWallet()   // 等弹窗 → 解锁 → 连接，一气呵成
+```
+
+- **注意什么**：需要任务配置 `meta.wallet`（未配置抛 `任务未配置钱包`）；等待弹窗最多 15 秒，超时抛 `钱包弹窗未出现`；只有该窗口配置了解锁密码才会执行解锁。**若站点要先点页面上的「连接钱包」按钮才弹窗**，先点那个按钮，再调 `loginByWallet()`（它会等弹窗出现并完成连接）。
 
 ### textPresent
 
@@ -227,12 +350,16 @@ async loginByWallet(): Promise<void>
 async textPresent(text: string): Promise<boolean>
 ```
 
-页面上是否存在该文本（`getByText(text, { exact: false })`，包含即命中）：
+- **是什么**：**立刻看一眼**页面上有没有某段文字，有就返回 `true`，没有 `false`（包含即命中，不是整句相等）。
+- **什么时候用**：状态判断——「已领过」直接返回、「维护中」抛错，页面此时已经加载完。
+- **怎么用**：
 
 ```ts
-if (await ctx.textPresent('已领取')) return        // 已领过 → 直接成功
-if (await ctx.textPresent('维护中')) throw new Error('水龙头维护中')
+if (await ctx.textPresent('已领取')) return              // 已领过 → 直接成功
+if (await ctx.textPresent('维护中')) throw new Error('站点维护中')  // 维护 → 抛错进失败流程
 ```
+
+- **注意什么**：它是**即时判断一次**，不等待。文案要过一会儿才出现的话，用 `waitForText`（蹲点等）。两者分工见后文对比表。
 
 ### urlIncludes
 
@@ -240,11 +367,15 @@ if (await ctx.textPresent('维护中')) throw new Error('水龙头维护中')
 async urlIncludes(part: string): Promise<boolean>
 ```
 
-当前 URL 是否包含指定子串：
+- **是什么**：**立刻看一眼**当前网址（URL）是否包含某片段。
+- **什么时候用**：判断登录状态/跳转结果——地址栏里有 `/dashboard` 说明已登录。
+- **怎么用**：
 
 ```ts
 if (await ctx.urlIncludes('/dashboard')) { /* 已登录，跳过登录 */ }
 ```
+
+- **注意什么**：同样是即时判断。**等待**网址变化要用 `waitForUrl`。
 
 ### waitForText
 
@@ -252,7 +383,9 @@ if (await ctx.urlIncludes('/dashboard')) { /* 已登录，跳过登录 */ }
 async waitForText(text: string, timeoutMs = 10000): Promise<void>
 ```
 
-等待某文案出现在页面上。与 `textPresent`（即时判断一次）不同：`waitForText` 会持续等待直到文案可见，适合等待异步结果（接口返回后才渲染的文案、倒计时结束出现的提示等）。匹配方式与 `textPresent` 一致（`getByText`，`exact: false`，包含即命中）。超时抛 `等待文案超时: <text>`。
+- **是什么**：**蹲点等**某段文字出现在页面上，等到就返回，超时抛 `等待文案超时: <text>`。
+- **什么时候用**：等异步渲染的文案——点击提交后接口返回才出现的「已签到成功」、倒计时结束才出现的提示。
+- **怎么用**：
 
 ```ts
 // 点击提交后，等"已签到成功"出现（最长 10 秒）
@@ -260,7 +393,7 @@ await ctx.clickCheckin('#submit-btn')
 await ctx.waitForText('已签到成功')
 ```
 
-**与 textPresent 的分工**：页面状态已经就绪、只做一次判断用 `textPresent`（如打开页面后检查"已领取"直接返回）；结果要等异步动作完成才出现，用 `waitForText`。
+- **注意什么**：匹配方式与 `textPresent` 一致（包含即命中）。**与 textPresent 的分工**：页面状态已经就绪、只做一次判断用 `textPresent`（如打开页面后检查「已领取」直接返回）；结果要等异步动作完成才出现，用 `waitForText`。
 
 ### waitForApi
 
@@ -268,7 +401,9 @@ await ctx.waitForText('已签到成功')
 async waitForApi(urlPart: string, timeoutMs = 10000): Promise<unknown>
 ```
 
-等待 URL 包含 `urlPart` 的网络响应，并解析其 JSON 返回。解析失败（非 JSON 响应）返回 `null`；超时抛 `等待接口超时: <urlPart>（<原始错误>）`。用于把接口返回当作业务结果的场景（站点 UI 不更新、但接口有明确状态码/字段）。
+- **是什么**：蹲点等「网址包含 `urlPart` 的网络请求」的响应（API 请求），并把响应体 JSON 解析好返回给你。
+- **什么时候用**：站点点击后 UI 不更新（或更新滞后），但接口返回体里有明确的业务状态码/字段时，把接口返回当作业务结果。
+- **怎么用**：
 
 ```ts
 // 点击领取后等接口返回，并校验业务字段
@@ -277,7 +412,7 @@ const body = await ctx.waitForApi('/api/claim', 15000) as { ok: boolean; message
 if (!body.ok) throw new Error(`领取失败: ${body.message}`)
 ```
 
-注意：`waitForApi` 不会自己触发请求——调用前先执行触发动作（点击按钮等）；若担心响应先于等待注册，可先 `const p = ctx.waitForApi(...)` 再触发点击，最后 `await p`。
+- **注意什么**：**它不会自己触发请求**——调用前先执行触发动作（点按钮等）；若担心响应比等待注册还快，可先 `const p = ctx.waitForApi(...)` 再触发点击，最后 `await p`。响应体不是 JSON 时返回 `null`；超时抛 `等待接口超时: <urlPart>（<原始错误>）`。
 
 ### waitForUrl
 
@@ -285,15 +420,17 @@ if (!body.ok) throw new Error(`领取失败: ${body.message}`)
 async waitForUrl(part: string, timeoutMs = 10000): Promise<void>
 ```
 
-等待当前 URL 包含某片段（跳转等待）。hash 变化同样有效（如 SPA 路由 `#/dashboard`）。超时抛 `等待跳转超时: <part>`。
+- **是什么**：蹲点等当前网址变成「包含某片段」（跳转等待）。
+- **什么时候用**：等动作引发的跳转——登录成功跳到面板、SPA（Single Page Application，单页应用，页面不刷新靠 hash 路由切换）内 hash 路由推进。
+- **怎么用**：
 
 ```ts
 await ctx.human.click('#login-btn')
 await ctx.waitForUrl('/dashboard')      // 登录成功后跳转到面板
-await ctx.waitForUrl('#/step-2')        // SPA 内 hash 路由推进
+await ctx.waitForUrl('#/step-2')        // SPA 内 hash 路由推进（地址栏 # 后面的变化也算）
 ```
 
-与 `urlIncludes`（即时判断）的关系同 `waitForText`/`textPresent`：先判断后动作用 `urlIncludes`，等待动作引发跳转用 `waitForUrl`。
+- **注意什么**：hash 变化同样有效。超时抛 `等待跳转超时: <part>`。与 `urlIncludes`（即时判断）的关系同 `waitForText`/`textPresent`：先判断后动作用 `urlIncludes`，等待动作引发跳转用 `waitForUrl`。
 
 ### js
 
@@ -301,7 +438,9 @@ await ctx.waitForUrl('#/step-2')        // SPA 内 hash 路由推进
 async js<T>(fn: () => T): Promise<T>
 ```
 
-在页面**主世界**执行 JS 并返回结果。站点注入的全局状态（`window.__APP_STATE__` 之类）必须用主世界读取——自动化工具的默认隔离世界看不到站点自己注入的全局变量。适合判断登录态、任务状态、读取站点配置等：
+- **是什么**：在页面**主世界**执行一段 JavaScript 并返回结果。
+- **什么时候用**：读站点自己注入的全局状态（`window.__APP_STATE__` 之类）、读 `localStorage` 判断登录态/任务状态——这些自动化工具的默认隔离世界（Isolated world，工具自己的平行宇宙）看不到，必须进主世界（Main world，站点的宇宙）读。
+- **怎么用**：
 
 ```ts
 // 读站点全局状态判断登录态
@@ -313,13 +452,17 @@ const done = await ctx.js<boolean>(() => localStorage.getItem('claimed_today') =
 if (done) return
 ```
 
+- **注意什么**：函数体必须是**自包含**的——它会被序列化后送进页面执行，函数里引用外面的变量会拿不到值。
+
 ### waitForGone
 
 ```ts
 async waitForGone(selector: string, timeoutMs = 10000): Promise<void>
 ```
 
-等待元素从页面移除（如 loading 遮罩、提交中的 spinner）。元素从未出现过视为已消失（立即返回）；超时抛 `元素未消失: <selector>`。
+- **是什么**：蹲点等某个元素**从页面消失**（如 loading 遮罩、提交中的转圈动画）。
+- **什么时候用**：点击提交后等加载遮罩消失，说明请求完成，再做下一步。
+- **怎么用**：
 
 ```ts
 await ctx.human.click('#submit-btn')
@@ -327,22 +470,17 @@ await ctx.waitForGone('.loading-mask', 30000)   // 遮罩消失说明请求完�
 await ctx.assertVisible('.success-toast')        // 再断言成功标志
 ```
 
+- **注意什么**：元素**从未出现过也视为已消失**（立即返回），不会误报；超时抛 `元素未消失: <selector>`。与 `assertVisible` 是反义词：一个等出现，一个等消失。
+
 ### closeModal
 
 ```ts
 async closeModal(opts?: { close?: string[]; mask?: string; gone?: string; timeoutMs?: number }): Promise<void>
 ```
 
-关闭挡路的页面弹窗/遮罩（公告、通知、新手引导层等）。策略按顺序尝试，**每尝试一次就用 `gone` 快速验证（600ms）是否已关闭，成功即返回**；全部策略跑完后若 `gone` 仍在，用完整超时兜底验证（失败抛 `元素未消失: <gone>`）。
-
-| 参数 | 含义 |
-| --- | --- |
-| `opts.close` | 关闭按钮候选选择器数组，依次尝试，存在才点（`human.click` 拟人点击） |
-| `opts.mask` | 遮罩层选择器：点其左上角内侧 (x+12, y+12) 空白处（`human.clickAt` 坐标点击），避开居中弹窗主体 |
-| `opts.gone` | 弹窗容器选择器，用于验证关闭成功；不传则只尝试不验证 |
-| `opts.timeoutMs` | 最终兜底验证超时（默认 10000） |
-
-策略顺序：**候选关闭按钮（依序）→ 点遮罩空白处 → 按 Esc**。
+- **是什么**：关闭挡路的页面弹窗/遮罩（公告、通知、新手引导层），内部按「候选关闭按钮 → 点遮罩空白处 → 按 Esc」的顺序**逐级兜底（Fallback）**尝试。
+- **什么时候用**：打开页面先弹一个公告弹窗挡住签到按钮时——很多站点都这样。
+- **怎么用**：
 
 ```ts
 // 签到前清掉公告弹窗：优先点关闭按钮，失败再点遮罩、按 Esc，最后断言弹窗容器消失
@@ -351,6 +489,31 @@ await ctx.closeModal({ close: ['.announce-close', '#notice .close'], mask: '.ann
 // 只点关闭按钮，不验证（弹窗是否消失由后续断言负责）
 await ctx.closeModal({ close: ['.popup-close'] })
 ```
+
+| 参数 | 含义 |
+| --- | --- |
+| `opts.close` | 关闭按钮候选选择器数组，依次尝试，存在才点（`human.click` 拟人点击） |
+| `opts.mask` | 遮罩层选择器：点其左上角内侧 (x+12, y+12) 空白处（`human.clickAt` 坐标点击），避开居中弹窗主体 |
+| `opts.gone` | 弹窗容器选择器，用于验证关闭成功；不传则只尝试不验证 |
+| `opts.timeoutMs` | 最终兜底验证超时（默认 10000） |
+
+- **注意什么**：策略顺序**固定**：候选关闭按钮（依序）→ 点遮罩空白处 → 按 Esc。每尝试一次就用 `gone` 快速验证（600ms）是否已关闭，成功即返回；单个策略失败（按钮存在但不可点等）不阻断回退链，继续下一个。全部策略跑完后若 `gone` 仍在，用完整超时兜底验证（失败抛 `元素未消失: <gone>`）。
+
+### 方法对比速查
+
+这几个方法长得像但职责不同，选错会写出「看起来对、跑起来翻车」的任务：
+
+| 场景 | 用这个 | 别用那个 | 一句话区别 |
+| --- | --- | --- | --- |
+| 页面已就绪，看**现在**有没有某文字 | `textPresent` | `waitForText` | 即时看一眼 vs 蹲点等 |
+| 结果**过一会儿**才出现 | `waitForText` | `textPresent` | 蹲点等 vs 即时看一眼 |
+| 往框里输入一串文字 | `typeInto` | `pressKey` | 打字 vs 按一个键 |
+| 按 Enter 提交 / Esc 关闭 / Tab 切焦点 | `pressKey` | `typeInto` | 按一个键 vs 打字 |
+| 等元素**出现** | `assertVisible` | `waitForGone` | 等出现 vs 等消失 |
+| 等元素**消失**（loading 遮罩） | `waitForGone` | `assertVisible` | 等消失 vs 等出现 |
+| 看**当前**网址是否包含某片段 | `urlIncludes` | `waitForUrl` | 即时看一眼 vs 蹲点等 |
+| 等网址**变成**包含某片段（跳转） | `waitForUrl` | `urlIncludes` | 蹲点等 vs 即时看一眼 |
+| 打开页面 | `goto` | — | **打开页面 ≠ 签到成功**，成功与否要后续断言 |
 
 ### 选择器查找技巧
 
@@ -369,7 +532,7 @@ await ctx.closeModal({ close: ['.popup-close'] })
 
 ### 窗口级密码配置
 
-钱包解锁密码是**窗口级**的，通过环境变量 `WALLET_PASSWORDS` 配置（JSON 字符串，映射比特窗口 ID → 密码）：
+钱包解锁密码是**窗口级**的（每个窗口的钱包密码可能不同），通过环境变量 `WALLET_PASSWORDS` 配置（JSON 字符串，映射比特窗口 ID → 密码）：
 
 ```env
 # config/.env（或部署环境变量）
@@ -400,6 +563,7 @@ WALLET_PASSWORDS={"bb-1001":"钱包解锁密码","bb-1002":"另一个密码"}
 弹窗内操作通过 `PopupPage` 接口（`getByRole`/`getByTestId`/`locator`/`waitForEvent`）完成：
 
 - MetaMask `unlock`：`getByTestId('unlock-password')` 填密码 → `unlock-submit` 点击 → 等 `close` 事件（15s）。
+- Petra `unlock`：密码输入框填密码 → 按 Enter（无稳定 testid 时的替代方案）。
 - `ensureConnected`：最多 3 轮，按角色正则（`/connect|next|confirm|approve|sign/i`，Petra 另含 `unlock`）找按钮点击，每轮等 `close` 事件 5 秒，弹窗关闭即视为完成。
 
 ### 新增钱包适配器步骤
@@ -488,13 +652,13 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 
 - 费用上限：`config.json` 的 `captcha.maxCostPerTask`（默认 1500 点）。每次打码前 `ensureBalance(上限)` 检查余额。
 - 余额不足：抛 `yescaptcha 余额不足: X 点 < Y 点`（`CaptchaFailure`）。
-- 查询余额：面板「设置」页点「查询余额」→ `GET /api/captcha/balance`（返回 `{ points, yuan }`，1 元 = 1000 点）。
+- 查询余额：面板「设置」页点「查询余额」→ `GET /api/captcha/balance`（返回 `{ configured, points, yuan }`，1 元 = 1000 点）。
 
 ### 失败行为
 
 打码失败（创建任务失败 / 解题超时 / 回填异常）统一抛 `CaptchaFailure`。窗口运行器识别该异常后：
 
-- 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**）；
+- 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
 - 计入窗口熔断计数（见第 9 章）；
 - 每次尝试都记录 `logCaptcha(kind, ok, costPoints)`，看板可见。
 
@@ -504,25 +668,86 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 
 `Humanizer`（`src/automation/humanize.ts`）负责所有拟人化输入。构造：`new Humanizer(page, { minDelayMs = 800, maxDelayMs = 3000 })`（延迟选项为通用默认值）。
 
-点击前犹豫的停顿区间由全局配置 `execution.humanize`（`config/config.json`）注入（`src/engine/window-runner.ts` 构造时传入 `cfg.execution.humanize`），默认 `{ "minDelayMs": 800, "maxDelayMs": 3000 }`，可按需调整快慢；未配置时回落构造函数默认值（同样为 800/3000ms）。
+- **是什么**：让鼠标移动、点击、打字、滚动都像真人——随机轨迹 + 随机停顿。
+- **什么时候用**：任务代码一般不直接 new 它，用 `ctx.human`（任务上下文已创建好）；需要滚动页面、微动鼠标、拟人等待时直接调它。
+- **注意什么**：点击前犹豫的停顿区间由全局配置 `execution.humanize`（`config/config.json`）注入（`src/engine/window-runner.ts` 构造时传入 `cfg.execution.humanize`），默认 `{ "minDelayMs": 800, "maxDelayMs": 3000 }`，可按需调整快慢；未配置时回落构造函数默认值（同样为 800/3000ms）。
 
-| 方法 | 签名 | 行为 |
-| --- | --- | --- |
-| `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms（区间由 `execution.humanize` 配置）→ 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
-| `clickAt` | `clickAt(x, y): Promise<void>` | 在指定坐标拟人点击：贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。不做 hover 与随机落点，适合无选择器的目标（弹窗遮罩空白处、canvas 按钮等） |
-| `type` | `type(selector, text): Promise<void>` | 先 click 聚焦，再逐键输入：每键延迟 40-130ms；约 3% 概率按 Backspace、停顿 100-300ms 后重输该键（模拟错键回删） |
-| `moveTo` | `moveTo(x, y): Promise<void>` | ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8~23ms；记住终点作为鼠标当前位置 |
-| `scroll` | `scroll(deltaY): Promise<void>` | 在鼠标当前位置派发滚轮事件，随后停顿 100-400ms |
-| `sleep` | `static sleep(minMs, maxMs): Promise<void>` | 区间内均匀随机停顿 |
-| `randomMicroMove` | `randomMicroMove(): Promise<void>` | 在当前位置 ±60px 内随机微移（模拟真实用户小动作） |
-
-用法示例：
+### click
 
 ```ts
-await ctx.human.scroll(400)                 // 向下滚 400px
-await ctx.human.randomMicroMove()           // 微动一下
-await Humanizer.sleep(1000, 2000)           // 随机停顿 1-2 秒
+click(selector): Promise<void>
 ```
+
+- **是什么**：拟人地点击一个元素。
+- **什么时候用**：`ctx.clickCheckin` 内部就是它；需要点「非签到」按钮时直接调。
+- **怎么用**：`await ctx.human.click('#some-btn')`
+- **注意什么**：boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X`。
+
+### clickAt
+
+```ts
+clickAt(x, y): Promise<void>
+```
+
+- **是什么**：在指定坐标拟人点击。
+- **什么时候用**：没有选择器的目标——弹窗遮罩空白处、canvas 按钮等。
+- **怎么用**：`await ctx.human.clickAt(320, 240)`
+- **注意什么**：贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 40-150ms → 释放。不做 hover 与随机落点。
+
+### type
+
+```ts
+type(selector, text): Promise<void>
+```
+
+- **是什么**：拟人地往输入框打字（`ctx.typeInto` 内部就是它）。
+- **什么时候用**：任务里请直接用 `ctx.typeInto`，只有需要绕开任务上下文的场景才调它。
+- **怎么用**：`await ctx.human.type('input[name="email"]', 'a@b.com')`
+- **注意什么**：先 click 聚焦，再逐键输入：每键延迟 40-130ms；约 3% 概率按 Backspace、停顿 100-300ms 后重输该键（模拟错键回删）。
+
+### moveTo
+
+```ts
+moveTo(x, y): Promise<void>
+```
+
+- **是什么**：沿贝塞尔轨迹把鼠标移动到目标点。
+- **什么时候用**：需要「先移过去、再决定点不点」的分步操作。
+- **怎么用**：`await ctx.human.moveTo(400, 300)`
+- **注意什么**：ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8~23ms；记住终点作为鼠标当前位置。
+
+### scroll
+
+```ts
+scroll(deltaY): Promise<void>
+```
+
+- **是什么**：在鼠标当前位置派发滚轮事件（正数向下滚）。
+- **什么时候用**：按钮在首屏外，滚一滚让它露出来。
+- **怎么用**：`await ctx.human.scroll(400)`   // 向下滚 400px
+- **注意什么**：滚完随机停顿 100-400ms；滚动位置基于「鼠标当前位置」，先把鼠标移到页面中间再滚更符合直觉。
+
+### sleep（静态方法）
+
+```ts
+static sleep(minMs, maxMs): Promise<void>
+```
+
+- **是什么**：区间内均匀随机停顿。
+- **什么时候用**：个别站点节奏特殊，需要在两步之间「喘口气」。
+- **怎么用**：`await Humanizer.sleep(1000, 2000)`   // 随机停顿 1-2 秒
+- **注意什么**：优先用断言等待（`assertVisible`/`waitForText`）代替固定 sleep——sleep 不能保证「东西真的出现了」。
+
+### randomMicroMove
+
+```ts
+randomMicroMove(): Promise<void>
+```
+
+- **是什么**：在当前位置 ±60px 内随机微移（模拟真实用户无目的的小动作）。
+- **什么时候用**：页面停留较久（等倒计时、等链上确认）时插一个，降低「呆住不动」的机器感。
+- **怎么用**：`await ctx.human.randomMicroMove()`
+- **注意什么**：纯装饰性动作，不影响逻辑。
 
 ### CDP 派发原理（为什么不用原生 mouse）
 
@@ -578,6 +803,42 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 ---
 
 ## 8. 常用模式
+
+### 完整示例：9 点签到的站点（公告弹窗 + 钱包登录 + 签到 + 等文案）
+
+假设站点每天 9 点开放签到：打开页面先弹一个公告弹窗挡住一切，登录要用钱包，签到成功后页面会浮现「签到成功」文案。完整 `run()` 如下：
+
+```ts
+async run(ctx: TaskContext): Promise<void> {
+  // 1. 打开站点入口（失败自动重试 3 次，每次隔 2-5 秒）
+  await ctx.goto()
+
+  // 2. 清掉公告弹窗：依次尝试点关闭按钮 → 点遮罩空白处 → 按 Esc，最后验证弹窗容器消失
+  await ctx.closeModal({ close: ['.announce-close'], mask: '.announce-mask', gone: '.announce-modal' })
+
+  // 3. 钱包登录：等站点唤起钱包弹窗 → 按窗口配置的密码解锁 → 点"连接"确认
+  await ctx.loginByWallet()
+
+  // 4. 点击签到按钮，并断言成功后出现的徽章（宁严勿松）
+  await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
+
+  // 5. 蹲点等"签到成功"文案出现（最长 10 秒），等不到就抛错 → 进入重试流程
+  await ctx.waitForText('签到成功')
+}
+```
+
+对应的 `meta` 把「每天 9 点」交给错峰窗口（9:00-11:00 之间随机一分钟，多个窗口不扎堆）：
+
+```ts
+meta: TaskMeta = {
+  key: 'nine-am-checkin',
+  name: '九点签到',
+  url: 'https://example.com/checkin',
+  wallet: 'metamask',
+  schedule: { stagger: ['09:00', '11:00'] },   // 每天 9:00-11:00 随机一分钟
+  captcha: { auto: true },                      // 站点可能弹验证码（默认开启）
+}
+```
 
 ### 签到成功 / 已签到
 

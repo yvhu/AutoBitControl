@@ -97,6 +97,11 @@ export class TaskContext {
     await this.human.type(selector, text)
   }
 
+  /** 按键盘键（Enter 提交、Escape 关闭、Tab 切换焦点等；纯键盘操作，往输入框打字请用 typeInto） */
+  async pressKey(key: string): Promise<void> {
+    await this.page.keyboard.press(key)
+  }
+
   /**
    * 在当前页面检测并处理验证码（调用处即检测点）
    * @returns 'none' 未注入服务或任务关闭自动处理；'solved' 成功；失败抛 CaptchaFailure

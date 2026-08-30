@@ -9,6 +9,12 @@
   <button id="nav-btn" style="width:150px;height:40px">去面板</button>
   <button id="api-btn" style="width:150px;height:40px">拉取数据</button>
   <div id="api-result"></div>
+  <!-- Enter 提交场景：输入框内按 Enter 显示"已提交"（pressKey 测试用） -->
+  <div style="margin:8px 0">
+    <input id="enter-input" type="text" style="width:200px;height:30px" placeholder="输入后按 Enter 提交">
+    <button id="enter-btn" style="width:100px;height:34px">提交</button>
+    <div id="enter-result" style="min-height:20px"></div>
+  </div>
   <!-- 弹窗场景（?modal=a|b|c|d 控制显示，避免全屏遮罩互相/遮挡页面按钮） -->
   <div id="modal-a" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:200px;background:#fff;border:1px solid #999;z-index:100">
     <div style="padding:16px">公告内容 A</div>
@@ -31,6 +37,14 @@
       fetch('/api/delay').then(r => r.json()).then(data => {
         document.getElementById('api-result').textContent = 'done'
       })
+    })
+
+    document.getElementById('enter-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('enter-result').textContent = '已提交'
+    })
+
+    document.getElementById('enter-btn').addEventListener('click', () => {
+      document.getElementById('enter-result').textContent = '已提交'
     })
 
     document.querySelector('#modal-a .close').addEventListener('click', () => {
