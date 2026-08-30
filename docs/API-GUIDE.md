@@ -1,6 +1,6 @@
 # AutoBitControl API 使用手册（小白友好版）
 
-> 目标读者：第一次接触自动化的你。本文按「是什么 → 什么时候用 → 怎么用 → 注意什么」的顺序讲解，不预设任何编程背景。所有代码签名、默认值与报错文案，均以仓库当前代码为准（`src/engine/task-context.ts`、`src/automation/humanize.ts`、`src/engine/task.ts`、`src/engine/scheduler.ts`、`src/integrations/yescaptcha.ts`、`src/server/routes/*`）。
+> 目标读者：第一次接触自动化的你。本文按「是什么 → 什么时候用 → 怎么用 → 注意什么」的顺序讲解，不预设任何编程背景。所有代码签名、默认值与报错文案，均以仓库当前代码为准（`src/engine/task-context.ts`、`src/automation/humanize.ts`、`src/engine/task.ts`、`src/engine/scheduler.ts`、`src/integrations/yescaptcha.ts`、`src/infrastructure/config.ts`、`src/server/routes/*`、`scripts/*`）。
 
 配套资源：
 
@@ -32,7 +32,7 @@ AutoBitControl 一共三块，分工如下：
 2. **试跑**：先跑本地测试（秒级反馈）→ 再用 `npm run task:run` 单窗口真跑一次 → 看截图确认没点错。
 3. **上线**：面板任务页打开开关，调度器（Scheduler，负责「到点自动开跑」的组件）每天准时执行，看板自动记录结果。
 
-一个完整的「9 点签到站点」任务长什么样，见第 8 章开头的完整示例。
+一个完整的「9 点签到站点」任务长什么样，见第 9 章开头的完整示例。
 
 ### 三句话记住怎么用
 
@@ -138,6 +138,8 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 1. **本地测试**：参考 `tests/task-base.test.ts` 的模式（注入假驱动，秒级反馈）。把选择器换成本地 fixture 页面先验证流程逻辑，不依赖真实站点与窗口。
 2. **单窗口单任务真实验证**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`——只开一个窗口、只跑指定任务、打印结果后退出（脚本：`scripts/run-task.ts`），比面板全量触发轻量。
 3. **面板验证**：面板看板行级「执行」（单窗口单任务）或任务页「立即触发」（全部启用窗口），人工核对截图与日志。
+4. **开窗冒烟（部署后先跑这个）**：`BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window`——验证「开窗 → CDP 接管 → 打开探活页 → 关窗」整条链路（脚本：`scripts/smoke-open-window.ts`），一次确认比特浏览器 API、驱动与代理 IP 都可用。
+5. **钱包冒烟**：`BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra npm run smoke:wallet`——打开站点后手动点「连接钱包」，脚本等 60 秒检测弹窗并自动确认（脚本：`scripts/smoke-wallet.ts`）。**新钱包适配器写好后，用这个验证弹窗识别正则是否命中真实插件**（见第 4 章「新增钱包适配器步骤」）。
 
 示例任务默认 `enabled: false`（不参与日常执行），调试时把代码改为 `true` 并重启服务、直接在面板任务页打开开关（立即生效，无需重启），或用第 2 层的 `task:run` 脚本（不受开关限制）。
 
@@ -152,12 +154,12 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `key` | `string` | 无（必填） | 全局唯一标识。API 路由（`/api/tasks/:key/trigger`）、数据库 runs 表、调度器都用它 |
 | `name` | `string` | 无（必填） | 面板任务页显示名 |
 | `url` | `string` | 无（必填，可为 `''`） | 站点入口页 URL，`goto()` 从这里开始。空串 → 调度器跳过，仅可手动触发 |
-| `sourceUrl` | `string?` | `undefined` | 信息来源页：记录选择器是从哪个页面确认的，站点改版时回这里重查（排错见第 9 章） |
+| `sourceUrl` | `string?` | `undefined` | 信息来源页：记录选择器是从哪个页面确认的，站点改版时回这里重查（排错见第 10 章） |
 | `note` | `string?` | `undefined` | 备注，面板任务页直接可见，记录站点的坑与特殊逻辑 |
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
-| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效——停用即停 cron、重新启用即重注册 cron，无需重启；跨机器生效、重启保留） |
+| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效——停用即停 cron、重新启用即重注册 cron，无需重启；跨机器生效、重启保留）。注意：上表的 `true` 只是代码默认值，三个示例任务（`example-checkin.ts`/`faucet-example.ts`/`mint-example.ts`）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
 | `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见第 7 章） |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见第 4 章） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
@@ -317,7 +319,7 @@ await ctx.solveCaptcha()                                   // 此时才检测 + 
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
 
-- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见第 5/8 章）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见第 5/9 章）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
 
 ### screenshot
 
@@ -333,7 +335,7 @@ async screenshot(name: string): Promise<string>
 await ctx.screenshot('faucet-success')   // 存一张名为 faucet-success.png 的截图
 ```
 
-- **注意什么**：截图目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败的截图框架会自动补拍（见第 8 章「成功断言写法」），无需在每个任务里手调。
+- **注意什么**：截图目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败的截图框架会自动补拍（见第 9 章「成功断言写法」），无需在每个任务里手调。
 
 ### loginByWallet
 
@@ -667,7 +669,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 打码失败（创建任务失败 / 解题超时 / 回填异常）统一抛 `CaptchaFailure`。窗口运行器识别该异常后：
 
 - 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
-- 计入窗口熔断计数（见第 9 章）；
+- 计入窗口熔断计数（见第 10 章）；
 - 每次尝试都记录 `logCaptcha(kind, ok, costPoints)`，看板可见。
 
 ---
@@ -798,19 +800,79 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | 入口 | 接口 | 语义 |
 | --- | --- | --- |
 | 面板任务页「立即触发」 | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId? }` | 带 `bitbrowserId` → 只跑该窗口（窗口不存在返回 404）；不带 → 全部启用窗口 |
-| 面板看板「全部窗口执行」 | 逐窗口 `POST /api/profiles/:id/run` | 任意窗口 id（含禁用窗口，find 基于 listProfiles(false)）跑该窗口全部**启用**任务（停用任务排除，见跳过规则） |
-| 面板看板「重跑今日失败」 | `POST /api/runs/rerun-failed`，body `{ date }` | 当日失败行重新入队 |
+| 面板看板行级「执行」（失败行显示「重跑」） | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId }` | **单窗口单任务**：只把该窗口的该任务入队（对应矩阵里那一行） |
+| 面板看板「全部窗口执行」 | `POST /api/tasks/:key/trigger`（不带 body） | **需先在任务下拉里选中任务**（未选会提示「请先选择一个任务」）：把该任务推给全部启用窗口 |
+| 面板窗口页「立即跑」 | `POST /api/profiles/:id/run` | 跑该窗口的**全部启用任务**（停用任务排除，返回实际入队数 `count`） |
+| 面板看板「重跑今日失败」 | `POST /api/runs/rerun-failed`，body `{ date }` | 当日 `failed`/`captcha_failed` 行重新入队 |
 | 代码内 `Scheduler.fireNow(taskKey)` | — | 对**全部启用窗口**逐窗口入队（与 `POST /api/tasks/:key/trigger` 不带 body 等价） |
+
+几个「执行」按钮的区别（按入队范围记）：
+
+- 看板行级「执行」= **一个窗口 × 一个任务**（矩阵里那一行）；
+- 看板「全部窗口执行」= **一个任务 × 全部启用窗口**（先在任务下拉选任务，一次铺开）；
+- 窗口页「立即跑」= **一个窗口 × 全部启用任务**（该窗口的任务全跑一遍）。
 
 `重跑今日失败` 会重跑失败记录对应的任务，即使该任务当前已停用（显式恢复操作，语义等同手动触发）。
 
 ### fireNow 语义
 
-`fireNow(taskKey)` 遍历 `db.listProfiles(true)`（启用窗口），逐个调用 `CoalescingEnqueuer.enqueue(profile, taskKey)`。入队器保证：同一窗口的任务合并为一次开窗执行；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**。
+`fireNow(taskKey)` 遍历 `db.listProfiles(true)`（启用窗口），逐个调用 `CoalescingEnqueuer.enqueue(profile, taskKey)`。入队器保证：同一窗口的任务合并为一次开窗执行；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**。`fireNow` 同样受云端开关守卫：任务停用时告警 `任务已停用，跳过本次触发` 并直接返回——保证已注册的 cron 在关停后到点也不会执行；任务未注册则静默忽略。
 
 ---
 
-## 8. 常用模式
+## 8. 配置与面板
+
+### 8.1 配置文件与环境变量
+
+配置一共三层，**后面的覆盖前面的**（逐键深合并）：代码默认值 ← `config/config.json` ← `config/config.local.json` ← 环境变量（含 `config/.env`，由 dotenv 加载）。本地差异写 `config.local.json`（不进版本库），部署密钥用环境变量注入。**任何配置改动都要重启服务（`npm start`）才生效。**
+
+全部配置段与关键键（以 `src/infrastructure/config.ts` 为准）：
+
+| 配置段 | 关键键 | 说明 |
+| --- | --- | --- |
+| `cloud` | `url`、`authToken` | 云数据库（Turso/libsql）连接信息。**必须配置，否则启动报错退出**；`npm run task:run` 脚本同样需要，缺了直接退出。环境变量 `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` 覆盖配置文件同名字段 |
+| `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
+| `execution` | `concurrency`、`windowTimeoutMs`、`probeUrl`、`timezone`、`humanize` | 执行引擎：窗口并发默认 6；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`timezone` 是 cron 时区；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
+| `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
+| `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
+| `wallet` | `passwords` | 窗口解锁密码映射（比特窗口 ID → 密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
+| `storage` | `logLevel`、`prettyColorize`、`screenshotDir`、`logDir` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是**遗留字段**——数据层已全走云端数据库，云库模式下不生效，无需配置 |
+
+### 8.2 面板使用
+
+面板共五个页面（顶部导航切换），每个页面「在哪 / 能干什么」如下：
+
+- **看板（首页）**：统计卡（成功/失败/验证码失败/跳过/进行中数量与打码花费）＋日期切换 ＋任务筛选下拉 ＋ 状态分段 tab（全部/失败/成功/进行中）＋ 任务执行矩阵表（窗口 × 任务 × 当日结果）。矩阵行级「执行」= 单窗口单任务触发（失败行显示「重跑」）；「重跑今日失败」把当日全部失败记录重新入队；「全部窗口执行」按钮**需先在下拉里选任务**，再把该任务推给全部启用窗口。停留在看板页时每 15 秒自动刷新。
+- **窗口页**：搜索框（按名字/窗口 ID 过滤）；「同步比特浏览器」按钮把比特客户端里的窗口列表拉取入库；每行有启用开关；「立即跑」= 跑该窗口的全部启用任务；「详情」打开**弹窗**，展示该窗口今日任务时间线与「重置熔断」按钮。
+- **任务页**：每张任务卡片显示分类徽章（签到/领水/铸币/其他）、备注、来源页链接；卡片开关写入云端 `task_states` 表，切换**立即生效**（停用即停 cron、重新启用即重注册 cron，无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍。
+- **文档页**：左侧目录树（本手册章节树 ＋ 三个示例任务源码），右侧渲染本手册正文；代码块默认折叠，点头部展开；正文滚动时目录自动高亮当前章节（滚动联动）。
+- **设置页**：只读展示运行参数（比特 API 地址、并发、探活地址、时区等）；「测试连接」按钮验证比特浏览器本地 API 是否可达；「查询余额」展示 yescaptcha 剩余点数。
+
+### 8.3 REST 接口总表
+
+面板本身也是普通网页，下面的接口就是它背后的「服务员」，全部以 `/api` 开头、返回 JSON：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/dashboard` | 看板全部数据（统计/矩阵/窗口/打码成本），`?date=YYYY-MM-DD` 切换日期 |
+| GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 云端开关状态） |
+| PATCH | `/api/tasks/:key` | 任务开关，body `{ "enabled": true \| false }`，写云端立即生效 |
+| POST | `/api/tasks/:key/trigger` | 手动触发：body `{ "bitbrowserId" }` 只跑该窗口；不带 body 跑全部启用窗口 |
+| GET | `/api/profiles` | 窗口列表（含启用状态与熔断计数） |
+| PATCH | `/api/profiles/:id` | 窗口开关，body `{ "enabled": true \| false }` |
+| POST | `/api/profiles/:id/run` | 该窗口跑全部**启用**任务（停用排除，返回 `count`） |
+| POST | `/api/profiles/:id/breaker/reset` | 重置该窗口熔断计数 |
+| POST | `/api/runs/rerun-failed` | 当日失败记录重新入队，body `{ "date": "YYYY-MM-DD" }`（缺省今天） |
+| GET | `/api/captcha/balance` | 打码余额（`{ configured, points, yuan }`） |
+| POST | `/api/bitbrowser/test` | 比特浏览器连接测试（`{ ok }`） |
+| POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库（`{ count }`） |
+| GET | `/api/settings` | 公开只读设置（不含任何密钥） |
+| GET | `/api/screenshots` | 取截图文件，`?path=` 传截图目录内的相对路径 |
+| GET | `/api/docs/guide`、`/api/docs/examples`、`/api/docs/examples/:name` | 本手册 markdown 原文、示例文件清单、单个示例源码（白名单限定三个示例文件） |
+
+---
+
+## 9. 常用模式
 
 ### 完整示例：9 点签到的站点（公告弹窗 + 钱包登录 + 签到 + 等文案）
 
@@ -935,7 +997,7 @@ if (done) return   // 今日已做 → 直接成功
 
 ---
 
-## 9. 排错
+## 10. 排错
 
 ### 选择器失效
 
@@ -965,4 +1027,4 @@ if (done) return   // 今日已做 → 直接成功
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板矩阵行内可点开截图。
 - **日志**：`data/logs/app.log`（pino，级别由 `config.json` 的 `storage.logLevel` 控制，控制台同步输出）；任务失败时日志携带 `status/err`。
-- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/熔断跳过。
+- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。
