@@ -192,4 +192,32 @@ describe('TaskContext 场景方法集成', () => {
       await browser.close()
     }
   })
+
+  it('closeModal 无 gone 时依次尝试多候选不提前返回', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=a`)
+      expect(await page.locator('#modal-a').count()).toBe(1)
+      await ctx.closeModal({ close: ['#nonexistent', '#modal-a .close'] })
+      expect(await page.locator('#modal-a').count()).toBe(0)
+    } finally {
+      await browser.close()
+    }
+  })
+
+  it('closeModal 候选按钮存在但隐藏时回退到遮罩策略', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=b`)
+      expect(await page.locator('#modal-b').count()).toBe(1)
+      await ctx.closeModal({ close: ['#modal-e-hidden-close'], mask: '#modal-b-mask', gone: '#modal-b' })
+      expect(await page.locator('#modal-b').count()).toBe(0)
+    } finally {
+      await browser.close()
+    }
+  })
 })

@@ -235,11 +235,16 @@ export class TaskContext {
     }
     attempts.push(async () => { await this.page.keyboard.press('Escape') })
     for (const attempt of attempts) {
-      await attempt()
-      if (!goneSel) return
+      try {
+        await attempt()
+      } catch {
+        // 单策略失败（按钮存在但不可点等）不阻断回退链，继续下一个策略
+      }
+      if (!goneSel) continue
       const gone = await this.waitForGone(goneSel, 600).then(() => true).catch(() => false)
       if (gone) return
     }
+    if (!goneSel) return
     if (goneSel) await this.waitForGone(goneSel, opts.timeoutMs ?? 10000)
   }
 }
