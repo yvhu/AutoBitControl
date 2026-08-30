@@ -246,6 +246,87 @@ async urlIncludes(part: string): Promise<boolean>
 if (await ctx.urlIncludes('/dashboard')) { /* 已登录，跳过登录 */ }
 ```
 
+### waitForText
+
+```ts
+async waitForText(text: string, timeoutMs = 10000): Promise<void>
+```
+
+等待某文案出现在页面上。与 `textPresent`（即时判断一次）不同：`waitForText` 会持续等待直到文案可见，适合等待异步结果（接口返回后才渲染的文案、倒计时结束出现的提示等）。匹配方式与 `textPresent` 一致（`getByText`，`exact: false`，包含即命中）。超时抛 `等待文案超时: <text>`。
+
+```ts
+// 点击提交后，等"已签到成功"出现（最长 10 秒）
+await ctx.clickCheckin('#submit-btn')
+await ctx.waitForText('已签到成功')
+```
+
+**与 textPresent 的分工**：页面状态已经就绪、只做一次判断用 `textPresent`（如打开页面后检查"已领取"直接返回）；结果要等异步动作完成才出现，用 `waitForText`。
+
+### waitForApi
+
+```ts
+async waitForApi(urlPart: string, timeoutMs = 10000): Promise<unknown>
+```
+
+等待 URL 包含 `urlPart` 的网络响应，并解析其 JSON 返回。解析失败（非 JSON 响应）返回 `null`；超时抛 `等待接口超时: <urlPart>（<原始错误>）`。用于把接口返回当作业务结果的场景（站点 UI 不更新、但接口有明确状态码/字段）。
+
+```ts
+// 点击领取后等接口返回，并校验业务字段
+await ctx.human.click('#claim-btn')
+const body = await ctx.waitForApi('/api/claim', 15000) as { ok: boolean; message?: string }
+if (!body.ok) throw new Error(`领取失败: ${body.message}`)
+```
+
+注意：`waitForApi` 不会自己触发请求——调用前先执行触发动作（点击按钮等）；若担心响应先于等待注册，可先 `const p = ctx.waitForApi(...)` 再触发点击，最后 `await p`。
+
+### waitForUrl
+
+```ts
+async waitForUrl(part: string, timeoutMs = 10000): Promise<void>
+```
+
+等待当前 URL 包含某片段（跳转等待）。hash 变化同样有效（如 SPA 路由 `#/dashboard`）。超时抛 `等待跳转超时: <part>`。
+
+```ts
+await ctx.human.click('#login-btn')
+await ctx.waitForUrl('/dashboard')      // 登录成功后跳转到面板
+await ctx.waitForUrl('#/step-2')        // SPA 内 hash 路由推进
+```
+
+与 `urlIncludes`（即时判断）的关系同 `waitForText`/`textPresent`：先判断后动作用 `urlIncludes`，等待动作引发跳转用 `waitForUrl`。
+
+### js
+
+```ts
+async js<T>(fn: () => T): Promise<T>
+```
+
+在页面**主世界**执行 JS 并返回结果。站点注入的全局状态（`window.__APP_STATE__` 之类）必须用主世界读取——自动化工具的默认隔离世界看不到站点自己注入的全局变量。适合判断登录态、任务状态、读取站点配置等：
+
+```ts
+// 读站点全局状态判断登录态
+const state = await ctx.js<{ user?: { id: string } }>(() => (window as any).__APP_STATE__)
+if (!state?.user) throw new Error('未登录')
+
+// 读 localStorage 判断是否已做过任务
+const done = await ctx.js<boolean>(() => localStorage.getItem('claimed_today') === '1')
+if (done) return
+```
+
+### waitForGone
+
+```ts
+async waitForGone(selector: string, timeoutMs = 10000): Promise<void>
+```
+
+等待元素从页面移除（如 loading 遮罩、提交中的 spinner）。元素从未出现过视为已消失（立即返回）；超时抛 `元素未消失: <selector>`。
+
+```ts
+await ctx.human.click('#submit-btn')
+await ctx.waitForGone('.loading-mask', 30000)   // 遮罩消失说明请求完成
+await ctx.assertVisible('.success-toast')        // 再断言成功标志
+```
+
 ### 选择器查找技巧
 
 - 用浏览器 DevTools：右键目标元素 → Copy → Copy selector。
@@ -521,6 +602,29 @@ await ctx.clickCheckin('#step-next', { assert: '#step-2' })
 - 断言元素选「成功后才会出现」的标志，不要选「点击前就存在」的元素。
 - 链上交易类异步结果用长超时断言：`await ctx.assertVisible('.tx-success', 30000)`，超时抛 `断言超时: 元素 X 未出现` 进入失败流程。
 - 成功自动留档：任务成功后框架自动补拍 `<日期>-success.png`；`run` 内也可显式 `await ctx.screenshot('xxx')`。
+
+### 等待接口返回再断言
+
+有些站点点击后 UI 不更新（或更新滞后），但接口返回体有明确的业务状态。此时用 `waitForApi` 等接口并用返回体做断言：
+
+```ts
+await ctx.human.click('#claim-btn')
+const body = await ctx.waitForApi('/api/claim', 15000) as { code: number; msg?: string }
+if (body.code !== 0) throw new Error(`领取失败: ${body.msg ?? '未知错误'}`) // 抛错 → 失败重试流程
+await ctx.assertVisible('.success-toast')                                     // UI 也确认一遍
+```
+
+### 读站点全局状态判断登录态 / 任务状态
+
+站点注入的全局变量（`window.__APP_STATE__`、`window.__INITIAL_STATE__` 等）在自动化工具的隔离世界里读不到，用 `ctx.js`（主世界执行）读取：
+
+```ts
+const state = await ctx.js<{ user?: { id: string } }>(() => (window as any).__APP_STATE__)
+if (!state?.user) throw new Error('登录态丢失')
+
+const done = await ctx.js<boolean>(() => localStorage.getItem('claimed_today') === '1')
+if (done) return   // 今日已做 → 直接成功
+```
 
 ---
 

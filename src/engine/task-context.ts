@@ -150,4 +150,62 @@ export class TaskContext {
   async urlIncludes(part: string): Promise<boolean> {
     return this.page.url().includes(part)
   }
+
+  /**
+   * 等待文案出现在页面（区别于 textPresent 的即时判断，这里会持续等到出现）
+   * @throws 超时抛 `等待文案超时: <text>`
+   */
+  async waitForText(text: string, timeoutMs = 10000): Promise<void> {
+    try {
+      await this.page.getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout: timeoutMs })
+    } catch {
+      throw new Error(`等待文案超时: ${text}`)
+    }
+  }
+
+  /**
+   * 等待匹配 url 片段的网络响应并解析 JSON（解析失败返回 null）
+   * @returns 响应体 JSON；非 JSON 响应返回 null
+   * @throws 超时抛 `等待接口超时: <urlPart>（<原始错误>）`
+   */
+  async waitForApi(urlPart: string, timeoutMs = 10000): Promise<unknown> {
+    try {
+      const res = await this.page.waitForResponse(r => r.url().includes(urlPart), { timeout: timeoutMs })
+      return await res.json().catch(() => null)
+    } catch (e) {
+      throw new Error(`等待接口超时: ${urlPart}（${(e as Error).message}）`)
+    }
+  }
+
+  /**
+   * 等待当前 URL 包含某片段（跳转等待，hash 变化同样有效）
+   * @throws 超时抛 `等待跳转超时: <part>`
+   */
+  async waitForUrl(part: string, timeoutMs = 10000): Promise<void> {
+    try {
+      await this.page.waitForURL((u) => u.href.includes(part), { timeout: timeoutMs })
+    } catch {
+      throw new Error(`等待跳转超时: ${part}`)
+    }
+  }
+
+  /**
+   * 在页面主世界执行 JS 并返回结果（自动处理 patchright 隔离世界参数）
+   * 读站点全局状态（window 上的变量）必须用主世界——默认隔离世界看不到站点注入的全局变量
+   */
+  async js<T>(fn: () => T): Promise<T> {
+    return this.page.evaluate(fn, undefined, {}, false) as Promise<T>
+  }
+
+  /**
+   * 等待元素消失（如 loading 遮罩）；元素从未出现视为已消失
+   * @throws 超时抛 `元素未消失: <selector>`
+   */
+  async waitForGone(selector: string, timeoutMs = 10000): Promise<void> {
+    try {
+      await this.page.locator(selector).first().waitFor({ state: 'detached', timeout: timeoutMs })
+    } catch {
+      throw new Error(`元素未消失: ${selector}`)
+    }
+  }
 }
