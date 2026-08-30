@@ -1,0 +1,20 @@
+import { get, post, patch } from './client'
+import type { DashboardData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo } from '../types'
+
+export const fetchDashboard = (date: string) => get<DashboardData>(`/api/dashboard?date=${date}`)
+export const fetchTasks = () => get<TaskMetaView[]>('/api/tasks')
+export const fetchProfiles = () => get<ProfileRow[]>('/api/profiles')
+export const triggerTask = (key: string, bitbrowserId?: string) => post<{ scope: string }>(`/api/tasks/${encodeURIComponent(key)}/trigger`, bitbrowserId ? { bitbrowserId } : {})
+export const setTaskEnabled = (key: string, enabled: boolean) => patch<{ key: string; enabled: boolean }>(`/api/tasks/${encodeURIComponent(key)}`, { enabled })
+export const rerunFailed = (date: string) => post<{ count: number }>('/api/runs/rerun-failed', { date })
+export const runProfile = (id: number) => post<{ count: number }>(`/api/profiles/${id}/run`, {})
+export const patchProfile = (id: number, body: { enabled?: boolean }) => patch<ProfileRow>(`/api/profiles/${id}`, body)
+export const resetBreaker = (id: number) => post<null>(`/api/profiles/${id}/breaker/reset`, {})
+export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})
+export const syncProfiles = () => post<{ count: number }>('/api/bitbrowser/sync', {})
+export const fetchBalance = () => get<{ configured: boolean; points: number; yuan: number }>('/api/captcha/balance')
+export const fetchSettings = () => get<SettingsData>('/api/settings')
+export const reloadDatasource = () => post<DatasourceInfo>('/api/datasource/reload', {})
+export const fetchGuide = () => get<{ content: string }>('/api/docs/guide')
+export const fetchExamples = () => get<{ name: string; label: string }[]>('/api/docs/examples')
+export const fetchExampleSource = (name: string) => get<{ content: string }>(`/api/docs/examples/${name}`)
