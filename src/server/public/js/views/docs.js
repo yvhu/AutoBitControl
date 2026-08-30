@@ -100,7 +100,7 @@ function buildDocTree(side, content, chapters, examples) {
       <div class="doc-tree-children">${children.map(c => node(c.title, c.id, c.children, depth + 1)).join('')}</div>
     </div>`
   const treeHtml = chapters.map(c => node(c.title, c.id, c.children, 0)).join('')
-    + node('🧩 任务示例', '__examples__', examples.map(f => ({ title: EXAMPLE_LABELS[f.name] ?? f.label, id: `__src_${f.name}`, children: [] })), 0)
+    + node('▣ 任务示例', '__examples__', examples.map(f => ({ title: EXAMPLE_LABELS[f.name] ?? f.label, id: `__src_${f.name}`, children: [] })), 0)
   side.innerHTML = `<div class="doc-tree">${treeHtml}</div>`
 
   // 点击叶子/章节标题：跳转正文；任务示例文件切换到源码视图
