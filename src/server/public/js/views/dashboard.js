@@ -37,7 +37,7 @@ export async function render({ date, setTasks }) {
     document.querySelector('#st-capcost').textContent = '¥' + (data.captcha.totalCost / 1000).toFixed(2)
     document.querySelector('#st-capcount').textContent = data.captcha.count + ' 次'
     const total = s.total || 1
-    document.querySelector('#bar-dist').innerHTML = `<div style="width:${s.success/total*100}%;background:#34D399"></div><div style="width:${s.failed/total*100}%;background:#F87171"></div><div style="width:${s.captchaFailed/total*100}%;background:#38BDF8"></div><div style="width:${s.skipped/total*100}%;background:#334155"></div>`
+    document.querySelector('#bar-dist').innerHTML = `<div style="width:${s.success/total*100}%;background:#34D399"></div><div style="width:${s.failed/total*100}%;background:#F87171"></div><div style="width:${s.captchaFailed/total*100}%;background:#38BDF8"></div><div style="width:${s.skipped/total*100}%;background:#3D4C66"></div>`
     const badge = document.querySelector('#badge-fail')
     badge.textContent = s.failed + s.captchaFailed
     badge.style.display = s.failed + s.captchaFailed > 0 ? '' : 'none'
@@ -66,7 +66,7 @@ function renderMatrix(data) {
     const bitId = profile ? String(profile.bitbrowserId).slice(0, 8) : ''
     const num = String(r.profileId).padStart(2, '0')
     return `<tr>
-      <td><div style="display:flex;align-items:center;gap:8px"><div class="avatar">${num}</div><div><div>${esc(r.profileName)}</div><div style="font-size:10px;color:#64748B">${esc(bitId)}</div></div></div></td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="avatar">${num}</div><div><div>${esc(r.profileName)}</div><div style="font-size:10px;color:#8E9CB3">${esc(bitId)}</div></div></div></td>
       <td>${esc(r.taskKey)}</td>
       <td><span class="pill ${cls}"><span class="d"></span>${label}</span></td>
       <td>${r.attempts}</td>

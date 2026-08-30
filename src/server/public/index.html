@@ -37,7 +37,7 @@
         </div>
         <div class="stat"><div class="stat-label">📊 结果分布</div>
           <div class="stat-value" style="font-size:15px;margin-top:10px">
-            <span style="color:#34D399" id="st-ok">0</span> <span style="color:#F87171" id="st-fail">0</span> <span style="color:#38BDF8" id="st-cap">0</span> <span style="color:#94A3B8" id="st-skip">0</span>
+            <span style="color:#34D399" id="st-ok">0</span> <span style="color:#F87171" id="st-fail">0</span> <span style="color:#38BDF8" id="st-cap">0</span> <span style="color:#BAC5D9" id="st-skip">0</span>
           </div>
           <div class="stat-extra">成功 · 失败 · 验证码失败 · 跳过</div>
           <div class="bar" id="bar-dist" style="margin-top:8px"></div>
@@ -52,7 +52,7 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">任务执行矩阵 <span style="font-weight:400;color:#64748B">· 窗口 × 任务 × 当日结果</span></div>
+        <div class="card-title">任务执行矩阵 <span style="font-weight:400;color:#8E9CB3">· 窗口 × 任务 × 当日结果</span></div>
         <div class="toolbar">
           <div class="seg" id="seg-filter"><span class="on" data-f="all">全部</span><span data-f="failed">失败</span><span data-f="success">成功</span><span data-f="running">进行中</span></div>
           <select class="select" id="filter-task" data-tasks="[]"><option value="">全部任务</option></select>
@@ -73,7 +73,7 @@
       <div class="card">
         <div class="toolbar">
           <input class="input" id="profile-search" placeholder="🔍 搜索窗口名 / 比特ID" style="width:220px">
-          <span style="color:#64748B;font-size:12px" id="profile-count"></span>
+          <span style="color:#8E9CB3;font-size:12px" id="profile-count"></span>
           <button class="btn primary sm" style="margin-left:auto" onclick="window.abcSyncProfiles()">⇅ 同步比特浏览器</button>
         </div>
         <table class="mx">
@@ -85,7 +85,7 @@
 
     <div class="page" id="page-tasks">
       <div class="card" id="task-cards"></div>
-      <div style="color:#64748B;font-size:11px">→ 任务定义在代码（src/tasks），开关与触发在此页管理</div>
+      <div style="color:#8E9CB3;font-size:11px">→ 任务定义在代码（src/tasks），开关与触发在此页管理</div>
     </div>
 
     <div class="page" id="page-docs">
@@ -100,26 +100,26 @@
     <div class="page" id="page-settings">
       <div class="card">
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
-          <div style="width:120px;color:#94A3B8;font-size:12px">比特浏览器</div>
+          <div style="width:120px;color:#BAC5D9;font-size:12px">比特浏览器</div>
           <span class="kbd" id="set-bb-url">—</span>
           <button class="btn ghost sm" onclick="window.abcTestBitbrowser()">测试连接</button>
           <span class="chip"><span class="dot err" id="set-bb-dot"></span><span id="set-bb-text">未检测</span></span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
-          <div style="width:120px;color:#94A3B8;font-size:12px">执行参数</div>
+          <div style="width:120px;color:#BAC5D9;font-size:12px">执行参数</div>
           <span class="kbd" id="set-exec">—</span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
-          <div style="width:120px;color:#94A3B8;font-size:12px">yescaptcha</div>
+          <div style="width:120px;color:#BAC5D9;font-size:12px">yescaptcha</div>
           <button class="btn ghost sm" onclick="window.abcBalance()">查询余额</button>
           <span class="chip"><span class="dot ok"></span><span id="set-balance">—</span></span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
-          <div style="width:120px;color:#94A3B8;font-size:12px">数据源</div>
+          <div style="width:120px;color:#BAC5D9;font-size:12px">数据源</div>
           <button class="btn ghost sm" onclick="window.abcReloadDatasource()">重载</button>
           <span class="chip"><span class="dot err" id="set-ds-dot"></span><span id="set-datasource">—</span></span>
         </div>
-        <div style="color:#64748B;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）；数据源改完 xlsx 点「重载」即时生效</div>
+        <div style="color:#8E9CB3;font-size:11px;padding-top:8px">→ 设置页全部只读；修改走 config 文件 + 重启（配置单一来源）；数据源改完 xlsx 点「重载」即时生效</div>
       </div>
     </div>
   </div>
