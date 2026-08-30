@@ -7,7 +7,7 @@
  *   A. 有"窗口"列 → 按 窗口名/比特ID 精确匹配行
  *   B. 无"窗口"列 → 按窗口列表顺序取第 i 行（list 顺序 = 面板顺序）
  */
-import { Workbook } from 'exceljs'
+import ExcelJS from 'exceljs'
 
 /** 数据源中的一行 */
 export interface DataSourceRow {
@@ -37,7 +37,7 @@ export class DataSource {
     this.columns = []
     this.hasWindowColumn = false
     try {
-      const workbook = new Workbook()
+      const workbook = new ExcelJS.Workbook()
       await workbook.xlsx.readFile(path)
       // 只取第一个工作表（数据源约定单表）
       const sheet = workbook.worksheets[0]

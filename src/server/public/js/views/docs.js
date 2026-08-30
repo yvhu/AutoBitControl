@@ -114,6 +114,14 @@ function buildDocTree(side, content, chapters, examples) {
     const target = document.getElementById(id)
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+  // 渲染手册正文（markdown 缓存于 guideMarkdown，切回时重新渲染以恢复标题 id/折叠块/滚动联动）
+  const renderGuide = async () => {
+    content.innerHTML = `<div class="doc-md">${renderMarkdown(guideMarkdown)}</div>`
+    injectHeadingIds(content)
+    makeCodeBlocksCollapsible(content)
+    content.dataset.view = 'guide'
+    attachScrollSpy(side, content)
+  }
   const node = (title, id, children, depth) => `
     <div class="doc-tree-node" data-depth="${depth}">
       <div class="doc-toc-item" data-target="${id}">
@@ -133,6 +141,8 @@ function buildDocTree(side, content, chapters, examples) {
       detachScrollSpy()
       const list = await get('/api/docs/examples')
       content.innerHTML = `<h2 style="margin-bottom:10px">任务示例</h2><div class="doc-md"><p>左侧选择示例文件查看带注释的完整源码。示例与 <code>docs/API-GUIDE.md</code> 配合阅读。</p><ul>${list.map(f => `<li><code>${f.name}</code></li>`).join('')}</ul></div>`
+      content.dataset.view = 'examples'
+      window.scrollTo({ top: 0 })
       scrollToId(id)
       return
     }
@@ -141,9 +151,13 @@ function buildDocTree(side, content, chapters, examples) {
       const name = id.slice('__src_'.length)
       const r = await get('/api/docs/examples/' + name)
       content.innerHTML = `<h2 style="margin-bottom:10px">${name}</h2><div class="doc-md">${renderSource(r.content)}</div>`
+      content.dataset.view = 'source'
+      window.scrollTo({ top: 0 })
       scrollToId(id)
       return
     }
+    // 手册章节：当前不是手册视图时先还原手册正文（否则目标标题不存在、点了没反应）
+    if (content.dataset.view !== 'guide') await renderGuide()
     scrollToId(id)
   }))
 
@@ -165,6 +179,9 @@ function renderSource(content) {
   ).join('') + '</div>'
 }
 
+// 手册 markdown 原文缓存（切到示例/源码视图后再点章节时，用于重新渲染手册正文）
+let guideMarkdown = ''
+
 // 渲染文档页：整个左侧是树形目录（手册章节树 + 任务示例文件），右侧为内容区
 export async function render() {
   const side = document.querySelector('#doc-side')
@@ -172,9 +189,11 @@ export async function render() {
   const examples = await get('/api/docs/examples')
   const r = await get('/api/docs/guide')
   await ensureMarked()
-  content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
+  guideMarkdown = r.content
+  content.innerHTML = `<div class="doc-md">${renderMarkdown(guideMarkdown)}</div>`
   injectHeadingIds(content)
   makeCodeBlocksCollapsible(content)
+  content.dataset.view = 'guide'
   buildDocTree(side, content, extractChapterTree(content), examples)
   attachScrollSpy(side, content)
 }
