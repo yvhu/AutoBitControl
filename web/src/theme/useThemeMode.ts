@@ -8,8 +8,13 @@ function systemDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
+function readStored(): ThemeMode {
+  const v = localStorage.getItem(KEY)
+  return v === 'light' || v === 'dark' || v === 'system' ? v : 'system'
+}
+
 export function useThemeMode() {
-  const [mode, setModeState] = useState<ThemeMode>(() => (localStorage.getItem(KEY) as ThemeMode) || 'system')
+  const [mode, setModeState] = useState<ThemeMode>(readStored)
   const [system, setSystem] = useState<boolean>(() => systemDark())
 
   useEffect(() => {

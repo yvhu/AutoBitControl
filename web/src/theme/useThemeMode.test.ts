@@ -24,6 +24,12 @@ describe('useThemeMode', () => {
     expect(result.current.mode).toBe('dark')
   })
 
+  it('localStorage 非法值回落 system', () => {
+    localStorage.setItem('abc-theme', 'abc')
+    const { result } = renderHook(() => useThemeMode())
+    expect(result.current.mode).toBe('system')
+  })
+
   it('setMode 写入 localStorage', () => {
     const { result } = renderHook(() => useThemeMode())
     act(() => result.current.setMode('light'))
