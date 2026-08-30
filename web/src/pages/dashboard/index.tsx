@@ -194,12 +194,17 @@ export default function DashboardPage() {
       width: 100,
       render: (_, r) => {
         const failed = r.status === 'failed' || r.status === 'captcha_failed'
+        const id = bitbrowserOf(r.profileId)
         return (
           <Button
             type="link"
             size="small"
             loading={trigger.isPending}
-            onClick={() => trigger.mutate({ key: r.taskKey, bitbrowserId: bitbrowserOf(r.profileId) })}
+            disabled={!id}
+            onClick={() => {
+              if (!id) return
+              trigger.mutate({ key: r.taskKey, bitbrowserId: id })
+            }}
           >
             {failed ? '重跑' : '执行'}
           </Button>

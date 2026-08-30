@@ -12,6 +12,6 @@ const MAP: Record<RunStatus, { color: string; label: string }> = {
 }
 
 export default function StatusPill({ status }: { status: RunStatus }) {
-  const m = MAP[status]
+  const m = MAP[status] ?? { color: 'default', label: status }
   return <Tag color={m.color}>{m.label}</Tag>
 }
