@@ -6,7 +6,7 @@
 
 **Architecture:** `web/` 独立 Vite 工程；dev 由 concurrently 同启后端(3000)+Vite(5173 代理 /api)；生产 `vite build` → `web/dist` 由后端静态托管。数据层 @tanstack/react-query + 类型化 API 层（复用现有 REST envelope）。文档页 = react-markdown + antd Tree + react-syntax-highlighter。
 
-**Tech Stack:** React 18、TypeScript、Vite 5、antd 5、@tanstack/react-query、react-router 6、react-markdown、remark-gfm、react-syntax-highlighter、concurrently、vitest + @testing-library/react + jsdom（前端单测）。
+**Tech Stack:** React 18、TypeScript、Vite 5、antd 5、@tanstack/react-query、react-router 6、react-markdown、remark-gfm、react-syntax-highlighter、concurrently、vitest + @testing-library/react + jsdom（前端单测）；后端 API 规范化：swagger-jsdoc + swagger-ui-express（OpenAPI 文档化）、openapi-typescript（前端类型生成）。
 
 **Spec:** `docs/superpowers/specs/2026-08-30-antd-frontend-rebuild-design.md`
 
@@ -42,6 +42,109 @@ web/
     ├── pages/tasks/{index.tsx,hooks.ts}
     ├── pages/docs/{index.tsx,markdown.tsx,slug.ts,useDocTree.ts}
     └── pages/settings/{index.tsx,hooks.ts}
+```
+
+---
+
+### Task 0: 后端 API 规范化（OpenAPI 文档化 + 统一错误码）
+
+**Files:** 新增 `src/server/http/errors.ts`；修改 `src/server/app.ts`、全部 `src/server/routes/*.ts`、`package.json`；新增后端测试
+
+**Interfaces:**
+- Produces: `ERROR_CODES` 常量表（如 `TASK_NOT_FOUND: 40401`、`PROFILE_NOT_FOUND: 40402`、`TASK_DISABLED: 40901`、`INVALID_ARGUMENT: 40000`、`SCREENSHOT_NOT_FOUND: 40403`、`INTERNAL: 50000`）；`GET /api/docs/openapi.json`；`/api-docs`（swagger-ui 页面）；每个路由的 OpenAPI 注解（Task 2 前端类型生成依赖此 spec 的准确性）
+
+- [ ] **Step 1: 安装**
+
+```powershell
+npm i swagger-jsdoc swagger-ui-express
+npm i -D @types/swagger-jsdoc @types/swagger-ui-express openapi-typescript
+```
+
+- [ ] **Step 2: errors.ts（错误码常量 + HttpError 扩展）**
+
+```ts
+/** 业务错误码表：4 开头 = 客户端可理解错误；与 HTTP 状态码联动（code = status*100 + 序号） */
+export const ERROR_CODES = {
+  INVALID_ARGUMENT: 40000,
+  TASK_NOT_FOUND: 40401,
+  PROFILE_NOT_FOUND: 40402,
+  SCREENSHOT_NOT_FOUND: 40403,
+  DOCS_NOT_FOUND: 40404,
+  TASK_DISABLED: 40901,
+  INTERNAL: 50000,
+} as const
+
+export class HttpError extends Error {
+  constructor(public status: number, public code: number, message: string) {
+    super(message)
+    this.name = 'HttpError'
+  }
+}
+```
+
+（`src/server/http/error.ts` 原 HttpError 迁移至此并扩展 code 字段；`fail()` 响应体 `{ code, message, data }` 中的 code 即业务码；errorHandler 的 404/500 兜底改用 INTERNAL 与 40400。）
+
+- [ ] **Step 3: 各路由改用错误码**（grep 全部 `new HttpError(` 与 `fail(` 调用点，替换为 ERROR_CODES 常量：tasks 404/409、profiles 404、screenshots 404、docs 404、notFoundHandler 40400、errorHandler 50000；message 文案不变）
+
+- [ ] **Step 4: OpenAPI 文档化（swagger-jsdoc）**
+
+`src/server/openapi.ts`：
+
+```ts
+import swaggerJsdoc from 'swagger-jsdoc'
+
+export const openapiSpec = swaggerJsdoc({
+  definition: {
+    openapi: '3.0.3',
+    info: { title: 'AutoBitControl API', version: '0.1.0', description: '面板与自动化引擎的全部接口' },
+    servers: [{ url: 'http://127.0.0.1:3000' }],
+  },
+  apis: ['src/server/routes/*.ts'],
+})
+```
+
+每个 route 文件加 JSDoc 注解（格式示例）：
+
+```ts
+/**
+ * @swagger
+ * /api/tasks/{key}/trigger:
+ *   post:
+ *     summary: 触发任务（可选指定单窗口）
+ *     parameters:
+ *       - in: path
+ *         name: key
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema: { type: object, properties: { bitbrowserId: { type: string } } }
+ *     responses:
+ *       '200':
+ *         description: 入队成功
+ *       '409':
+ *         description: 任务已停用
+ */
+```
+
+覆盖 15 个接口（REST 总表见 API-GUIDE 8.3）。app.ts 挂载：
+
+```ts
+app.get('/api/docs/openapi.json', (req, res) => res.json(openapiSpec))
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiSpec))
+```
+
+（注意挂载顺序在 notFoundHandler 之前。）
+
+- [ ] **Step 5: 验证 + Commit**
+
+```powershell
+npm test
+npm run typecheck
+# 手测：http://127.0.0.1:3000/api/docs/openapi.json 返回合法 OpenAPI；/api-docs 页面可见 15 个接口
+git add -A
+git commit -m "feat: openapi documentation with swagger and unified business error codes"
 ```
 
 ---
@@ -342,7 +445,17 @@ git commit -m "feat: antd frontend scaffold with theme system, layout and dev pr
 **Files:** web/src/api/client.ts、api/endpoints.ts、pages/dashboard/{index.tsx,hooks.ts}、components/StatusPill.tsx
 
 **Interfaces:**
-- Produces: `get<T>(path)` / `post<T>(path, body?)` / `patch<T>(path, body?)`（envelope 解包，code!==0 抛 Error(message)）；`fetchDashboard(date)`、`fetchTasks()`、`fetchProfiles()`、`triggerTask(key, bitbrowserId?)`、`rerunFailed(date)`、`runProfile(id)`、`patchProfile(id, body)`、`resetBreaker(id)`、`testBitbrowser()`、`fetchBalance()`、`fetchSettings()`、`reloadDatasource()`、`fetchGuide()`、`fetchExamples()`、`fetchExampleSource(name)`（Task 3-6 依赖）
+- Consumes: `GET /api/docs/openapi.json`（Task 0 产物，本任务用它生成前端类型）
+- Produces: `web/src/api/schema.d.ts`（openapi-typescript 生成）、`client.ts`（基于生成类型）、`endpoints.ts`（类型化函数，签名与后端 schema 一致）、看板页、StatusPill
+
+- [ ] **Step 0: 生成类型（替代手写 types.ts）**
+
+```powershell
+# 后端已运行（或临时起）后执行；将生成结果保存进仓库（后端接口变更时重跑）
+npx openapi-typescript http://127.0.0.1:3000/api/docs/openapi.json -o web/src/api/schema.d.ts
+```
+
+（生成文件较大但准确；Task 1 的 types.ts 不再手写，改为从 schema.d.ts 导出常用类型的别名文件 `web/src/types.ts`。）
 
 - [ ] **Step 1: client.ts**
 
