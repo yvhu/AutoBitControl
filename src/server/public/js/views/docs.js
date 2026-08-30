@@ -25,6 +25,16 @@ function renderMarkdown(content) {
   return '<pre>' + content.replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])) + '</pre>'
 }
 
+// 标题锚点：marked 不生成标题 id，渲染后按目录约定补上（小写、去符号、空格转连字符、保留中文）
+function injectHeadingIds(root) {
+  root.querySelectorAll('h1, h2, h3').forEach(h => {
+    if (h.id) return
+    h.id = h.textContent.trim().toLowerCase()
+      .replace(/[^\u4e00-\u9fa5a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+  })
+}
+
 // 源码视图：逐行带行号渲染（HTML 转义后展示）
 function renderSource(content) {
   const lines = content.split('\n')
@@ -58,6 +68,7 @@ export async function render() {
       const r = await get('/api/docs/guide')
       await ensureMarked()
       content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
+      injectHeadingIds(content)
     }
   }))
   const first = side.querySelector('[data-doc="guide"]')
