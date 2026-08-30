@@ -286,17 +286,20 @@ await ctx.typeInto('input[name="amount"]', '100')                  // 往数量�
 async pressKey(key: string): Promise<void>
 ```
 
-- **是什么**：按一下键盘键（按下 + 抬起）。
-- **什么时候用**：按 Enter 提交表单、按 Escape 关闭浮层、按 Tab 切换焦点等**单个按键**的场景。
+- **是什么**：按一下键盘键（按下 + 抬起），单键和**组合键**都支持。
+- **什么时候用**：按 Enter 提交表单、按 Escape 关闭浮层、按 Tab 切换焦点等单个按键场景；也可以发组合键——全选 `Control+A`、反向切焦点 `Shift+Tab`、保存 `Control+S` 等。
 - **怎么用**：
 
 ```ts
 await ctx.typeInto('#search-input', 'hello')  // 1. 先往搜索框打字（会自动聚焦输入框）
 await ctx.pressKey('Enter')                   // 2. 按回车提交（表单的 keydown 监听收到 Enter）
 await ctx.waitForText('提交成功')              // 3. 蹲点等结果文案出现
+// 组合键：键名之间用加号连接
+await ctx.pressKey('Control+A')               // 全选当前输入框内容
+await ctx.pressKey('Shift+Tab')               // 反向切换焦点（回到上一个输入框）
 ```
 
-- **注意什么**：这是纯键盘操作，焦点在哪它就发给谁——按 Enter 之前要确保焦点在目标输入框里（`typeInto` 已经帮你聚焦了）。**只按一个键**，要输入一串文字请用 `typeInto`。按键名写键盘标准名：`'Enter'`、`'Escape'`、`'Tab'`、`'ArrowDown'`、`'Backspace'` 等。
+- **注意什么**：这是纯键盘操作，焦点在哪它就发给谁——按 Enter 之前要确保焦点在目标输入框里（`typeInto` 已经帮你聚焦了）。**只按键不输入文字**，要输入一串文字请用 `typeInto`。按键名写键盘标准名：`'Enter'`、`'Escape'`、`'Tab'`、`'ArrowDown'`、`'Backspace'` 等，组合键用加号连接（`'Control+A'`、`'Shift+Tab'`）。
 
 ### solveCaptcha
 
