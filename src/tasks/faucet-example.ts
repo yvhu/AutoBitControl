@@ -9,7 +9,7 @@ export class FaucetExampleTask extends SiteTask {
     name: '示例领水',
     url: '',
     sourceUrl: '',
-    note: '示例任务，未配置真实 url；水龙头一般每 24h 限领一次',
+    note: '示例任务：url 为空且开关默认关闭，调试时打开面板开关或用 task:run；水龙头一般每 24h 限领一次',
     category: 'faucet',
     lastUpdated: '2026-08-28',
     // 默认停用：示例任务不参与日常执行，需调试时在面板打开开关或直接用 task:run 脚本

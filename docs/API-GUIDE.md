@@ -98,7 +98,7 @@ meta: TaskMeta = {
   name: '示例签到',
   url: '',
   sourceUrl: '',
-  note: '示例任务，未配置真实 url，仅手动触发演示',
+  note: '示例任务：url 为空且开关默认关闭；调试时在面板任务页打开开关，或用 task:run 脚本直接跑（不受开关限制）',
   category: 'checkin',
   lastUpdated: '2026-08-28',
   schedule: { stagger: ['09:00', '11:00'] },

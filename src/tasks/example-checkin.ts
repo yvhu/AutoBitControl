@@ -13,7 +13,7 @@ export class ExampleCheckinTask extends SiteTask {
     // 信息来源页：选择器是从哪个页面确认的，站点改版时回这里重查
     sourceUrl: '',
     // 备注：记录站点的坑与特殊逻辑，面板任务页直接可见
-    note: '示例任务，未配置真实 url，仅手动触发演示',
+    note: '示例任务：url 为空且开关默认关闭；调试时在面板任务页打开开关，或用 task:run 脚本直接跑（不受开关限制）',
     // 分类：checkin/faucet/mint/other，面板显示对应颜色徽章
     category: 'checkin',
     // 最后更新日期，提醒自己多久没核对过这个站点
