@@ -106,6 +106,53 @@ function detachScrollSpy() {
   scrollSpy = null
 }
 
+// 手册 markdown 原文缓存 + 左右栏元素引用（render 时赋值，renderGuide/renderSourceView 共用）
+let guideMarkdown = ''
+let docSide = null
+let docContent = null
+
+// 渲染手册正文（markdown 缓存于 guideMarkdown，切回时重新渲染以恢复标题 id/折叠块/滚动联动）
+async function renderGuide() {
+  docContent.innerHTML = `<div class="doc-md">${renderMarkdown(guideMarkdown)}</div>`
+  injectHeadingIds(docContent)
+  makeCodeBlocksCollapsible(docContent)
+  docContent.dataset.view = 'guide'
+  attachScrollSpy(docSide, docContent)
+}
+
+// 渲染示例源码视图（目录树点击与正文 src:// 链接共用）
+async function renderSourceView(name) {
+  detachScrollSpy()
+  const r = await get('/api/docs/examples/' + name)
+  docContent.innerHTML = `<h2 style="margin-bottom:10px">${name}</h2><div class="doc-md">${renderSource(r.content)}</div>`
+  docContent.dataset.view = 'source'
+  window.scrollTo({ top: 0 })
+}
+
+// 正文区点击事件委托只绑一次（content 元素在视图间不变，renderGuide/renderSourceView 只重写其 innerHTML）：
+// #锚点 → 切回手册视图并平滑滚动到目标标题；src:// → 打开对应示例源码视图
+let contentClickBound = false
+function bindContentClick(content) {
+  if (contentClickBound) return
+  contentClickBound = true
+  content.addEventListener('click', async (e) => {
+    const a = e.target.closest('a[href]')
+    if (!a) return
+    // marked 会把 href 里的非 ASCII 字符百分号编码，getElementById 前先还原
+    let href = a.getAttribute('href')
+    try { href = decodeURIComponent(href) } catch { /* 无编码的普通链接原样使用 */ }
+    if (href?.startsWith('#') && href.length > 1) {
+      e.preventDefault()
+      if (content.dataset.view !== 'guide') await renderGuide()
+      const el = document.getElementById(href.slice(1))
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else if (href?.startsWith('src://')) {
+      e.preventDefault()
+      await renderSourceView(href.slice('src://'.length))
+    }
+  })
+}
+
 // 渲染整棵左侧目录树（手册章节 + 任务示例文件），支持展开/收起与点击跳转
 function buildDocTree(side, content, chapters, examples) {
   const scrollToId = (id) => {
@@ -113,14 +160,6 @@ function buildDocTree(side, content, chapters, examples) {
     side.querySelector(`[data-target="${id}"]`)?.classList.add('on')
     const target = document.getElementById(id)
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-  // 渲染手册正文（markdown 缓存于 guideMarkdown，切回时重新渲染以恢复标题 id/折叠块/滚动联动）
-  const renderGuide = async () => {
-    content.innerHTML = `<div class="doc-md">${renderMarkdown(guideMarkdown)}</div>`
-    injectHeadingIds(content)
-    makeCodeBlocksCollapsible(content)
-    content.dataset.view = 'guide'
-    attachScrollSpy(side, content)
   }
   const node = (title, id, children, depth) => `
     <div class="doc-tree-node" data-depth="${depth}">
@@ -133,6 +172,9 @@ function buildDocTree(side, content, chapters, examples) {
   const treeHtml = chapters.map(c => node(c.title, c.id, c.children, 0)).join('')
     + node('▣ 任务示例', '__examples__', examples.map(f => ({ title: EXAMPLE_LABELS[f.name] ?? f.label, id: `__src_${f.name}`, children: [] })), 0)
   side.innerHTML = `<div class="doc-tree">${treeHtml}</div>`
+
+  // 正文区链接（#锚点 / src://）事件委托：只绑一次，renderGuide/renderSourceView 重写 innerHTML 但 content 元素不变
+  bindContentClick(content)
 
   // 点击叶子/章节标题：跳转正文；任务示例文件切换到源码视图
   side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', async () => {
@@ -147,12 +189,7 @@ function buildDocTree(side, content, chapters, examples) {
       return
     }
     if (id.startsWith('__src_')) {
-      detachScrollSpy()
-      const name = id.slice('__src_'.length)
-      const r = await get('/api/docs/examples/' + name)
-      content.innerHTML = `<h2 style="margin-bottom:10px">${name}</h2><div class="doc-md">${renderSource(r.content)}</div>`
-      content.dataset.view = 'source'
-      window.scrollTo({ top: 0 })
+      await renderSourceView(id.slice('__src_'.length))
       scrollToId(id)
       return
     }
@@ -179,21 +216,14 @@ function renderSource(content) {
   ).join('') + '</div>'
 }
 
-// 手册 markdown 原文缓存（切到示例/源码视图后再点章节时，用于重新渲染手册正文）
-let guideMarkdown = ''
-
 // 渲染文档页：整个左侧是树形目录（手册章节树 + 任务示例文件），右侧为内容区
 export async function render() {
-  const side = document.querySelector('#doc-side')
-  const content = document.querySelector('#doc-content')
+  docSide = document.querySelector('#doc-side')
+  docContent = document.querySelector('#doc-content')
   const examples = await get('/api/docs/examples')
   const r = await get('/api/docs/guide')
   await ensureMarked()
   guideMarkdown = r.content
-  content.innerHTML = `<div class="doc-md">${renderMarkdown(guideMarkdown)}</div>`
-  injectHeadingIds(content)
-  makeCodeBlocksCollapsible(content)
-  content.dataset.view = 'guide'
-  buildDocTree(side, content, extractChapterTree(content), examples)
-  attachScrollSpy(side, content)
+  await renderGuide()
+  buildDocTree(docSide, docContent, extractChapterTree(docContent), examples)
 }

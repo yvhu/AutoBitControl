@@ -5,8 +5,8 @@
 配套资源：
 
 - 面板「文档」页在线渲染本手册；「任务示例」页展示三个带逐行注释的示例任务源码。
-- 示例任务位于 `src/tasks/`：`example-checkin.ts`（签到）、`faucet-example.ts`（领水）、`mint-example.ts`（铸币）。
-- 新增任务从复制 `src/tasks/example-checkin.ts` 改起最快。
+- 示例任务位于 `src/tasks/`：[example-checkin.ts（打开源码视图）](src://example-checkin.ts)（签到）、[faucet-example.ts（打开源码视图）](src://faucet-example.ts)（领水）、[mint-example.ts（打开源码视图）](src://mint-example.ts)（铸币）。
+- 新增任务从复制 [example-checkin.ts（打开源码视图）](src://example-checkin.ts) 改起最快。
 
 ---
 
@@ -32,7 +32,7 @@ AutoBitControl 一共三块，分工如下：
 2. **试跑**：先跑本地测试（秒级反馈）→ 再用 `npm run task:run` 单窗口真跑一次 → 看截图确认没点错。
 3. **上线**：面板任务页打开开关，调度器（Scheduler，负责「到点自动开跑」的组件）每天准时执行，看板自动记录结果。
 
-一个完整的「9 点签到站点」任务长什么样，见第 9 章开头的完整示例。
+一个完整的「9 点签到站点」任务长什么样，见[第 9 章](#9-常用模式)的「完整示例：9 点签到的站点」。
 
 ### 三句话记住怎么用
 
@@ -52,7 +52,7 @@ AutoBitControl 一共三块，分工如下：
 | 任务文件 | Task file | 上面说的那份「操作说明书」，含 `meta`（基本信息）和 `run`（操作步骤） |
 | 选择器 | Selector | 用来「定位」网页上某个元素的规则，比如 `#checkin-btn` 表示 id 为 `checkin-btn` 的按钮 |
 | 断言 | Assertion | 检查「该出现的东西出现了没有」，没出现就报错 |
-| cron | cron | 一种定时表达式，`0 9 * * *` 表示每天 9:00（写法见第 2/7 章） |
+| cron | cron | 一种定时表达式，`0 9 * * *` 表示每天 9:00（写法见[第 2 章](#2-taskmeta-字段全解)与[第 7 章](#7-调度)） |
 | 错峰 | Stagger | 不写死几点，而是在一个时间段里随机挑一分钟（多窗口不扎堆、站点压力分散） |
 | 弹窗 | Popup | 网页上浮出来的小窗口（公告、通知、新手引导） |
 | 遮罩 | Mask | 弹窗背后盖住整页的半透明灰层，挡住页面、逼你先处理弹窗 |
@@ -91,9 +91,9 @@ AutoBitControl 一共三块，分工如下：
 
 **第 1 步：建文件** `src/tasks/my-checkin.ts`。
 
-**第 2 步：写 meta**（任务的基本信息：叫什么、几点跑、要不要钱包，字段含义见第 2 章）。
+**第 2 步：写 meta**（任务的基本信息：叫什么、几点跑、要不要钱包，字段含义见[第 2 章](#2-taskmeta-字段全解)）。
 
-**第 3 步：写 run**（具体操作步骤，可用方法见第 3 章）。
+**第 3 步：写 run**（具体操作步骤，可用方法见[第 3 章](#3-taskcontext-方法全解)）。
 
 **第 4 步：注册** 在 `src/tasks/index.ts` 的 `ALL` 数组中加入实例。
 
@@ -130,9 +130,9 @@ import { MyCheckinTask } from './my-checkin'
 const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 ```
 
-注意：`url` 为空字符串的任务不会参与调度（见第 7 章），只能在面板手动触发——示例任务正是如此。
+注意：`url` 为空字符串的任务不会参与调度（见[第 7 章](#7-调度)），只能在面板手动触发——示例任务正是如此。
 
-> 填表数据有讲究：需要「每个窗口用自己预先准备的数据」时用**数据源**（`ctx.account('列名')`，见第 3 章与第 9 章「数据源与 faker」）；内容无所谓时用 faker 随机。
+> 填表数据有讲究：需要「每个窗口用自己预先准备的数据」时用**数据源**（`ctx.account('列名')`，见[第 3 章](#3-taskcontext-方法全解)与[第 9 章「数据源与 faker」](#数据源与-faker)）；内容无所谓时用 faker 随机。
 
 ### 写好之后怎么验证
 
@@ -142,7 +142,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 2. **单窗口单任务真实验证**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`——只开一个窗口、只跑指定任务、打印结果后退出（脚本：`scripts/run-task.ts`），比面板全量触发轻量。
 3. **面板验证**：面板看板行级「执行」（单窗口单任务）或任务页「立即触发」（全部启用窗口），人工核对截图与日志。
 4. **开窗冒烟（部署后先跑这个）**：`BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window`——验证「开窗 → CDP 接管 → 打开探活页 → 关窗」整条链路（脚本：`scripts/smoke-open-window.ts`），一次确认比特浏览器 API、驱动与代理 IP 都可用。
-5. **钱包冒烟**：`BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra npm run smoke:wallet`——打开站点后手动点「连接钱包」，脚本等 60 秒检测弹窗并自动确认（脚本：`scripts/smoke-wallet.ts`）。**新钱包适配器写好后，用这个验证弹窗识别正则是否命中真实插件**（见第 4 章「新增钱包适配器步骤」）。
+5. **钱包冒烟**：`BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra npm run smoke:wallet`——打开站点后手动点「连接钱包」，脚本等 60 秒检测弹窗并自动确认（脚本：`scripts/smoke-wallet.ts`）。**新钱包适配器写好后，用这个验证弹窗识别正则是否命中真实插件**（见[第 4 章「新增钱包适配器步骤」](#新增钱包适配器步骤)）。
 
 示例任务默认 `enabled: false`（不参与日常执行），调试时把代码改为 `true` 并重启服务、直接在面板任务页打开开关（立即生效，无需重启），或用第 2 层的 `task:run` 脚本（不受开关限制）。
 
@@ -157,19 +157,19 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `key` | `string` | 无（必填） | 全局唯一标识。API 路由（`/api/tasks/:key/trigger`）、数据库 runs 表、调度器都用它 |
 | `name` | `string` | 无（必填） | 面板任务页显示名 |
 | `url` | `string` | 无（必填，可为 `''`） | 站点入口页 URL，`goto()` 从这里开始。空串 → 调度器跳过，仅可手动触发 |
-| `sourceUrl` | `string?` | `undefined` | 信息来源页：记录选择器是从哪个页面确认的，站点改版时回这里重查（排错见第 10 章） |
+| `sourceUrl` | `string?` | `undefined` | 信息来源页：记录选择器是从哪个页面确认的，站点改版时回这里重查（排错见[第 10 章](#10-排错)） |
 | `note` | `string?` | `undefined` | 备注，面板任务页直接可见，记录站点的坑与特殊逻辑 |
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
-| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效——停用即停 cron、重新启用即重注册 cron，无需重启；跨机器生效、重启保留）。注意：上表的 `true` 只是代码默认值，三个示例任务（`example-checkin.ts`/`faucet-example.ts`/`mint-example.ts`）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
-| `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见第 7 章） |
-| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见第 4 章） |
+| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效——停用即停 cron、重新启用即重注册 cron，无需重启；跨机器生效、重启保留）。注意：上表的 `true` 只是代码默认值，三个示例任务（[example-checkin.ts](src://example-checkin.ts)/[faucet-example.ts](src://faucet-example.ts)/[mint-example.ts](src://mint-example.ts)）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
+| `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见[第 7 章](#7-调度)） |
+| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见[第 4 章](#4-钱包弹窗)） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
-| `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见第 5 章）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
+| `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见[第 5 章](#5-验证码)）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
 
-示例（省略了部分可选字段，完整字段见上表；摘自 `src/tasks/example-checkin.ts`）：
+示例（省略了部分可选字段，完整字段见上表；摘自 [example-checkin.ts（打开源码视图）](src://example-checkin.ts)）：
 
 ```ts
 meta: TaskMeta = {
@@ -201,7 +201,7 @@ meta: TaskMeta = {
 
 ## 3. TaskContext 方法全解
 
-`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见第 6 章）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文「accountRow」）。
+`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
 下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。
 
@@ -228,7 +228,7 @@ await ctx.goto('https://a.com/b')   // 打开指定页（适合流程中的跳�
 async clickCheckin(selector: string, opts?: { assert?: string; assertTimeoutMs?: number }): Promise<void>
 ```
 
-- **是什么**：拟人地点击签到按钮（见第 6 章 `Humanizer.click`），点击后可选地断言「成功标志元素」出现。
+- **是什么**：拟人地点击签到按钮（见[第 6 章](#6-拟人接口humanizer) `Humanizer.click`），点击后可选地断言「成功标志元素」出现。
 - **什么时候用**：站点有一个明确的「签到/领取」按钮时——这是最常用的方法。
 - **怎么用**：
 
@@ -249,7 +249,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast', assertTimeoutMs
 | `opts.assert` | 点击后应出现的成功标志元素；断言失败抛 `断言超时: 元素 X 未出现` |
 | `opts.assertTimeoutMs` | 断言等待时长（毫秒），默认 10000 |
 
-- **注意什么**：断言元素选「成功后才会出现」的标志（徽章/文案），不要选「点击前就存在」的元素——否则断言形同虚设。点击后可能弹验证码，这类站点在点之前先调 `solveCaptcha()`（见第 5 章）。
+- **注意什么**：断言元素选「成功后才会出现」的标志（徽章/文案），不要选「点击前就存在」的元素——否则断言形同虚设。点击后可能弹验证码，这类站点在点之前先调 `solveCaptcha()`（见[第 5 章](#5-验证码)）。
 
 ### assertVisible
 
@@ -265,7 +265,7 @@ async assertVisible(selector: string, timeoutMs = 10000): Promise<void>
 await ctx.assertVisible('.tx-success', 30000)   // 等链上交易成功标志，最长 30 秒
 ```
 
-- **注意什么**：它等的是「出现」，元素「消失」要用 `waitForGone`（见后文对比表）。超时抛错意味着任务失败，会进入重试流程。
+- **注意什么**：它等的是「出现」，元素「消失」要用 `waitForGone`（见后文[方法对比速查](#方法对比速查)）。超时抛错意味着任务失败，会进入重试流程。
 
 ### typeInto
 
@@ -292,7 +292,7 @@ async account(key: string): Promise<string>
 ```
 
 - **是什么**：从**数据源**（预先准备的 Excel 账号表格）里取**当前窗口对应行**的某一列值。严格模式：行不存在、列缺失、值为空都会抛错（错误信息带窗口名与列名）。
-- **什么时候用**：任务需要「每个窗口用自己预先准备好的数据」时——邮箱、邀请码、用户名、收款地址等。这是替代 faker 随机现编的方案（数据源 vs faker 的关系见第 9 章「数据源与 faker」）。
+- **什么时候用**：任务需要「每个窗口用自己预先准备好的数据」时——邮箱、邀请码、用户名、收款地址等。这是替代 faker 随机现编的方案（数据源 vs faker 的关系见[第 9 章「数据源与 faker」](#数据源与-faker)）。
 - **怎么用**：
 
 ```ts
@@ -369,7 +369,7 @@ await ctx.pressKey('Shift+Tab')               // 反向切换焦点（回到上�
 async solveCaptcha(): Promise<'none' | 'solved' | 'failed'>
 ```
 
-- **是什么**：在**当前页面**检测验证码（CAPTCHA），检测到就交给打码平台解题并回填，详见第 5 章。
+- **是什么**：在**当前页面**检测验证码（CAPTCHA），检测到就交给打码平台解题并回填，详见[第 5 章](#5-验证码)。
 - **什么时候用**：验证码可能出现的时刻——通常就在点击提交按钮**之前**（很多站点点击时才弹出验证码）。
 - **怎么用**：
 
@@ -379,7 +379,7 @@ await ctx.solveCaptcha()                                   // 此时才检测 + 
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
 
-- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见第 5/9 章）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见[第 5 章](#5-验证码)与[第 9 章](#9-常用模式)）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
 
 ### screenshot
 
@@ -395,7 +395,7 @@ async screenshot(name: string): Promise<string>
 await ctx.screenshot('faucet-success')   // 存一张名为 faucet-success.png 的截图
 ```
 
-- **注意什么**：截图目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败的截图框架会自动补拍（见第 9 章「成功断言写法」），无需在每个任务里手调。
+- **注意什么**：截图目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败的截图框架会自动补拍（见[第 9 章「成功断言写法」](#成功断言写法)），无需在每个任务里手调。
 
 ### loginByWallet
 
@@ -403,7 +403,7 @@ await ctx.screenshot('faucet-success')   // 存一张名为 faucet-success.png �
 async loginByWallet(): Promise<void>
 ```
 
-- **是什么**：完成「站点唤起钱包弹窗 → 解锁（若配了密码）→ 点连接确认」全流程，详见第 4 章。
+- **是什么**：完成「站点唤起钱包弹窗 → 解锁（若配了密码）→ 点连接确认」全流程，详见[第 4 章](#4-钱包弹窗)。
 - **什么时候用**：站点要求钱包登录时，一般紧跟 `goto()` 之后。
 - **怎么用**：
 
@@ -429,7 +429,7 @@ if (await ctx.textPresent('已领取')) return              // 已领过 → 直
 if (await ctx.textPresent('维护中')) throw new Error('站点维护中')  // 维护 → 抛错进失败流程
 ```
 
-- **注意什么**：它是**即时判断一次**，不等待。文案要过一会儿才出现的话，用 `waitForText`（蹲点等）。两者分工见后文对比表。
+- **注意什么**：它是**即时判断一次**，不等待。文案要过一会儿才出现的话，用 `waitForText`（蹲点等）。两者分工见后文[方法对比速查](#方法对比速查)。
 
 ### urlIncludes
 
@@ -729,7 +729,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 打码失败（创建任务失败 / 解题超时 / 回填异常）统一抛 `CaptchaFailure`。窗口运行器识别该异常后：
 
 - 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
-- 计入窗口熔断计数（见第 10 章）；
+- 计入窗口熔断计数（见[第 10 章](#10-排错)）；
 - 每次尝试都记录 `logCaptcha(kind, ok, costPoints)`，看板可见。
 
 ---
@@ -897,7 +897,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
 | `wallet` | `passwords` | 窗口解锁密码映射（比特窗口 ID → 密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`screenshotDir`、`logDir` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是**遗留字段**——数据层已全走云端数据库，云库模式下不生效，无需配置 |
-| `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见第 9 章「数据源与 faker」）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见第 9 章「数据源与 faker」）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
+| `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 
 ### 8.2 面板使用
 
@@ -935,6 +935,50 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 ---
 
 ## 9. 常用模式
+
+### 任务的一生（状态流转）
+
+一个任务从入队到出结果，状态只在下面这几种里流转（箭头是唯一合法的走法）：
+
+```
+pending（排队，还没轮到它）
+   │ 窗口轮到这个任务：开窗 → CDP 接管 → 探活通过
+   ▼
+running（执行中，正在一步步跑你的 run()）
+   ├─ run() 正常跑完（没抛错）───────────────────────────▶ success（成功）
+   ├─ 抛普通错误，重试次数还没用完 ───────────────────────▶ retry_wait（重试等待）
+   │        ▲                                               │ 退避到期，调度器重新入队
+   │        └───────────────────────────────────────────────┘
+   ├─ 抛普通错误，重试次数已用完 ─────────────────────────▶ failed（失败）
+   ├─ 抛 CaptchaFailure（验证码类错误）────────────────────▶ captcha_failed（验证码失败）
+   └─ 超过 timeoutSec 还没跑完 ────────────────────────────▶ 按普通失败处理（可重试）
+```
+
+另外还有一条「没开跑就结束」的支线——`skipped`（跳过）不经过 `running`，直接终态：**开窗失败 / IP 探活失败**（整轮任务全部跳过）、**窗口熔断 / 窗口超时**（剩余任务逐个跳过）。skipped 行里会记具体原因，面板上点开就能看到。
+
+**每个状态什么意思（大白话 + 面板颜色）：**
+
+| 状态 | 大白话 | 什么情况下进入 | 面板徽章 |
+| --- | --- | --- | --- |
+| `pending` | 排队中：任务已经进队，但还没轮到它的窗口 | 入队后等待执行 | 灰色「待执行」 |
+| `running` | 执行中：浏览器窗口开着，正在一步步跑你的 `run()` | 窗口轮到这个任务、开始执行 | 黄色「执行中」 |
+| `retry_wait` | 重试等待：刚失败一次，退避倒计时中，窗口先释放给别的任务 | 抛普通错误且还有重试名额 | 黄色「重试中」 |
+| `success` | 成功：`run()` 无抛错跑完（**断言都过了才算**，不是「点到了按钮」） | `run()` 正常返回 | 绿色「成功」 |
+| `failed` | 失败：重试到上限还是失败 | 普通错误重试耗尽 | 红色「失败」 |
+| `captcha_failed` | 验证码失败：打码业务失败，**不重试**（重试大概率再失败，白烧钱） | 抛 `CaptchaFailure` | 蓝色「验证码失败」 |
+| `skipped` | 跳过：根本没跑就终态，原因记在行内 | 开窗失败/IP 探活失败/窗口熔断/窗口超时 | 灰色「跳过」 |
+
+**对用户意味着什么：**
+
+- **失败后会自动重试**：普通错误按 `retry.max` 重试（默认 2 次），加上第一次共跑 3 次，**3 次都失败才算 `failed`**；每次重试间隔 `backoffSec` 秒（默认 600 秒）。重试计数记在数据库里，重启服务也不丢，最终必达终态，不会无限重试。
+- **重试不占窗口**：`retry_wait` 期间窗口立即释放（继续跑别的任务或正常关窗），到点由调度器重新入队、开新一轮窗口会话。
+- **熔断**：终态失败（`failed`/`captcha_failed`）会让窗口的熔断计数 +1；计数达到阈值（默认 2）后，该窗口**当天剩下的任务全部 `skipped`（窗口熔断）**。任一任务成功会清零。
+- **窗口超时**：一个窗口的一次会话有总时长限制（默认 15 分钟），到点后剩余任务全部 `skipped`（窗口超时）。
+
+**与其他章节的关系：**
+
+- 这里讲的是「任务已经入队之后」的流转；「任务根本没资格入队」的跳过规则（已停用/url 为空/没配 schedule）见[第 7 章「跳过规则」](#跳过规则)。
+- 走到 `failed`/`captcha_failed` 后怎么查原因、怎么重置熔断，见[第 10 章「报错速查表」](#报错速查表)与「[熔断触发与重置](#熔断触发与重置)」。
 
 ### 完整示例：9 点签到的站点（公告弹窗 + 钱包登录 + 签到 + 等文案）
 
@@ -984,7 +1028,7 @@ if (await ctx.textPresent('已签到')) return
 
 ### 签到前关闭公告/引导弹窗
 
-很多站点打开即弹公告/新手引导层，挡住签到按钮。用 `closeModal` 一行清掉（详见第 3 章）：
+很多站点打开即弹公告/新手引导层，挡住签到按钮。用 `closeModal` 一行清掉（详见[第 3 章](#3-taskcontext-方法全解)）：
 
 ```ts
 await ctx.goto()
@@ -993,6 +1037,72 @@ await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
 ```
 
 遮罩点击原理：`closeModal` 的 `mask` 策略取遮罩 `boundingBox` 左上角内侧 12px 处做坐标点击（`human.clickAt`）——全屏遮罩的左上角必然是空白区域，不会命中居中弹窗主体；站点的 `event.target === mask` 判定（点在遮罩本体而非弹窗内容）因此成立，弹窗随之关闭。
+
+### 配方一：签到一条龙
+
+适用场景：每天固定时间开放签到、打开先弹公告、钱包登录、点击时可能弹验证码的站点。把上文的碎片拼成一条完整流水线：
+
+```ts
+async run(ctx: TaskContext): Promise<void> {
+  await ctx.goto()                                                        // 1. 打开签到页（失败自动重试 3 次）
+  await ctx.closeModal({ close: ['.announce-close'], mask: '.announce-mask', gone: '.announce-modal' })
+                                                                          // 2. 清公告弹窗：点关闭按钮 → 点遮罩 → 按 Esc 逐级兜底
+  if (await ctx.textPresent('已签到')) return                             // 3. 已经签过就当场成功（run 正常返回 = success）
+  await ctx.loginByWallet()                                               // 4. 钱包登录：等弹窗 → 解锁 → 点连接
+  await ctx.solveCaptcha()                                                // 5. 提交前先处理验证码（很多站点点击时才弹）
+  await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })    // 6. 点击签到 + 断言成功徽章（宁严勿松）
+  await ctx.screenshot('checkin-done')                                    // 7. 留一张自定义截图（成功时框架还会自动补拍 success 图）
+}
+```
+
+每一步为什么这么放：弹窗挡在签到按钮前面，必须第 2 步先清掉；「已签到」判断放在登录之前，省得白走一遍钱包流程；验证码放在**点击提交之前**，因为很多站点是点击那一刻才弹验证码；最后的 `assert` 是唯一裁判，徽章没出现就算失败进入重试。
+
+### 配方二：领水一条龙
+
+适用场景：有领取频率限制、要填邮箱、数据源预配了邮箱列（没配也能靠 faker 兜底）的水龙头站点：
+
+```ts
+async run(ctx: TaskContext): Promise<void> {
+  await ctx.goto()                                                        // 1. 打开领水页
+  if (await ctx.textPresent('操作过于频繁')) return                      // 2. 频率限制：今天已经领过 → 直接成功返回
+  const email = ctx.accountRow?.['邮箱'] || faker.internet.email()        // 3. 邮箱：数据源有就用，没有就 faker 随机兜底
+  await ctx.typeInto('input[name="email"]', email)                        // 4. 逐键拟人输入邮箱（每键 40-130ms 随机延迟）
+  await ctx.solveCaptcha()                                                // 5. 领水站点几乎必有验证码，提交前处理
+  await ctx.clickCheckin('#claim-btn', { assert: '.claim-success', assertTimeoutMs: 30000 })
+                                                                          // 6. 点「领取」+ 断言成功提示（链上到账慢，等 30 秒）
+  await ctx.screenshot('faucet-claimed')                                  // 7. 截图留档
+}
+```
+
+第 3 步是「数据源优先、faker 兜底」的宽松写法：数据没备齐不会让任务失败。若你要求「每个窗口必须用预配邮箱、缺了宁可失败」，换严格写法 `const email = await ctx.account('邮箱')`（见[「数据源与 faker」](#数据源与-faker)）。
+
+### 配方三：点按钮后跳转等待
+
+点击后站点会有两种反馈：**地址栏变**（普通跳转或 SPA 的 hash 路由）或**只浮现一句提示文案**（网址不变）。两种等待方式组合使用：
+
+```ts
+await ctx.human.click('#login-btn')          // 点击「登录」（非签到类按钮直接调 ctx.human.click）
+await ctx.waitForUrl('/dashboard')           // 地址栏会变 → 等网址包含 /dashboard（# 后的 hash 变化也算）
+await ctx.waitForText('登录成功')             // 页面只出提示文案 → 等文案出现（最长 10 秒）
+await ctx.assertVisible('.user-avatar')      // 最后再断言一个「成功后才会出现」的标志，宁严勿松
+```
+
+- **什么时候用 `waitForUrl`**：点击后会发生跳转——整页跳转、SPA 路由推进（`waitForUrl('#/step-2')` 这样连 hash 都能等）。
+- **什么时候用 `waitForText`**：网址不变，但页面上会浮现「已提交/已成功」之类的提示。
+- 两者不冲突：跳转 + 提示的站点可以 `waitForUrl` 接 `waitForText` 一起用。
+
+**点按钮开新页签**（当前框架未封装新页签助手，用底层 page 处理）：
+
+```ts
+// 注意：先注册监听、再点击，顺序反了会错过新页签
+const [newPage] = await Promise.all([
+  ctx.page.context().waitForEvent('page'),   // 1. 先注册监听：等「新页签」出现
+  ctx.human.click('#open-btn'),              // 2. 再点击触发（先注册后点击，不会错过）
+])
+await newPage.waitForLoadState('domcontentloaded')   // 3. 等新页签加载完
+// 4. 新页签上的操作要自己处理：ctx 的方法（goto/clickCheckin/waitForText 等）都作用在原来的主页面，
+//    不会自动切到新页签；需要时用 newPage.locator(...)/newPage.click(...) 等底层 API 手动完成
+```
 
 ### 频率限制 / 维护中
 
@@ -1095,6 +1205,40 @@ if (done) return   // 今日已做 → 直接成功
 
 ## 10. 排错
 
+### 报错速查表
+
+任务失败时，看板行内错误文案与日志里能找到下面这些关键词。先对号入座，再按「怎么解决」动手（所有文案均取自仓库当前代码）：
+
+| 报错关键词 | 大白话含义 | 常见原因 | 怎么解决 |
+| --- | --- | --- | --- |
+| `任务未配置 url` | 调 `goto()` 时发现任务没填入口网址 | `meta.url` 是空串，`run()` 里又调了 `ctx.goto()` | 给 `meta.url` 填真实地址；url 为空的任务本就不该在 run 里调用 goto |
+| `页面加载失败，重试 3/3` | 打开网页失败（这是日志警告，每次重试打一条） | 站点挂了/超时（45 秒没加载完）、代理 IP 不通、网址写错 | 第 3 次失败会把真实原因抛出来——看日志里的原始错误与失败截图；核对 url 与窗口代理 |
+| `点击失败: 找不到元素` | 想点的按钮页面上没找到 | 选择器写错；页面还没加载出来就点；站点改版元素变了 | 回 `meta.sourceUrl` 记录的页面用 DevTools 重取选择器（见[选择器失效](#选择器失效)） |
+| `断言超时: 元素 … 未出现` | 等成功标志等到超时（默认 10 秒）都没出现 | 操作其实失败了；断言元素选错（选了点击前就存在的元素）；页面渲染慢 | 拉长 `assertTimeoutMs`；断言元素换成「成功后才会出现」的标志；看失败截图 |
+| `等待文案超时` | 等一句文案等到超时没出现 | 文案与预期不一致（空格/标点/半角全角）；上一步其实就失败了 | 用 `textPresent` 先确认页面上真实的文案原文；看截图里页面实际显示的字 |
+| `等待接口超时` | 等某个接口的响应等到超时 | 触发动作没生效、接口没发；`urlPart` 拼错；接口超过 10 秒没回 | 先 `const p = ctx.waitForApi(...)` 再点击触发、最后 `await p`（防错过）；核对 urlPart 与实际请求地址 |
+| `等待跳转超时` | 等网址变化等到超时，地址栏一直没变 | 点击没生效；站点开了新页签（不算当前页跳转）；SPA 路由不匹配 | 确认点击生效；新页签场景用底层 `waitForEvent('page')`（见[配方三：点按钮后跳转等待](#配方三点按钮后跳转等待)） |
+| `元素未消失` | 等某个元素消失等到超时，它还在 | 遮罩/弹窗一直没关掉；选择器指向了常驻元素 | 核对选择器指向「会消失的那层」；关弹窗直接用 `closeModal` |
+| 弹窗没关掉（报 `元素未消失: <弹窗容器>`） | `closeModal` 全部策略跑完，弹窗还赖在页面上 | 关闭按钮选择器没命中；遮罩选择器不对；弹窗需要特殊姿势才能关 | 看失败截图确认弹窗长啥样；补对 `close`/`mask`/`gone` 选择器（见[第 3 章](#3-taskcontext-方法全解)） |
+| `任务已停用` | 手动触发被拒（接口 409）；调度器到点告警跳过 | 任务开关关着（云端 task_states 或代码 `enabled: false`） | 面板任务页打开开关（立即生效）；确实不想跑就别触发 |
+| `任务未注册` | 队列里有这个 key，但框架里找不到任务 | key 拼错；任务没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组（见[第 1 章第 4 步](#1-快速开始)） |
+| `窗口熔断` | 该窗口连续失败太多，剩下任务全跳过 | 前面任务终态失败（failed/captcha_failed）把熔断计数顶到阈值（默认 2） | 先修掉失败任务；面板「窗口」页「重置熔断」，或任一任务成功后自动清零（见[熔断触发与重置](#熔断触发与重置)） |
+| `窗口超时` | 单窗口会话到点（默认 15 分钟），剩余任务跳过 | 窗口任务太多/某任务跑太久 | 精简该窗口任务；查哪个任务耗时异常；上调 `execution.windowTimeoutMs` |
+| `IP 探活失败` | 代理 IP 没生效，整轮任务全跳过 | 代理过期/未配置；探活地址（`execution.probeUrl`）访问失败（30 秒超时） | 检查窗口代理配置；看日志确认网络；核对探活地址 |
+| `开窗失败` | 比特浏览器窗口打不开，整轮任务全跳过 | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 面板「设置」页「测试连接」；核对窗口 ID 与比特客户端状态 |
+| `CDP 连接失败` | 窗口开了但接管浏览器失败，整轮任务全 failed | 调试端口异常/内核版本不匹配 | 看日志与截图；重启比特客户端后重试 |
+| `数据源无当前窗口对应的行（窗口: X）` | 严格取数时表里没有这个窗口的行 | 数据源没填这个窗口；「窗口」列填了窗口名但窗口改名了 | 补行；按窗口 ID 填列更稳（见[第 9 章「数据源与 faker」](#数据源与-faker)） |
+| `数据源缺少列: X（可用列: …）` | 表头没有这个列名 | 列名拼写/大小写不一致 | 按报错里的「可用列」清单核对拼写 |
+| `数据源列 X 在窗口 Y 的行为空` | 这一格是空的 | 表里这格忘了填 | 补数据；想「缺了就用 faker」改用 `accountRow` 兜底写法 |
+| `图片下载失败: <url> (HTTP <状态码>)` | 上传的图片 URL 下载失败 | 图片地址失效/404/需登录才能访问 | 换可用地址或改用本地路径；核对数据源「图片地址」列 |
+| `钱包弹窗未出现` | 等钱包弹窗 15 秒没等到 | `meta.wallet` 没配或 key 没注册；站点要先点页面上的「连接钱包」按钮才弹窗 | 核对 `meta.wallet`；先在 run 里点连接按钮再调 `loginByWallet()`（见[钱包弹窗不出现](#钱包弹窗不出现)） |
+| `未注册的钱包适配器: X` | `meta.wallet` 的 key 没人认领 | key 拼错或适配器没在 `src/app.ts` 注册 | 核对 key 与注册列表（见[第 4 章](#4-钱包弹窗)） |
+| `任务 X 超时` | 单次运行超过 `timeoutSec`（默认 180 秒），按普通失败处理 | run 卡死；某个等待动作超时太长 | 核对各等待方法的超时参数；必要时上调 `meta.timeoutSec` 或全局 `execution.taskTimeoutMs` |
+| `yescaptcha 余额不足: X 点 < Y 点` | 打码平台余额不够付这道题 | 余额低于费用上限 | 去平台充值；或下调 `captcha.maxCostPerTask`（见[打码失败与余额](#打码失败与余额)） |
+| `yescaptcha 创建任务失败` | 平台没接这道题 | `clientKey` 无效或题型不支持 | 核对 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持（见[第 5 章](#5-验证码)） |
+| `yescaptcha 解题超时` | 平台解题超过 `solveTimeoutMs` 还没出结果 | 题目太难/平台拥堵 | 任务会以 `captcha_failed` 终态收场（不重试）；看日志 taskId 与截图 |
+| `未配置 TURSO_DATABASE_URL` | 服务启动直接退出：云数据库地址没配 | `config/.env` 或 config.json 的 `cloud` 段缺配置 | 按日志提示配置云数据库地址后重启（`npm start`） |
+
 ### 选择器失效
 
 - **症状**：`点击失败: 找不到元素 X` / `断言超时: 元素 X 未出现`。
@@ -1123,4 +1267,4 @@ if (done) return   // 今日已做 → 直接成功
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板矩阵行内可点开截图。
 - **日志**：`data/logs/app.log`（pino，级别由 `config.json` 的 `storage.logLevel` 控制，控制台同步输出）；任务失败时日志携带 `status/err`。
-- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。
+- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。各状态含义、进入条件与面板颜色见[第 9 章「任务的一生（状态流转）」](#任务的一生状态流转)。
