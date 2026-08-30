@@ -12,6 +12,8 @@
 - 代码规范：目录清晰、命名一致、组件职责单一；**不启用 ESLint**（不要 lint 门槛）
 - 开发一条命令前后端同启；生产构建后后端单进程托管（保持 3000 端口与 pm2 现状）
 
+**部署定位（2026-08-30 确认）**：单机单人本地工具，无鉴权，面板保持绑定 127.0.0.1；"生产"= 本机 7×24 长驻（pm2）。前端重做为"把本地面板做专业"，不涉及远程部署。
+
 ## 1. 技术栈
 
 | 项 | 选型 |
@@ -21,6 +23,7 @@
 | UI | antd 5（ConfigProvider + defaultAlgorithm/darkAlgorithm） |
 | 数据请求 | @tanstack/react-query（服务端状态缓存、轮询） |
 | 路由 | react-router 6（5 页面） |
+| 前端测试 | vitest + @testing-library/react + jsdom（关键逻辑单测：主题 hook、API client、文档树/slug 工具） |
 | 文档渲染 | react-markdown + remark-gfm + antd Tree（目录树）+ react-syntax-highlighter（代码高亮） |
 | 规范 | 无 ESLint；目录/命名人工约定（见 4） |
 
