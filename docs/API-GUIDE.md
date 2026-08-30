@@ -327,6 +327,31 @@ await ctx.waitForGone('.loading-mask', 30000)   // 遮罩消失说明请求完�
 await ctx.assertVisible('.success-toast')        // 再断言成功标志
 ```
 
+### closeModal
+
+```ts
+async closeModal(opts?: { close?: string[]; mask?: string; gone?: string; timeoutMs?: number }): Promise<void>
+```
+
+关闭挡路的页面弹窗/遮罩（公告、通知、新手引导层等）。策略按顺序尝试，**每尝试一次就用 `gone` 快速验证（600ms）是否已关闭，成功即返回**；全部策略跑完后若 `gone` 仍在，用完整超时兜底验证（失败抛 `元素未消失: <gone>`）。
+
+| 参数 | 含义 |
+| --- | --- |
+| `opts.close` | 关闭按钮候选选择器数组，依次尝试，存在才点（`human.click` 拟人点击） |
+| `opts.mask` | 遮罩层选择器：点其左上角内侧 (x+12, y+12) 空白处（`human.clickAt` 坐标点击），避开居中弹窗主体 |
+| `opts.gone` | 弹窗容器选择器，用于验证关闭成功；不传则只尝试不验证 |
+| `opts.timeoutMs` | 最终兜底验证超时（默认 10000） |
+
+策略顺序：**候选关闭按钮（依序）→ 点遮罩空白处 → 按 Esc**。
+
+```ts
+// 签到前清掉公告弹窗：优先点关闭按钮，失败再点遮罩、按 Esc，最后断言弹窗容器消失
+await ctx.closeModal({ close: ['.announce-close', '#notice .close'], mask: '.announce-mask', gone: '.announce-modal' })
+
+// 只点关闭按钮，不验证（弹窗是否消失由后续断言负责）
+await ctx.closeModal({ close: ['.popup-close'] })
+```
+
 ### 选择器查找技巧
 
 - 用浏览器 DevTools：右键目标元素 → Copy → Copy selector。
@@ -484,6 +509,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
 | `click` | `click(selector): Promise<void>` | boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms（区间由 `execution.humanize` 配置）→ 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X` |
+| `clickAt` | `clickAt(x, y): Promise<void>` | 在指定坐标拟人点击：贝塞尔轨迹移动 → 停顿 60-400ms → 按下 → 停顿 40-150ms → 释放。不做 hover 与随机落点，适合无选择器的目标（弹窗遮罩空白处、canvas 按钮等） |
 | `type` | `type(selector, text): Promise<void>` | 先 click 聚焦，再逐键输入：每键延迟 40-130ms；约 3% 概率按 Backspace、停顿 100-300ms 后重输该键（模拟错键回删） |
 | `moveTo` | `moveTo(x, y): Promise<void>` | ghost-cursor 生成贝塞尔路径（`spreadOverride: 25`），逐点派发移动事件，每点间隔 8~23ms；记住终点作为鼠标当前位置 |
 | `scroll` | `scroll(deltaY): Promise<void>` | 在鼠标当前位置派发滚轮事件，随后停顿 100-400ms |
@@ -562,6 +588,18 @@ await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
 // 已签到：出现"已签到"类文案直接返回（run 正常返回 = 任务 success）
 if (await ctx.textPresent('已签到')) return
 ```
+
+### 签到前关闭公告/引导弹窗
+
+很多站点打开即弹公告/新手引导层，挡住签到按钮。用 `closeModal` 一行清掉（详见第 3 章）：
+
+```ts
+await ctx.goto()
+await ctx.closeModal({ close: ['.announce-close'], mask: '.announce-mask', gone: '.announce-modal' })
+await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
+```
+
+遮罩点击原理：`closeModal` 的 `mask` 策略取遮罩 `boundingBox` 左上角内侧 12px 处做坐标点击（`human.clickAt`）——全屏遮罩的左上角必然是空白区域，不会命中居中弹窗主体；站点的 `event.target === mask` 判定（点在遮罩本体而非弹窗内容）因此成立，弹窗随之关闭。
 
 ### 频率限制 / 维护中
 

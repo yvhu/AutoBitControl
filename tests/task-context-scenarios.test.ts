@@ -135,4 +135,61 @@ describe('TaskContext 场景方法集成', () => {
       await browser.close()
     }
   })
+
+  it('closeModal 点候选关闭按钮关闭公告弹窗', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=a`)
+      expect(await page.locator('#modal-a').count()).toBe(1)
+      await ctx.closeModal({ close: ['#modal-a .close'], gone: '#modal-a' })
+      expect(await page.locator('#modal-a').count()).toBe(0)
+    } finally {
+      await browser.close()
+    }
+  })
+
+  it('closeModal 点遮罩空白处关闭引导弹窗（clickAt 坐标点击）', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=b`)
+      expect(await page.locator('#modal-b').count()).toBe(1)
+      await ctx.closeModal({ mask: '#modal-b-mask', gone: '#modal-b' })
+      expect(await page.locator('#modal-b').count()).toBe(0)
+      expect(await page.locator('#modal-b-mask').count()).toBe(0)
+    } finally {
+      await browser.close()
+    }
+  })
+
+  it('closeModal 无 close/mask 时按 Esc 关闭弹窗', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=c`)
+      expect(await page.locator('#modal-c').count()).toBe(1)
+      await ctx.closeModal({ gone: '#modal-c' })
+      expect(await page.locator('#modal-c').count()).toBe(0)
+    } finally {
+      await browser.close()
+    }
+  })
+
+  it('closeModal 所有策略失败时抛"元素未消失"', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.goto(`${baseUrl}?modal=d`)
+      expect(await page.locator('#modal-d').count()).toBe(1)
+      await expect(ctx.closeModal({ close: ['#nonexistent'], gone: '#modal-d', timeoutMs: 1200 })).rejects.toThrow('元素未消失: #modal-d')
+      expect(await page.locator('#modal-d').count()).toBe(1)
+    } finally {
+      await browser.close()
+    }
+  })
 })

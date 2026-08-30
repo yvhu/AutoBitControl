@@ -208,4 +208,38 @@ export class TaskContext {
       throw new Error(`元素未消失: ${selector}`)
     }
   }
+
+  /**
+   * 关闭页面弹窗/遮罩（公告、通知、引导层等挡路弹窗）
+   * 策略按顺序尝试：候选关闭按钮 → 点遮罩空白处 → 按 Esc；
+   * 每次尝试后若配置了 gone 则快速验证是否已消失，最终用完整超时兜底验证
+   * @param opts.close 关闭按钮候选选择器（依次尝试，存在才点）
+   * @param opts.mask 遮罩层选择器（点击其左上角内侧空白区域，避开居中弹窗主体）
+   * @param opts.gone 弹窗容器选择器，用于验证关闭成功（不传则只尝试不验证）
+   * @param opts.timeoutMs 最终验证超时（默认 10000）
+   */
+  async closeModal(opts: { close?: string[]; mask?: string; gone?: string; timeoutMs?: number } = {}): Promise<void> {
+    const goneSel = opts.gone
+    const attempts: Array<() => Promise<void>> = []
+    for (const sel of opts.close ?? []) {
+      attempts.push(async () => {
+        if (await this.page.locator(sel).first().count() > 0) await this.human.click(sel)
+      })
+    }
+    const maskSel = opts.mask
+    if (maskSel) {
+      attempts.push(async () => {
+        const box = await this.page.locator(maskSel).first().boundingBox()
+        if (box) await this.human.clickAt(box.x + 12, box.y + 12)
+      })
+    }
+    attempts.push(async () => { await this.page.keyboard.press('Escape') })
+    for (const attempt of attempts) {
+      await attempt()
+      if (!goneSel) return
+      const gone = await this.waitForGone(goneSel, 600).then(() => true).catch(() => false)
+      if (gone) return
+    }
+    if (goneSel) await this.waitForGone(goneSel, opts.timeoutMs ?? 10000)
+  }
 }

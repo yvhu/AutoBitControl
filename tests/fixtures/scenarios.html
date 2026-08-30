@@ -9,6 +9,16 @@
   <button id="nav-btn" style="width:150px;height:40px">去面板</button>
   <button id="api-btn" style="width:150px;height:40px">拉取数据</button>
   <div id="api-result"></div>
+  <!-- 弹窗场景（?modal=a|b|c|d 控制显示，避免全屏遮罩互相/遮挡页面按钮） -->
+  <div id="modal-a" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:200px;background:#fff;border:1px solid #999;z-index:100">
+    <div style="padding:16px">公告内容 A</div>
+    <button class="close" style="position:absolute;top:8px;right:8px">关闭</button>
+  </div>
+  <div id="modal-b-mask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200">
+    <div id="modal-b" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:200px;background:#fff">引导内容 B</div>
+  </div>
+  <div id="modal-c" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:200px;background:#fff;border:1px solid #999;z-index:100">通知内容 C</div>
+  <div id="modal-d" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;height:200px;background:#fff;border:1px solid #999;z-index:100">顽固弹窗 D</div>
   <script>
     window.__APP_STATE__ = { ok: true, user: 't1' }
 
@@ -21,6 +31,26 @@
         document.getElementById('api-result').textContent = 'done'
       })
     })
+
+    document.querySelector('#modal-a .close').addEventListener('click', () => {
+      document.getElementById('modal-a').remove()
+    })
+
+    document.getElementById('modal-b-mask').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('modal-b-mask')) {
+        document.getElementById('modal-b-mask').remove()
+      }
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') document.getElementById('modal-c').remove()
+    })
+
+    const modal = new URLSearchParams(location.search).get('modal')
+    if (modal === 'a') document.getElementById('modal-a').style.display = 'block'
+    if (modal === 'b') document.getElementById('modal-b-mask').style.display = 'block'
+    if (modal === 'c') document.getElementById('modal-c').style.display = 'block'
+    if (modal === 'd') document.getElementById('modal-d').style.display = 'block'
 
     setTimeout(() => {
       const el = document.createElement('div')

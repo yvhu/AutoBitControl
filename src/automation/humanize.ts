@@ -105,6 +105,19 @@ export class Humanizer {
   }
 
   /**
+   * 在指定坐标拟人点击（弹窗遮罩空白处、canvas 按钮等无选择器的场景）：
+   * 轨迹移动 → 60-400ms 停顿 → 按下 → 40-150ms → 抬起（复用 click 的按压节奏，不做 hover/随机落点）
+   */
+  async clickAt(x: number, y: number): Promise<void> {
+    await this.moveTo(x, y)
+    await Humanizer.sleep(60, 400)
+    const s = await this.cdp()
+    await s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
+    await Humanizer.sleep(40, 150)
+    await s.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
+  }
+
+  /**
    * 拟人键入：先点击聚焦，逐键 40-130ms 延迟；
    * 3% 概率错键后回删重打（模拟真实手误，降低键入节奏的规律性）
    */
