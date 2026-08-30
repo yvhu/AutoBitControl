@@ -57,6 +57,28 @@ const EXAMPLE_LABELS = {
   'mint-example.ts': '铸币 Mint',
 }
 
+let scrollSpy = null
+
+// 滚动联动：正文滚到哪个标题，树里对应条目自动高亮（切到源码视图时断开）
+function attachScrollSpy(side, content) {
+  scrollSpy?.disconnect()
+  const headings = [...content.querySelectorAll('.doc-md h2, .doc-md h3')]
+  if (headings.length === 0 || !('IntersectionObserver' in window)) return
+  scrollSpy = new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue
+      side.querySelectorAll('.doc-toc-item').forEach(x => x.classList.remove('on'))
+      side.querySelector(`[data-target="${en.target.id}"]`)?.classList.add('on')
+    }
+  }, { rootMargin: '-10% 0px -75% 0px' })
+  headings.forEach(h => scrollSpy.observe(h))
+}
+
+function detachScrollSpy() {
+  scrollSpy?.disconnect()
+  scrollSpy = null
+}
+
 // 渲染整棵左侧目录树（手册章节 + 任务示例文件），支持展开/收起与点击跳转
 function buildDocTree(side, content, chapters, examples) {
   const scrollToId = (id) => {
@@ -81,12 +103,14 @@ function buildDocTree(side, content, chapters, examples) {
   side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', async () => {
     const id = el.dataset.target
     if (id === '__examples__') {
+      detachScrollSpy()
       const list = await get('/api/docs/examples')
       content.innerHTML = `<h2 style="margin-bottom:10px">任务示例</h2><div class="doc-md"><p>左侧选择示例文件查看带注释的完整源码。示例与 <code>docs/API-GUIDE.md</code> 配合阅读。</p><ul>${list.map(f => `<li><code>${f.name}</code></li>`).join('')}</ul></div>`
       scrollToId(id)
       return
     }
     if (id.startsWith('__src_')) {
+      detachScrollSpy()
       const name = id.slice('__src_'.length)
       const r = await get('/api/docs/examples/' + name)
       content.innerHTML = `<h2 style="margin-bottom:10px">${name}</h2><div class="doc-md">${renderSource(r.content)}</div>`
@@ -124,4 +148,5 @@ export async function render() {
   content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
   injectHeadingIds(content)
   buildDocTree(side, content, extractChapterTree(content), examples)
+  attachScrollSpy(side, content)
 }
