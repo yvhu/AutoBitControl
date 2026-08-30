@@ -79,7 +79,7 @@ export class TaskContext {
     const loc = this.page.locator(selector).first()
     if (/^https?:\/\//i.test(value)) {
       const res = await fetch(value)
-      if (!res.ok) throw new Error(`图片下载失败: ${value} (HTTP ${res.status})`)
+      if (!res.ok) throw new Error(`图片下载失败: ${value.split('?')[0]} (HTTP ${res.status})`)
       const buf = Buffer.from(await res.arrayBuffer())
       const ext = (value.split('?')[0].match(/\.(\w+)$/)?.[1] ?? 'png').slice(0, 10)
       mkdirSync(join(tmpdir(), 'abc-uploads'), { recursive: true })

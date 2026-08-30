@@ -69,7 +69,8 @@ async function main(): Promise<void> {
     // 数据源行解析：与 app.ts 同逻辑（有窗口列按名匹配，无窗口列按窗口列表顺序取行）
     accountResolver: async (profile) => {
       if (!datasource.available) return null
-      return datasource.rowFor(profile, await db.listProfiles(false))?.values ?? null
+      const row = datasource.rowFor(profile, await db.listProfiles(false))
+      return row ? { ...row.values } : null
     },
     // 脚本场景无队列：退避到期直接重跑该任务（定时器不 unref，保持进程存活等待重试）
     scheduleRetry: (profile, taskKey, delayMs) => {
