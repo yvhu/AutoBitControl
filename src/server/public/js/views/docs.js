@@ -35,23 +35,74 @@ function injectHeadingIds(root) {
   })
 }
 
-// 栏目树：从已渲染的 h2（章）/h3（节）提取树形导航，点击滚动到对应标题
-function buildChapterTree(root, side) {
-  const items = []
+// 从渲染后的标题（h2 章 / h3 节）提取嵌套树结构
+function extractChapterTree(root) {
+  const chapters = []
+  let current = null
   root.querySelectorAll('h2, h3').forEach(h => {
-    items.push({ level: h.tagName === 'H2' ? 2 : 3, id: h.id, text: h.textContent.trim() })
+    if (h.tagName === 'H2') {
+      current = { title: h.textContent.trim(), id: h.id, children: [] }
+      chapters.push(current)
+    } else if (current) {
+      current.children.push({ title: h.textContent.trim(), id: h.id, children: [] })
+    }
   })
-  if (items.length === 0) return
-  const html = items.map(it => {
-    const pad = it.level === 3 ? 'padding-left:22px;' : ''
-    return `<div class="doc-toc-item" data-target="${it.id}" style="${pad}">${it.text}</div>`
-  }).join('')
-  side.innerHTML += `<div class="doc-toc" id="doc-toc">${html}</div>`
-  side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', () => {
+  return chapters
+}
+
+// 示例文件的友好显示名（树节点用）
+const EXAMPLE_LABELS = {
+  'example-checkin.ts': '每日签到',
+  'faucet-example.ts': '领水水龙头',
+  'mint-example.ts': '铸币 Mint',
+}
+
+// 渲染整棵左侧目录树（手册章节 + 任务示例文件），支持展开/收起与点击跳转
+function buildDocTree(side, content, chapters, examples) {
+  const scrollToId = (id) => {
     side.querySelectorAll('.doc-toc-item').forEach(x => x.classList.remove('on'))
-    el.classList.add('on')
-    const target = document.getElementById(el.dataset.target)
+    side.querySelector(`[data-target="${id}"]`)?.classList.add('on')
+    const target = document.getElementById(id)
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const node = (title, id, children, depth) => `
+    <div class="doc-tree-node" data-depth="${depth}">
+      <div class="doc-toc-item" data-target="${id}">
+        ${children.length > 0 ? '<span class="doc-tree-arrow">▾</span>' : '<span class="doc-tree-dot"></span>'}
+        <span class="doc-tree-label">${title}</span>
+      </div>
+      <div class="doc-tree-children">${children.map(c => node(c.title, c.id, c.children, depth + 1)).join('')}</div>
+    </div>`
+  const treeHtml = chapters.map(c => node(c.title, c.id, c.children, 0)).join('')
+    + node('🧩 任务示例', '__examples__', examples.map(f => ({ title: EXAMPLE_LABELS[f.name] ?? f.label, id: `__src_${f.name}`, children: [] })), 0)
+  side.innerHTML = `<div class="doc-tree">${treeHtml}</div>`
+
+  // 点击叶子/章节标题：跳转正文；任务示例文件切换到源码视图
+  side.querySelectorAll('.doc-toc-item').forEach(el => el.addEventListener('click', async () => {
+    const id = el.dataset.target
+    if (id === '__examples__') {
+      const list = await get('/api/docs/examples')
+      content.innerHTML = `<h2 style="margin-bottom:10px">任务示例</h2><div class="doc-md"><p>左侧选择示例文件查看带注释的完整源码。示例与 <code>docs/API-GUIDE.md</code> 配合阅读。</p><ul>${list.map(f => `<li><code>${f.name}</code></li>`).join('')}</ul></div>`
+      scrollToId(id)
+      return
+    }
+    if (id.startsWith('__src_')) {
+      const name = id.slice('__src_'.length)
+      const r = await get('/api/docs/examples/' + name)
+      content.innerHTML = `<h2 style="margin-bottom:10px">${name}</h2><div class="doc-md">${renderSource(r.content)}</div>`
+      scrollToId(id)
+      return
+    }
+    scrollToId(id)
+  }))
+
+  // 章节的展开/收起（箭头点击只折叠，不跳转）
+  side.querySelectorAll('.doc-tree-arrow').forEach(arrow => arrow.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const children = arrow.closest('.doc-tree-node').querySelector(':scope > .doc-tree-children')
+    const collapsed = children.style.display === 'none'
+    children.style.display = collapsed ? '' : 'none'
+    arrow.textContent = collapsed ? '▾' : '▸'
   }))
 }
 
@@ -63,37 +114,14 @@ function renderSource(content) {
   ).join('') + '</div>'
 }
 
-// 渲染文档页：左侧栏目（手册/示例页签 + 章节目录树）+ 右侧内容（首次进入默认打开手册）
+// 渲染文档页：整个左侧是树形目录（手册章节树 + 任务示例文件），右侧为内容区
 export async function render() {
   const side = document.querySelector('#doc-side')
   const content = document.querySelector('#doc-content')
-  side.innerHTML = `
-    <div class="doc-tab on" data-doc="guide">📖 使用手册</div>
-    <div class="doc-tab" data-doc="examples">🧩 任务示例</div>
-    <div class="doc-tab" data-doc="example-checkin.ts" data-kind="source">例：每日签到</div>
-    <div class="doc-tab" data-doc="faucet-example.ts" data-kind="source">例：领水水龙头</div>
-    <div class="doc-tab" data-doc="mint-example.ts" data-kind="source">例：铸币 Mint</div>
-  `
-  side.querySelectorAll('.doc-tab').forEach(tab => tab.addEventListener('click', async () => {
-    side.querySelectorAll('.doc-tab').forEach(t => t.classList.remove('on'))
-    tab.classList.add('on')
-    const toc = side.querySelector('#doc-toc')
-    if (toc) toc.remove()
-    const kind = tab.dataset.kind
-    if (kind === 'source') {
-      const r = await get('/api/docs/examples/' + tab.dataset.doc)
-      content.innerHTML = `<h2 style="margin-bottom:10px">${tab.dataset.doc}</h2><div class="doc-md">${renderSource(r.content)}</div>`
-    } else if (tab.dataset.doc === 'examples') {
-      const list = await get('/api/docs/examples')
-      content.innerHTML = `<h2 style="margin-bottom:10px">任务示例</h2><div class="doc-md"><p>左侧选择示例文件查看带注释的完整源码。示例与 <code>docs/API-GUIDE.md</code> 配合阅读。</p><ul>${list.map(f => `<li><code>${f.name}</code></li>`).join('')}</ul></div>`
-    } else {
-      const r = await get('/api/docs/guide')
-      await ensureMarked()
-      content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
-      injectHeadingIds(content)
-      buildChapterTree(content, side)
-    }
-  }))
-  const first = side.querySelector('[data-doc="guide"]')
-  first.click()
+  const examples = await get('/api/docs/examples')
+  const r = await get('/api/docs/guide')
+  await ensureMarked()
+  content.innerHTML = `<div class="doc-md">${renderMarkdown(r.content)}</div>`
+  injectHeadingIds(content)
+  buildDocTree(side, content, extractChapterTree(content), examples)
 }

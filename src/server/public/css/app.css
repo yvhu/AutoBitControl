@@ -96,12 +96,18 @@
   .doc-layout { display: flex; gap: 16px; }
   .doc-side { width: 220px; flex-shrink: 0; }
   .doc-content { flex: 1; min-width: 0; }
-  .doc-tab { padding: 8px 14px; border-radius: 10px; cursor: pointer; color: #94A3B8; font-size: 13px; margin-bottom: 4px; }
-  .doc-tab.on { background: linear-gradient(90deg,rgba(99,102,241,.18),rgba(139,92,246,.08)); color: #E2E8F0; font-weight: 600; }
-  .doc-toc { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 10px; max-height: calc(100vh - 320px); overflow-y: auto; }
-  .doc-toc-item { padding: 5px 12px; font-size: 12px; color: #94A3B8; cursor: pointer; border-radius: 8px; margin-bottom: 2px; line-height: 1.5; }
+  .doc-tree { max-height: calc(100vh - 40px); overflow-y: auto; padding-right: 4px; }
+  .doc-tree-node[data-depth="1"] { padding-left: 14px; }
+  .doc-tree-node[data-depth="2"] { padding-left: 28px; }
+  .doc-tree-node[data-depth="3"] { padding-left: 42px; }
+  .doc-toc-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 12.5px; color: #94A3B8; cursor: pointer; border-radius: 8px; margin-bottom: 1px; line-height: 1.5; }
   .doc-toc-item:hover { color: #E2E8F0; background: rgba(255,255,255,.04); }
   .doc-toc-item.on { color: #818CF8; background: rgba(99,102,241,.12); font-weight: 600; }
+  .doc-tree-arrow { width: 14px; text-align: center; color: #64748B; flex-shrink: 0; font-size: 10px; cursor: pointer; }
+  .doc-tree-arrow:hover { color: #A5B4FC; }
+  .doc-tree-dot { width: 14px; text-align: center; color: #475569; flex-shrink: 0; font-size: 10px; }
+  .doc-tree-dot::before { content: '·'; }
+  .doc-tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ============ markdown 渲染样式 ============ */
   .doc-md { font-size: 13px; line-height: 1.9; }
