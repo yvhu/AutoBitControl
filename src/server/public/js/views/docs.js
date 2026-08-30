@@ -59,7 +59,7 @@ const EXAMPLE_LABELS = {
 
 let scrollSpy = null
 
-// 滚动联动：正文滚到哪个标题，树里对应条目自动高亮（切到源码视图时断开）
+// 滚动联动：正文滚到哪个标题，树里对应条目自动高亮并滚动到树的可视区内（目录跟随内容）
 function attachScrollSpy(side, content) {
   scrollSpy?.disconnect()
   const headings = [...content.querySelectorAll('.doc-md h2, .doc-md h3')]
@@ -68,7 +68,11 @@ function attachScrollSpy(side, content) {
     for (const en of entries) {
       if (!en.isIntersecting) continue
       side.querySelectorAll('.doc-toc-item').forEach(x => x.classList.remove('on'))
-      side.querySelector(`[data-target="${en.target.id}"]`)?.classList.add('on')
+      const item = side.querySelector(`[data-target="${en.target.id}"]`)
+      if (item) {
+        item.classList.add('on')
+        item.scrollIntoView({ block: 'nearest' })
+      }
     }
   }, { rootMargin: '-10% 0px -75% 0px' })
   headings.forEach(h => scrollSpy.observe(h))
