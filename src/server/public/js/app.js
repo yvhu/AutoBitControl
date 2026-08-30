@@ -44,6 +44,7 @@ window.abcRerun = async (profileId, taskKey) => {
   await post(`/api/tasks/${encodeURIComponent(taskKey)}/trigger`, { bitbrowserId: p.bitbrowserId })
   navigate('dashboard')
 }
+window.abcCopyId = async (id) => { try { await navigator.clipboard.writeText(id); showToast('已复制窗口ID: ' + id) } catch { showToast('复制失败，请手动复制: ' + id) } }
 window.abcToggle = (id, enabled) => profiles.toggle(id, enabled)
 window.abcRunProfile = (id) => profiles.runProfile(id)
 window.abcDrawer = (id) => profiles.openDrawer(id)

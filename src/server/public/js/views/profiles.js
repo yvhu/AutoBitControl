@@ -19,7 +19,7 @@ export async function render() {
       <td><span style="color:#34D399">${okCount} ✓</span>${fail ? ` <span style="color:#F87171">${fail} ✗</span>` : ''}</td>
       <td><span style="color:${p.circuitBreakerCount > 0 ? '#FBBF24' : '#64748B'};font-size:11px">${p.circuitBreakerCount}/${settings.circuitBreakerThreshold}</span></td>
       <td><span class="toggle ${p.enabled ? '' : 'off'}" onclick="window.abcToggle(${p.id}, ${p.enabled ? 0 : 1})"></span></td>
-      <td><span class="link" onclick="window.abcRunProfile(${p.id})">立即跑</span> · <span class="link" onclick="window.abcDrawer(${p.id})">详情</span></td>
+      <td><span class="link" onclick="window.abcCopyId('${esc(p.bitbrowserId)}')">复制ID</span> · <span class="link" onclick="window.abcRunProfile(${p.id})">立即跑</span> · <span class="link" onclick="window.abcDrawer(${p.id})">详情</span></td>
     </tr>`
   }).join('')
 }
