@@ -80,7 +80,14 @@ web/
 - prod：`npm run build` → `web/dist`；后端静态托管改为优先 web/dist（存在则用之，回退旧 public）；`npm start` 单进程 3000
 - 后端 REST 全部不动；仅调整静态目录逻辑
 
-## 6. 实施顺序（SDD 任务）
+## 7. 教程与 API 文档的关系（行业标准：双体系 + 交叉链接）
+
+- **API 参考（权威）**：`/api-docs`（swagger-jsdoc 注解自动生成 + swagger-ui 试玩台），含完整参数/请求体/响应/业务错误码；注解写在路由代码旁，接口变更即同步
+- **教程（Guide）**：API-GUIDE.md 保持任务开发视角；其中 REST 接口信息**只留导航索引**（方法+路径+一句话用途），不重抄参数细节，并注明"完整参数与错误码见面板 `/api-docs`"
+- **错误码**：后端统一 `ERROR_CODES` 常量表；API-GUIDE 第 10 章报错速查只举常见项，全表指向 `/api-docs`
+- **面板互通**：文档页目录树加「📄 API 接口文档」入口（新窗打开 `/api-docs`）
+
+## 8. 实施顺序（SDD 任务）
 
 1. 脚手架（Vite+React+TS+antd+react-query+router+文档组件依赖）+ 主题系统 + AppLayout 骨架 + concurrently 联调
 2. API 层（client+endpoints+types）+ 看板页

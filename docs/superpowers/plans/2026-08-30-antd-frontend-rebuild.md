@@ -664,10 +664,14 @@ export function extractChapterTree(htmlLikeText: string): DocNode[]  // 输入 m
 测试：3 个用例（章嵌套节/无节章/示例节点拼接）。
 
 - [ ] **Step 4: index.tsx**
-  - 左：Tree（treeData = 章节树 + 「任务示例」节点(children=3 示例文件，key=`src://<name>`)；defaultExpandAll；onSelect：key 为 `src://` 前缀 → 渲染源码视图；否则渲染 markdown 视图并 scrollIntoView（document.getElementById(key)）；selectedKeys 受控）
+  - 左：Tree（treeData = 章节树 + 「任务示例」节点(children=3 示例文件，key=`src://<name>`) + **「📄 API 接口文档」节点（key=`ext://api-docs`，选中时 window.open('/api-docs') 新窗打开，选中态立即还原）**；defaultExpandAll；onSelect：key 为 `src://` 前缀 → 渲染源码视图；`ext://` 前缀 → 新窗跳转；否则渲染 markdown 视图并 scrollIntoView（document.getElementById(key)）；selectedKeys 受控）
   - 右：内容区（markdown 视图 / 源码视图切换：源码 = 逐行行号渲染 `<pre>` 风格 Div）；锚点链接点击（内容区 onClick 拦截 a[href^="#"] → preventDefault + scrollIntoView；a[href^="src://"] → 切源码视图）
   - scrollspy：IntersectionObserver 监听内容区 h1/h2/h3 → 更新 Tree selectedKeys + 树节点 scrollIntoView（block:'nearest'）
   - 代码折叠/高亮、交叉链接、跟随主题：代码块高亮风格固定 oneDark 但外层包 antd Collapse；正文 Typography 自动随主题
+- [ ] **Step 5: API-GUIDE 8.3 REST 总表按"教程只留导航"精简改写**
+  - 表格保留三列：方法 / 路径 / 一句话用途（删除参数与响应细节）
+  - 表尾加引导行：「完整参数、请求体、响应与错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）」
+  - 第 10 章报错速查表保留常见项，末尾加「完整业务错误码清单见 /api-docs」
 - [ ] **Step 5: 验证 + Commit**
 
 ```powershell
