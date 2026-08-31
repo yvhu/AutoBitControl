@@ -19,11 +19,24 @@ Copy-Item config/.env.example config/.env
 
 ## 运行
 
+### 开发模式
+
 ```powershell
 npm run dev
 ```
 
-Web 面板：http://127.0.0.1:3000
+同时启动后端（127.0.0.1:3000）与前端 Vite dev server（http://localhost:5173，带热更新，/api 自动代理到 3000）。开发时面板请访问：http://localhost:5173
+
+### 生产模式
+
+```powershell
+npm run build:web   # 构建 antd 前端到 web/dist（tsc + vite build）
+npm start           # 单进程启动后端，直出 web/dist 构建产物
+```
+
+Web 面板：http://127.0.0.1:3000 （另附 /api-docs Swagger 接口文档，可当场试调）
+
+> 生产模式必须先前端构建（`npm run build:web`）：后端按顺序托管 `web/dist`（构建产物）→ `src/server/public`（兼容旧版占位），未构建时面板不可用。
 
 ## 开机自启（pm2）
 
