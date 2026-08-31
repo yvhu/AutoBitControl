@@ -61,6 +61,16 @@ export function todayStr(now = new Date()): string {
   return `${y}-${m}-${d}`
 }
 
+/**
+ * 当前时刻的本地墙钟时间字符串（毫秒精度，`yyyy-MM-dd HH:mm:ss.SSS`）：
+ * 所有落库时间统一此口径（与系统时区一致，避免 UTC ISO 比本地慢 8 小时的困惑）；
+ * 固定宽度保证字典序 == 时间序，比较/排序均安全
+ */
+export function localWallNow(): string {
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
+}
+
 /** AppDb.open 的参数（cloud 配置段；file: URL 为测试/本地引擎，无需 authToken） */
 export interface AppDbOpenConfig {
   url: string
@@ -331,7 +341,7 @@ export class AppDb {
   /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
   async logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): Promise<void> {
     const now = new Date()
-    const localWall = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
+    const localWall = localWallNow()
     await this.exec('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?)', [profileId, taskKey, kind, cost, ok ? 1 : 0, localWall])
   }
 
@@ -352,7 +362,7 @@ export class AppDb {
     await this.exec(
       `INSERT INTO open_windows (bitbrowser_id, http, opened_at) VALUES (?, ?, ?)
        ON CONFLICT(bitbrowser_id) DO UPDATE SET http = excluded.http, opened_at = excluded.opened_at`,
-      [bitbrowserId, http, new Date().toISOString()],
+      [bitbrowserId, http, localWallNow()],
     )
   }
 

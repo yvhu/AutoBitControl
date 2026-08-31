@@ -55,6 +55,7 @@ export class InceptionDachainTask extends SiteTask {
     await ctx.goto()
 
     // 已登录（cookie 还在）：左侧目录栏直接可见，跳过登录步骤
+    let popupFailed = false
     if (!(await ctx.textPresent('Quantum Crate'))) {
       // 第 1 步：等 Enter Inception 出现，网络差刷不出来就反复刷新
       for (let i = 0; i < 10; i++) {
@@ -64,19 +65,25 @@ export class InceptionDachainTask extends SiteTask {
         if (i === 9) throw new Error('多次刷新后仍未出现 Enter Inception（网络异常）')
       }
 
+      // MetaMask 扩展未注入快速失败（真机实测部分窗口无 window.ethereum：点钱包项只会出二维码、永远等不到弹窗）
+      const hasMetaMask = await ctx.js<boolean>(() => typeof (window as unknown as { ethereum?: unknown }).ethereum !== 'undefined')
+      if (!hasMetaMask) throw new Error('未检测到 MetaMask 扩展（window.ethereum 缺失），请检查该窗口的扩展配置')
+
       // 第 2 步：Enter Inception → 登录方式选择弹窗（Get Started）→ 点 WALLET（钱包登录）
       await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: 30000 })
       await ctx.human.click('button:has-text("WALLET")')
-      // 钱包列表出现后点 MetaMask（AppKit 钱包项 data-testid，真机核实）；列表加载慢时重进一次
+      // 钱包列表出现后点 MetaMask（AppKit 钱包项 data-testid，真机核实）
       const walletEntry = '[data-testid="wallet-selector-io.metamask"]'
-      const visible = await ctx.page.locator(walletEntry).first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => false)
-      if (!visible) {
-        await ctx.human.click('button:has-text("WALLET")')
-        await ctx.assertVisible(walletEntry, 30000)
-      }
+      await ctx.assertVisible(walletEntry, 30000)
       await ctx.human.click(walletEntry)
-      // 钱包弹窗 → 解锁 → 确认连接
-      await ctx.loginByWallet()
+      // 钱包弹窗 → 解锁 → 确认连接；已授权过站点的窗口可能不再弹弹窗（静默连接），
+      // 弹窗未出现不立即判失败，交给后面的左侧目录判定
+      try {
+        await ctx.loginByWallet()
+      } catch (e) {
+        if ((e as Error).message.includes('钱包弹窗未出现')) popupFailed = true
+        else throw e
+      }
     }
 
     // 第 3 步：等登录完成（左侧目录栏出现）——连接成功后站点偶发不自动跳转（真机实测），
@@ -88,7 +95,13 @@ export class InceptionDachainTask extends SiteTask {
       if (i === 1) await ctx.page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
       await ctx.page.waitForTimeout(10000)
     }
-    await ctx.waitForText('Quantum Crate', 30000)
+    if (!loggedIn) {
+      throw new Error(
+        popupFailed
+          ? '钱包弹窗未出现且页面未登录：该窗口 MetaMask 可能未安装/未启用（window.ethereum 缺失）'
+          : '等待文案超时: Quantum Crate',
+      )
+    }
     // 点左侧目录栏 Quantum Crate → 页面出现 Open Free 表示打开成功
     await ctx.human.click('button:has-text("Quantum Crate")')
     await ctx.waitForText('Open Free', 20000)
@@ -107,9 +120,9 @@ export class InceptionDachainTask extends SiteTask {
       }
       if (outcome !== 'modal') throw new Error('点击 Open Free 后既无开箱弹窗也无每日上限提示（页面或网络异常）')
       // 弹窗内点 Open for（开箱），等视频/接口完成出现开箱结果（You Won / Better luck next time）
-      // 注意：弹窗 Close 按钮常驻，不能等它；开箱视频很卡，放宽到 60s
+      // 注意：弹窗 Close 按钮常驻，不能等它；开箱视频/接口很卡，放宽到 90s
       await ctx.human.click('button:has-text("Open for")')
-      const revealed = await this.waitAnyText(ctx, REVEAL_TEXTS, 60000)
+      const revealed = await this.waitAnyText(ctx, REVEAL_TEXTS, 90000)
       if (!revealed) throw new Error('等待开箱结果超时（视频/接口过慢）')
       await ctx.human.click('button:has-text("Close")')
       await ctx.page.waitForTimeout(2000)
