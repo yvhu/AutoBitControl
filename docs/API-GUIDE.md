@@ -915,22 +915,24 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/dashboard` | 看板全部数据（统计/矩阵/窗口/打码成本），`?date=YYYY-MM-DD` 切换日期 |
+| GET | `/api/dashboard` | 看板全部数据（统计/矩阵/窗口/打码成本） |
 | GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 云端开关状态） |
-| PATCH | `/api/tasks/:key` | 任务开关，body `{ "enabled": true \| false }`，写云端立即生效 |
-| POST | `/api/tasks/:key/trigger` | 手动触发：body `{ "bitbrowserId" }` 只跑该窗口；不带 body 跑全部启用窗口 |
+| PATCH | `/api/tasks/:key` | 任务开关（写云端，立即生效） |
+| POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
 | GET | `/api/profiles` | 窗口列表（含启用状态与熔断计数） |
-| PATCH | `/api/profiles/:id` | 窗口开关，body `{ "enabled": true \| false }` |
-| POST | `/api/profiles/:id/run` | 该窗口跑全部**启用**任务（停用排除，返回 `count`） |
+| PATCH | `/api/profiles/:id` | 窗口开关 |
+| POST | `/api/profiles/:id/run` | 该窗口跑全部启用任务 |
 | POST | `/api/profiles/:id/breaker/reset` | 重置该窗口熔断计数 |
-| POST | `/api/runs/rerun-failed` | 当日失败记录重新入队，body `{ "date": "YYYY-MM-DD" }`（缺省今天） |
-| GET | `/api/captcha/balance` | 打码余额（`{ configured, points, yuan }`） |
-| POST | `/api/bitbrowser/test` | 比特浏览器连接测试（`{ ok }`） |
-| POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库（`{ count }`） |
-| GET | `/api/settings` | 公开只读设置（不含任何密钥），含 `datasource` 状态（`{ available, error, path, rows, columns }`） |
-| POST | `/api/datasource/reload` | 重载数据源 Excel（改完 xlsx 后点面板「设置」页「重载」，返回 `{ available, rows, columns }`，无需重启服务） |
-| GET | `/api/screenshots` | 取截图文件，`?path=` 传截图目录内的相对路径 |
-| GET | `/api/docs/guide`、`/api/docs/examples`、`/api/docs/examples/:name` | 本手册 markdown 原文、示例文件清单、单个示例源码（白名单限定三个示例文件） |
+| POST | `/api/runs/rerun-failed` | 当日失败记录重新入队 |
+| GET | `/api/captcha/balance` | 打码余额查询 |
+| POST | `/api/bitbrowser/test` | 比特浏览器连接测试 |
+| POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库 |
+| GET | `/api/settings` | 公开只读设置（不含密钥）＋ 数据源状态 |
+| POST | `/api/datasource/reload` | 重载数据源 Excel |
+| GET | `/api/screenshots` | 取截图文件 |
+| GET | `/api/docs/guide`、`/api/docs/examples`、`/api/docs/examples/:name` | 本手册 markdown 原文、示例文件清单、单个示例源码 |
+
+完整参数、请求体、响应与业务错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）。
 
 ---
 
@@ -1238,6 +1240,8 @@ if (done) return   // 今日已做 → 直接成功
 | `yescaptcha 创建任务失败` | 平台没接这道题 | `clientKey` 无效或题型不支持 | 核对 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持（见[第 5 章](#5-验证码)） |
 | `yescaptcha 解题超时` | 平台解题超过 `solveTimeoutMs` 还没出结果 | 题目太难/平台拥堵 | 任务会以 `captcha_failed` 终态收场（不重试）；看日志 taskId 与截图 |
 | `未配置 TURSO_DATABASE_URL` | 服务启动直接退出：云数据库地址没配 | `config/.env` 或 config.json 的 `cloud` 段缺配置 | 按日志提示配置云数据库地址后重启（`npm start`） |
+
+完整业务错误码清单见 /api-docs。
 
 ### 选择器失效
 
