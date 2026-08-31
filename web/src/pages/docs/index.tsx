@@ -169,7 +169,7 @@ export default function DocsPage() {
 
   return (
     <Row gutter={12}>
-      <Col style={{ flex: '0 0 260px', position: 'sticky', top: 16, alignSelf: 'flex-start', maxHeight: 'calc(100vh - 120px)', overflow: 'auto' }}>
+      <Col style={{ flex: '0 0 260px', position: 'sticky', top: 16, alignSelf: 'flex-start', maxHeight: 'calc(100vh - 32px)', overflow: 'auto' }}>
         <Card size="small">
           <div ref={treeWrapRef}>
             {guide.isPending ? (

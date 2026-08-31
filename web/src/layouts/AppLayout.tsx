@@ -50,7 +50,13 @@ export default function AppLayout() {
       <Sider
         breakpoint="lg"
         collapsedWidth="64"
-        style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}
+        style={{
+          borderRight: `1px solid ${token.colorBorderSecondary}`,
+          position: 'sticky',
+          top: 0,
+          height: '100vh',
+          overflow: 'auto',
+        }}
       >
         <div style={{ height: 32, margin: 16, color: token.colorText, fontSize: 16, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>
           AutoBitControl
