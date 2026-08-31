@@ -79,8 +79,16 @@ export class InceptionDachainTask extends SiteTask {
       await ctx.loginByWallet()
     }
 
-    // 第 3 步：等登录完成（左侧目录栏出现）
-    await ctx.waitForText('Quantum Crate', 60000)
+    // 第 3 步：等登录完成（左侧目录栏出现）——连接成功后站点偶发不自动跳转（真机实测），
+    // 10s 未见目录则刷新页面重试（最多 6 轮，覆盖慢跳转与网络抖动）
+    let loggedIn = false
+    for (let i = 0; i < 6 && !loggedIn; i++) {
+      loggedIn = await ctx.textPresent('Quantum Crate')
+      if (loggedIn) break
+      if (i === 1) await ctx.page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      await ctx.page.waitForTimeout(10000)
+    }
+    await ctx.waitForText('Quantum Crate', 30000)
     // 点左侧目录栏 Quantum Crate → 页面出现 Open Free 表示打开成功
     await ctx.human.click('button:has-text("Quantum Crate")')
     await ctx.waitForText('Open Free', 20000)
