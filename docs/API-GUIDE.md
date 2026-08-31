@@ -203,7 +203,7 @@ meta: TaskMeta = {
 
 `TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
-下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
 
 ### goto
 

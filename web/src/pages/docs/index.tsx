@@ -79,8 +79,8 @@ export default function DocsPage() {
     if (view !== 'guide') return
     const content = contentRef.current
     if (!content) return
-    // 手册 h1/h2/h3 经 Typography.Title 渲染为 h2/h3/h4（level 2/3/4）
-    const headings = Array.from(content.querySelectorAll('h2[id], h3[id], h4[id]'))
+    // 手册 h1/h2/h3 经 Typography.Title 渲染为 h3/h4/h5（level 3/4/5）
+    const headings = Array.from(content.querySelectorAll('h3[id], h4[id], h5[id]'))
     if (headings.length === 0) return
     const bandTop = () => window.innerHeight * 0.1
     const bandBottom = () => window.innerHeight * 0.25
