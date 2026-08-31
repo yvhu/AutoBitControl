@@ -325,7 +325,7 @@ export class AppDb {
 
   /** 某天的全部运行记录（面板矩阵/统计用，按窗口与任务排序） */
   async listRunsForDate(date: string): Promise<RunRow[]> {
-    return (await this.exec(`${SELECT_RUN} WHERE r.date = ? ORDER BY p.id, r.task_key`, [date])) as unknown as RunRow[]
+    return (await this.exec(`${SELECT_RUN} WHERE r.date = ? ORDER BY p.id, r.task_key, r.slot`, [date])) as unknown as RunRow[]
   }
 
   /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */

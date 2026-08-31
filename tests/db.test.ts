@@ -191,5 +191,11 @@ describe('runs 老库迁移', () => {
     expect(rows[0].slot).toBe(0)
     await db.setTaskFiredAt('t', '2026-08-31T09:00:00.000Z')
     db.close()
+    // 重新打开已迁移库：第二次 migrate() 幂等无错、数据仍在、slot 仍为 0
+    const db2 = await AppDb.open({ url: `file:${file}`, authToken: '' })
+    const rows2 = await db2.listRunsForDate('2026-08-30')
+    expect(rows2.length).toBe(1)
+    expect(rows2[0].slot).toBe(0)
+    db2.close()
   })
 })

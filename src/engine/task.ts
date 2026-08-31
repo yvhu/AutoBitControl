@@ -44,5 +44,8 @@ export interface TaskRef {
 
 /** 是否间隔调度（每 N 小时）——调度器与窗口执行器共用判定 */
 export function isIntervalSchedule(s: TaskMeta['schedule'] | null): s is { everyHours: number } {
-  return typeof s === 'object' && s !== null && 'everyHours' in s && typeof (s as { everyHours?: unknown }).everyHours === 'number'
+  if (typeof s !== 'object' || s === null || !('everyHours' in s)) return false
+  const v = (s as { everyHours?: unknown }).everyHours
+  // 必须是有限正数：0/负数/NaN 都会让间隔判定恒真、nextAllow 推后 0，导致每分钟全窗口触发
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
 }

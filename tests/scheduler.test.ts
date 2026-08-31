@@ -259,6 +259,12 @@ describe('isIntervalSchedule', () => {
     expect(isIntervalSchedule(undefined)).toBe(false)
     expect(isIntervalSchedule(null)).toBe(false)
   })
+
+  it('非正数 everyHours 不视为间隔形态（防每分钟触发）', () => {
+    expect(isIntervalSchedule({ everyHours: 0 })).toBe(false)
+    expect(isIntervalSchedule({ everyHours: -8 })).toBe(false)
+    expect(isIntervalSchedule({ everyHours: 8 })).toBe(true)
+  })
 })
 
 describe('Scheduler 间隔任务', () => {
