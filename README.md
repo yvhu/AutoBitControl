@@ -19,24 +19,28 @@ Copy-Item config/.env.example config/.env
 
 ## 运行
 
-### 开发模式
+### 日常使用（唯一入口，面板 + API）
 
 ```powershell
 npm run dev
 ```
 
-同时启动后端（127.0.0.1:3000）与前端 Vite dev server（http://localhost:5173，带热更新，/api 自动代理到 3000）。开发时面板请访问：http://localhost:5173
+同时启动两个独立进程：
 
-### 生产模式
+- **后端 API**：`http://127.0.0.1:3000`（纯接口，不托管页面；`/api-docs` Swagger 文档在它上面）
+- **前端面板**：`http://localhost:5173`（Vite dev server，带热更新，`/api` 自动代理到后端）
+
+**面板一律访问 Vite 端口（5173）**，后端端口不需要在浏览器打开。
+
+两个端口都可在 `config/.env` 改：`WEB_PORT` 改后端 API 端口（Vite 代理自动跟随），`VITE_PORT` 改前端面板端口（5173 被占用时）。改完重启 `npm run dev` 生效。
+
+### 只跑后端（无面板）
 
 ```powershell
-npm run build:web   # 构建 antd 前端到 web/dist（tsc + vite build）
-npm start           # 单进程启动后端，直出 web/dist 构建产物
+npm start           # 单进程启动后端，只出 API；pm2 开机自启用这个
 ```
 
-Web 面板：http://127.0.0.1:3000 （另附 /api-docs Swagger 接口文档，可当场试调）
-
-> 生产模式必须先前端构建（`npm run build:web`）：后端托管 `web/dist`（构建产物，前端唯一来源）；未构建时访问面板会显示提示页（提示先运行 `npm run build:web`）。
+> `npm run build:web` 已不再需要：后端不再托管前端产物，面板由 Vite dev server 提供。
 
 ## 开机自启（pm2）
 
@@ -47,7 +51,8 @@ pm2 save
 pm2 startup   # 按提示执行输出的命令
 ```
 
-> 已验证（2026-08-28，pm2 6.0.14）：`pm2 start ecosystem.config.cjs` 启动后 8 秒内进程 online、面板 HTTP 200。因验证时本机 3000 端口被 dev 进程占用，验证使用 `$env:WEB_PORT='3112'; pm2 start ecosystem.config.cjs` 指定端口跑通后已删除进程；默认配置仍走 3000 端口。
+> pm2 只托管后端 API（`ecosystem.config.cjs` 跑 `src/index.ts`）；开机自启后如需要面板，再手动 `npm run dev` 起前端。
+> 已验证（2026-08-28，pm2 6.0.14）：`pm2 start ecosystem.config.cjs` 启动后 8 秒内进程 online、API HTTP 200。验证时本机 3000 端口被 dev 进程占用，改用 `$env:WEB_PORT='3112'` 跑通后已删除进程；默认配置仍走 3000 端口。
 
 ## 配置
 
@@ -97,5 +102,3 @@ chcp 65001
 ```powershell
 npm test
 ```
-
-> `npm test` 包含 `GET /` 面板页面断言，运行前需先 `npm run build:web` 构建前端。

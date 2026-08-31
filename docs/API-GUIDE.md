@@ -97,7 +97,7 @@ AutoBitControl 一共三块，分工如下：
 
 **第 4 步：注册** 在 `src/tasks/index.ts` 的 `ALL` 数组中加入实例。
 
-**第 5 步：面板验证** 重启服务（`npm start`）→ 面板「任务」页应出现新任务卡片（含分类徽章、来源页、备注）→ 点「立即触发」手动跑一次 → 看板查看结果与截图。
+**第 5 步：面板验证** 重启服务（`npm run dev`，后端 API 与前端 Vite 面板同启）→ 面板「任务」页应出现新任务卡片（含分类徽章、来源页、备注）→ 点「立即触发」手动跑一次 → 看板查看结果与截图。
 
 完整最小任务代码：
 
@@ -884,7 +884,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 
 ### 8.1 配置文件与环境变量
 
-配置一共三层，**后面的覆盖前面的**（逐键深合并）：代码默认值 ← `config/config.json` ← `config/config.local.json` ← 环境变量（含 `config/.env`，由 dotenv 加载）。本地差异写 `config.local.json`（不进版本库），部署密钥用环境变量注入。**任何配置改动都要重启服务（`npm start`）才生效。**
+配置一共三层，**后面的覆盖前面的**（逐键深合并）：代码默认值 ← `config/config.json` ← `config/config.local.json` ← 环境变量（含 `config/.env`，由 dotenv 加载）。本地差异写 `config.local.json`（不进版本库），部署密钥用环境变量注入。**任何配置改动都要重启服务（`npm run dev`）才生效。**
 
 全部配置段与关键键（以 `src/infrastructure/config.ts` 为准）：
 
@@ -894,7 +894,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
 | `execution` | `concurrency`、`windowTimeoutMs`、`probeUrl`、`timezone`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：窗口并发默认 6；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`timezone` 是 cron 时区；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
-| `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
+| `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是**遗留字段**——数据层已全走云端数据库，云库模式下不生效，无需配置 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
@@ -1239,7 +1239,7 @@ if (done) return   // 今日已做 → 直接成功
 | `yescaptcha 余额不足: X 点 < Y 点` | 打码平台余额不够付这道题 | 余额低于费用上限 | 去平台充值；或下调 `captcha.maxCostPerTask`（见[打码失败与余额](#打码失败与余额)） |
 | `yescaptcha 创建任务失败` | 平台没接这道题 | `clientKey` 无效或题型不支持 | 核对 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持（见[第 5 章](#5-验证码)） |
 | `yescaptcha 解题超时` | 平台解题超过 `solveTimeoutMs` 还没出结果 | 题目太难/平台拥堵 | 任务会以 `captcha_failed` 终态收场（不重试）；看日志 taskId 与截图 |
-| `未配置 TURSO_DATABASE_URL` | 服务启动直接退出：云数据库地址没配 | `config/.env` 或 config.json 的 `cloud` 段缺配置 | 按日志提示配置云数据库地址后重启（`npm start`） |
+| `未配置 TURSO_DATABASE_URL` | 服务启动直接退出：云数据库地址没配 | `config/.env` 或 config.json 的 `cloud` 段缺配置 | 按日志提示配置云数据库地址后重启服务 |
 
 完整业务错误码清单见 /api-docs。
 

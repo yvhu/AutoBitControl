@@ -2,11 +2,11 @@
  * Web 服务装配（server 层）：express 应用与路由挂载
  * 依赖方向：server 层依赖 engine/infrastructure，不反向；被 src/app.ts 调用
  * 设计思路：所有业务依赖经 ServerDeps 注入，各路由声明最小依赖子集；
- * /api 前缀统一挂载；静态面板直出 web/dist（antd 构建产物，唯一前端来源）
+ * /api 前缀统一挂载；后端只出 API（前端面板由 Vite dev server 提供，端口见 VITE_PORT）
  */
 import express from 'express'
 import swaggerUi from 'swagger-ui-express'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AppDb } from '../infrastructure/db'
@@ -73,32 +73,11 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
   app.use('/api', api)
 
-  // 前端静态资源：web/dist 为唯一前端来源（npm run build:web 构建产物；express.static 对不存在目录安全）
-  const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'dist')
-  app.use(express.static(distDir))
-  // OpenAPI 文档：spec json 供 Task 2 类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）
+  // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）
   app.get('/api/docs/openapi.json', (req, res) => res.json(openapiSpec))
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiSpec))
   // 错误处理链：/api 未匹配路由 → 404；其余异常 → 统一 500/业务状态码
   app.use('/api', notFoundHandler())
-  // SPA 回退：BrowserRouter 深链/刷新（如 /profiles）无对应静态文件时回退 dist/index.html 由前端路由接管；
-  // 带扩展名的路径视为静态资源缺失（express 默认 404），避免给缺失 js/css 返回 html；
-  // 未构建（无 dist/index.html）时返回友好提示页而非 500（npm test 的 GET / 断言亦依赖此行为）
-  app.use((req, res, next) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
-    if (req.path.includes('.')) return next()
-    const indexHtml = join(distDir, 'index.html')
-    if (!existsSync(indexHtml)) {
-      res
-        .status(200)
-        .set('Content-Type', 'text/html; charset=utf-8')
-        .send('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>AutoBitControl</title></head><body><h1>AutoBitControl</h1><p>前端未构建，请先运行 npm run build:web</p></body></html>')
-      return
-    }
-    res.sendFile(indexHtml, (err) => {
-      if (err) next(err)
-    })
-  })
   app.use(errorHandler(deps.logger))
   return app
 }

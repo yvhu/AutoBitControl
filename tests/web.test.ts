@@ -413,10 +413,9 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
-  it('GET / 返回面板页面', async () => {
+  it('GET / 返回 404（后端只出 API，面板由 Vite dev server 提供）', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/')
-    expect(res.status).toBe(200)
-    expect(res.text).toContain('AutoBitControl')
+    expect(res.status).toBe(404)
   })
 
   it('未知路由 404 统一 envelope', async () => {

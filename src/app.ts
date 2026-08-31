@@ -198,7 +198,7 @@ export async function startApp(): Promise<void> {
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {
-    logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, 'Web 面板已启动')
+    logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, '后端 API 已启动')
   })
 
   scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
