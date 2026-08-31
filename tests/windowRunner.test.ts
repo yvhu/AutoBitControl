@@ -15,7 +15,9 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
     incrCircuitBreaker: vi.fn().mockResolvedValue(0),
     listProfiles: vi.fn().mockResolvedValue([]),
-    getRun: vi.fn().mockResolvedValue(null),
+    getLatestRun: vi.fn().mockResolvedValue(null),
+    nextRunSlot: vi.fn().mockResolvedValue(0),
+    setTaskFiredAt: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as unknown as AppDb
 }
@@ -77,9 +79,21 @@ class FailTask implements SiteTask {
   run = vi.fn().mockRejectedValue(new Error('boom'))
 }
 
+/** 间隔调度（everyHours）任务 fixture：成功回写锚点用例用 */
+class IntervalTask implements SiteTask {
+  meta = { key: 'iv', name: 'IV', url: 'https://a.io', schedule: { everyHours: 8 } }
+  run = vi.fn().mockResolvedValue(undefined)
+}
+
+/** 错峰窗口（stagger）任务 fixture：非间隔任务不回写锚点用例用 */
+class StaggerTask implements SiteTask {
+  meta = { key: 'daily', name: 'DAILY', url: 'https://a.io', schedule: { stagger: ['09:00', '11:00'] as [string, string] } }
+  run = vi.fn().mockResolvedValue(undefined)
+}
+
 /** 提取 upsertRun 调用序列的状态列 */
 function statuses(db: AppDb): string[] {
-  return (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[3])
+  return (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.map(c => c[4])
 }
 
 describe('WindowRunner', () => {
@@ -110,7 +124,7 @@ describe('WindowRunner', () => {
 
   it('重试会话从上次 attempts 继续并先复位页面', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>),
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 0 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const page = { ...okPage, goto: vi.fn().mockResolvedValue(undefined) }
@@ -122,8 +136,8 @@ describe('WindowRunner', () => {
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     expect(statuses(db)).toEqual(['running', 'retry_wait'])
     // attempts 从上次的 1 续到 2（重试上限跨会话生效）
-    const runningCall = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[3] === 'running')
-    expect(runningCall![4].attempts).toBe(2)
+    const runningCall = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'running')
+    expect(runningCall![5].attempts).toBe(2)
     // 重试前页面复位 about:blank，且发生在任务执行之前
     const blankIdx = page.goto.mock.calls.findIndex(c => c[0] === 'about:blank')
     expect(blankIdx).toBeGreaterThanOrEqual(0)
@@ -134,7 +148,7 @@ describe('WindowRunner', () => {
 
   it('最后一次尝试失败标记 failed 且不再调度重试', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>),
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
@@ -146,7 +160,7 @@ describe('WindowRunner', () => {
 
   it('重试跨会话续算并最终 failed', async () => {
     const db = makeDb()
-    const getRun = db.getRun as ReturnType<typeof vi.fn>
+    const getLatestRun = db.getLatestRun as ReturnType<typeof vi.fn>
     const task = new FailTask()
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
     // 第 1 会话：无历史记录 → attempt=1 → retry_wait + scheduleRetry
@@ -154,24 +168,24 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['running', 'retry_wait'])
     expect(scheduleRetry).toHaveBeenCalledTimes(1)
     // 第 2 会话：上一轮 attempts=1 → 从 2 续跑 → 再 retry_wait + scheduleRetry
-    getRun.mockResolvedValue({ status: 'retry_wait', attempts: 1 } as Partial<RunRow>)
+    getLatestRun.mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 0 } as Partial<RunRow>)
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait'])
     expect(scheduleRetry).toHaveBeenCalledTimes(2)
     // 第 3 会话：上一轮 attempts=2 → 从 3 续跑 → 达上限 failed 终态，不再调度
-    getRun.mockResolvedValue({ status: 'retry_wait', attempts: 2 } as Partial<RunRow>)
+    getLatestRun.mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>)
     await runner.runWindowTasks(makeProfile(), ['fail-task'])
     expect(statuses(db)).toEqual(['running', 'retry_wait', 'running', 'retry_wait', 'running', 'failed'])
     expect(scheduleRetry).toHaveBeenCalledTimes(2)
     // 三次 running 的 attempts 依次 1/2/3（重试上限跨会话生效，共 3 次尝试）
     const runningAttempts = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
-      .filter(c => c[3] === 'running').map(c => c[4].attempts)
+      .filter(c => c[4] === 'running').map(c => c[5].attempts)
     expect(runningAttempts).toEqual([1, 2, 3])
   })
 
   it('历史 attempts 已耗尽重试预算时直接 failed 且不调度重试', async () => {
     const db = makeDb({
-      getRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 3 } as Partial<RunRow>),
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 3, slot: 0 } as Partial<RunRow>),
     })
     const task = new FailTask()
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
@@ -219,8 +233,8 @@ describe('WindowRunner', () => {
     const runner = new WindowRunner({ cfg: cfgZero, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', ok1], ['ok2', ok2]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), ['ok-task', 'ok2'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
-    expect(calls.map(c => c[3])).toEqual(['skipped', 'skipped'])
-    expect(calls.every(c => c[4].error === '窗口超时')).toBe(true)
+    expect(calls.map(c => c[4])).toEqual(['skipped', 'skipped'])
+    expect(calls.every(c => c[5].error === '窗口超时')).toBe(true)
     expect(ok1.run).not.toHaveBeenCalled()
     expect(ok2.run).not.toHaveBeenCalled()
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
@@ -266,5 +280,43 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toContain('success')
     expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('间隔任务成功后回写锚点（只增不减）', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, tasks: new Map([['iv', new IntervalTask()]]) })
+    await runner.runWindowTasks(makeProfile(), ['iv'])
+    expect(db.setTaskFiredAt).toHaveBeenCalled()
+  })
+
+  it('非间隔任务成功不回写锚点', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, tasks: new Map([['daily', new StaggerTask()]]) })
+    await runner.runWindowTasks(makeProfile(), ['daily'])
+    expect(db.setTaskFiredAt).not.toHaveBeenCalled()
+  })
+
+  it('新轮次使用 nextRunSlot（终态行后开新轮），续跑沿用原 slot', async () => {
+    const db = makeDb()
+    const getLatestRun = db.getLatestRun as ReturnType<typeof vi.fn>
+    getLatestRun.mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 2 } as Partial<RunRow>)
+    const runner = makeRunner({ db, tasks: new Map([['t', new FailTask()]]) })
+    await runner.runWindowTasks(makeProfile(), ['t'])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.every(c => c[3] === 2)).toBe(true) // 续跑沿用 slot=2
+    expect(db.nextRunSlot).not.toHaveBeenCalled()
+  })
+
+  it('终态行后开新轮：slot 取 nextRunSlot 返回值', async () => {
+    const db = makeDb()
+    const getLatestRun = db.getLatestRun as ReturnType<typeof vi.fn>
+    const nextRunSlot = db.nextRunSlot as ReturnType<typeof vi.fn>
+    getLatestRun.mockResolvedValue({ status: 'success', attempts: 1, slot: 1 } as Partial<RunRow>)
+    nextRunSlot.mockResolvedValue(2)
+    const runner = makeRunner({ db, tasks: new Map([['ok-task', new OkTask()]]) })
+    await runner.runWindowTasks(makeProfile(), ['ok-task'])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.every(c => c[3] === 2)).toBe(true) // 新轮次沿用 nextRunSlot 计算出的 slot=2
+    expect(nextRunSlot).toHaveBeenCalledWith(1, 'ok-task', expect.any(String))
   })
 })
