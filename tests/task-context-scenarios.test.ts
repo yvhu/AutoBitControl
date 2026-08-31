@@ -322,4 +322,34 @@ describe('TaskContext 场景方法集成', () => {
     expect(makeCtx(null as never).accountRow).toBeNull()
     expect(makeCtx(null as never, { 邮箱: 'x@y.com' }).accountRow).toEqual({ 邮箱: 'x@y.com' })
   })
+
+  it('closeOtherTabs 关闭其它标签页保留当前页', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const context = await browser.newContext()
+      const page = await context.newPage()
+      const ctx = makeCtx(page)
+      await context.newPage()
+      await context.newPage()
+      expect(context.pages().length).toBe(3)
+      await ctx.closeOtherTabs()
+      const pages = context.pages()
+      expect(pages.length).toBe(1)
+      expect(pages[0]).toBe(page)
+    } finally {
+      await browser.close()
+    }
+  })
+
+  it('closeOtherTabs 只有当前页时为空操作', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const ctx = makeCtx(page)
+      await ctx.closeOtherTabs()
+      expect(page.context().pages().length).toBe(1)
+    } finally {
+      await browser.close()
+    }
+  })
 })

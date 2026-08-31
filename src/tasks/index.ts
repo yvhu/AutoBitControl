@@ -7,9 +7,10 @@ import type { SiteTask } from './base'
 import { ExampleCheckinTask } from './example-checkin'
 import { FaucetExampleTask } from './faucet-example'
 import { MintExampleTask } from './mint-example'
+import { InceptionDachainTask } from './inception-dachain'
 
 // 全部任务实例（每个任务一个单例，跨调度器/API/队列共享状态）
-const ALL: SiteTask[] = [new ExampleCheckinTask(), new FaucetExampleTask(), new MintExampleTask()]
+const ALL: SiteTask[] = [new ExampleCheckinTask(), new FaucetExampleTask(), new MintExampleTask(), new InceptionDachainTask()]
 
 /** 以 meta.key 为索引构建任务表（key 重复会覆盖——登记时注意唯一性） */
 export function loadTasks(): Map<string, SiteTask> {

@@ -92,6 +92,17 @@ export class TaskContext {
   }
 
   /**
+   * 关闭当前浏览器上下文中的其它标签页（保留当前页）
+   * 任务开始前调用：清掉上一次会话残留的标签页，再从干净状态打开任务网址
+   */
+  async closeOtherTabs(): Promise<void> {
+    for (const p of this.page.context().pages()) {
+      if (p === this.page) continue
+      await p.close().catch(() => {})
+    }
+  }
+
+  /**
    * 打开任务页面（默认 meta.url，可覆盖）
    * @throws 无 url 配置；3 次重试（2-5s 随机退避）后仍失败抛出最后一次错误
    */

@@ -203,7 +203,26 @@ meta: TaskMeta = {
 
 `TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
-下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
+
+### closeOtherTabs
+
+```ts
+async closeOtherTabs(): Promise<void>
+```
+
+- **是什么**：关闭当前浏览器上下文中的**其它标签页**，只保留任务正在用的当前页。
+- **什么时候用**：任务 `run()` 第一步（在 `goto` 之前）——窗口是复用的，上一次会话可能残留标签页，先清干净再从干净状态打开任务网址。
+- **怎么用**：
+
+```ts
+async run(ctx: TaskContext): Promise<void> {
+  await ctx.closeOtherTabs()   // 关掉残留标签页
+  await ctx.goto()             // 再打开任务网址
+}
+```
+
+- **注意什么**：当前页不会动（后续 `goto` 直接在上面导航）；关闭失败静默跳过（个别标签页正在关闭/已关闭不报错）。
 
 ### goto
 
