@@ -21,7 +21,7 @@ export class InceptionDachainTask extends SiteTask {
     key: 'inception-dachain',
     name: 'DAC 签到',
     url: 'https://inception.dachain.io/',
-    sourceUrl: 'https://inception.dachain.io/',
+    sourceUrl: 'https://airdrops.io/dac/',
     note: '真机核实：免费箱按钮实为 OPEN FOR 150 QE（余额 ≥150 QE 才可点，不足报 Insufficient QE）；弹窗 Close 按钮常驻（开箱结果需等 You Won / Better luck next time 出现）；开箱视频很卡放宽等待；每日 5 箱上限，达到后点 Open Free 弹 Daily limit reached 提示即成功（已领取同判定）；落地页网络差时常渲染失败需刷新重试；MetaMask 为中文界面（适配器按 testid 定位）',
     category: 'faucet',
     lastUpdated: '2026-08-31',
