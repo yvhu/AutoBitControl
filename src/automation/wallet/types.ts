@@ -24,6 +24,8 @@ export interface PopupPage {
   getByTestId(id: string): PopupLocator
   locator(selector: string): PopupLocator
   waitForEvent(event: string, opts?: { timeout?: number }): Promise<void>
+  /** 弹窗页是否已关闭（真实 Page.isClosed；mock 可不提供） */
+  isClosed?(): boolean
 }
 
 /**

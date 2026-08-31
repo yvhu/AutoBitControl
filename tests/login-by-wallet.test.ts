@@ -11,7 +11,15 @@ vi.mock('../src/automation/wallet/popup', () => ({
 import { waitForPopup } from '../src/automation/wallet/popup'
 
 function makeLocator(over: Partial<PopupLocator> = {}): PopupLocator {
-  return { click: async () => {}, fill: async () => {}, press: async () => {}, first() { return this }, ...over }
+  return {
+    click: async () => {},
+    fill: async () => {},
+    press: async () => {},
+    count: async () => 1,
+    waitFor: async () => {},
+    first() { return this },
+    ...over,
+  }
 }
 
 function makePopup(over: Partial<PopupPage> = {}): PopupPage {
@@ -21,6 +29,7 @@ function makePopup(over: Partial<PopupPage> = {}): PopupPage {
     getByTestId: () => makeLocator(),
     locator: () => makeLocator(),
     waitForEvent: async () => {},
+    isClosed: () => false,
     ...over,
   }
 }

@@ -23,6 +23,7 @@ function makePopup(over: Partial<PopupPage> = {}): PopupPage {
     getByTestId: () => makeLocator(),
     locator: () => makeLocator(),
     waitForEvent: async () => {},
+    isClosed: () => false,
     ...over,
   }
 }
@@ -60,6 +61,122 @@ describe('waitForPopup', () => {
   })
 })
 
+describe('MetaMaskAdapter 解锁轮询', () => {
+  it('解锁框立即渲染：填密码提交后等解锁页消失即成功', async () => {
+    const adapter = new MetaMaskAdapter()
+    const filled: string[] = []
+    const clicked: string[] = []
+    const popup = makePopup({
+      getByTestId: (id: string) => {
+        if (id === 'unlock-password') return makeLocator({ fill: async (t: string) => { filled.push(t) } })
+        if (id === 'unlock-page') return makeLocator({ waitFor: async () => {} })
+        if (id === 'unlock-submit') return makeLocator({ click: async () => { clicked.push(id) } })
+        return makeLocator({ count: async () => 0 })
+      },
+    })
+    await adapter.unlock!(popup, 'secret123')
+    expect(filled).toEqual(['secret123'])
+    expect(clicked).toEqual(['unlock-submit'])
+  })
+
+  it('解锁框延迟渲染：轮询等到出现后解锁成功', async () => {
+    const adapter = new MetaMaskAdapter()
+    const filled: string[] = []
+    let renders = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => {
+        if (id === 'unlock-password') {
+          return makeLocator({
+            count: async () => { renders++; return renders > 5 ? 1 : 0 },
+            fill: async (t: string) => { filled.push(t) },
+          })
+        }
+        if (id === 'unlock-page') return makeLocator({ waitFor: async () => {} })
+        return makeLocator({ count: async () => 0 })
+      },
+    })
+    await adapter.unlock!(popup, 'secret123')
+    expect(filled).toEqual(['secret123'])
+  })
+
+  it('弹窗直接是连接确认页（已解锁）：等 confirm-btn 出现后跳过解锁', async () => {
+    const adapter = new MetaMaskAdapter()
+    let renders = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({ count: async () => { renders++; return renders > 3 ? 1 : 0 } })
+        : makeLocator({ count: async () => 0 }),
+    })
+    await adapter.unlock!(popup, 'secret123')
+  })
+
+  it('解锁密码错误：解锁页未离开则抛错', async () => {
+    const adapter = new MetaMaskAdapter()
+    const popup = makePopup({
+      getByTestId: (id: string) => {
+        if (id === 'unlock-page') return makeLocator({ waitFor: async () => { throw new Error('仍在解锁页') } })
+        return makeLocator()
+      },
+    })
+    await expect(adapter.unlock!(popup, 'bad')).rejects.toThrow(/解锁失败/)
+  })
+
+  it('20s 无任何状态抛错', async () => {
+    const adapter = new MetaMaskAdapter()
+    const popup = makePopup({ getByTestId: () => makeLocator({ count: async () => 0 }) })
+    await expect(adapter.unlock!(popup, 'secret123')).rejects.toThrow(/弹窗状态未出现/)
+  })
+
+  it('弹窗已关闭：立即返回', async () => {
+    const adapter = new MetaMaskAdapter()
+    const filled: string[] = []
+    const popup = makePopup({
+      isClosed: () => true,
+      getByTestId: () => makeLocator({ count: async () => 1, fill: async (t: string) => { filled.push(t) } }),
+    })
+    await adapter.unlock!(popup, 'secret123')
+    expect(filled).toEqual([])
+  })
+})
+
+describe('MetaMaskAdapter 连接确认', () => {
+  it('确认按钮延迟渲染：等到出现点击，弹窗关闭即成功', async () => {
+    const adapter = new MetaMaskAdapter()
+    let clicks = 0
+    let renders = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({ count: async () => { renders++; return renders > 2 ? 1 : 0 }, click: async () => { clicks++ } })
+        : makeLocator({ count: async () => 0 }),
+      // 角色名兜底不生效：confirm-btn 延迟渲染期间没有可点按钮
+      getByRole: () => makeLocator({ count: async () => 0 }),
+      waitForEvent: async () => {},
+    })
+    await adapter.ensureConnected(popup)
+    expect(clicks).toBe(1)
+  })
+
+  it('close 事件不来但连接页消失也判成功（先存在后消失）', async () => {
+    const adapter = new MetaMaskAdapter()
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({ count: async () => 1, click: async () => {} })
+        : makeLocator({ count: async () => (id === 'connect-page' ? 1 : 0), waitFor: async () => {} }),
+      waitForEvent: async () => { throw new Error('close 事件永不触发') },
+    })
+    await adapter.ensureConnected(popup)
+  })
+
+  it('3 轮无确认按钮抛错', async () => {
+    const adapter = new MetaMaskAdapter()
+    const popup = makePopup({
+      getByTestId: () => makeLocator({ count: async () => 0 }),
+      getByRole: () => makeLocator({ count: async () => 0 }),
+    })
+    await expect(adapter.ensureConnected(popup)).rejects.toThrow(/连接确认未完成/)
+  })
+})
+
 describe('ensureConnected 重试循环', () => {
   it('testid 确认按钮：弹窗未关闭时多次点击直到关闭', async () => {
     const adapter = new MetaMaskAdapter()
@@ -69,7 +186,7 @@ describe('ensureConnected 重试循环', () => {
       // testid 路径命中（confirm-btn 存在且可点），getByRole 不应被使用
       getByTestId: (id: string) => id === 'confirm-btn'
         ? makeLocator({ click: async () => { clicks++ } })
-        : makeLocator({ click: async () => { throw new Error('不可点') } }),
+        : makeLocator({ count: async () => 0, waitFor: async () => { throw new Error('连接页未消失') } }),
       waitForEvent: async () => {
         closes++
         if (closes < 2) throw new Error('未关闭')
@@ -85,7 +202,7 @@ describe('ensureConnected 重试循环', () => {
     const popup = makePopup({
       // 全部 testid 候选均不存在（count=0）
       getByTestId: () => makeLocator({ count: async () => 0 }),
-      getByRole: () => makeLocator({ click: async () => { roleClicks++ } }),
+      getByRole: () => makeLocator({ count: async () => 1, click: async () => { roleClicks++ } }),
       waitForEvent: async () => {},
     })
     await adapter.ensureConnected(popup)
@@ -98,7 +215,7 @@ describe('ensureConnected 重试循环', () => {
     const popup = makePopup({
       getByTestId: (id: string) => id === 'confirm-btn'
         ? makeLocator({ click: async () => { clicks++ } })
-        : makeLocator({ count: async () => 0 }),
+        : makeLocator({ count: async () => 0, waitFor: async () => { throw new Error('连接页未消失') } }),
       waitForEvent: async () => { throw new Error('永不关闭') },
     })
     await expect(adapter.ensureConnected(popup)).rejects.toThrow(/连接确认未完成/)
@@ -107,50 +224,6 @@ describe('ensureConnected 重试循环', () => {
 })
 
 describe('MetaMaskAdapter', () => {
-  it('unlock 填写密码并提交（解锁后弹窗关闭）', async () => {
-    const filled: string[] = []
-    const clicked = { count: 0 }
-    const adapter = new MetaMaskAdapter()
-    const popup = makePopup({
-      getByTestId: (id: string) => id === 'unlock-password'
-        ? makeLocator({ fill: async (t: string) => { filled.push(t) } })
-        : makeLocator({ click: async () => { clicked.count++ } }),
-      // 弹窗关闭即解锁成功
-      waitForEvent: async () => {},
-    })
-    await adapter.unlock!(popup, 'secret123')
-    expect(filled).toEqual(['secret123'])
-    expect(clicked.count).toBe(1)
-  })
-
-  it('unlock 弹窗不关闭时等解锁页消失即成功（新版切连接确认页）', async () => {
-    const adapter = new MetaMaskAdapter()
-    const popup = makePopup({
-      getByTestId: () => makeLocator({ waitFor: async () => {} }),
-      waitForEvent: async () => { throw new Error('未关闭') },
-    })
-    await adapter.unlock!(popup, 'secret123')
-  })
-
-  it('unlock 密码错误解锁页未离开则抛错', async () => {
-    const adapter = new MetaMaskAdapter()
-    const popup = makePopup({
-      getByTestId: () => makeLocator({ waitFor: async () => { throw new Error('仍在解锁页') } }),
-      waitForEvent: async () => { throw new Error('未关闭') },
-    })
-    await expect(adapter.unlock!(popup, 'bad')).rejects.toThrow(/解锁失败/)
-  })
-
-  it('unlock 钱包已解锁（无密码框）直接跳过', async () => {
-    const adapter = new MetaMaskAdapter()
-    const filled: string[] = []
-    const popup = makePopup({
-      getByTestId: () => makeLocator({ count: async () => 0, fill: async (t: string) => { filled.push(t) } }),
-    })
-    await adapter.unlock!(popup, 'secret123')
-    expect(filled).toEqual([])
-  })
-
   it('ensureConnected 点击确认按钮', async () => {
     const clicked = { count: 0 }
     const adapter = new MetaMaskAdapter()
