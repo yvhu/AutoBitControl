@@ -22,7 +22,7 @@ const EXAMPLE_WHITELIST = ['example-checkin.ts', 'faucet-example.ts', 'mint-exam
  * @swagger
  * /api/docs/guide:
  *   get:
- *     summary: API 使用手册 markdown 原文（前端 marked 渲染）
+ *     summary: API 使用手册 markdown 原文（前端 react-markdown 渲染）
  *     responses:
  *       '200':
  *         description: 手册内容
@@ -88,7 +88,7 @@ const EXAMPLE_WHITELIST = ['example-checkin.ts', 'faucet-example.ts', 'mint-exam
 
 export function docsRouter(): Router {
   const router = Router()
-  // 使用手册：原样返回 markdown 内容，前端用 marked 渲染
+  // 使用手册：原样返回 markdown 内容，前端用 react-markdown 渲染
   router.get('/docs/guide', asyncHandler(async (req, res) => {
     ok(res, { content: readFileSync(GUIDE_PATH, 'utf-8') })
   }))

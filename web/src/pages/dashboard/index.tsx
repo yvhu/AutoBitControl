@@ -18,6 +18,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  theme,
 } from 'antd'
 import { SearchOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -54,11 +55,12 @@ function DistributionCard({ data }: { data: DashboardData }) {
 }
 
 function CaptchaCard({ data }: { data: DashboardData }) {
+  const { token } = theme.useToken()
   const costYuan = (data.captcha.totalCost / 1000).toFixed(2)
   return (
     <Card title="验证码" size="small">
       <Statistic value={costYuan} precision={2} prefix="¥" />
-      <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
+      <div style={{ marginTop: 4, color: token.colorTextSecondary, fontSize: 12 }}>
         今日 {data.captcha.count} 次消费
       </div>
     </Card>
@@ -66,11 +68,12 @@ function CaptchaCard({ data }: { data: DashboardData }) {
 }
 
 function LiveCard({ data }: { data: DashboardData }) {
+  const { token } = theme.useToken()
   const s = data.stats
   return (
     <Card title="实时运行" size="small">
       <Statistic value={s.running} />
-      <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>
+      <div style={{ marginTop: 4, color: token.colorTextSecondary, fontSize: 12 }}>
         窗口 {data.profilesTotal} / 启用 {data.profilesEnabled}
       </div>
     </Card>
@@ -78,6 +81,7 @@ function LiveCard({ data }: { data: DashboardData }) {
 }
 
 function CompleteCard({ data, loading }: { data: DashboardData | undefined; loading: boolean }) {
+  const { token } = theme.useToken()
   const s = data?.stats
   const total = s?.total ?? 0
   const done = (s?.success ?? 0) + (s?.failed ?? 0) + (s?.captchaFailed ?? 0) + (s?.skipped ?? 0)
@@ -88,7 +92,7 @@ function CompleteCard({ data, loading }: { data: DashboardData | undefined; load
         <Progress type="circle" percent={loading ? 0 : pct} size={64} format={(p) => `${p}%`} />
         <div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>{loading ? '—' : `${done} / ${total}`}</div>
-          <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }}>窗口任务完成</div>
+          <div style={{ color: token.colorTextSecondary, fontSize: 12 }}>窗口任务完成</div>
         </div>
       </div>
     </Card>
@@ -97,6 +101,7 @@ function CompleteCard({ data, loading }: { data: DashboardData | undefined; load
 
 export default function DashboardPage() {
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [date, setDate] = useState<Dayjs>(dayjs())
   const [taskFilter, setTaskFilter] = useState<string | undefined>(undefined)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -143,7 +148,7 @@ export default function DashboardPage() {
           </Avatar>
           <span>
             {name}
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
               {(bitbrowserOf(r.profileId) ?? '').slice(0, 8)}
             </div>
           </span>

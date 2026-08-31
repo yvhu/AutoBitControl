@@ -14,6 +14,7 @@ import {
   Tag,
   Timeline,
   Typography,
+  theme,
 } from 'antd'
 import { CopyOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -48,6 +49,7 @@ function runTime(r: RunRow): string {
 
 export default function ProfilesPage() {
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [search, setSearch] = useState('')
   const [detailId, setDetailId] = useState<number | null>(null)
 
@@ -93,7 +95,7 @@ export default function ProfilesPage() {
           </Avatar>
           <span>
             {p.name}
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{(p.bitbrowserId ?? '').slice(0, 8)}</div>
+            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>{(p.bitbrowserId ?? '').slice(0, 8)}</div>
           </span>
         </Space>
       ),

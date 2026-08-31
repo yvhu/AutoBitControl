@@ -43,10 +43,21 @@ export interface paths {
                                 deprecated?: boolean;
                                 enabled?: boolean;
                                 wallet?: string | null;
-                                schedule?: string | null;
+                                /** @description cron 字符串或错峰窗口对象 {stagger:[start,end]} */
+                                schedule?: Record<string, never> | null;
                                 timeoutSec?: number | null;
-                                retry?: number | null;
-                                captcha?: boolean | null;
+                                retry?: {
+                                    /** @description 额外重试次数 */
+                                    max?: number;
+                                    /** @description 重试间隔（秒） */
+                                    backoffSec?: number;
+                                } | null;
+                                captcha?: {
+                                    /** @description 是否自动打码 */
+                                    auto?: boolean;
+                                    /** @description 单任务费用上限（点） */
+                                    maxCost?: number;
+                                } | null;
                             }[];
                         };
                     };
@@ -629,7 +640,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** API 使用手册 markdown 原文（前端 marked 渲染） */
+        /** API 使用手册 markdown 原文（前端 react-markdown 渲染） */
         get: {
             parameters: {
                 query?: never;

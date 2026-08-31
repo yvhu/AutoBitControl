@@ -25,24 +25,8 @@ export type RunRow = EnvelopeData<'/api/dashboard'>['runs'][number]
 
 export type DashboardData = EnvelopeData<'/api/dashboard'>
 
-// 任务 meta 的 schedule/retry/captcha 在 OpenAPI 里被简化成了标量（后端 spec 注释偏差），
-// 此处按后端实际返回的对象结构声明
-export interface TaskMetaView {
-  key: string
-  name: string
-  url: string
-  sourceUrl: string | null
-  note: string | null
-  category: 'checkin' | 'faucet' | 'mint' | 'other' | null
-  lastUpdated: string | null
-  deprecated: boolean
-  enabled: boolean
-  wallet: string | null
-  schedule: string | { stagger: [string, string] } | null
-  timeoutSec: number | null
-  retry: { max: number; backoffSec: number } | null
-  captcha: { auto?: boolean; maxCost?: number } | null
-}
+// 任务 meta 视图：与 /api/tasks envelope data 一致（schedule/retry/captcha 均为对象或 null，见 server 注解）
+export type TaskMetaView = EnvelopeData<'/api/tasks'>[number]
 
 export type SettingsBase = EnvelopeData<'/api/settings'>
 

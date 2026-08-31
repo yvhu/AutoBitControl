@@ -36,7 +36,7 @@ npm start           # 单进程启动后端，直出 web/dist 构建产物
 
 Web 面板：http://127.0.0.1:3000 （另附 /api-docs Swagger 接口文档，可当场试调）
 
-> 生产模式必须先前端构建（`npm run build:web`）：后端按顺序托管 `web/dist`（构建产物）→ `src/server/public`（兼容旧版占位），未构建时面板不可用。
+> 生产模式必须先前端构建（`npm run build:web`）：后端托管 `web/dist`（构建产物，前端唯一来源）；未构建时访问面板会显示提示页（提示先运行 `npm run build:web`）。
 
 ## 开机自启（pm2）
 
@@ -90,3 +90,5 @@ chcp 65001
 ```powershell
 npm test
 ```
+
+> `npm test` 包含 `GET /` 面板页面断言，运行前需先 `npm run build:web` 构建前端。

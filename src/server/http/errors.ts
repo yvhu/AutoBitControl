@@ -8,6 +8,7 @@
 /** 业务错误码表：与 HTTP 状态码联动（code = status*100 + 序号） */
 export const ERROR_CODES = {
   INVALID_ARGUMENT: 40000,
+  GENERIC_NOT_FOUND: 40400,
   TASK_NOT_FOUND: 40401,
   PROFILE_NOT_FOUND: 40402,
   SCREENSHOT_NOT_FOUND: 40403,

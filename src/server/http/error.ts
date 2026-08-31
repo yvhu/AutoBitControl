@@ -15,7 +15,7 @@ export { HttpError }
 /** /api 前缀下未匹配路由的兜底 404（业务码 40400 = 404*100，泛化"接口不存在"，无细分实体） */
 export function notFoundHandler(): RequestHandler {
   return (req, res) => {
-    fail(res, 404, 40400, `接口不存在: ${req.method} ${req.path}`)
+    fail(res, 404, ERROR_CODES.GENERIC_NOT_FOUND, `接口不存在: ${req.method} ${req.path}`)
   }
 }
 

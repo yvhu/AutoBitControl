@@ -41,10 +41,23 @@ import type { SiteTask } from '../../tasks/base'
  *                       deprecated: { type: boolean }
  *                       enabled: { type: boolean }
  *                       wallet: { type: string, nullable: true }
- *                       schedule: { type: string, nullable: true }
+ *                       schedule:
+ *                         type: object
+ *                         nullable: true
+ *                         description: cron 字符串或错峰窗口对象 {stagger:[start,end]}
  *                       timeoutSec: { type: integer, nullable: true }
- *                       retry: { type: integer, nullable: true }
- *                       captcha: { type: boolean, nullable: true }
+ *                       retry:
+ *                         type: object
+ *                         nullable: true
+ *                         properties:
+ *                           max: { type: integer, description: 额外重试次数 }
+ *                           backoffSec: { type: integer, description: 重试间隔（秒） }
+ *                       captcha:
+ *                         type: object
+ *                         nullable: true
+ *                         properties:
+ *                           auto: { type: boolean, description: 是否自动打码 }
+ *                           maxCost: { type: integer, description: 单任务费用上限（点） }
  */
 
 /**
