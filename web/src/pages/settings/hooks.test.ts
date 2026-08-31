@@ -1,20 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { datasourceText, formatBalance, pointsToYuan } from './hooks'
-
-describe('pointsToYuan', () => {
-  it('1000 点 = ¥1', () => {
-    expect(pointsToYuan(1000)).toBe(1)
-  })
-
-  it('2500 点 = ¥2.5', () => {
-    expect(pointsToYuan(2500)).toBe(2.5)
-  })
-
-  it('四舍五入到分', () => {
-    expect(pointsToYuan(333)).toBe(0.33)
-    expect(pointsToYuan(1)).toBe(0)
-  })
-})
+import { datasourceText, formatBalance } from './hooks'
 
 describe('formatBalance', () => {
   it('已配置 → N 点（¥X）', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { render, renderHook, act } from '@testing-library/react'
 import { useThemeMode } from './useThemeMode'
 
 describe('useThemeMode', () => {
@@ -35,6 +35,30 @@ describe('useThemeMode', () => {
     act(() => result.current.setMode('light'))
     expect(result.current.mode).toBe('light')
     expect(localStorage.getItem('abc-theme')).toBe('light')
+  })
+
+  it('跨实例同步：任一实例 setMode 后其它实例读同一存储值', () => {
+    const refs: { first: ReturnType<typeof useThemeMode> | null; second: ReturnType<typeof useThemeMode> | null } = {
+      first: null,
+      second: null,
+    }
+    function First() {
+      refs.first = useThemeMode()
+      return null
+    }
+    function Second() {
+      refs.second = useThemeMode()
+      return null
+    }
+    render(
+      <>
+        <First />
+        <Second />
+      </>,
+    )
+    act(() => refs.first!.setMode('dark'))
+    expect(refs.first!.mode).toBe('dark')
+    expect(refs.second!.mode).toBe('dark')
   })
 
   it('system 态跟随 prefers-color-scheme', () => {

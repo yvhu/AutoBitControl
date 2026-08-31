@@ -7,11 +7,6 @@ const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失�
 
 export type BalanceInfo = { configured: boolean; points: number; yuan: number }
 
-/** 点数 → 金额：1000 点 = ¥1（保留 2 位小数） */
-export function pointsToYuan(points: number): number {
-  return Math.round((points / 1000) * 100) / 100
-}
-
 /** 余额展示文案：已配置 → `N 点（¥X）`；未配置 → 未配置 Key（与旧版 settings.js 一致） */
 export function formatBalance(b: BalanceInfo): string {
   return b.configured ? `${b.points.toLocaleString()} 点（¥${b.yuan}）` : '未配置 Key'

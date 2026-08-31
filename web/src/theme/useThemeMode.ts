@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 export type ThemeMode = 'light' | 'dark' | 'system'
 
 const KEY = 'abc-theme'
+const EVENT = 'abc-theme-change'
 
 function systemDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -24,9 +25,16 @@ export function useThemeMode() {
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
+  useEffect(() => {
+    const onChange = () => setModeState(readStored())
+    window.addEventListener(EVENT, onChange)
+    return () => window.removeEventListener(EVENT, onChange)
+  }, [])
+
   const setMode = useCallback((m: ThemeMode) => {
-    setModeState(m)
     localStorage.setItem(KEY, m)
+    setModeState(m)
+    window.dispatchEvent(new CustomEvent(EVENT))
   }, [])
 
   return { mode, setMode, effective: mode === 'system' ? (system ? 'dark' : 'light') : mode }
