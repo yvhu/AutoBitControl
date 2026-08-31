@@ -72,10 +72,13 @@ export class MetaMaskAdapter implements WalletAdapter {
       await btn.click()
       const closed = await popup.waitForEvent('close', { timeout: 6000 }).then(() => true).catch(() => false)
       if (closed) return
-      // close 事件没来：连接页若已消失（先确认过存在）同样视为完成
+      // close 事件没来：连接页若已消失（先确认过存在——detached 对从未出现的元素立即成功，必须 count 校验）
+      const cp = popup.getByTestId('connect-page').first()
       try {
-        await popup.getByTestId('connect-page').first().waitFor?.({ state: 'detached', timeout: 6000 })
-        return
+        if (cp.count && (await cp.count()) > 0) {
+          await cp.waitFor?.({ state: 'detached', timeout: 6000 })
+          return
+        }
       } catch {
         // 连接页仍在（可能进入下一步确认），继续下一轮
       }

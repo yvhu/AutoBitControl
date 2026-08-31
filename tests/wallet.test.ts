@@ -158,13 +158,18 @@ describe('MetaMaskAdapter 连接确认', () => {
 
   it('close 事件不来但连接页消失也判成功（先存在后消失）', async () => {
     const adapter = new MetaMaskAdapter()
+    let cpCounts = 0
     const popup = makePopup({
-      getByTestId: (id: string) => id === 'confirm-btn'
-        ? makeLocator({ count: async () => 1, click: async () => {} })
-        : makeLocator({ count: async () => (id === 'connect-page' ? 1 : 0), waitFor: async () => {} }),
+      getByTestId: (id: string) => {
+        if (id === 'confirm-btn') return makeLocator({ count: async () => 1, click: async () => {} })
+        if (id === 'connect-page') return makeLocator({ count: async () => { cpCounts++; return 1 }, waitFor: async () => {} })
+        return makeLocator({ count: async () => 0 })
+      },
       waitForEvent: async () => { throw new Error('close 事件永不触发') },
     })
     await adapter.ensureConnected(popup)
+    // 守卫语义：detached 判定前必须先 count 确认连接页存在（守卫被绕过时 count 不被调用，用例失败）
+    expect(cpCounts).toBeGreaterThan(0)
   })
 
   it('3 轮无确认按钮抛错', async () => {
