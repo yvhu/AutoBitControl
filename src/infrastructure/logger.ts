@@ -37,8 +37,8 @@ function terminalSupportsAnsi(): boolean {
   return Boolean(process.env.WT_SESSION || process.env.TERM || process.env.ANSICON || process.env.ConEmuANSI)
 }
 
-/** 无颜色纯文本布局（文件与无色终端共用）：`[时间] 级别 消息` */
-const PLAIN_PATTERN = '[%d{yyyy-MM-dd hh:mm:ss}] %p %m'
+/** 无颜色纯文本布局（文件与无色终端共用）：`[时间] 级别 消息`（毫秒精度） */
+const PLAIN_PATTERN = '[%d{yyyy-MM-dd hh:mm:ss.SSS}] %p %m'
 
 /** 滚动后文件名的正则（streamroller 把 yyyy-MM-dd pattern 拼到 app.log 后面）：app.log.2026-08-31 */
 const ROLLED_LOG_RE = /^app\.log\.(\d{4}-\d{2}-\d{2})$/
@@ -114,7 +114,7 @@ export function createLogger(cfg: AppConfig): Logger {
   mkdirSync(cfg.storage.logDir, { recursive: true })
   // 颜色策略：显式配置优先，否则按终端能力自动检测（Git Bash/WT 有色，老式 PowerShell 无色）
   const colorize = cfg.storage.prettyColorize ?? terminalSupportsAnsi()
-  const patternStr = colorize ? `%[[%d{yyyy-MM-dd hh:mm:ss}]%] %[%p%] %m` : PLAIN_PATTERN
+  const patternStr = colorize ? `%[[%d{yyyy-MM-dd hh:mm:ss.SSS}]%] %[%p%] %m` : PLAIN_PATTERN
   const retainDays = cfg.storage.logRetainDays ?? 7
   // 每次调用都完整 configure：单进程单配置场景无并发问题；测试等多次 createLogger（不同临时目录）场景下也各自正确生效
   log4js.configure({

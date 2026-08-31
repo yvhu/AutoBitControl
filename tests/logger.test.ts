@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { formatArgs } from '../src/infrastructure/logger'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { shutdown } from 'log4js'
+import { formatArgs, createLogger } from '../src/infrastructure/logger'
 
 describe('formatArgs', () => {
   it('单字符串原样透传', () => {
@@ -33,5 +37,18 @@ describe('formatArgs', () => {
 
   it('对象 + 非字符串第二参只序列化对象本身', () => {
     expect(formatArgs([{ a: 1 }, 42])).toEqual(['{"a":1}'])
+  })
+})
+
+describe('createLogger 毫秒时间戳', () => {
+  it('文件与终端日志时间精确到毫秒（yyyy-MM-dd HH:mm:ss.SSS）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-log-ms-'))
+    const logger = createLogger({
+      storage: { logDir: dir, logLevel: 'info', prettyColorize: false, logRetainDays: 2 },
+    } as never)
+    logger.info('毫秒测试')
+    await new Promise<void>((r) => shutdown(() => r()))
+    const line = readFileSync(join(dir, 'app.log'), 'utf-8').trim()
+    expect(line).toMatch(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] INFO 毫秒测试$/)
   })
 })
