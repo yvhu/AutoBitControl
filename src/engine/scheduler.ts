@@ -8,8 +8,10 @@ import { Cron } from 'croner'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { AppDb, ProfileRow } from '../infrastructure/db'
-import type { TaskMeta } from './task'
+import { isIntervalSchedule, type TaskMeta } from './task'
 import type { CoalescingEnqueuer } from './queue'
+
+export { isIntervalSchedule }
 
 /**
  * 在 [start, end] 分钟区间内随机取一分钟（含两端），返回"今天"该时刻的 Date
@@ -42,6 +44,20 @@ export function staggerToCron(start: string, end: string): string {
   return `${t.getMinutes()} ${t.getHours()} * * *`
 }
 
+/** 间隔调度缓冲：到期判定在锚点+N 小时基础上再加 60s，吸收时钟抖动/代理延迟/多进程时间差 */
+export const INTERVAL_BUFFER_MS = 60_000
+
+/**
+ * 间隔调度是否到期：无锚点（从未成功过）→ 立即触发；否则 now >= 锚点 + N 小时 + 缓冲
+ * @param lastFiredAt 最近一次成功 finished_at（毫秒 ISO，可 null）
+ */
+export function intervalDue(lastFiredAt: string | null, everyHours: number, bufferMs: number, nowMs: number): boolean {
+  if (!lastFiredAt) return true
+  const anchor = new Date(lastFiredAt).getTime()
+  if (Number.isNaN(anchor)) return true
+  return nowMs >= anchor + everyHours * 3_600_000 + bufferMs
+}
+
 /**
  * 调度器：start() 遍历任务注册表建 cron，stop() 全部停止（进程退出时调用）
  * 跳过规则（与 docs/API-GUIDE.md「跳过规则」一致）：
@@ -56,6 +72,12 @@ export class Scheduler {
   private staggerRefreshKeys = new Set<string>()
   /** 日更刷新 cron（taskKey → cron，00:01 触发，为每个 stagger 任务重选当日时间） */
   private staggerRefreshers = new Map<string, Cron>()
+  /** 间隔任务（key → 每 N 小时）；分钟 tick 统一判定触发 */
+  private intervalTasks = new Map<string, number>()
+  /** 间隔任务下次允许触发时刻（毫秒时间戳）：触发后 N 小时内不重复触发（失败不重触发，等待任务级重试） */
+  private intervalNextAllow = new Map<string, number>()
+  /** 分钟 tick cron（存在间隔任务时注册一个，共用于全部间隔任务） */
+  private intervalTick: Cron | null = null
 
   constructor(
     private cfg: AppConfig,
@@ -72,8 +94,9 @@ export class Scheduler {
    */
   refreshStagger(taskKey: string): void {
     const task = this.tasks.get(taskKey)
-    if (!task?.meta.schedule || typeof task.meta.schedule === 'string') return
-    const [start, end] = task.meta.schedule.stagger
+    const schedule = task?.meta.schedule
+    if (!schedule || typeof schedule === 'string' || isIntervalSchedule(schedule)) return
+    const [start, end] = schedule.stagger
     const cron = staggerToCron(start, end)
     const old = this.staggerJobs.get(taskKey)
     if (old) old.stop()
@@ -85,6 +108,34 @@ export class Scheduler {
       this.staggerRefreshers.set(taskKey, refresher)
     }
     this.logger.info({ task: taskKey, cron }, '任务已调度')
+  }
+
+  /** 确保分钟 tick cron 已注册（有间隔任务时共用同一个 tick，无间隔任务时无需注册） */
+  private ensureIntervalTick(): void {
+    if (this.intervalTick) return
+    this.intervalTick = new Cron('* * * * *', { timezone: this.cfg.execution.timezone }, () => {
+      void this.tickIntervals().catch((e) => this.logger.warn({ err: (e as Error).message }, '间隔任务 tick 异常'))
+    })
+  }
+
+  /**
+   * 间隔任务分钟 tick：逐个判定是否到期，到期则触发（public 供测试注入 nowMs）
+   * 候选集取自任务注册表（间隔形态，跳过 deprecated/无 url 任务，停用守卫在 fireNow 内），
+   * 触发后把该任务 nextAllow 推后 N 小时——即使本轮失败也不会分钟级重复触发，
+   * 失败补偿靠任务级重试；成功后锚点前移，nextAllow 到点后再按新锚点判定
+   */
+  async tickIntervals(nowMs = Date.now()): Promise<void> {
+    for (const task of this.tasks.values()) {
+      const schedule = task.meta.schedule
+      if (!isIntervalSchedule(schedule)) continue
+      if (task.meta.deprecated || !task.meta.url) continue
+      const key = task.meta.key
+      if (nowMs < (this.intervalNextAllow.get(key) ?? 0)) continue
+      const anchor = await this.db.getTaskFiredAt(key)
+      if (!intervalDue(anchor, schedule.everyHours, INTERVAL_BUFFER_MS, nowMs)) continue
+      this.intervalNextAllow.set(key, nowMs + schedule.everyHours * 3_600_000)
+      await this.fireNow(key).catch((e) => this.logger.warn({ task: key, err: (e as Error).message }, '间隔任务触发失败'))
+    }
   }
 
   /**
@@ -110,6 +161,10 @@ export class Scheduler {
       const job = new Cron(cron, { timezone: this.cfg.execution.timezone }, () => this.fireSafely(task.meta.key))
       this.jobs.set(task.meta.key, job)
       this.logger.info({ task: task.meta.key, cron }, '任务已调度')
+    } else if (isIntervalSchedule(task.meta.schedule)) {
+      this.intervalTasks.set(task.meta.key, task.meta.schedule.everyHours)
+      this.ensureIntervalTick()
+      this.logger.info({ task: task.meta.key, everyHours: task.meta.schedule.everyHours }, '任务已调度（每 N 小时）')
     } else {
       this.refreshStagger(task.meta.key)
     }
@@ -129,6 +184,12 @@ export class Scheduler {
         const refresher = this.staggerRefreshers.get(taskKey)
         if (refresher) { refresher.stop(); this.staggerRefreshers.delete(taskKey) }
         this.staggerRefreshKeys.delete(taskKey)
+        this.intervalTasks.delete(taskKey)
+        this.intervalNextAllow.delete(taskKey)
+        if (this.intervalTasks.size === 0 && this.intervalTick) {
+          this.intervalTick.stop()
+          this.intervalTick = null
+        }
         const task = this.tasks.get(taskKey)
         if (task) await this.registerTask(task)
       } catch (e) {
@@ -140,7 +201,7 @@ export class Scheduler {
   /** 为每个任务建 cron 定时器 */
   async start(): Promise<void> {
     // 重入保护：已注册过任务时先停旧任务再重新注册（保证可重入且不产生重复 cron）
-    if (this.jobs.size > 0 || this.staggerJobs.size > 0) {
+    if (this.jobs.size > 0 || this.staggerJobs.size > 0 || this.intervalTasks.size > 0) {
       this.logger.warn('调度器已启动，先停止旧任务再重新注册')
       this.stop()
     }
@@ -158,6 +219,9 @@ export class Scheduler {
     this.staggerRefreshKeys.clear()
     for (const r of this.staggerRefreshers.values()) r.stop()
     this.staggerRefreshers.clear()
+    if (this.intervalTick) { this.intervalTick.stop(); this.intervalTick = null }
+    this.intervalTasks.clear()
+    this.intervalNextAllow.clear()
   }
 
   /**

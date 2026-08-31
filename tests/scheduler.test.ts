@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { pickRandomTimeInWindow, staggerToCron, Scheduler } from '../src/engine/scheduler'
+import { pickRandomTimeInWindow, staggerToCron, Scheduler, intervalDue, isIntervalSchedule } from '../src/engine/scheduler'
 
 describe('pickRandomTimeInWindow', () => {
   it('随机时间落在窗口内', () => {
@@ -228,5 +228,81 @@ describe('Scheduler', () => {
     await new Promise(r => setTimeout(r, 0))
     expect(warn).toHaveBeenCalledWith({ task: 't1', err: 'cloud blip' }, '刷新任务调度失败')
     sched.stop()
+  })
+})
+
+describe('intervalDue', () => {
+  it('无锚点视为到期（立即触发首轮）', () => {
+    expect(intervalDue(null, 8, 60000, Date.now())).toBe(true)
+  })
+
+  it('锚点 + N 小时 + 缓冲之前未到期', () => {
+    const now = Date.parse('2026-08-31T08:00:00.000Z')
+    expect(intervalDue('2026-08-31T00:00:00.000Z', 8, 60000, now)).toBe(false)
+  })
+
+  it('锚点 + N 小时 + 缓冲之后到期', () => {
+    const now = Date.parse('2026-08-31T08:01:01.000Z')
+    expect(intervalDue('2026-08-31T00:00:00.000Z', 8, 60000, now)).toBe(true)
+  })
+
+  it('非法锚点按无锚点处理（到期）', () => {
+    expect(intervalDue('not-a-date', 8, 60000, Date.now())).toBe(true)
+  })
+})
+
+describe('isIntervalSchedule', () => {
+  it('识别间隔形态与其它形态', () => {
+    expect(isIntervalSchedule({ everyHours: 8 })).toBe(true)
+    expect(isIntervalSchedule({ stagger: ['09:00', '11:00'] })).toBe(false)
+    expect(isIntervalSchedule('0 8 * * *')).toBe(false)
+    expect(isIntervalSchedule(undefined)).toBe(false)
+    expect(isIntervalSchedule(null)).toBe(false)
+  })
+})
+
+describe('Scheduler 间隔任务', () => {
+  function makeIntervalDeps(getTaskFiredAt: ReturnType<typeof vi.fn>) {
+    const db = {
+      listProfiles: vi.fn().mockResolvedValue([]),
+      getTaskEnabled: vi.fn().mockResolvedValue(true),
+      getTaskFiredAt,
+    } as never
+    const enqueue = vi.fn()
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never
+    const scheduler = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db, new Map([
+      ['iv', { meta: { key: 'iv', url: 'https://a.io', schedule: { everyHours: 8 } } }],
+    ]) as never, { enqueue } as never, logger)
+    return { db, enqueue, scheduler }
+  }
+
+  it('无锚点首轮 tick 触发，触发后 N 小时内不再触发', async () => {
+    const { enqueue, scheduler } = makeIntervalDeps(vi.fn().mockResolvedValue(null))
+    const t0 = Date.parse('2026-08-31T08:00:00.000Z')
+    await scheduler.tickIntervals(t0)
+    expect(enqueue).toHaveBeenCalledTimes(0) // listProfiles 为空窗口，fireNow 不入队
+    // 用有窗口的库再验一次：触发行为由 fireNow 决定，这里直接验证 nextAllow 抑制逻辑
+    const db2 = {
+      listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }]),
+      getTaskEnabled: vi.fn().mockResolvedValue(true),
+      getTaskFiredAt: vi.fn().mockResolvedValue(null),
+    } as never
+    const enqueue2 = vi.fn()
+    const s2 = new Scheduler({ execution: { timezone: 'Asia/Shanghai' } } as never, db2, new Map([
+      ['iv', { meta: { key: 'iv', url: 'https://a.io', schedule: { everyHours: 8 } } }],
+    ]) as never, { enqueue: enqueue2 } as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
+    await s2.tickIntervals(t0)
+    expect(enqueue2).toHaveBeenCalledTimes(1)
+    await s2.tickIntervals(t0 + 3_600_000)
+    expect(enqueue2).toHaveBeenCalledTimes(1) // 8 小时内不重复触发
+    await s2.tickIntervals(t0 + 8 * 3_600_000 + 61_000)
+    expect(enqueue2).toHaveBeenCalledTimes(2) // 到期后再次触发
+    s2.stop()
+  })
+
+  it('锚点未到缓冲期不触发', async () => {
+    const { enqueue, scheduler } = makeIntervalDeps(vi.fn().mockResolvedValue('2026-08-31T00:00:00.000Z'))
+    await scheduler.tickIntervals(Date.parse('2026-08-31T08:00:30.000Z'))
+    expect(enqueue).toHaveBeenCalledTimes(0)
   })
 })

@@ -25,7 +25,8 @@ export interface TaskMeta {
   deprecated?: boolean
   /** 任务开关（纯代码开关）：false 时调度器跳过、窗口"立即跑"排除、手动触发接口 409；改后需重启生效 */
   enabled?: boolean
-  schedule?: string | { stagger: [string, string] }
+  /** 调度配置：cron 字符串（固定时间点）/ stagger（每日错峰窗口）/ everyHours（每 N 小时间隔，锚点=最近一次成功完成时刻） */
+  schedule?: string | { stagger: [string, string] } | { everyHours: number }
   /** 登录用钱包的 key（对应 WalletRegistry 注册表） */
   wallet?: string
   /** 单次运行超时（秒，缺省用 execution.taskTimeoutMs） */
@@ -39,4 +40,9 @@ export interface TaskMeta {
 /** 任务引用（runner 内部持有的最小视图） */
 export interface TaskRef {
   meta: TaskMeta
+}
+
+/** 是否间隔调度（每 N 小时）——调度器与窗口执行器共用判定 */
+export function isIntervalSchedule(s: TaskMeta['schedule'] | null): s is { everyHours: number } {
+  return typeof s === 'object' && s !== null && 'everyHours' in s && typeof (s as { everyHours?: unknown }).everyHours === 'number'
 }
