@@ -223,7 +223,7 @@ describe('WindowRunner', () => {
         if (attempts < 3) throw new Error('SOCKS 失败')
       }),
     } as never
-    const ok = await runner.probeForTest(page)
+    const ok = await runner.probeWithRetry(page)
     expect(ok).toBe(true)
     expect(attempts).toBe(3)
   })
@@ -231,7 +231,7 @@ describe('WindowRunner', () => {
   it('IP 探活三次全失败返回 false', async () => {
     const runner = makeRunner({})
     const page = { goto: vi.fn().mockRejectedValue(new Error('失败')) } as never
-    expect(await runner.probeForTest(page)).toBe(false)
+    expect(await runner.probeWithRetry(page)).toBe(false)
   })
 
   it('CDP 连接失败标记 failed 且不抛异常', async () => {

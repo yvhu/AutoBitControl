@@ -134,7 +134,7 @@ export class WindowRunner {
       }
       const page = connected.page
       // IP 探活：代理 IP 未生效时整窗口跳过，避免用错误 IP 跑任务触发风控
-      const probeOk = await this.probeForTest(page)
+      const probeOk = await this.probeWithRetry(page)
       if (!probeOk) {
         for (const key of taskKeys) {
           const slot = await this.nextSlot(profile, key, date)
@@ -204,7 +204,7 @@ export class WindowRunner {
    * 访问探活地址校验 IP 生效：3 次尝试、每次 30s 超时、间隔 5s——
    * S5 代理连接建立初期常失败，单次判定会把整窗口误跳过
    */
-  async probeForTest(page: Page): Promise<boolean> {
+  async probeWithRetry(page: Page): Promise<boolean> {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await page.goto(this.deps.cfg.execution.probeUrl, { timeout: 30000, waitUntil: 'domcontentloaded' })

@@ -181,7 +181,7 @@ export class TaskContext {
 
   /**
    * 钱包登录全流程：等钱包弹窗 → 有密码则解锁 → 点连接确认
-   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 15s 内未出现
+   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 30s 内未出现
    */
   async loginByWallet(): Promise<void> {
     const walletKey = this.deps.task.meta.wallet
