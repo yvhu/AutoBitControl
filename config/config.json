@@ -6,7 +6,7 @@
     "retryBackoffMs": [5000, 30000, 120000]
   },
   "execution": {
-    "concurrency": 6,
+    "concurrency": 5,
     "windowTimeoutMs": 900000,
     "taskTimeoutMs": 180000,
     "retryMax": 2,
