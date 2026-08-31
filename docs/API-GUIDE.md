@@ -157,7 +157,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `key` | `string` | 无（必填） | 全局唯一标识。API 路由（`/api/tasks/:key/trigger`）、数据库 runs 表、调度器都用它 |
 | `name` | `string` | 无（必填） | 面板任务页显示名 |
 | `url` | `string` | 无（必填，可为 `''`） | 站点入口页 URL，`goto()` 从这里开始。空串 → 调度器跳过，仅可手动触发 |
-| `sourceUrl` | `string?` | `undefined` | 信息来源页：记录选择器是从哪个页面确认的，站点改版时回这里重查（排错见[第 10 章](#10-排错)） |
+| `sourceUrl` | `string \| string[]` | `undefined` | 信息来源页：选择器从哪个页面确认的，站点改版时回这里重查；多步骤分别核实时可给多个地址 |
 | `note` | `string?` | `undefined` | 备注，面板任务页直接可见，记录站点的坑与特殊逻辑 |
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |

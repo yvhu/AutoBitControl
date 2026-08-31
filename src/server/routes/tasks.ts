@@ -34,7 +34,7 @@ import type { SiteTask } from '../../tasks/base'
  *                       key: { type: string }
  *                       name: { type: string }
  *                       url: { type: string }
- *                       sourceUrl: { type: string, nullable: true }
+ *                       sourceUrl: { type: string, nullable: true, description: '信息来源页（string 或 string[]，多个页面分别核实不同步骤）' }
  *                       note: { type: string, nullable: true }
  *                       category: { type: string, nullable: true }
  *                       lastUpdated: { type: string, nullable: true }

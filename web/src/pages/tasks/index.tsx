@@ -47,9 +47,13 @@ function TaskCard({ task }: { task: TaskMetaView }) {
           )}
           {task.sourceUrl && (
             <div style={{ marginTop: 4, fontSize: 12 }}>
-              <Typography.Link href={task.sourceUrl} target="_blank" rel="noreferrer">
-                🔗 来源页
-              </Typography.Link>
+              <Space size="small" wrap>
+                {(Array.isArray(task.sourceUrl) ? task.sourceUrl : [task.sourceUrl]).map((u, i) => (
+                  <Typography.Link key={u} href={u} target="_blank" rel="noreferrer">
+                    🔗 来源页{i > 0 ? i + 1 : ''}
+                  </Typography.Link>
+                ))}
+              </Space>
             </div>
           )}
         </div>

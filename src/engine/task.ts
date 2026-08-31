@@ -16,8 +16,8 @@ export interface TaskMeta {
   key: string
   name: string
   url: string
-  /** 信息来源页：选择器是从哪个页面确认的，站点改版时回这里重查 */
-  sourceUrl?: string
+  /** 信息来源页：选择器是从哪个页面确认的，站点改版时回这里重查；可多个（多个页面分别核实不同步骤） */
+  sourceUrl?: string | string[]
   /** 备注：站点的坑与特殊逻辑，面板任务页直接可见 */
   note?: string
   category?: 'checkin' | 'faucet' | 'mint' | 'other'

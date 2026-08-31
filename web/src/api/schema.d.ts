@@ -36,7 +36,7 @@ export interface paths {
                                 key?: string;
                                 name?: string;
                                 url?: string;
-                                sourceUrl?: string | null;
+                                sourceUrl?: (string | string[]) | null;
                                 note?: string | null;
                                 category?: string | null;
                                 lastUpdated?: string | null;
