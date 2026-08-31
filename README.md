@@ -70,7 +70,7 @@ BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run
 
 ## Windows 中文乱码
 
-Git Bash 原生 UTF-8，无需处理。PowerShell 5.1 默认 GBK 代码页会乱码，运行前执行一次：
+本项目日志已改为字符串直写路径（WriteConsoleW），Git Bash / VS Code 终端 / PowerShell 均正常显示中文，无需任何设置。若仍遇到其它命令行工具输出乱码（Windows 控制台默认 GBK 代码页所致），在 PowerShell 执行一次：
 
 ```powershell
 chcp 65001
