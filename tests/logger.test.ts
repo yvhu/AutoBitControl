@@ -26,4 +26,12 @@ describe('formatArgs', () => {
   it('多参透传（首参为字符串时其余参数原样保留）', () => {
     expect(formatArgs(['msg', 'x', 1])).toEqual(['msg', 'x', 1])
   })
+
+  it('单对象参数序列化为 JSON 字符串（不产出 [object Object]）', () => {
+    expect(formatArgs([{ a: 1 }])).toEqual(['{"a":1}'])
+  })
+
+  it('对象 + 非字符串第二参只序列化对象本身', () => {
+    expect(formatArgs([{ a: 1 }, 42])).toEqual(['{"a":1}'])
+  })
 })

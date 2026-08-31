@@ -54,13 +54,13 @@ pm2 startup   # 按提示执行输出的命令
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
 云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs/task_states）。
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按窗口配置（JSON 映射，`{"窗口ID":"密码",...}`，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
-日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，到期自动清理历史日志文件）。
+日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，保留最近 N 天；启动时与按天滚动时均清理过期文件）。
 
 ## 日志
 
 - 终端实时输出：`[时间] 级别 消息`，中文正常显示无乱码；颜色按终端能力自动检测（`storage.prettyColorize` 可强制开关）
 - 文件：`data/logs/app.log`（当天）＋ `data/logs/app.log.<日期>`（按天滚动，如 `app.log.2026-08-31`），纯文本一行一条
-- 历史文件保留 N 天：`storage.logRetainDays`（默认 7），到期由日志库自动删除
+- 历史文件保留最近 N 天：`storage.logRetainDays`（默认 7），启动时与按天滚动时均清理过期文件（numBackups=N 表示保留 N 个归档 + 当前文件，共 N+1 个）
 
 ## 冒烟测试
 
