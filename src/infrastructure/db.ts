@@ -41,6 +41,8 @@ export interface RunRow {
   taskKey: string
   /** 本地时区日期 YYYY-MM-DD（每日唯一键的一部分） */
   date: string
+  /** 当日第几轮（0 起）：每日一次的任务恒为 0；间隔任务一天多轮各占一行 */
+  slot: number
   status: RunStatus
   attempts: number
   error: string | null
@@ -84,13 +86,14 @@ const SCHEMA = [
     profile_id INTEGER NOT NULL REFERENCES profiles(id),
     task_key TEXT NOT NULL,
     date TEXT NOT NULL,
+    slot INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
     error TEXT,
     screenshot TEXT,
     started_at TEXT,
     finished_at TEXT,
-    UNIQUE(profile_id, task_key, date)
+    UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
   `CREATE TABLE IF NOT EXISTS captcha_logs (
@@ -104,7 +107,8 @@ const SCHEMA = [
   )`,
   `CREATE TABLE IF NOT EXISTS task_states (
     task_key TEXT PRIMARY KEY,
-    enabled INTEGER NOT NULL DEFAULT 1
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_fired_at TEXT
   )`,
   // 窗口打开状态登记表：主进程（面板打开/关闭）与 task:run 脚本跨进程共享，
   // 一行 = 一个已打开的窗口（http 调试地址供 CDP 复用）；pid 是否存活由调用方实测
@@ -116,7 +120,7 @@ const SCHEMA = [
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
-const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id`
 
 /** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
 type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
@@ -156,6 +160,42 @@ export class AppDb {
     ]
     for (const [col, type] of extraCols) {
       if (!existing.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
+    }
+    // 老库补列：task_states.last_fired_at（间隔调度锚点，毫秒 ISO）
+    const tsInfo = await this.client.execute(`PRAGMA table_info(task_states)`)
+    if (!tsInfo.rows.some((r) => String(r.name) === 'last_fired_at')) {
+      await this.client.execute(`ALTER TABLE task_states ADD COLUMN last_fired_at TEXT`)
+    }
+    // 老库重建：runs 表加 slot 列 + 唯一键改为 (profile_id, task_key, date, slot)——
+    // SQLite 无法 ALTER 删除表级 UNIQUE 约束，必须建新表迁移数据（事务内完成，中断自动回滚）
+    const runsInfo = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo.rows.some((r) => String(r.name) === 'slot')) {
+      const tx = await this.client.transaction('write')
+      try {
+        await tx.execute(`ALTER TABLE runs RENAME TO runs_old`)
+        await tx.execute(`CREATE TABLE runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          profile_id INTEGER NOT NULL REFERENCES profiles(id),
+          task_key TEXT NOT NULL,
+          date TEXT NOT NULL,
+          slot INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          screenshot TEXT,
+          started_at TEXT,
+          finished_at TEXT,
+          UNIQUE(profile_id, task_key, date, slot)
+        )`)
+        await tx.execute(`INSERT INTO runs (id, profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at)
+          SELECT id, profile_id, task_key, date, 0, status, attempts, error, screenshot, started_at, finished_at FROM runs_old`)
+        await tx.execute(`DROP TABLE runs_old`)
+        await tx.execute(`CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`)
+        await tx.commit()
+      } catch (e) {
+        await tx.rollback().catch(() => {})
+        throw e
+      }
     }
   }
 
@@ -209,6 +249,27 @@ export class AppDb {
     await this.exec('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled', [taskKey, enabled ? 1 : 0])
   }
 
+  /** 读间隔调度锚点（最近一次成功 finished_at，毫秒 ISO；无记录 null） */
+  async getTaskFiredAt(taskKey: string): Promise<string | null> {
+    const rows = await this.exec(`SELECT last_fired_at AS lastFiredAt FROM task_states WHERE task_key = ?`, [taskKey])
+    const v = rows[0]?.lastFiredAt
+    return v ? String(v) : null
+  }
+
+  /**
+   * 回写间隔调度锚点（毫秒 ISO）：只增不减（多窗口并发成功时取最晚时刻），
+   * 不覆盖 enabled 位（首次写入补默认 enabled=1 行）
+   */
+  async setTaskFiredAt(taskKey: string, iso: string): Promise<void> {
+    await this.exec(
+      `INSERT INTO task_states (task_key, enabled, last_fired_at) VALUES (?, 1, ?)
+       ON CONFLICT(task_key) DO UPDATE SET last_fired_at = CASE
+         WHEN task_states.last_fired_at IS NULL OR excluded.last_fired_at > task_states.last_fired_at
+         THEN excluded.last_fired_at ELSE task_states.last_fired_at END`,
+      [taskKey, iso],
+    )
+  }
+
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */
   async incrCircuitBreaker(profileId: number): Promise<number> {
     await this.exec('UPDATE profiles SET circuit_breaker_count = circuit_breaker_count + 1 WHERE id = ?', [profileId])
@@ -228,26 +289,38 @@ export class AppDb {
    * 设计权衡：ON CONFLICT 更新时 started_at/finished_at 用 COALESCE 保留——
    * started_at 取首次值（标记真正开始时刻），finished_at 保留已有值不被中间状态覆盖
    */
-  async upsertRun(profileId: number, taskKey: string, date: string, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
+  async upsertRun(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
     await this.exec(
-      `INSERT INTO runs (profile_id, task_key, date, status, attempts, error, screenshot, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(profile_id, task_key, date) DO UPDATE SET
+      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(profile_id, task_key, date, slot) DO UPDATE SET
          status = excluded.status,
          attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
          error = excluded.error,
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at)`,
-      [profileId, taskKey, date, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
+      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
     )
-    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`, [profileId, taskKey, date])
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return rows[0] as unknown as RunRow
   }
 
-  /** 查询单条运行记录（不存在返回 null） */
-  async getRun(profileId: number, taskKey: string, date: string): Promise<RunRow | null> {
-    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ?`, [profileId, taskKey, date])
+  /** 查询单条运行记录（按轮次；不存在返回 null） */
+  async getRun(profileId: number, taskKey: string, date: string, slot: number): Promise<RunRow | null> {
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return (rows[0] as unknown as RunRow | undefined) ?? null
+  }
+
+  /** 查询当日最近一轮运行记录（slot 最大的一行；无记录返回 null——重试续跑与新增轮次判定用） */
+  async getLatestRun(profileId: number, taskKey: string, date: string): Promise<RunRow | null> {
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? ORDER BY r.slot DESC LIMIT 1`, [profileId, taskKey, date])
+    return (rows[0] as unknown as RunRow | undefined) ?? null
+  }
+
+  /** 当日下一轮序号：MAX(slot)+1（无记录返回 0） */
+  async nextRunSlot(profileId: number, taskKey: string, date: string): Promise<number> {
+    const rows = await this.exec(`SELECT COALESCE(MAX(slot), -1) + 1 AS nextSlot FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`, [profileId, taskKey, date])
+    return Number(rows[0]?.nextSlot ?? 0)
   }
 
   /** 某天的全部运行记录（面板矩阵/统计用，按窗口与任务排序） */
