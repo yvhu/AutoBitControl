@@ -23,6 +23,7 @@ import StatusPill from '../../components/StatusPill'
 import type { ProfileRow, RunRow, RunStatus } from '../../types'
 import {
   filterProfiles,
+  profileSorters,
   useBreakerThreshold,
   useCloseProfile,
   useOpenProfile,
@@ -88,10 +89,14 @@ export default function ProfilesPage() {
     }
   }
 
+  const successOf = (p: ProfileRow) => (runsByProfile.get(p.id) ?? []).filter((r) => r.status === 'success').length
+
   const columns: ColumnsType<ProfileRow> = [
     {
       title: '窗口',
       key: 'window',
+      sorter: profileSorters.name,
+      defaultSortOrder: 'ascend',
       render: (_, p) => (
         <Space size="small">
           <Avatar size="small" style={{ background: 'var(--ant-color-primary, #1677ff)' }}>
@@ -113,6 +118,7 @@ export default function ProfilesPage() {
       title: '今日结果',
       key: 'today',
       width: 130,
+      sorter: profileSorters.success(successOf),
       render: (_, p) => {
         const mine = runsByProfile.get(p.id) ?? []
         const ok = mine.filter((r) => r.status === 'success').length
@@ -133,6 +139,7 @@ export default function ProfilesPage() {
       title: '熔断',
       key: 'breaker',
       width: 170,
+      sorter: profileSorters.breaker,
       render: (_, p) => {
         const count = p.circuitBreakerCount
         const pct = threshold > 0 ? Math.min(100, Math.round((count / threshold) * 100)) : 0
@@ -156,6 +163,7 @@ export default function ProfilesPage() {
       title: '启用',
       key: 'enabled',
       width: 90,
+      sorter: profileSorters.enabled,
       render: (_, p) => (
         <Switch
           checked={p.enabled === 1}

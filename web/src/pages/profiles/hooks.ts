@@ -26,6 +26,14 @@ export function filterProfiles(profiles: ProfileRow[], query: string): ProfileRo
   )
 }
 
+/** 窗口表列排序比较器（antd Table sorter，返回负数 a 在前；名称按中文拼音序） */
+export const profileSorters = {
+  name: (a: ProfileRow, b: ProfileRow) => a.name.localeCompare(b.name, 'zh-CN'),
+  breaker: (a: ProfileRow, b: ProfileRow) => a.circuitBreakerCount - b.circuitBreakerCount,
+  enabled: (a: ProfileRow, b: ProfileRow) => a.enabled - b.enabled,
+  success: (successOf: (p: ProfileRow) => number) => (a: ProfileRow, b: ProfileRow) => successOf(a) - successOf(b),
+}
+
 export function useProfiles() {
   return useQuery({
     queryKey: ['profiles'],
