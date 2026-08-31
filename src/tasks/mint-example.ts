@@ -35,7 +35,7 @@ export class MintExampleTask extends SiteTask {
     // 第二步：描述与数量
     await ctx.typeInto('textarea[name="description"]', faker.lorem.sentence())
     await ctx.typeInto('input[name="amount"]', String(faker.number.int({ min: 1, max: 100 })))
-    // 提交：站点会唤起钱包弹窗；框架自动等待弹窗并点确认（密码已在窗口配置）
+    // 提交：站点会唤起钱包弹窗；框架自动等待弹窗并点确认（密码已按钱包类型配置）
     await ctx.clickCheckin('#mint-submit')
     // 断言链上结果提示：等待"交易已提交/成功"文案，超时则任务失败进入重试
     await ctx.assertVisible('.tx-success', 30000)

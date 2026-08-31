@@ -69,7 +69,7 @@ export interface StorageConfig {
   logRetainDays?: number
 }
 
-/** 钱包配置：窗口解锁密码映射（key 为比特窗口 ID，值环境变量 WALLET_PASSWORDS 优先） */
+/** 钱包配置：解锁密码映射（key 为钱包类型，如 metamask/petra，值环境变量 WALLET_PASSWORDS 优先） */
 export interface WalletConfig {
   passwords: Record<string, string>
   /** WALLET_PASSWORDS 存在但解析失败时为 true（启动时告警提示检查 JSON 格式） */
@@ -153,7 +153,7 @@ const defaults: AppConfig = {
     // 历史日志文件保留 7 天，到期由 log4js 自动清理
     logRetainDays: 7,
   },
-  // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供
+  // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供（key 为钱包类型，如 metamask/petra，同类型钱包共用同一密码）
   wallet: { passwords: {} },
   // 账号数据源：默认 config/accounts.xlsx（文件不存在时仅告警，任务用 faker 兜底）
   dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
@@ -221,7 +221,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     const port = Number(env.WEB_PORT)
     if (Number.isInteger(port) && port > 0 && port < 65536) cfg.web.port = port
   }
-  // 钱包密码：WALLET_PASSWORDS 为 JSON 映射字符串（{"窗口ID":"密码"}），解析成功时与配置文件值合并（env 覆盖同名 key）
+  // 钱包密码：WALLET_PASSWORDS 为 JSON 映射字符串（{"metamask":"密码"}，key 为钱包类型），解析成功时与配置文件值合并（env 覆盖同名 key）
   // 解析失败不抛错，保留配置值并置 parseError 标记（app 启动时告警提示检查 JSON 格式）
   if (env.WALLET_PASSWORDS) {
     try {

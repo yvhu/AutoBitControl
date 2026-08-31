@@ -35,7 +35,7 @@ export class ExampleCheckinTask extends SiteTask {
   async run(ctx: TaskContext): Promise<void> {
     // goto：打开 url，失败自动重试 3 次（2s-5s 退避）
     await ctx.goto()
-    // loginByWallet：等站点唤起钱包弹窗 → 自动解锁（密码按窗口配置）→ 点连接
+    // loginByWallet：等站点唤起钱包弹窗 → 自动解锁（密码按钱包类型配置）→ 点连接
     await ctx.loginByWallet()
     // clickCheckin：拟人点击签到按钮，并断言成功后出现的元素
     // 选择器查找：DevTools 右键按钮 → Copy → Copy selector

@@ -53,7 +53,7 @@ export interface WindowRunnerDeps {
   captcha: CaptchaService | null
   logger: Logger
   artifactsDir: string
-  /** 钱包解锁密码映射（key 为比特窗口 ID，透传给 TaskContext） */
+  /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
   walletPasswords: Record<string, string>
   /**
    * 重试退避调度（不占窗口）：retry_wait 后由装配层 setTimeout 到期重新入队，

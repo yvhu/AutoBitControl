@@ -600,24 +600,24 @@ await ctx.closeModal({ close: ['.popup-close'] })
 
 `meta.wallet` 指定适配器 key（目前内置 `'metamask'` 与 `'petra'`），`loginByWallet()` 按此查找。任务未配置 wallet 时调用会抛 `任务未配置钱包`。
 
-### 窗口级密码配置
+### 钱包类型级密码配置
 
-钱包解锁密码是**窗口级**的（每个窗口的钱包密码可能不同），通过环境变量 `WALLET_PASSWORDS` 配置（JSON 字符串，映射比特窗口 ID → 密码）：
+钱包解锁密码是**钱包类型级**的：同一种钱包在所有窗口共用同一个密码（如 100 个窗口的 MetaMask 密码都一样，只写一条），通过环境变量 `WALLET_PASSWORDS` 配置（JSON 字符串，映射钱包类型 key → 密码，key 与任务 `meta.wallet` 一致）：
 
 ```env
 # config/.env（或部署环境变量）
-WALLET_PASSWORDS={"bb-1001":"钱包解锁密码","bb-1002":"另一个密码"}
+WALLET_PASSWORDS={"metamask":"MetaMask 解锁密码","petra":"Petra 解锁密码"}
 ```
 
 也可以在 `config/config.json` / `config/config.local.json` 的 `wallet.passwords` 对象中配置：
 
 ```json
 {
-  "wallet": { "passwords": { "bb-1001": "钱包解锁密码" } }
+  "wallet": { "passwords": { "metamask": "MetaMask 解锁密码", "petra": "Petra 解锁密码" } }
 }
 ```
 
-两者并存时环境变量覆盖同名 key。**修改后需重启服务生效**。密码 key 取窗口的比特浏览器窗口 ID（面板「窗口」页可见）。仅当窗口配置了密码时，`loginByWallet` 才会调用适配器的 `unlock`。
+两者并存时环境变量覆盖同名 key。**修改后需重启服务生效**。密码 key 取钱包类型（`metamask` / `petra`，与 `meta.wallet` 一致）。仅当该钱包类型配置了密码时，`loginByWallet` 才会调用适配器的 `unlock`（未配置则跳过解锁、直接点连接）。
 
 ### 弹窗识别机制
 
@@ -895,7 +895,7 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 | `execution` | `concurrency`、`windowTimeoutMs`、`probeUrl`、`timezone`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：窗口并发默认 6；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`timezone` 是 cron 时区；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
 | `web` | `host`、`port` | 面板监听地址，默认 `127.0.0.1:3000`（仅本机可访问）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口 |
-| `wallet` | `passwords` | 窗口解锁密码映射（比特窗口 ID → 密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
+| `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是**遗留字段**——数据层已全走云端数据库，云库模式下不生效，无需配置 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 
@@ -994,7 +994,7 @@ async run(ctx: TaskContext): Promise<void> {
   // 2. 清掉公告弹窗：依次尝试点关闭按钮 → 点遮罩空白处 → 按 Esc，最后验证弹窗容器消失
   await ctx.closeModal({ close: ['.announce-close'], mask: '.announce-mask', gone: '.announce-modal' })
 
-  // 3. 钱包登录：等站点唤起钱包弹窗 → 按窗口配置的密码解锁 → 点"连接"确认
+  // 3. 钱包登录：等站点唤起钱包弹窗 → 按钱包类型配置的密码解锁 → 点"连接"确认
   await ctx.loginByWallet()
 
   // 4. 点击签到按钮，并断言成功后出现的徽章（宁严勿松）
@@ -1272,3 +1272,106 @@ if (done) return   // 今日已做 → 直接成功
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板矩阵行内可点开截图。
 - **日志**：`data/logs/app.log`（当天，纯文本 `[时间] 级别 消息`）＋ `data/logs/app.log.<日期>`（按天滚动的历史文件，如 `app.log.2026-08-31`，保留最近 N 天由 `config.json` 的 `storage.logRetainDays` 控制，默认 7 天——启动时与滚动时均清理过期文件，numBackups=N 表示保留 N 个归档 + 当前文件，共 N+1 个；级别由 `storage.logLevel` 控制，控制台同步输出，error 及以上走 stderr、其余走 stdout）；任务失败时日志携带 `status/err`。
 - **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。各状态含义、进入条件与面板颜色见[第 9 章「任务的一生（状态流转）」](#任务的一生状态流转)。
+
+---
+
+## 附录：AI 帮写任务的自然语言描述模板
+
+> 新增任务不用自己写代码：照下面的模板把需求用自然语言描述清楚，丢给 AI（opencode 等）帮你写。带 ✅ 的是必填项，其余选填——不填时 AI 按默认值处理或访问网站自行确认。选择器（按钮/输入框的定位规则）你给不给都行：给得出 AI 直接用，给不出 AI 访问网站自己核实。
+
+### 填空模板（直接复制，按提示填写）
+
+```text
+【新任务】
+
+✅ 任务名称（面板上显示的名字）：
+✅ 任务 key（英文小写 + 连字符，如 my-checkin，全局唯一，起完尽量不改）：
+✅ 任务类型（四选一：checkin 签到 / faucet 领水 / mint 铸币 / other 其他）：
+✅ 网站地址（任务入口 URL，浏览器地址栏那串，https:// 开头）：
+✅ 登录方式（metamask / petra / 邮箱密码 / 无需登录 / 其他，见下说明）：
+
+✅ 操作步骤（用自然语言一步步描述，按你亲手点网页的顺序写）：
+  第 1 步：
+  第 2 步：
+  第 3 步：
+
+✅ 成功判定（做完之后，页面上出现什么让你确认「成功了」？文案/标志尽量写页面原文）：
+✅ 已领取判定（今天已经领过时页面显示什么文案？站点没有这种状态就写「无」）：
+
+——以下选填，不填按默认处理——
+
+调度时间（每天几点/多久一次，或「不调度、只手动触发」）：
+验证码（有/无。类型按长相描述：Cloudflare 转圈 / 谷歌「我不是机器人」勾选框 / 九宫格选图 / 图片识别文字 / 看不到但疑似有 / 不知道）：
+弹窗（打开页面会弹公告/新手引导吗？怎么关掉）：
+数据源（需要每个窗口用不同数据吗？如邮箱/邀请码，列名叫什么）：
+选择器（会用 DevTools 就附上按钮/输入框的选择器；不会就写「AI 帮找」）：
+重点关注（这个站点的坑：改版频繁、风控严、有倒计时……你知道什么写什么）：
+备注（其他想交代的）：
+```
+
+### 字段怎么填（逐条说明）
+
+| 字段 | 必填 | 怎么填 | 不填/填错会怎样 |
+| --- | --- | --- | --- |
+| 任务名称 | ✅ | 面板任务页卡片显示的名字，中文即可，一眼认出是哪个站 | 起得太随便，以后看板分不清谁是谁 |
+| 任务 key | ✅ | 英文小写 + 连字符（如 `my-checkin`）。全局唯一标识，数据库/API/调度都用它 | 重复会冲突；中途改 key 等于换新任务，历史记录对不上 |
+| 任务类型 | ✅ | 四选一：`checkin` 签到（每天打卡领奖励，绿徽章）/ `faucet` 领水（水龙头领少量代币，蓝徽章）/ `mint` 铸币（铸造 NFT/代币，黄徽章）/ `other` 其他（以上都不算，灰徽章） | 只影响面板徽章颜色，不影响运行 |
+| 网站地址 | ✅ | 浏览器地址栏完整 URL。若任务实际从某个子页面开始（活动页），填那个子页 | 打不开页面，任务直接失败 |
+| 登录方式 | ✅ | 四选一或描述：`metamask` / `petra`（见[第 4 章](#4-钱包弹窗)）/ 邮箱密码（账号密码写进步骤里）/ 其他（描述怎么登录）/ 无需登录 | 登录不上，后续步骤全挂 |
+| 操作步骤 | ✅ | 按你亲手点网页的顺序写，越具体越好：点哪个按钮（按钮上写的什么字）、往哪个框输什么、要不要等。**不用管选择器怎么写**，描述「按钮上的字」即可，AI 会去找 | 越模糊 AI 越要靠猜，第一版越可能返工 |
+| 成功判定 | ✅ | 成功后才出现的文案/徽章，尽量写页面原文（语言、大小写）。这是断言依据，见[第 9 章「成功断言写法」](#成功断言写法) | 没判定 = AI 只能猜，可能把「点到按钮」误当成功 |
+| 已领取判定 | ✅ | 今天已领过时页面显示的提示原文（如 `Please wait 24 hours`）；没有这种状态写「无」 | 不写可能重复领取触发风控，或天天报失败 |
+| 调度时间 | 选填 | 自然语言即可：「每天 9 点」「每天 10-12 点随机」「每 4 小时一次」「不调度只手动」 | 默认不调度（只手动触发），见[第 7 章](#7-调度) |
+| 验证码 | 选填 | 有没有、长什么样，按支持列表对号入座（详见[第 5 章](#5-验证码)）：`turnstile`（Cloudflare 转圈）＝ 一个小方框，点一下转圈就过；或 Cloudflare 的「确认你是人类」勾选框（勾完转圈通过）；`recaptcha_v2` ＝ 谷歌「我不是机器人」勾选框，点完可能弹九宫格选图；`hcaptcha` ＝ hCaptcha 勾选框，样子类似谷歌；`image` ＝ 图片上写字/数字要你认；`recaptcha_v3` ＝ 页面看不到（隐形后台打分），一般不需要描述。拿不准写「不知道」 | 不知道时 AI 按支持列表常规处理，试跑再确认 |
+| 弹窗 | 选填 | 打开会不会弹公告/新手引导挡住按钮？关闭按钮长什么样（右上角 X？「知道了」？） | AI 默认不处理，被挡住时试跑失败再补 `closeModal` |
+| 数据源 | 选填 | 哪些输入内容每个窗口不一样（邮箱/邀请码/收款地址…），准备写在 `config/accounts.xlsx` 的哪一列 | 内容无所谓的内容 AI 用 faker 随机（见[第 9 章「数据源与 faker」](#数据源与-faker)） |
+| 选择器 | 选填 | DevTools 右键元素 → Copy → Copy selector（见[第 3 章「选择器查找技巧」](#选择器查找技巧)）。不会用就写「AI 帮找」 | AI 访问网站自己核实 |
+| 重点关注 | 选填 | 你知道的坑：站点改版频繁、风控严、有倒计时、必须固定时间等 | AI 按常规写法，坑可能踩一遍才发现 |
+| 备注 | 选填 | 其他想交代的（参考页面、历史改动…），会写进 `meta.note` 面板可见 | — |
+
+### 填写示例
+
+假设要给一个叫 ZooFaucet 的领水站写任务，模板填好长这样：
+
+```text
+【新任务】
+
+✅ 任务名称：ZooFaucet 领水
+✅ 任务 key：zoo-faucet
+✅ 任务类型：faucet
+✅ 网站地址：https://zoofaucet.example.com/
+✅ 登录方式：metamask
+
+✅ 操作步骤：
+  第 1 步：打开网站，弹出一个公告弹窗，点右上角 X 关掉
+  第 2 步：点页面上的「Connect Wallet」按钮，等钱包弹窗 → 解锁 → 确认连接
+  第 3 步：在邮箱输入框输入邮箱（每个窗口不一样，用数据源「邮箱」列）
+  第 4 步：点「Claim」按钮，点击时会弹 Cloudflare 验证码，自动打码
+  第 5 步：等绿色提示「Claimed! 0.01 ETH sent」
+
+✅ 成功判定：页面出现绿色提示「Claimed! 0.01 ETH sent」
+✅ 已领取判定：页面出现「Please wait 24 hours」，直接算成功（今天已经领过了）
+
+——以下选填，不填按默认处理——
+
+调度时间：每天 10:00-12:00 随机（错峰）
+验证码：有，Cloudflare turnstile
+弹窗：打开有公告弹窗，右上角 X 关闭
+数据源：需要「邮箱」列
+选择器：AI 帮找
+重点关注：站点改版频繁，成功文案偶尔变化，每周核对一次
+备注：参考页面 https://zoofaucet.example.com/docs
+```
+
+AI 拿到这段会写出约 20 行的任务文件（结构同[第 9 章「配方二：领水一条龙」](#配方二领水一条龙)），并在 `src/tasks/index.ts` 注册。
+
+### 提交后会发生什么
+
+模板提交后，AI 按下面的流程走，你只在关键节点确认：
+
+1. **补问缺失信息**：必填缺失或描述有歧义时，AI 逐条追问，不瞎编。
+2. **写任务代码**：新建 `src/tasks/<key>.ts`（写好 `meta` 与 `run`），并在 `src/tasks/index.ts` 的 `ALL` 数组注册。
+3. **本地测试**：跑 `npm test` 确认代码没有语法/逻辑错误。
+4. **真机试跑**：AI 给你单窗口试跑命令 `BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<key> npm run task:run`（见 README「冒烟测试」），你在真实窗口验证。
+5. **你验收优化**：看面板结果与截图，把不对的地方（点错按钮、文案不一致、选择器失效）告诉 AI，改到跑通为止。
+6. **上线**：面板任务页打开开关，调度器按 `schedule` 每天自动接管（见[第 7 章](#7-调度)）。
