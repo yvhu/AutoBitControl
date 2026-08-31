@@ -65,6 +65,8 @@ export interface StorageConfig {
   logLevel: string
   /** 终端日志颜色：true/false 强制开关，缺省按终端能力自动检测（Git Bash/WT 有色，老式 PowerShell 无色） */
   prettyColorize?: boolean
+  /** 日志文件保留天数（按天滚动的历史文件保留 N 天，默认 7） */
+  logRetainDays?: number
 }
 
 /** 钱包配置：窗口解锁密码映射（key 为比特窗口 ID，值环境变量 WALLET_PASSWORDS 优先） */
@@ -148,6 +150,8 @@ const defaults: AppConfig = {
     screenshotDir: join(DEFAULT_ROOT, 'data', 'screenshots'),
     logDir: join(DEFAULT_ROOT, 'data', 'logs'),
     logLevel: 'info',
+    // 历史日志文件保留 7 天，到期由 log4js 自动清理
+    logRetainDays: 7,
   },
   // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供
   wallet: { passwords: {} },

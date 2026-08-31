@@ -1,13 +1,29 @@
 import { describe, it, expect } from 'vitest'
-import { ConsoleUtf8 } from '../src/infrastructure/logger'
+import { formatArgs } from '../src/infrastructure/logger'
 
-describe('ConsoleUtf8', () => {
-  it('Buffer 与字符串输入都按 UTF-8 字符串写出（GBK 控制台不乱码的关键路径）', async () => {
-    const out: string[] = []
-    const w = new ConsoleUtf8((s, cb) => { out.push(s); cb() })
-    w.write(Buffer.from('中文测试\n'))
-    w.write('第二行\n')
-    await new Promise(r => setTimeout(r, 50))
-    expect(out.join('')).toBe('中文测试\n第二行\n')
+describe('formatArgs', () => {
+  it('单字符串原样透传', () => {
+    expect(formatArgs(['任务完成'])).toEqual(['任务完成'])
+  })
+
+  it('(obj, msg) 两参合并为 消息 + JSON', () => {
+    expect(formatArgs([{ a: 1, b: 'x' }, '任务完成'])).toEqual(['任务完成 {"a":1,"b":"x"}'])
+  })
+
+  it('循环引用对象不抛错（回退 String）', () => {
+    const o: Record<string, unknown> = {}
+    ;(o as { self: unknown }).self = o
+    const out = formatArgs([o, '循环'])
+    expect(out[0]).toContain('循环')
+    expect(out[0]).not.toContain('undefined')
+  })
+
+  it('Error 对象保留 message 而非空对象', () => {
+    const out = formatArgs([{ err: new Error('boom') }, '失败'])
+    expect(out[0]).toContain('boom')
+  })
+
+  it('多参透传（首参为字符串时其余参数原样保留）', () => {
+    expect(formatArgs(['msg', 'x', 1])).toEqual(['msg', 'x', 1])
   })
 })

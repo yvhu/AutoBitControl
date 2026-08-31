@@ -38,6 +38,7 @@
     "dbPath": "data/app.db",
     "screenshotDir": "data/screenshots",
     "logDir": "data/logs",
-    "logLevel": "info"
+    "logLevel": "info",
+    "logRetainDays": 7
   }
 }
