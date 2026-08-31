@@ -188,7 +188,7 @@ export class TaskContext {
     if (!walletKey) throw new Error('任务未配置钱包')
     if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(walletKey)
-    const popup = (await waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 15000)) as PopupPage | null
+    const popup = (await waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 30000)) as PopupPage | null
     if (!popup) throw new Error('钱包弹窗未出现')
     const unlockPassword = this.deps.walletPasswords[walletKey]
     if (unlockPassword && adapter.unlock) {

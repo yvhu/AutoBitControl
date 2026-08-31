@@ -59,6 +59,24 @@ describe('waitForPopup', () => {
     const popup = await waitForPopup(context, ['chrome-extension://.*/home.html'], 300)
     expect(popup).toBeNull()
   })
+
+  it('弹窗开在其它 browser context 也能被发现', async () => {
+    const popupPage = { url: () => 'chrome-extension://abc/notification.html' }
+    let handler: ((p: unknown) => void) | null = null
+    const otherCtx = {
+      pages: () => [popupPage],
+      on: () => {},
+      off: () => {},
+    }
+    const context = {
+      pages: () => [] as Array<{ url(): string }>,
+      on: (event: string, fn: (p: unknown) => void) => { if (event === 'page') handler = fn },
+      off: () => {},
+      browser: () => ({ contexts: () => [context, otherCtx] }),
+    } as never
+    const popup = await waitForPopup(context, ['chrome-extension://.*/notification.html'], 2000)
+    expect(popup).not.toBeNull()
+  })
 })
 
 describe('MetaMaskAdapter 解锁轮询', () => {

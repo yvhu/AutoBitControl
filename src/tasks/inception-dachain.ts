@@ -29,7 +29,7 @@ export class InceptionDachainTask extends SiteTask {
     // 无 schedule：仅手动触发/窗口立即跑（按模板默认）
     wallet: 'metamask',
     // 开箱视频慢 + 最多 5 箱，放宽单次超时
-    timeoutSec: 600,
+    timeoutSec: 900,
     retry: { max: 2, backoffSec: 600 },
     captcha: { auto: true, maxCost: 1500 },
   }
@@ -57,19 +57,24 @@ export class InceptionDachainTask extends SiteTask {
     // 已登录（cookie 还在）：左侧目录栏直接可见，跳过登录步骤
     if (!(await ctx.textPresent('Quantum Crate'))) {
       // 第 1 步：等 Enter Inception 出现，网络差刷不出来就反复刷新
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 10; i++) {
         if (await ctx.textPresent('Enter Inception')) break
         await ctx.page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
-        await ctx.page.waitForTimeout(4000)
-        if (i === 5) throw new Error('多次刷新后仍未出现 Enter Inception（网络异常）')
+        await ctx.page.waitForTimeout(10000)
+        if (i === 9) throw new Error('多次刷新后仍未出现 Enter Inception（网络异常）')
       }
 
       // 第 2 步：Enter Inception → 登录方式选择弹窗（Get Started）→ 点 WALLET（钱包登录）
-      await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: 15000 })
+      await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: 30000 })
       await ctx.human.click('button:has-text("WALLET")')
-      // 钱包列表出现后点 MetaMask（AppKit 钱包项 data-testid，真机核实）
-      await ctx.assertVisible('[data-testid="wallet-selector-io.metamask"]', 15000)
-      await ctx.human.click('[data-testid="wallet-selector-io.metamask"]')
+      // 钱包列表出现后点 MetaMask（AppKit 钱包项 data-testid，真机核实）；列表加载慢时重进一次
+      const walletEntry = '[data-testid="wallet-selector-io.metamask"]'
+      const visible = await ctx.page.locator(walletEntry).first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => false)
+      if (!visible) {
+        await ctx.human.click('button:has-text("WALLET")')
+        await ctx.assertVisible(walletEntry, 30000)
+      }
+      await ctx.human.click(walletEntry)
       // 钱包弹窗 → 解锁 → 确认连接
       await ctx.loginByWallet()
     }

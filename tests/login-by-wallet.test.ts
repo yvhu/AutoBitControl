@@ -86,4 +86,11 @@ describe('loginByWallet 密码按钱包类型取用', () => {
     await ctx.loginByWallet()
     expect(filled).toEqual([])
   })
+
+  it('钱包弹窗等待 30s 且扫描全部 context', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(makePopup({ url: () => 'chrome-extension://abc/home.html' }) as never)
+    const ctx = makeCtx({ metamask: 'pw' })
+    await ctx.loginByWallet()
+    expect(vi.mocked(waitForPopup).mock.calls[0][2]).toBe(30000)
+  })
 })

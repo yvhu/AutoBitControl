@@ -12,13 +12,24 @@ export function matchesWalletUrl(url: string, patterns: string[]): boolean {
 }
 
 /**
- * 等待钱包弹窗出现
+ * 等待钱包弹窗出现（扫描浏览器全部 context——比特浏览器部分弹窗开在别的 context）
+ * 先查已打开的页面，再同时用事件监听 + 100ms 轮询兜底；超时返回 null
  * @param timeoutMs 最长等待时间（超时返回 null）
  * @returns 命中的弹窗页面，或超时 null
  * 设计权衡：settled 标记防止事件监听与轮询同时命中导致重复 resolve
  */
 export async function waitForPopup(context: BrowserContext, patterns: string[], timeoutMs: number): Promise<Page | null> {
-  const find = () => context.pages().find(p => matchesWalletUrl(p.url(), patterns))
+  const find = (): Page | undefined => {
+    // context.browser 可能缺失（测试 mock）或返回 null（独立 context），任一情况回退到 [context]
+    const browser = context.browser?.()
+    const contexts = browser ? browser.contexts() : [context]
+    for (const c of contexts) {
+      for (const p of c.pages()) {
+        if (matchesWalletUrl(p.url(), patterns)) return p
+      }
+    }
+    return undefined
+  }
   const existing = find()
   if (existing) return existing
   return new Promise(resolve => {
