@@ -39,9 +39,12 @@ export function useReloadDatasource() {
 
 export function useTestBitbrowser() {
   const { message } = App.useApp()
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: () => testBitbrowser(),
     onSuccess: (res) => {
+      // 同步顶栏状态：测试连接结果要立刻反映到布局栏的「比特浏览器已连接/未连接」
+      queryClient.invalidateQueries({ queryKey: ['bitbrowser-status'] })
       if (res.ok) message.success('比特浏览器已连接')
       else message.warning('比特浏览器连接失败')
     },
