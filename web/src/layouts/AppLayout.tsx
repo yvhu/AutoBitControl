@@ -1,4 +1,4 @@
-import { Layout, Menu, Segmented, Tag } from 'antd'
+import { Layout, Menu, Segmented, Tag, theme } from 'antd'
 import {
   DashboardOutlined,
   DesktopOutlined,
@@ -25,6 +25,7 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { mode, setMode } = useThemeMode()
+  const { token } = theme.useToken()
 
   // 顶栏状态芯片：挂载时静默探测一次（不弹 message），失败统一显示灰色"状态未知"
   const bitbrowserStatus = useQuery({ queryKey: ['bitbrowser-status'], queryFn: testBitbrowser, staleTime: 60_000 })
@@ -46,12 +47,15 @@ export default function AppLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth="64">
-        <div style={{ height: 32, margin: 16, color: '#fff', fontSize: 16, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+      <Sider
+        breakpoint="lg"
+        collapsedWidth="64"
+        style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}
+      >
+        <div style={{ height: 32, margin: 16, color: token.colorText, fontSize: 16, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden' }}>
           AutoBitControl
         </div>
         <Menu
-          theme="dark"
           mode="inline"
           selectedKeys={[pathname === '/' ? '/' : pathname]}
           items={menuItems}
