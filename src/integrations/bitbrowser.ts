@@ -11,10 +11,15 @@ export interface OpenResult {
   ws: string
 }
 
-/** 窗口基本信息（列表接口返回项） */
+/** 窗口基本信息（列表接口返回项；元数据字段随比特客户端填写情况可为空） */
 export interface BrowserInfo {
   id: string
   name: string
+  remark?: string
+  seq?: number
+  lastIp?: string
+  lastCountry?: string
+  coreVersion?: string
 }
 
 /** 平台响应包：success 与 code 两种口径兼容（不同版本 API 返回习惯不同） */
@@ -91,11 +96,19 @@ export class BitBrowserClient {
     return parseOpenPids(d, ids)
   }
 
-  /** 分页拉取窗口列表（app 启动时同步到 profiles 表） */
+  /** 分页拉取窗口列表（app 启动时同步到 profiles 表；附带备注/序号/最近 IP 与内核版本元数据） */
   async listBrowsers(page = 0, pageSize = 100): Promise<BrowserInfo[]> {
     const d = await this.post('/browser/list', { page, pageSize })
-    const raw = (d.list ?? d.page ?? []) as Array<{ id: string | number; name?: string }>
-    return raw.map(l => ({ id: String(l.id), name: l.name ?? String(l.id) }))
+    const raw = (d.list ?? d.page ?? []) as Array<Record<string, unknown>>
+    return raw.map((l) => ({
+      id: String(l.id),
+      name: typeof l.name === 'string' ? l.name : String(l.id),
+      remark: typeof l.remark === 'string' && l.remark !== '' ? l.remark : undefined,
+      seq: typeof l.seq === 'number' ? l.seq : undefined,
+      lastIp: typeof l.lastIp === 'string' && l.lastIp !== '' ? l.lastIp : undefined,
+      lastCountry: typeof l.lastCountry === 'string' && l.lastCountry !== '' ? l.lastCountry : undefined,
+      coreVersion: typeof l.coreVersion === 'string' && l.coreVersion !== '' ? l.coreVersion : undefined,
+    }))
   }
 }
 

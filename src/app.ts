@@ -28,7 +28,7 @@ async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promi
   let total = 0
   while (true) {
     const list = await bitbrowser.listBrowsers(page, 100)
-    for (const b of list) await db.upsertProfile(b.id, b.name)
+    for (const b of list) await db.upsertProfile(b.id, b.name, b)
     total += list.length
     if (list.length < 100) break
     page++

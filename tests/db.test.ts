@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { createClient } from '@libsql/client'
+import { mkdtempSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { AppDb, todayStr } from '../src/infrastructure/db'
 
 let db: AppDb
@@ -86,5 +90,45 @@ describe('AppDb', () => {
     expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61235' })
     await db.clearOpenWindow('bb-1')
     expect(await db.getOpenWindow('bb-1')).toBeNull()
+  })
+
+  it('upsertProfile 带元数据写入并可读回', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1', { remark: '测试备注', seq: 100, lastIp: '1.2.3.4', lastCountry: 'US', coreVersion: '150' })
+    expect(p.remark).toBe('测试备注')
+    expect(p.seq).toBe(100)
+    expect(p.lastIp).toBe('1.2.3.4')
+    expect(p.lastCountry).toBe('US')
+    expect(p.coreVersion).toBe('150')
+    // 再次同步不带元数据：旧值被覆盖为 null（与比特客户端当前数据保持一致）
+    const p2 = await db.upsertProfile('bb-1', '窗口1')
+    expect(p2.remark).toBeNull()
+    expect(p2.lastIp).toBeNull()
+  })
+
+  it('老库无元数据列时 migrate 自动补列（ALTER TABLE 幂等）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-legacy-'))
+    const fileUrl = `file:${join(dir, 'legacy.db').split('\\').join('/')}`
+    const raw = createClient({ url: fileUrl })
+    await raw.execute(`CREATE TABLE profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bitbrowser_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      circuit_breaker_count INTEGER NOT NULL DEFAULT 0
+    )`)
+    raw.close()
+    const legacy = await AppDb.open({ url: fileUrl, authToken: '' })
+    const p = await legacy.upsertProfile('bb-1', '窗口1', { remark: '老库补列', seq: 7, lastIp: '9.9.9.9', lastCountry: 'US', coreVersion: '150' })
+    expect(p.remark).toBe('老库补列')
+    expect(p.seq).toBe(7)
+    expect(p.coreVersion).toBe('150')
+    // 再次 open（重复迁移）不报错、数据仍在
+    legacy.close()
+    const again = await AppDb.open({ url: fileUrl, authToken: '' })
+    const list = await again.listProfiles(false)
+    expect(list).toHaveLength(1)
+    expect(list[0].lastIp).toBe('9.9.9.9')
+    again.close()
+    // 注：Windows 下 libsql 关闭连接后文件句柄延迟释放，临时目录交由系统清理（与 upload 夹具同策略）
   })
 })

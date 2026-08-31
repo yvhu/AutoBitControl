@@ -95,6 +95,7 @@ export default function ProfilesPage() {
     {
       title: '窗口',
       key: 'window',
+      width: 170,
       sorter: profileSorters.name,
       defaultSortOrder: 'ascend',
       render: (_, p) => (
@@ -104,7 +105,10 @@ export default function ProfilesPage() {
           </Avatar>
           <span>
             {p.name}
-            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>{(p.bitbrowserId ?? '').slice(0, 8)}</div>
+            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
+              {(p.bitbrowserId ?? '').slice(0, 8)}
+              {p.seq != null && ` · No.${p.seq}`}
+            </div>
           </span>
           {p.open && (
             <Tag color="green" style={{ marginInlineStart: 4 }}>
@@ -115,9 +119,64 @@ export default function ProfilesPage() {
       ),
     },
     {
+      title: '备注',
+      key: 'remark',
+      width: 170,
+      ellipsis: true,
+      render: (_, p) =>
+        p.remark ? (
+          <Typography.Text title={p.remark} style={{ fontSize: 13 }}>
+            {p.remark}
+          </Typography.Text>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            —
+          </Typography.Text>
+        ),
+    },
+    {
+      title: 'IP',
+      key: 'ip',
+      width: 150,
+      render: (_, p) =>
+        p.lastIp ? (
+          <Typography.Text style={{ fontSize: 13 }}>{p.lastIp}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            —
+          </Typography.Text>
+        ),
+    },
+    {
+      title: '国家',
+      key: 'country',
+      width: 130,
+      render: (_, p) =>
+        p.lastCountry ? (
+          <Typography.Text style={{ fontSize: 13 }}>{p.lastCountry}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            —
+          </Typography.Text>
+        ),
+    },
+    {
+      title: '内核',
+      key: 'core',
+      width: 110,
+      render: (_, p) =>
+        p.coreVersion ? (
+          <Typography.Text style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Chrome {p.coreVersion}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            —
+          </Typography.Text>
+        ),
+    },
+    {
       title: '今日结果',
       key: 'today',
-      width: 130,
+      width: 120,
       sorter: profileSorters.success(successOf),
       render: (_, p) => {
         const mine = runsByProfile.get(p.id) ?? []
@@ -138,7 +197,7 @@ export default function ProfilesPage() {
     {
       title: '熔断',
       key: 'breaker',
-      width: 170,
+      width: 180,
       sorter: profileSorters.breaker,
       render: (_, p) => {
         const count = p.circuitBreakerCount
@@ -162,7 +221,7 @@ export default function ProfilesPage() {
     {
       title: '启用',
       key: 'enabled',
-      width: 90,
+      width: 100,
       sorter: profileSorters.enabled,
       render: (_, p) => (
         <Switch
@@ -240,9 +299,9 @@ export default function ProfilesPage() {
           columns={columns}
           dataSource={rows}
           loading={profiles.isPending}
-          pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 个窗口` }}
+          pagination={{ defaultPageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (t) => `共 ${t} 个窗口` }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无窗口，点击同步比特浏览器拉取" /> }}
-          scroll={{ x: 860 }}
+          scroll={{ x: 1200 }}
         />
       </Card>
 

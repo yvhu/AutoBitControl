@@ -450,6 +450,16 @@ export interface paths {
                                 circuitBreakerCount?: number;
                                 /** @description 是否已打开（open_windows 登记 + 比特浏览器 pid 实测） */
                                 open?: boolean;
+                                /** @description 比特客户端窗口备注 */
+                                remark?: string | null;
+                                /** @description 比特客户端排序号 */
+                                seq?: number | null;
+                                /** @description 最近探测 IP */
+                                lastIp?: string | null;
+                                /** @description 最近探测国家 */
+                                lastCountry?: string | null;
+                                /** @description 浏览器内核版本 */
+                                coreVersion?: string | null;
                             }[];
                         };
                     };
@@ -949,6 +959,16 @@ export interface paths {
                                     /** @description 0/1 开关 */
                                     enabled?: number;
                                     circuitBreakerCount?: number;
+                                    /** @description 比特客户端窗口备注 */
+                                    remark?: string | null;
+                                    /** @description 比特客户端排序号 */
+                                    seq?: number | null;
+                                    /** @description 最近探测 IP */
+                                    lastIp?: string | null;
+                                    /** @description 最近探测国家 */
+                                    lastCountry?: string | null;
+                                    /** @description 浏览器内核版本 */
+                                    coreVersion?: string | null;
                                 }[];
                                 captcha?: {
                                     count?: number;

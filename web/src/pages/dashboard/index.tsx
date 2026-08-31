@@ -289,7 +289,7 @@ export default function DashboardPage() {
           columns={columns}
           dataSource={rows}
           loading={dashboard.isPending}
-          pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 条` }}
+          pagination={{ defaultPageSize: 50, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (t) => `共 ${t} 条` }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行记录" /> }}
           scroll={{ x: 900 }}
         />

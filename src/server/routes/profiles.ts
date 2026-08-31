@@ -37,6 +37,11 @@ import type { SiteTask } from '../../tasks/base'
  *                       enabled: { type: integer, description: '0/1 开关' }
  *                       circuitBreakerCount: { type: integer }
  *                       open: { type: boolean, description: '是否已打开（open_windows 登记 + 比特浏览器 pid 实测）' }
+ *                       remark: { type: string, nullable: true, description: '比特客户端窗口备注' }
+ *                       seq: { type: integer, nullable: true, description: '比特客户端排序号' }
+ *                       lastIp: { type: string, nullable: true, description: '最近探测 IP' }
+ *                       lastCountry: { type: string, nullable: true, description: '最近探测国家' }
+ *                       coreVersion: { type: string, nullable: true, description: '浏览器内核版本' }
  */
 
 /**

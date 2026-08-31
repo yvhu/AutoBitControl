@@ -9,6 +9,11 @@ const mk = (id: number, name: string, bitbrowserId: string): ProfileRow => ({
   enabled: 1,
   circuitBreakerCount: 0,
   open: false,
+  remark: null,
+  seq: null,
+  lastIp: null,
+  lastCountry: null,
+  coreVersion: null,
 })
 
 describe('filterProfiles', () => {

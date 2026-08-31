@@ -22,6 +22,16 @@ export interface ProfileRow {
   /** 0/1（SQLite 无布尔，读出保持数字由调用方判断） */
   enabled: number
   circuitBreakerCount: number
+  /** 比特客户端窗口备注（同步 /browser/list 时更新） */
+  remark?: string | null
+  /** 比特客户端排序号 */
+  seq?: number | null
+  /** 最近探测 IP */
+  lastIp?: string | null
+  /** 最近探测国家 */
+  lastCountry?: string | null
+  /** 浏览器内核版本（如 150） */
+  coreVersion?: string | null
 }
 
 /** runs 表行：某窗口某任务某天的一次运行记录 */
@@ -62,7 +72,12 @@ const SCHEMA = [
     bitbrowser_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
-    circuit_breaker_count INTEGER NOT NULL DEFAULT 0
+    circuit_breaker_count INTEGER NOT NULL DEFAULT 0,
+    remark TEXT,
+    seq INTEGER,
+    last_ip TEXT,
+    last_country TEXT,
+    core_version TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,7 +115,7 @@ const SCHEMA = [
   )`,
 ]
 
-const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles`
+const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
 const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id`
 
 /** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
@@ -128,6 +143,20 @@ export class AppDb {
 
   async migrate(): Promise<void> {
     for (const stmt of SCHEMA) await this.client.execute(stmt)
+    // 老库补列：profiles 元数据列（remark/seq/last_ip/last_country/core_version）后加，CREATE TABLE 只保证新库自带；
+    // PRAGMA table_info 查现有列，缺哪个补哪个（幂等，云库多机共享同一 schema）
+    const info = await this.client.execute(`PRAGMA table_info(profiles)`)
+    const existing = new Set(info.rows.map((r) => String(r.name)))
+    const extraCols: Array<[string, string]> = [
+      ['remark', 'TEXT'],
+      ['seq', 'INTEGER'],
+      ['last_ip', 'TEXT'],
+      ['last_country', 'TEXT'],
+      ['core_version', 'TEXT'],
+    ]
+    for (const [col, type] of extraCols) {
+      if (!existing.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
+    }
   }
 
   close(): void {
@@ -141,14 +170,15 @@ export class AppDb {
   }
 
   /**
-   * 幂等写入窗口（比特浏览器同步列表时调用：存在则更新名称）
+   * 幂等写入窗口（比特浏览器同步列表时调用：存在则更新名称与元数据）
+   * @param meta 比特客户端返回的窗口元数据（remark/seq/lastIp/lastCountry/coreVersion）
    * @returns 落库后的完整行
    */
-  async upsertProfile(bitbrowserId: string, name: string): Promise<ProfileRow> {
+  async upsertProfile(bitbrowserId: string, name: string, meta: { remark?: string | null; seq?: number | null; lastIp?: string | null; lastCountry?: string | null; coreVersion?: string | null } = {}): Promise<ProfileRow> {
     await this.exec(
-      `INSERT INTO profiles (bitbrowser_id, name) VALUES (?, ?)
-       ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name`,
-      [bitbrowserId, name],
+      `INSERT INTO profiles (bitbrowser_id, name, remark, seq, last_ip, last_country, core_version) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(bitbrowser_id) DO UPDATE SET name = excluded.name, remark = excluded.remark, seq = excluded.seq, last_ip = excluded.last_ip, last_country = excluded.last_country, core_version = excluded.core_version`,
+      [bitbrowserId, name, meta.remark ?? null, meta.seq ?? null, meta.lastIp ?? null, meta.lastCountry ?? null, meta.coreVersion ?? null],
     )
     const rows = await this.exec(`${SELECT_PROFILE} WHERE bitbrowser_id = ?`, [bitbrowserId])
     return rows[0] as unknown as ProfileRow

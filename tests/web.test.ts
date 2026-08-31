@@ -304,7 +304,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(await deps.sync()).toBe(3)
     expect(client.listBrowsers).toHaveBeenCalledWith(0, 100)
     expect(db.upsertProfile).toHaveBeenCalledTimes(3)
-    expect(db.upsertProfile).toHaveBeenCalledWith('b1', '窗口1')
+    expect(db.upsertProfile).toHaveBeenCalledWith('b1', '窗口1', { id: 'b1', name: '窗口1' })
     expect(await deps.health()).toBe(true)
   })
 
