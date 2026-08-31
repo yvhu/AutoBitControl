@@ -36,13 +36,14 @@ export function categoryLabel(category: TaskMetaView['category']): string {
   return (category && CATEGORY_LABELS[category]) || DEFAULT_CATEGORY_LABEL
 }
 
-/** 调度描述：字符串 → cron <值>；对象 → cron <a>-<b> 错峰；null → 手动触发
+/** 调度描述：字符串 → cron <值>；对象 → cron <a>-<b> 错峰；everyHours → 每 N 小时；null → 手动触发
  * 注：OpenAPI 注解以 object 声明（无法表达 string | object 联合），此处按运行时真实形态收窄 */
 export function scheduleText(schedule: string | { [key: string]: unknown } | null): string {
   if (schedule === null) return '手动触发'
   if (typeof schedule === 'string') return `cron ${schedule}`
-  const s = schedule as { stagger: [string, string] }
-  return `cron ${s.stagger[0]}-${s.stagger[1]} 错峰`
+  const s = schedule as { stagger?: [string, string]; everyHours?: number }
+  if (typeof s.everyHours === 'number') return `每 ${s.everyHours} 小时`
+  return `cron ${s.stagger?.[0]}-${s.stagger?.[1]} 错峰`
 }
 
 export function useTasks() {

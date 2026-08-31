@@ -39,4 +39,8 @@ describe('scheduleText', () => {
   it('null → 手动触发', () => {
     expect(scheduleText(null)).toBe('手动触发')
   })
+
+  it('每 N 小时间隔调度文案', () => {
+    expect(scheduleText({ everyHours: 8 })).toBe('每 8 小时')
+  })
 })

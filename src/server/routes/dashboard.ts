@@ -55,6 +55,7 @@ import { ok, asyncHandler } from '../http/response'
  *                           error: { type: string, nullable: true }
  *                           screenshot: { type: string, nullable: true }
  *                           startedAt: { type: string, nullable: true }
+ *                           slot: { type: number }
  *                           finishedAt: { type: string, nullable: true }
  *                           profileName: { type: string }
  *                     profiles:

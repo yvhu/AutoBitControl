@@ -44,7 +44,7 @@ import type { SiteTask } from '../../tasks/base'
  *                       schedule:
  *                         type: object
  *                         nullable: true
- *                         description: cron 字符串或错峰窗口对象 {stagger:[start,end]}
+ *                         description: 'cron 字符串 / { stagger: [start, end] } 每日错峰 / { everyHours: N } 每 N 小时（锚点=最近一次成功完成时刻）'
  *                       timeoutSec: { type: integer, nullable: true }
  *                       retry:
  *                         type: object

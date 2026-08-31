@@ -161,6 +161,13 @@ export default function DashboardPage() {
       key: 'task',
       render: (key: string) => taskNameByKey.get(key)?.name ?? key,
     },
+    {
+      title: '开始时间',
+      dataIndex: 'startedAt',
+      key: 'startedAt',
+      width: 130,
+      render: (v: string | null) => (v ? (v.includes('T') ? v.slice(11, 23) : v) : '—'),
+    },
     { title: '状态', dataIndex: 'status', key: 'status', width: 110, render: (s: RunRow['status']) => <StatusPill status={s} /> },
     { title: '尝试', dataIndex: 'attempts', key: 'attempts', width: 70 },
     {
