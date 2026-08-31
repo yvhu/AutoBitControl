@@ -163,7 +163,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 调度器跳过该任务并告警（仅能手动触发） |
 | `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 调度器跳过、窗口「立即跑」排除、手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效——停用即停 cron、重新启用即重注册 cron，无需重启；跨机器生效、重启保留）。注意：上表的 `true` 只是代码默认值，三个示例任务（[example-checkin.ts](src://example-checkin.ts)/[faucet-example.ts](src://faucet-example.ts)/[mint-example.ts](src://mint-example.ts)）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
-| `schedule` | `string \| { stagger: [string, string] }` | `undefined` | cron 字符串或错峰窗口；缺省则不参与调度（见[第 7 章](#7-调度)） |
+| `schedule` | `string \| {stagger:[string,string]} \| {everyHours:number}` | `undefined` | cron 字符串（固定点）/ stagger 每日错峰 / everyHours 每 N 小时（锚点=最近成功时刻）；无=仅手动 |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见[第 4 章](#4-钱包弹窗)） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
@@ -850,7 +850,7 @@ randomMicroMove(): Promise<void>
 
 ## 7. 调度
 
-### 两种 schedule 写法
+### 三种 schedule 写法
 
 ```ts
 schedule: '0 9 * * *'                      // cron：每天 9:00
@@ -858,6 +858,11 @@ schedule: { stagger: ['09:00', '11:00'] }   // 错峰：9:00-11:00 内随机分�
 ```
 
 错峰在进程启动时用 `staggerToCron` 定一次具体分钟，生成普通 cron（重启服务与每日 00:01 都会重新随机）；结束早于开始视为跨天窗口（如 `['23:00', '01:00']`，随机落点覆盖当晚与次日凌晨）。cron 时区为 `execution.timezone`（默认 `Asia/Shanghai`），由 croner 解析。
+
+3. **每 N 小时间隔**（`{ everyHours: N }`）：适合「每 8 小时可领一次」这类站点。
+   - 下一次触发 = **最近一次成功完成时刻 + N 小时 + 60 秒缓冲**（锚点存云端 `task_states.last_fired_at`，毫秒 ISO，重启不丢）
+   - 首次（从未成功过）启动后立即触发；触发后 N 小时内不重复触发，失败轮次靠任务级重试补偿
+   - 写入方式：`schedule: { everyHours: 8 }`（4/8/12 或任意小时均可，不要求整除 24）
 
 ### 跳过规则
 
@@ -1001,6 +1006,8 @@ running（执行中，正在一步步跑你的 run()）
 - 这里讲的是「任务已经入队之后」的流转；「任务根本没资格入队」的跳过规则（已停用/url 为空/没配 schedule）见[第 7 章「跳过规则」](#跳过规则)。
 - 走到 `failed`/`captcha_failed` 后怎么查原因、怎么重置熔断，见[第 10 章「报错速查表」](#报错速查表)与「[熔断触发与重置](#熔断触发与重置)」。
 
+> 间隔任务一天多轮，`runs` 表按 `slot` 列（当日第几轮，0 起）各占一行互不覆盖；面板 dashboard 页「开始时间」列可区分轮次。
+
 ### 完整示例：9 点签到的站点（公告弹窗 + 钱包登录 + 签到 + 等文案）
 
 假设站点每天 9 点开放签到：打开页面先弹一个公告弹窗挡住一切，登录要用钱包，签到成功后页面会浮现「签到成功」文案。完整 `run()` 如下：
@@ -1046,6 +1053,13 @@ await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
 // 已签到：出现"已签到"类文案直接返回（run 正常返回 = 任务 success）
 if (await ctx.textPresent('已签到')) return
 ```
+
+### 冷却中 vs 已领取（间隔任务必看）
+
+站点限频提示分两种语义，判定必须分开写：
+- **已领取**（今日限额已用完，如 DAC 的 `Daily limit reached`）→ 直接成功返回
+- **冷却中**（距上次领取未满 N 小时，如 `Please wait 30 minutes`）→ **抛错失败**，走任务重试退避
+  （退避时间自然覆盖剩余冷却，成功后调度锚点重置，节奏自动对齐；千万不要把冷却中当成功，否则会整轮虚报）
 
 ### 签到前关闭公告/引导弹窗
 
