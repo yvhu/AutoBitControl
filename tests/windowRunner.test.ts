@@ -50,7 +50,7 @@ const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
 const scheduleRetry = vi.fn()
 
-function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never }) {
+function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null> }) {
   return new WindowRunner({
     cfg: over.cfgOver ?? cfg,
     db: over.db ?? makeDb(),
@@ -63,6 +63,7 @@ function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<stri
     artifactsDir,
     walletPasswords,
     scheduleRetry,
+    reuseOpen: over.reuseOpen,
   })
 }
 
@@ -231,6 +232,39 @@ describe('WindowRunner', () => {
     const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page: okPage, close }) }) })
     await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
     expect(close).toHaveBeenCalled()
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('reuseOpen 返回地址时复用窗口：不开窗、不关窗、任务正常执行', async () => {
+    const db = makeDb()
+    const reuseOpen = vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' })
+    const runner = makeRunner({ db, reuseOpen })
+    await runner.runWindowTasks(makeProfile(), ['ok-task'])
+    expect(statuses(db)).toContain('success')
+    expect(reuseOpen).toHaveBeenCalledWith('bb-1')
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+  })
+
+  it('reuseOpen 返回地址时 CDP 连接失败仍落 failed 且不关窗', async () => {
+    const db = makeDb()
+    const runner = makeRunner({
+      db,
+      reuseOpen: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' }),
+      driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }),
+    })
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    expect(statuses(db)).toEqual(['failed'])
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+  })
+
+  it('reuseOpen 返回 null 时行为不变（正常开窗并关窗）', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, reuseOpen: vi.fn().mockResolvedValue(null) })
+    await runner.runWindowTasks(makeProfile(), ['ok-task'])
+    expect(statuses(db)).toContain('success')
+    expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
   })
 })

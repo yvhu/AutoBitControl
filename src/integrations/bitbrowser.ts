@@ -68,12 +68,70 @@ export class BitBrowserClient {
     await this.post('/browser/close', { id })
   }
 
+  /**
+   * 单窗口打开状态探测（POST /browser/pids）
+   * @returns pid 实测存活返回 true；请求失败/结构异常一律返回 false（容错优先，调用方按未开处理）
+   */
+  async isOpen(id: string): Promise<boolean> {
+    try {
+      return (await this.openPids([id])).has(id)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 批量打开状态探测（一次请求查全部窗口，面板列表 100 窗口场景避免逐窗口请求）
+   * data 结构容错：map 对象 {id: pid} / id 数组 / 对象数组（{id,pid} 等），值真值即视为打开
+   * @throws 请求失败向上抛（由调用方决定降级策略，如面板列表按全部未开处理但不清理登记行）
+   */
+  async openPids(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set()
+    const d = await this.post('/browser/pids', { ids })
+    return parseOpenPids(d, ids)
+  }
+
   /** 分页拉取窗口列表（app 启动时同步到 profiles 表） */
   async listBrowsers(page = 0, pageSize = 100): Promise<BrowserInfo[]> {
     const d = await this.post('/browser/list', { page, pageSize })
     const raw = (d.list ?? d.page ?? []) as Array<{ id: string | number; name?: string }>
     return raw.map(l => ({ id: String(l.id), name: l.name ?? String(l.id) }))
   }
+}
+
+/** 真值判定：排除空/0/false（pid 为 0 或空串均视为未打开） */
+function isTruthy(v: unknown): boolean {
+  if (v === null || v === undefined || v === false || v === 0 || v === '') return false
+  if (typeof v === 'string') return v !== '0'
+  return true
+}
+
+/**
+ * 解析 /browser/pids 的 data 段（平台版本差异容错）：
+ * - map 对象 {id: pid}：直接取 id 键的真值
+ * - 数组：元素为 id 字符串（打开列表）或 {id, pid} 对象（取 pid 真值）
+ */
+function parseOpenPids(data: unknown, ids: string[]): Set<string> {
+  const open = new Set<string>()
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'string') {
+        if (ids.includes(item)) open.add(item)
+      } else if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>
+        const id = String(obj.id ?? obj.bitbrowserId ?? obj.bitbrowser_id ?? '')
+        const pid = obj.pid ?? obj.value ?? obj
+        if (id && ids.includes(id) && isTruthy(pid)) open.add(id)
+      }
+    }
+    return open
+  }
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    for (const id of ids) {
+      if (isTruthy((data as Record<string, unknown>)[id])) open.add(id)
+    }
+  }
+  return open
 }
 
 /** 工厂函数（统一创建入口，测试可整体替换） */

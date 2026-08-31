@@ -36,7 +36,14 @@ export interface ServerDeps {
   tasks: Map<string, SiteTask>
   cfg: AppConfig
   logger: Logger
-  bitbrowser: { health(): Promise<boolean>; sync(): Promise<number> }
+  bitbrowser: {
+    health(): Promise<boolean>
+    sync(): Promise<number>
+    openBrowser(id: string): Promise<{ http: string; ws: string }>
+    closeBrowser(id: string): Promise<void>
+    isOpen(id: string): Promise<boolean>
+    openPids(ids: string[]): Promise<Set<string>>
+  }
   captchaBalance: () => Promise<{ points: number } | null>
   /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }

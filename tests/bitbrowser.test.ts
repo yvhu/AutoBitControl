@@ -73,4 +73,44 @@ describe('BitBrowserClient', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
     expect(await client.health()).toBe(false)
   })
+
+  it('isOpen pid 存在且真值返回 true（map 结构）', async () => {
+    mockFetchOnce((url, init) => {
+      expect(url).toContain('/browser/pids')
+      expect(JSON.parse(String(init.body))).toEqual({ ids: ['abc'] })
+      return new Response(JSON.stringify({ success: true, data: { abc: 12345 } }), { status: 200 })
+    })
+    expect(await client.isOpen('abc')).toBe(true)
+  })
+
+  it('isOpen pid 为 0/缺失返回 false', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ success: true, data: { abc: 0 } }), { status: 200 }))
+    expect(await client.isOpen('abc')).toBe(false)
+  })
+
+  it('isOpen 兼容数组结构（{id,pid} 对象数组）', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ success: true, data: [{ id: 'abc', pid: 777 }] }), { status: 200 }))
+    expect(await client.isOpen('abc')).toBe(true)
+  })
+
+  it('isOpen 请求失败返回 false（不抛错）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
+    expect(await client.isOpen('abc')).toBe(false)
+  })
+
+  it('openPids 批量一次请求返回存活 id 集合（map 结构）', async () => {
+    mockFetchOnce((url, init) => {
+      expect(url).toContain('/browser/pids')
+      expect(JSON.parse(String(init.body))).toEqual({ ids: ['a', 'b', 'c'] })
+      return new Response(JSON.stringify({ success: true, data: { a: 1, b: 0, c: 999 } }), { status: 200 })
+    })
+    expect(await client.openPids(['a', 'b', 'c'])).toEqual(new Set(['a', 'c']))
+  })
+
+  it('openPids 空 ids 不发请求直接返回空集合', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    expect(await client.openPids([])).toEqual(new Set())
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
 })

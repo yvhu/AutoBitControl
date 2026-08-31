@@ -8,6 +8,8 @@ export const triggerTask = (key: string, bitbrowserId?: string) => post<{ scope:
 export const setTaskEnabled = (key: string, enabled: boolean) => patch<{ key: string; enabled: boolean }>(`/api/tasks/${encodeURIComponent(key)}`, { enabled })
 export const rerunFailed = (date: string) => post<{ count: number }>('/api/runs/rerun-failed', { date })
 export const runProfile = (id: number) => post<{ count: number }>(`/api/profiles/${id}/run`, {})
+export const openProfile = (id: number) => post<{ already: boolean }>(`/api/profiles/${id}/open`, {})
+export const closeProfile = (id: number) => post<null>(`/api/profiles/${id}/close`, {})
 export const patchProfile = (id: number, body: { enabled?: boolean }) => patch<ProfileRow>(`/api/profiles/${id}`, body)
 export const resetBreaker = (id: number) => post<null>(`/api/profiles/${id}/breaker/reset`, {})
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})

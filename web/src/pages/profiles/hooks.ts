@@ -2,9 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
 import dayjs from 'dayjs'
 import {
+  closeProfile,
   fetchDashboard,
   fetchProfiles,
   fetchSettings,
+  openProfile,
   patchProfile,
   resetBreaker,
   runProfile,
@@ -74,6 +76,32 @@ export function useRunProfile() {
       message.success(`已入队 ${res.count} 个任务`)
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+export function useOpenProfile() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => openProfile(id),
+    onSuccess: (res) => {
+      message.success(res.already ? '窗口已处于打开状态' : '已打开窗口')
+      queryClient.invalidateQueries({ queryKey: ['profiles'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+export function useCloseProfile() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => closeProfile(id),
+    onSuccess: () => {
+      message.success('已关闭窗口')
+      queryClient.invalidateQueries({ queryKey: ['profiles'] })
     },
     onError: (e) => message.error(errMsg(e)),
   })

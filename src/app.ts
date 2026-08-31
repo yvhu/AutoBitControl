@@ -37,14 +37,26 @@ async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promi
 }
 
 /**
- * 面板依赖的比特浏览器适配：health 探活 + sync 窗口列表同步
+ * 面板依赖的比特浏览器适配：health 探活 + sync 窗口列表同步 + 开窗/关窗/打开状态探测
  * 独立导出便于测试（sync 闭包持有 db 做 upsert，路由层不直接依赖 db）
  */
-export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): { health(): Promise<boolean>; sync(): Promise<number> } {
+export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): {
+  health(): Promise<boolean>
+  sync(): Promise<number>
+  openBrowser(id: string): Promise<{ http: string; ws: string }>
+  closeBrowser(id: string): Promise<void>
+  isOpen(id: string): Promise<boolean>
+  openPids(ids: string[]): Promise<Set<string>>
+} {
   return {
     health: () => bitbrowser.health(),
     // 同步窗口列表到 profiles 表（面板"同步比特浏览器"按钮入口；失败向上抛由统一错误处理器转 500）
     sync: () => syncBrowsersPaged(bitbrowser, db),
+    // 打开/关闭与 pid 探测直接透传真实客户端（窗口路由用）
+    openBrowser: (id) => bitbrowser.openBrowser(id),
+    closeBrowser: (id) => bitbrowser.closeBrowser(id),
+    isOpen: (id) => bitbrowser.isOpen(id),
+    openPids: (ids) => bitbrowser.openPids(ids),
   }
 }
 
@@ -125,6 +137,13 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
+    // 窗口复用探测：open_windows 表有登记（面板打开/task:run 登记）即复用该窗口，
+    // 本轮会话不重新开窗、结束后不关窗。此处不做 pid 校验（校验在 route/task:run 打开时登记、
+    // 关闭时清除）；若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
+    reuseOpen: async (id) => {
+      const row = await db.getOpenWindow(id)
+      return row ? { http: row.http } : null
+    },
     // 数据源行解析：有窗口列按窗口名/ID 匹配，无窗口列按窗口列表顺序取行（list 顺序=面板顺序）
     accountResolver: async (profile) => {
       if (!datasource.available) return null

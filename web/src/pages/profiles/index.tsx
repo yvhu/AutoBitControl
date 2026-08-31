@@ -24,6 +24,8 @@ import type { ProfileRow, RunRow, RunStatus } from '../../types'
 import {
   filterProfiles,
   useBreakerThreshold,
+  useCloseProfile,
+  useOpenProfile,
   usePatchProfile,
   useProfiles,
   useResetBreaker,
@@ -58,6 +60,8 @@ export default function ProfilesPage() {
   const thresholdQ = useBreakerThreshold()
   const patch = usePatchProfile()
   const run = useRunProfile()
+  const open = useOpenProfile()
+  const close = useCloseProfile()
   const reset = useResetBreaker()
   const sync = useSyncProfiles()
 
@@ -97,6 +101,11 @@ export default function ProfilesPage() {
             {p.name}
             <div style={{ fontSize: 12, color: token.colorTextTertiary }}>{(p.bitbrowserId ?? '').slice(0, 8)}</div>
           </span>
+          {p.open && (
+            <Tag color="green" style={{ marginInlineStart: 4 }}>
+              已打开
+            </Tag>
+          )}
         </Space>
       ),
     },
@@ -158,26 +167,38 @@ export default function ProfilesPage() {
     {
       title: '操作',
       key: 'action',
-      width: 220,
-      render: (_, p) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<PlayCircleOutlined />}
-            loading={run.isPending && run.variables === p.id}
-            onClick={() => run.mutate(p.id)}
-          >
-            立即跑
-          </Button>
-          <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
-            复制ID
-          </Button>
-          <Button type="link" size="small" onClick={() => setDetailId(p.id)}>
-            详情
-          </Button>
-        </Space>
-      ),
+      width: 300,
+      render: (_, p) => {
+        const toggling = (open.isPending && open.variables === p.id) || (close.isPending && close.variables === p.id)
+        return (
+          <Space size="small">
+            <Button
+              type="link"
+              size="small"
+              danger={p.open}
+              loading={toggling}
+              onClick={() => (p.open ? close.mutate(p.id) : open.mutate(p.id))}
+            >
+              {p.open ? '关闭' : '打开'}
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              loading={run.isPending && run.variables === p.id}
+              onClick={() => run.mutate(p.id)}
+            >
+              立即跑
+            </Button>
+            <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
+              复制ID
+            </Button>
+            <Button type="link" size="small" onClick={() => setDetailId(p.id)}>
+              详情
+            </Button>
+          </Space>
+        )
+      },
     },
   ]
 
@@ -213,7 +234,7 @@ export default function ProfilesPage() {
           loading={profiles.isPending}
           pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 个窗口` }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无窗口，点击同步比特浏览器拉取" /> }}
-          scroll={{ x: 760 }}
+          scroll={{ x: 860 }}
         />
       </Card>
 

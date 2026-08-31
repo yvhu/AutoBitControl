@@ -17,6 +17,9 @@ interface MockDeps {
     resetCircuitBreaker: Mock
     getTaskEnabled: Mock
     setTaskEnabled: Mock
+    getOpenWindow: Mock
+    setOpenWindow: Mock
+    clearOpenWindow: Mock
   }
   enqueuer: { enqueue: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string; enabled?: boolean } }>
@@ -27,7 +30,7 @@ interface MockDeps {
     execution: { timezone: string; concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
     captcha: { clientKey: string }
   }
-  bitbrowser: { health: Mock; sync: Mock }
+  bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
   captchaBalance: Mock
   datasource: {
     summary: Mock
@@ -52,6 +55,9 @@ function makeDeps(): MockDeps {
       resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
       getTaskEnabled: vi.fn().mockResolvedValue(true),
       setTaskEnabled: vi.fn().mockResolvedValue(undefined),
+      getOpenWindow: vi.fn().mockResolvedValue(null),
+      setOpenWindow: vi.fn().mockResolvedValue(undefined),
+      clearOpenWindow: vi.fn().mockResolvedValue(undefined),
     },
     enqueuer: { enqueue: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
@@ -62,7 +68,14 @@ function makeDeps(): MockDeps {
       execution: { timezone: 'Asia/Shanghai', concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
-    bitbrowser: { health: vi.fn().mockResolvedValue(true), sync: vi.fn().mockResolvedValue(3) },
+    bitbrowser: {
+      health: vi.fn().mockResolvedValue(true),
+      sync: vi.fn().mockResolvedValue(3),
+      openBrowser: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234', ws: '' }),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      isOpen: vi.fn().mockResolvedValue(false),
+      openPids: vi.fn().mockResolvedValue(new Set()),
+    },
     captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
     datasource: {
       summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
@@ -174,6 +187,74 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).post('/api/profiles/1/breaker/reset')
     expect(res.body.code).toBe(0)
     expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+  })
+
+  it('GET /api/profiles 返回 open 字段（批量 pid 探测，无登记为 false）', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data[0].open).toBe(false)
+    expect(deps.bitbrowser.openPids).toHaveBeenCalledWith(['bb-1'])
+  })
+
+  it('GET /api/profiles 登记且 pid 存活返回 open=true', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    deps.bitbrowser.openPids.mockResolvedValue(new Set(['bb-1']))
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.body.data[0].open).toBe(true)
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
+  it('GET /api/profiles 登记但 pid 已死自动清行并返回 false', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.body.data[0].open).toBe(false)
+    expect(deps.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('POST /api/profiles/:id/open 调 openBrowser 并登记 open_windows', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/open')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ already: false })
+    expect(deps.bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234')
+  })
+
+  it('POST /api/profiles/:id/open 已打开返回 already 且不重复开窗', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    deps.bitbrowser.isOpen.mockResolvedValue(true)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/open')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ already: true })
+    expect(deps.bitbrowser.openBrowser).not.toHaveBeenCalled()
+  })
+
+  it('POST /api/profiles/:id/open 未知窗口 404', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/999/open')
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40402)
+  })
+
+  it('POST /api/profiles/:id/close 清登记并调 closeBrowser', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('POST /api/profiles/:id/close 无登记也调一次 closeBrowser', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it('POST /api/runs/rerun-failed 重跑失败（failed 行入队一次）', async () => {
@@ -366,6 +447,8 @@ describe('OpenAPI 文档与统一错误码', () => {
       '/api/profiles',
       '/api/profiles/{id}',
       '/api/profiles/{id}/run',
+      '/api/profiles/{id}/open',
+      '/api/profiles/{id}/close',
       '/api/profiles/{id}/breaker/reset',
       '/api/runs/rerun-failed',
       '/api/captcha/balance',

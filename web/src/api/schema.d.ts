@@ -420,7 +420,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 窗口列表（含启用状态与熔断计数） */
+        /** 窗口列表（含启用状态、熔断计数与打开状态） */
         get: {
             parameters: {
                 query?: never;
@@ -448,6 +448,8 @@ export interface paths {
                                 /** @description 0/1 开关 */
                                 enabled?: number;
                                 circuitBreakerCount?: number;
+                                /** @description 是否已打开（open_windows 登记 + 比特浏览器 pid 实测） */
+                                open?: boolean;
                             }[];
                         };
                     };
@@ -604,6 +606,113 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description 已重置 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example 0 */
+                            code?: number;
+                            /** @example ok */
+                            message?: string;
+                            data?: unknown;
+                        };
+                    };
+                };
+                /** @description 窗口不存在（业务码 40402） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{id}/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 打开窗口（已打开则直接复用；登记 open_windows 供跨进程复用） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 窗口内部 id */
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 打开完成（already=true 表示此前已在打开状态，未重新开窗） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example 0 */
+                            code?: number;
+                            /** @example ok */
+                            message?: string;
+                            data?: {
+                                /** @description true=复用已开窗口；false=本次新开 */
+                                already?: boolean;
+                            };
+                        };
+                    };
+                };
+                /** @description 窗口不存在（业务码 40402） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 关闭窗口并清除打开状态登记（未登记也会尝试关窗一次） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 窗口内部 id */
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已关闭 */
                 200: {
                     headers: {
                         [name: string]: unknown;

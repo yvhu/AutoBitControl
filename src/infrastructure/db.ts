@@ -91,6 +91,13 @@ const SCHEMA = [
     task_key TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 1
   )`,
+  // 窗口打开状态登记表：主进程（面板打开/关闭）与 task:run 脚本跨进程共享，
+  // 一行 = 一个已打开的窗口（http 调试地址供 CDP 复用）；pid 是否存活由调用方实测
+  `CREATE TABLE IF NOT EXISTS open_windows (
+    bitbrowser_id TEXT PRIMARY KEY,
+    http TEXT NOT NULL,
+    opened_at TEXT NOT NULL
+  )`,
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount FROM profiles`
@@ -229,5 +236,25 @@ export class AppDb {
   async captchaStats(date: string): Promise<{ count: number; totalCost: number }> {
     const rows = await this.exec(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at) = ?`, [date])
     return { count: (rows[0]?.count as number | undefined) ?? 0, totalCost: (rows[0]?.total as number | undefined) ?? 0 }
+  }
+
+  /** 读窗口打开状态登记（无登记返回 null）；是否真实存活由调用方经比特浏览器 /browser/pids 实测 */
+  async getOpenWindow(bitbrowserId: string): Promise<{ http: string } | null> {
+    const rows = await this.exec('SELECT http FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
+    return rows.length > 0 ? { http: String(rows[0].http) } : null
+  }
+
+  /** 登记/更新窗口打开状态（面板打开、task:run 复用探测等场景写入；同 id 覆盖 http 与打开时间） */
+  async setOpenWindow(bitbrowserId: string, http: string): Promise<void> {
+    await this.exec(
+      `INSERT INTO open_windows (bitbrowser_id, http, opened_at) VALUES (?, ?, ?)
+       ON CONFLICT(bitbrowser_id) DO UPDATE SET http = excluded.http, opened_at = excluded.opened_at`,
+      [bitbrowserId, http, new Date().toISOString()],
+    )
+  }
+
+  /** 清除窗口打开状态登记（窗口关闭或 pid 实测已死时调用） */
+  async clearOpenWindow(bitbrowserId: string): Promise<void> {
+    await this.exec('DELETE FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
   }
 }

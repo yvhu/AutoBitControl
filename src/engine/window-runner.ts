@@ -65,6 +65,12 @@ export interface WindowRunnerDeps {
    * 返回 null 表示无映射（任务侧 faker 兜底）；未注入时任务 accountRow 恒为 null
    */
   accountResolver?: (profile: ProfileRow) => Promise<Record<string, string> | null>
+  /**
+   * 窗口复用探测（app 层装配注入）：已登记打开状态（open_windows 表）且调用方实测存活时
+   * 返回该窗口调试地址——本轮会话直接复用（不重新开窗、结束后也不关窗）；
+   * 返回 null 走正常开窗/关窗流程。未注入时行为不变（恒不开窗复用）
+   */
+  reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>
 }
 
 export class WindowRunner {
@@ -92,9 +98,18 @@ export class WindowRunner {
     const { cfg, db, bitbrowser, logger } = this.deps
     const date = todayStr()
     let open: OpenResult | null = null
+    // 复用已开窗口时跳过开窗/关窗（面板手动打开的窗口、task:run 复用场景）；
+    // 复用地址失效会自然落入 CDP 连接失败 → failed 终态（可接受，见 app.ts 装配注释）
+    let reusedFlag = false
     // 第一段 try：开窗（含重试）——失败即整窗口跳过，无浏览器可操作
     try {
-      open = await this.openWithRetry(profile.bitbrowserId)
+      const reused = this.deps.reuseOpen ? await this.deps.reuseOpen(profile.bitbrowserId) : null
+      if (reused) {
+        open = { http: reused.http, ws: '' }
+        reusedFlag = true
+      } else {
+        open = await this.openWithRetry(profile.bitbrowserId)
+      }
     } catch (e) {
       for (const key of taskKeys) {
         await this.safeDb(() => db.upsertRun(profile.id, key, date, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: new Date().toISOString() }), null)
@@ -146,7 +161,8 @@ export class WindowRunner {
     } finally {
       // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）；close 失败只忽略
       if (connected) await connected.close().catch(() => {})
-      if (open) await bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
+      // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口
+      if (!reusedFlag && open) await bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
     }
   }
 

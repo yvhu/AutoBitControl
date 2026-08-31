@@ -76,4 +76,15 @@ describe('AppDb', () => {
     expect(stats.count).toBe(3)
     expect(stats.totalCost).toBeCloseTo(0.11)
   })
+
+  it('open_windows 登记/覆盖读取/清除 roundtrip', async () => {
+    expect(await db.getOpenWindow('bb-1')).toBeNull()
+    await db.setOpenWindow('bb-1', '127.0.0.1:61234')
+    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61234' })
+    // 同窗口重复登记覆盖 http（幂等 upsert，不产生第二行）
+    await db.setOpenWindow('bb-1', '127.0.0.1:61235')
+    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61235' })
+    await db.clearOpenWindow('bb-1')
+    expect(await db.getOpenWindow('bb-1')).toBeNull()
+  })
 })

@@ -48,17 +48,25 @@ async function main(): Promise<void> {
   )
   const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
   let runner!: WindowRunner
+  // 本轮会话的复用目标（open_windows 登记 + pid 实测存活才复用）；闭包捕获，重试会话每次重新探测
+  let reuse: { http: string } | null = null
   /** 单次运行：跑完查记录打印结果；终态时关库退出，retry_wait 时保持存活等重试定时器 */
   const runOnce = async (): Promise<void> => {
+    // 复用探测：表里有登记且比特浏览器实测 pid 存活 → 复用（runner 内不重开、结束不关窗）；
+    // 登记残留但 pid 已死 → 清行后按正常开窗流程走
+    const row = await db.getOpenWindow(profileId).catch(() => null)
+    const wasOpen = row ? await bitbrowser.isOpen(profileId) : false
+    reuse = row && wasOpen ? { http: row.http } : null
+    if (row && !wasOpen) await db.clearOpenWindow(profileId).catch(() => {})
     await runner.runManual(profileId, taskKey)
-    const row = (await db.listRunsForDate(todayStr())).find(r => r.taskKey === taskKey)
-    if (row) {
-      logger.info({ status: row.status, error: row.error, screenshot: row.screenshot }, '任务运行结果')
+    const row2 = (await db.listRunsForDate(todayStr())).find(r => r.taskKey === taskKey)
+    if (row2) {
+      logger.info({ status: row2.status, error: row2.error, screenshot: row2.screenshot }, '任务运行结果')
     } else {
       logger.error('未找到运行记录')
     }
-    if (!row || row.status !== 'retry_wait') {
-      process.exitCode = row && row.status === 'success' ? 0 : 1
+    if (!row2 || row2.status !== 'retry_wait') {
+      process.exitCode = row2 && row2.status === 'success' ? 0 : 1
       db.close()
     } else {
       logger.info({ taskKey }, '任务待重试，脚本保持存活等待退避到期')
@@ -66,6 +74,8 @@ async function main(): Promise<void> {
   }
   runner = new WindowRunner({
     cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords,
+    // 窗口复用：面板已打开的窗口直接接管（不复用则正常开新窗并在会话结束后关闭）
+    reuseOpen: () => Promise.resolve(reuse),
     // 数据源行解析：与 app.ts 同逻辑（有窗口列按名匹配，无窗口列按窗口列表顺序取行）
     accountResolver: async (profile) => {
       if (!datasource.available) return null
