@@ -11,6 +11,10 @@ export interface PopupLocator {
   fill(text: string): Promise<void>
   press?(key: string): Promise<void>
   first(): PopupLocator
+  /** 元素是否存在（0/1/多；真实 Locator.count 实现，mock 可不提供） */
+  count?(): Promise<number>
+  /** 等待元素状态变化（如解锁页 detached；真实 Locator.waitFor 实现，mock 可不提供） */
+  waitFor?(opts: { state?: 'visible' | 'hidden' | 'attached' | 'detached'; timeout?: number }): Promise<void>
 }
 
 /** 缩小化的弹窗页面接口：钱包适配器不直接依赖 playwright Page 全量 API */
