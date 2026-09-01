@@ -5,7 +5,7 @@
  */
 import { loadConfig } from '../src/infrastructure/config'
 import { createLogger } from '../src/infrastructure/logger'
-import { AppDb, todayStr } from '../src/infrastructure/db'
+import { AppDb } from '../src/infrastructure/db'
 import { DataSource } from '../src/infrastructure/datasource'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
 import { YesCaptchaClient, CaptchaService } from '../src/integrations/yescaptcha'
@@ -50,7 +50,9 @@ async function main(): Promise<void> {
   let runner!: WindowRunner
   // 本轮会话的复用目标（open_windows 登记 + pid 实测存活才复用）；闭包捕获，重试会话每次重新探测
   let reuse: { http: string } | null = null
-  /** 单次运行：跑完查记录打印结果；终态时关库退出，retry_wait 时保持存活等重试定时器 */
+  // 数据库关闭标记：终态后关库，防止重试定时器触发时访问已关闭的连接（今早实测崩溃场景）
+  let dbClosed = false
+  /** 单次运行：跑完用 runner 内存返回的结果行判定终态；retry_wait 时保持存活等重试定时器 */
   const runOnce = async (): Promise<void> => {
     // 复用探测：表里有登记且比特浏览器实测 pid 存活 → 复用（runner 内不重开、结束不关窗）；
     // 登记残留但 pid 已死 → 清行后按正常开窗流程走
@@ -58,12 +60,8 @@ async function main(): Promise<void> {
     const wasOpen = row ? await bitbrowser.isOpen(profileId) : false
     reuse = row && wasOpen ? { http: row.http } : null
     if (row && !wasOpen) await db.clearOpenWindow(profileId).catch(() => {})
-    await runner.runManual(profileId, taskKey)
-    // 取当前窗口当前任务的最新一轮记录（只按 taskKey 找会拿到别的窗口的行，误导排障）
-    const prof = (await db.listProfiles(false)).find(p => p.bitbrowserId === profileId)
-    const row2 = prof
-      ? [...(await db.listRunsForDate(todayStr()))].reverse().find(r => r.taskKey === taskKey && r.profileId === prof.id)
-      : undefined
+    // runManual 直接返回本轮最终运行行（内存传递，不做执行后再读库的竞态判定）
+    const row2 = await runner.runManual(profileId, taskKey)
     if (row2) {
       logger.info({ status: row2.status, error: row2.error, screenshot: row2.screenshot }, '任务运行结果')
     } else {
@@ -71,6 +69,7 @@ async function main(): Promise<void> {
     }
     if (!row2 || row2.status !== 'retry_wait') {
       process.exitCode = row2 && row2.status === 'success' ? 0 : 1
+      dbClosed = true
       db.close()
     } else {
       logger.info({ taskKey }, '任务待重试，脚本保持存活等待退避到期')
@@ -88,7 +87,14 @@ async function main(): Promise<void> {
     },
     // 脚本场景无队列：退避到期直接重跑该任务（定时器不 unref，保持进程存活等待重试）
     scheduleRetry: (profile, taskKey, delayMs) => {
-      setTimeout(() => { void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) }) }, delayMs)
+      setTimeout(() => {
+        if (dbClosed) {
+          console.error('数据库已关闭，无法执行重试（状态异常）')
+          process.exit(1)
+          return
+        }
+        void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) })
+      }, delayMs)
     },
   })
   logger.info({ profileId, taskKey }, '开始单任务调试运行')

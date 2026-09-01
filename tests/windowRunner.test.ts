@@ -237,7 +237,7 @@ describe('WindowRunner', () => {
   it('CDP 连接失败标记 failed 且不抛异常', async () => {
     const db = makeDb()
     const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }) })
-    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeInstanceOf(Map)
     expect(statuses(db)).toEqual(['failed'])
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
   })
@@ -264,7 +264,7 @@ describe('WindowRunner', () => {
     const db = makeDb()
     const close = vi.fn().mockRejectedValue(new Error('close boom'))
     const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page: okPage, close }) }) })
-    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeInstanceOf(Map)
     expect(close).toHaveBeenCalled()
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
   })
@@ -287,7 +287,7 @@ describe('WindowRunner', () => {
       reuseOpen: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' }),
       driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }),
     })
-    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeUndefined()
+    await expect(runner.runWindowTasks(makeProfile(), ['ok-task'])).resolves.toBeInstanceOf(Map)
     expect(statuses(db)).toEqual(['failed'])
     expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
     expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()

@@ -56,7 +56,7 @@ export class CoalescingEnqueuer {
 
   constructor(
     private queue: TaskQueue,
-    private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<void> },
+    private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<unknown> },
     private logger: Logger,
   ) {}
 
