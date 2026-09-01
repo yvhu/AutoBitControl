@@ -8,6 +8,9 @@ import type { WalletAdapter, PopupPage } from './types'
 
 export class PetraAdapter implements WalletAdapter {
   key = 'petra'
+  extensionId = 'ejjladinnckdgjemekebdpeokbikhfci'
+  probePath = 'index.html'
+  providerFlag = 'isPetra'
   // 弹窗 URL 模式：index.html（解锁页）/ popup.html（确认页）
   extensionUrlPatterns = ['chrome-extension://.*/index.html', 'chrome-extension://.*/popup.html']
 

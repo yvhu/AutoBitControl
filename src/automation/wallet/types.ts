@@ -36,6 +36,12 @@ export interface PopupPage {
 export interface WalletAdapter {
   key: string
   extensionUrlPatterns: string[]
+  /** 扩展 ID：CDP 探测扩展页用（MetaMask = nkbihfbeogaeaoehlefnkodbefgpgknn，真机弹窗 URL 实证） */
+  extensionId: string
+  /** 扩展页探测路径（MetaMask home.html / Petra index.html） */
+  probePath: string
+  /** 页面 provider 标识字段：区分其它钱包注入的 window.ethereum（isMetaMask / isPetra） */
+  providerFlag: string
   unlock?(popup: PopupPage, password: string): Promise<void>
   ensureConnected(popup: PopupPage): Promise<void>
 }

@@ -283,3 +283,16 @@ describe('WalletRegistry', () => {
     expect(() => reg.get('nope')).toThrow(/未注册/)
   })
 })
+
+describe('WalletAdapter 探测契约', () => {
+  it('内置适配器声明 extensionId / probePath / providerFlag（WalletSession 探测用）', () => {
+    const mm = new MetaMaskAdapter()
+    expect(mm.extensionId).toBe('nkbihfbeogaeaoehlefnkodbefgpgknn')
+    expect(mm.probePath).toBe('home.html')
+    expect(mm.providerFlag).toBe('isMetaMask')
+    const pt = new PetraAdapter()
+    expect(pt.extensionId.length).toBeGreaterThan(0)
+    expect(pt.probePath).toBe('index.html')
+    expect(pt.providerFlag).toBe('isPetra')
+  })
+})

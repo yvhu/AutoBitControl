@@ -18,6 +18,9 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 export class MetaMaskAdapter implements WalletAdapter {
   key = 'metamask'
+  extensionId = 'nkbihfbeogaeaoehlefnkodbefgpgknn'
+  probePath = 'home.html'
+  providerFlag = 'isMetaMask'
   // 弹窗 URL 模式：home（解锁页）/ notification（解锁 + 连接确认页）/ metamask://（协议唤起）
   extensionUrlPatterns = ['chrome-extension://.*/home.html', 'chrome-extension://.*/notification.html', 'metamask://']
   /** 解锁状态轮询预算：弹窗 UI 渲染有延迟（多窗口并发高负载时尤甚，真机实测可 >20s），默认 45s */
