@@ -950,6 +950,7 @@ export interface paths {
                                     screenshot?: string | null;
                                     startedAt?: string | null;
                                     finishedAt?: string | null;
+                                    durationSec?: number | null;
                                     slot: number;
                                     profileName?: string;
                                 }[];
