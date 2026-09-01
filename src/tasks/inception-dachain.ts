@@ -35,8 +35,6 @@ const STATE_WAIT_MS = 20000 // 初始登录状态竞速（SPA 渲染延迟容忍
 const STATE_RELOAD_ROUNDS = 10 // 状态不明时刷新轮数
 const STATE_RELOAD_WAIT_MS = 15000 // 每轮刷新后竞速
 const RELOAD_TIMEOUT_MS = 45000 // page.reload 超时
-const ETH_POLL_ROUNDS = 10 // window.ethereum 注入轮询次数（并发实测 0-30s 随机）
-const ETH_POLL_INTERVAL_MS = 6000 // 轮询间隔（总预算 60s）
 const GET_STARTED_WAIT_MS = 45000 // Enter Inception → Get Started 断言（高负载下弹窗渲染慢）
 const APP_KIT_MODAL_WAIT_MS = 45000 // AppKit 弹窗出现等待（高负载下渲染慢）
 const APP_KIT_NORMALIZE_ROUNDS = 5 // 弹窗视图归一化轮数
@@ -208,15 +206,9 @@ export class InceptionDachainTask extends SiteTask {
    * @returns 钱包弹窗是否未出现（静默连接容忍：由调用方结合目录栏判定）
    */
   private async loginByMetaMask(ctx: TaskContext): Promise<boolean> {
-    // 并行：MetaMask 扩展注入轮询（与后续 UI 流程重叠，缺失窗口提前失败且错误准确）
-    const ethReady = (async (): Promise<boolean> => {
-      for (let i = 0; i < ETH_POLL_ROUNDS; i++) {
-        const ok = await ctx.js<boolean>(() => typeof (window as unknown as { ethereum?: unknown }).ethereum !== 'undefined').catch(() => false)
-        if (ok) return true
-        await ctx.page.waitForTimeout(ETH_POLL_INTERVAL_MS)
-      }
-      return false
-    })()
+    // 会话级钱包扩展就绪检查：provider 轮询（isMetaMask 验证）、 CDP 扩展页探测（预热），
+    // 结果按类型缓存；扩展未加载时快速失败（重试将重启浏览器窗口，扩展随之重载）
+    await ctx.ensureWalletReady()
 
     // Enter Inception → 登录方式选择弹窗（Get Started）→ 点 WALLET
     await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: GET_STARTED_WAIT_MS })
@@ -228,10 +220,6 @@ export class InceptionDachainTask extends SiteTask {
     const entryFound = await this.normalizeAppKit(ctx)
     if (!entryFound) throw new Error('AppKit 弹窗未出现 MetaMask 入口（弹窗视图异常，归一化未命中）')
 
-    // 扩展注入判定：弹窗归一化耗时已并行覆盖大部分轮询窗口，此处缺失即为真缺失
-    if (!(await ethReady)) {
-      throw new Error('窗口 MetaMask 扩展未加载（window.ethereum 缺失，60s 轮询未等到），重试将重启浏览器窗口')
-    }
     await ctx.human.click(METAMASK_ENTRY)
 
     // 钱包弹窗 → 解锁 → 确认连接；已授权过站点的窗口可能不再弹弹窗（静默连接），
