@@ -59,7 +59,11 @@ async function main(): Promise<void> {
     reuse = row && wasOpen ? { http: row.http } : null
     if (row && !wasOpen) await db.clearOpenWindow(profileId).catch(() => {})
     await runner.runManual(profileId, taskKey)
-    const row2 = (await db.listRunsForDate(todayStr())).find(r => r.taskKey === taskKey)
+    // 取当前窗口当前任务的最新一轮记录（只按 taskKey 找会拿到别的窗口的行，误导排障）
+    const prof = (await db.listProfiles(false)).find(p => p.bitbrowserId === profileId)
+    const row2 = prof
+      ? [...(await db.listRunsForDate(todayStr()))].reverse().find(r => r.taskKey === taskKey && r.profileId === prof.id)
+      : undefined
     if (row2) {
       logger.info({ status: row2.status, error: row2.error, screenshot: row2.screenshot }, '任务运行结果')
     } else {

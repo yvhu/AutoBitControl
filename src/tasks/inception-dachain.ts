@@ -65,9 +65,14 @@ export class InceptionDachainTask extends SiteTask {
         if (i === 9) throw new Error('多次刷新后仍未出现 Enter Inception（网络异常）')
       }
 
-      // MetaMask 扩展未注入快速失败（真机实测部分窗口无 window.ethereum：点钱包项只会出二维码、永远等不到弹窗）
-      const hasMetaMask = await ctx.js<boolean>(() => typeof (window as unknown as { ethereum?: unknown }).ethereum !== 'undefined')
-      if (!hasMetaMask) throw new Error('未检测到 MetaMask 扩展（window.ethereum 缺失），请检查该窗口的扩展配置')
+      // MetaMask 扩展注入慢且按开窗会话随机（4 窗口并发实测：快则 0s、慢则 30s、偶尔全程缺失）：
+      // 轮询 60s 等注入；确实缺失才失败（任务重试 = 重新开窗，重启后大概率恢复）
+      let hasMetaMask = false
+      for (let i = 0; i < 10 && !hasMetaMask; i++) {
+        hasMetaMask = await ctx.js<boolean>(() => typeof (window as unknown as { ethereum?: unknown }).ethereum !== 'undefined')
+        if (!hasMetaMask) await ctx.page.waitForTimeout(6000)
+      }
+      if (!hasMetaMask) throw new Error('窗口 MetaMask 扩展未加载（window.ethereum 缺失，60s 轮询未等到），重试将重启浏览器窗口')
 
       // 第 2 步：Enter Inception → 登录方式选择弹窗（Get Started）→ 点 WALLET（钱包登录）
       await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: 30000 })
@@ -86,14 +91,22 @@ export class InceptionDachainTask extends SiteTask {
       }
     }
 
-    // 第 3 步：等登录完成（左侧目录栏出现）——连接成功后站点偶发不自动跳转（真机实测），
-    // 10s 未见目录则刷新页面重试（最多 6 轮，覆盖慢跳转与网络抖动）
+    // 第 3 步：等登录完成（左侧目录栏出现）——真机实测：钱包连接成功后，
+    // 站点侧登录 API 在网络差时很慢（可能 >60s）或需要刷新后才呈现；
+    // 先被动等 45s，再刷新 2 轮（每轮等 30s），总预算约 2 分钟
     let loggedIn = false
-    for (let i = 0; i < 6 && !loggedIn; i++) {
-      loggedIn = await ctx.textPresent('Quantum Crate')
-      if (loggedIn) break
-      if (i === 1) await ctx.page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
-      await ctx.page.waitForTimeout(10000)
+    const waitSidebar = async (sec: number): Promise<boolean> => {
+      const end = Date.now() + sec * 1000
+      while (Date.now() < end) {
+        if (await ctx.textPresent('Quantum Crate')) return true
+        await ctx.page.waitForTimeout(5000)
+      }
+      return false
+    }
+    if (await waitSidebar(45)) loggedIn = true
+    for (let round = 0; round < 2 && !loggedIn; round++) {
+      await ctx.page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      if (await waitSidebar(30)) loggedIn = true
     }
     if (!loggedIn) {
       throw new Error(
