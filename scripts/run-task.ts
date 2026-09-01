@@ -15,6 +15,18 @@ import { PetraAdapter } from '../src/automation/wallet/petra'
 import { PatchrightDriver, WindowRunner } from '../src/engine/window-runner'
 import { loadTasks } from '../src/tasks'
 
+// 进程级兜底：浏览器窗口中途被关闭/崩溃时，patchright 内部协议错误（如
+// Network.setCacheDisabled session closed）可能以未捕获异常/拒绝形式逃逸——
+// 兜底日志化退出（退出码 1），避免裸栈崩溃；任务行停留在 running，重新触发可续跑
+process.on('uncaughtException', (err) => {
+  console.error(`未捕获异常，脚本退出: ${(err as Error).message}`)
+  process.exit(1)
+})
+process.on('unhandledRejection', (err) => {
+  console.error(`未处理的 Promise 拒绝，脚本退出: ${(err as Error).message}`)
+  process.exit(1)
+})
+
 async function main(): Promise<void> {
   const profileId = process.env.BITBROWSER_PROFILE_ID
   const taskKey = process.env.TASK_KEY
