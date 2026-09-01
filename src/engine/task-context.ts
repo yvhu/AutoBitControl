@@ -14,6 +14,7 @@ import type { ProfileRow } from '../infrastructure/db'
 import { Humanizer } from '../automation/humanize'
 import type { CaptchaService } from '../integrations/yescaptcha'
 import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
+import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
 import type { TaskRef } from './task'
 
@@ -33,6 +34,8 @@ export interface TaskContextDeps {
   onCaptchaLog?: (kind: string, ok: boolean, costPoints: number) => void
   /** 当前窗口在数据源中的行（列名 -> 值）；无映射为 null（任务可用 faker 兜底） */
   accountRow?: Record<string, string> | null
+  /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 ensureWalletReady 跳过） */
+  walletSession?: WalletSession
 }
 
 export class TaskContext {
@@ -182,6 +185,25 @@ export class TaskContext {
     const file = join(this.deps.artifactsDir, `${name}.png`)
     await this.page.screenshot({ path: file, fullPage: false })
     return file
+  }
+
+  /**
+   * 钱包扩展就绪检查（会话级缓存）：任务登录流程前调用，扩展未加载时快速失败
+   * （重试会重启浏览器窗口，扩展随之重载——真机实测重启即恢复）
+   * 无 wallet 配置 / 未注入会话时跳过（脚本与测试兼容）
+   * @throws 钱包注册表未注入 / 该类型钱包扩展未加载
+   */
+  async ensureWalletReady(): Promise<void> {
+    const walletKey = this.deps.task.meta.wallet
+    if (!walletKey) return
+    if (!this.deps.wallets) throw new Error('钱包注册表未注入')
+    const session = this.deps.walletSession
+    if (!session) return
+    const adapter = this.deps.wallets.get(walletKey)
+    const state = await session.ensureReady(walletKey, adapter)
+    if (state === 'missing') {
+      throw new Error(`窗口 ${walletKey} 钱包扩展未加载（重试将重启浏览器窗口）`)
+    }
   }
 
   /**

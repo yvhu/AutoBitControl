@@ -55,7 +55,7 @@ class WalletTask implements SiteTask {
   async run(_ctx: TaskContext) {}
 }
 
-function makeCtx(walletPasswords: Record<string, string>): TaskContext {
+function makeCtx(walletPasswords: Record<string, string>, walletSession?: never): TaskContext {
   const reg = new WalletRegistry()
   reg.register(new MetaMaskAdapter())
   const task = new WalletTask()
@@ -69,6 +69,7 @@ function makeCtx(walletPasswords: Record<string, string>): TaskContext {
     artifactsDir: '',
     walletPasswords,
     wallets: reg,
+    walletSession,
   })
 }
 
@@ -100,5 +101,24 @@ describe('loginByWallet 密码按钱包类型取用', () => {
     const ctx = makeCtx({ metamask: 'pw' })
     await ctx.loginByWallet()
     expect(vi.mocked(waitForPopup).mock.calls[0][2]).toBe(60000)
+  })
+})
+
+describe('ensureWalletReady 扩展就绪检查', () => {
+  it('会话报告 missing → 抛「扩展未加载」提示重启窗口', async () => {
+    const session = { ensureReady: vi.fn().mockResolvedValue('missing') }
+    const ctx = makeCtx({}, session as never)
+    await expect(ctx.ensureWalletReady()).rejects.toThrow('钱包扩展未加载')
+  })
+
+  it('会话报告 ready → 正常通过', async () => {
+    const session = { ensureReady: vi.fn().mockResolvedValue('ready') }
+    const ctx = makeCtx({}, session as never)
+    await expect(ctx.ensureWalletReady()).resolves.toBeUndefined()
+  })
+
+  it('未注入会话（脚本/旧装配兼容）→ 跳过检查不抛错', async () => {
+    const ctx = makeCtx({})
+    await expect(ctx.ensureWalletReady()).resolves.toBeUndefined()
   })
 })
