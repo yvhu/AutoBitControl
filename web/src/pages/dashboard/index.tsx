@@ -247,7 +247,7 @@ export default function DashboardPage() {
           <Button
             type="link"
             size="small"
-            loading={trigger.isPending}
+            loading={trigger.isPending && trigger.variables?.bitbrowserId === id}
             disabled={!id}
             onClick={() => {
               if (!id) return
@@ -320,7 +320,7 @@ export default function DashboardPage() {
           <Button icon={<ReloadOutlined />} loading={rerun.isPending} onClick={() => rerun.mutate(dateStr)}>
             重跑今日失败
           </Button>
-          <Button type="primary" icon={<PlayCircleOutlined />} loading={trigger.isPending} onClick={handleTriggerAll}>
+          <Button type="primary" icon={<PlayCircleOutlined />} loading={trigger.isPending && !trigger.variables?.bitbrowserId} onClick={handleTriggerAll}>
             全部窗口执行
           </Button>
         </Space>
@@ -353,7 +353,7 @@ export default function DashboardPage() {
                     { title: '操作', width: 100, render: (_, h) => {
                       const failed = h.status === 'failed' || h.status === 'captcha_failed'
                       const id = bitbrowserOf(h.profileId)
-                      return <Button type="link" size="small" loading={trigger.isPending} disabled={!id} onClick={() => { if (id) trigger.mutate({ key: h.taskKey, bitbrowserId: id }) }}>{failed ? '重跑' : '执行'}</Button>
+                      return <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === id} disabled={!id} onClick={() => { if (id) trigger.mutate({ key: h.taskKey, bitbrowserId: id }) }}>{failed ? '重跑' : '执行'}</Button>
                     } },
                   ]}
                 />
