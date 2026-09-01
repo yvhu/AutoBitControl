@@ -17,6 +17,7 @@ import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
 import type { TaskRef } from './task'
+import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
 
 /** TaskContext 依赖集（window-runner 创建并注入） */
 export interface TaskContextDeps {
@@ -204,6 +205,15 @@ export class TaskContext {
     if (state === 'missing') {
       throw new Error(`窗口 ${walletKey} 钱包扩展未加载（重试将重启浏览器窗口）`)
     }
+  }
+
+  /**
+   * AppKit 钱包登录（站点页内 AppKit 弹窗打开 + 视图归一化 + 入口点击 + 钱包弹窗连接）
+   * 真机实测：AppKit 初始视图不固定，此封装集中处理归一化与补点
+   * @returns popupFailed：钱包弹窗未出现（静默连接容忍，调用方结合登录态判定）
+   */
+  async openAppKitWallet(opts: AppKitLoginOptions): Promise<boolean> {
+    return runAppKitLogin(this, opts)
   }
 
   /**
