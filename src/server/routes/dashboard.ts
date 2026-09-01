@@ -57,6 +57,7 @@ import { ok, asyncHandler } from '../http/response'
  *                           startedAt: { type: string, nullable: true }
  *                           slot: { type: number }
  *                           finishedAt: { type: string, nullable: true }
+ *                           durationSec: { type: integer, nullable: true, description: '总耗时（秒）；startedAt/finishedAt 任一缺失为 null' }
  *                           profileName: { type: string }
  *                     profiles:
  *                       type: array
@@ -76,12 +77,22 @@ import { ok, asyncHandler } from '../http/response'
  *                     profilesTotal: { type: integer }
  *                     profilesEnabled: { type: integer }
  */
+
+/** 运行耗时（秒）：started/finished 任一缺失或解析失败返回 null（墙钟字符串解析与重试恢复同口径） */
+function runDurationSec(startedAt: string | null, finishedAt: string | null): number | null {
+  if (!startedAt || !finishedAt) return null
+  const s = new Date(startedAt.replace(' ', 'T')).getTime()
+  const f = new Date(finishedAt.replace(' ', 'T')).getTime()
+  if (Number.isNaN(s) || Number.isNaN(f)) return null
+  return Math.round((f - s) / 1000)
+}
+
 export function dashboardRouter(deps: { db: AppDb }): Router {
   const router = Router()
   router.get('/dashboard', asyncHandler(async (req, res) => {
     // date 查询参数缺省为今天（面板日期切换用）
     const date = typeof req.query.date === 'string' ? req.query.date : todayStr()
-    const runs = await deps.db.listRunsForDate(date)
+    const runs = (await deps.db.listRunsForDate(date)).map((r) => ({ ...r, durationSec: runDurationSec(r.startedAt, r.finishedAt) }))
     const count = (s: RunStatus) => runs.filter(r => r.status === s).length
     const profiles = await deps.db.listProfiles(false)
     ok(res, {

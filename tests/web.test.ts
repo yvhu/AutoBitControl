@@ -99,6 +99,20 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data.captcha.totalCost).toBe(230)
   })
 
+  it('GET /api/dashboard runs 附加 durationSec（started/finished 差值秒；缺失为 null）', async () => {
+    const deps = makeDeps()
+    deps.db.listRunsForDate.mockResolvedValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-08-28 10:00:00.000', finishedAt: '2026-08-28 10:01:05.000', profileName: '窗口1' },
+      { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: '2026-08-28 10:02:00.000', finishedAt: null, profileName: '窗口1' },
+      { id: 3, profileId: 1, taskKey: 't3', date: '2026-08-28', status: 'pending', attempts: 0, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+    ])
+    const res = await request(createApp(deps as never)).get('/api/dashboard?date=2026-08-28')
+    expect(res.status).toBe(200)
+    expect(res.body.data.runs[0].durationSec).toBe(65)
+    expect(res.body.data.runs[1].durationSec).toBeNull()
+    expect(res.body.data.runs[2].durationSec).toBeNull()
+  })
+
   it('GET /api/tasks 返回任务元信息列表', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
     expect(res.body.code).toBe(0)
