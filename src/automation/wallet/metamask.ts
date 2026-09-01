@@ -75,9 +75,13 @@ export class MetaMaskAdapter implements WalletAdapter {
    * 最多 3 轮（覆盖连接 → 签名等多步授权）
    * 每轮先检测解锁框：存在说明钱包已锁定且未配置密码（配置密码时 unlock 已先行解锁），
    * 立即抛明确错误，避免角色名回退误点「解锁」按钮后 3 轮空转
+   * 弹窗加载沉降：新开窗口/并发下弹窗 UI 渲染慢（真机实测：未加载完成就点连接会点击丢失、
+   * 弹窗不关闭），入场先等 2s，点击后的关闭判定放宽到 15s（MetaMask 处理连接请求可能较慢）
    * @throws 钱包锁定未配密码 / 3 轮后仍未完成
    */
   async ensureConnected(popup: PopupPage): Promise<void> {
+    // 弹窗 UI 沉降：等初始渲染完成再开始交互，避免点击落在未挂载完成的界面上被吞掉
+    await sleep(2000)
     for (let i = 0; i < 3; i++) {
       if (popup.isClosed?.()) break
       const lockLoc = popup.getByTestId('unlock-password').first()
@@ -91,13 +95,13 @@ export class MetaMaskAdapter implements WalletAdapter {
       const btn = await this.waitConfirmBtn(popup, 10000)
       if (!btn) break
       await btn.click()
-      const closed = await popup.waitForEvent('close', { timeout: 6000 }).then(() => true).catch(() => false)
+      const closed = await popup.waitForEvent('close', { timeout: 15000 }).then(() => true).catch(() => false)
       if (closed) return
       // close 事件没来：连接页若已消失（先确认过存在——detached 对从未出现的元素立即成功，必须 count 校验）
       const cp = popup.getByTestId('connect-page').first()
       try {
         if (cp.count && (await cp.count()) > 0) {
-          await cp.waitFor?.({ state: 'detached', timeout: 6000 })
+          await cp.waitFor?.({ state: 'detached', timeout: 15000 })
           return
         }
       } catch {
