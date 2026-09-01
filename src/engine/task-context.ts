@@ -43,6 +43,11 @@ export class TaskContext {
     return this.deps.page
   }
 
+  /** 日志器（任务内步骤日志，大批量运行排障用） */
+  get log(): Logger {
+    return this.deps.logger
+  }
+
   /** 拟人操作器（移动/点击/键入统一走它） */
   get human(): Humanizer {
     return this.deps.human
@@ -181,14 +186,31 @@ export class TaskContext {
 
   /**
    * 钱包登录全流程：等钱包弹窗 → 有密码则解锁 → 点连接确认
-   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 30s 内未出现
+   * 弹窗等待 60s：多窗口并发高负载下弹窗出现可超过 30s（真机实测），且静默连接时
+   * 弹窗永不出现由任务侧容忍（不影响最终登录判定）
+   * @param opts.reclick 可选补点：弹窗 afterMs 内未出现时再点一次触发按钮
+   *   （AppKit 动画未稳定时首次点击可能不注册；已触发的弹窗被聚焦而非重复打开，安全）
+   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 60s 内未出现
    */
-  async loginByWallet(): Promise<void> {
+  async loginByWallet(opts: { reclick?: { selector: string; afterMs: number } } = {}): Promise<void> {
     const walletKey = this.deps.task.meta.wallet
     if (!walletKey) throw new Error('任务未配置钱包')
     if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(walletKey)
-    const popup = (await waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 30000)) as PopupPage | null
+    const popupPromise = waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 60000)
+    if (opts.reclick) {
+      const start = Date.now()
+      let appeared = false
+      while (Date.now() - start < opts.reclick.afterMs) {
+        const r = await Promise.race([
+          popupPromise.then(() => 'popup' as const).catch(() => 'timeout' as const),
+          new Promise<'tick'>(resolve => setTimeout(() => resolve('tick'), 500)),
+        ])
+        if (r === 'popup') { appeared = true; break }
+      }
+      if (!appeared) await this.human.click(opts.reclick.selector).catch(() => {})
+    }
+    const popup = (await popupPromise) as PopupPage | null
     if (!popup) throw new Error('钱包弹窗未出现')
     const unlockPassword = this.deps.walletPasswords[walletKey]
     if (unlockPassword && adapter.unlock) {

@@ -20,14 +20,20 @@ export class MetaMaskAdapter implements WalletAdapter {
   key = 'metamask'
   // 弹窗 URL 模式：home（解锁页）/ notification（解锁 + 连接确认页）/ metamask://（协议唤起）
   extensionUrlPatterns = ['chrome-extension://.*/home.html', 'chrome-extension://.*/notification.html', 'metamask://']
+  /** 解锁状态轮询预算：弹窗 UI 渲染有延迟（多窗口并发高负载时尤甚，真机实测可 >20s），默认 45s */
+  private readonly unlockWaitMs: number
+
+  constructor(opts: { unlockWaitMs?: number } = {}) {
+    this.unlockWaitMs = opts.unlockWaitMs ?? 45000
+  }
 
   /**
    * 解锁：弹窗 UI 渲染有延迟（尤其多窗口并发时），不能单次 count 判「已解锁」——
-   * 轮询 20s 等三态：解锁框出现 → 填密码提交、等解锁页消失；连接按钮出现 → 已解锁直接返回；弹窗关闭 → 返回
-   * @throws 20s 无任何状态（解锁框/连接确认均未渲染）
+   * 轮询等三态：解锁框出现 → 填密码提交、等解锁页消失；连接按钮出现 → 已解锁直接返回；弹窗关闭 → 返回
+   * @throws 轮询预算内无任何状态（解锁框/连接确认均未渲染）
    */
   async unlock(popup: PopupPage, password: string): Promise<void> {
-    const deadline = Date.now() + 20000
+    const deadline = Date.now() + this.unlockWaitMs
     while (Date.now() < deadline) {
       if (popup.isClosed?.()) return
       const pw = popup.getByTestId('unlock-password').first()
@@ -40,9 +46,10 @@ export class MetaMaskAdapter implements WalletAdapter {
       if (pwCount > 0) {
         await pw.fill(password)
         await popup.getByTestId('unlock-submit').first().click()
-        // 等解锁页消失（waitFor detached 对从未出现的元素立即成功——解锁框已确认存在，此判定安全）
+        // 等解锁页消失（waitFor detached 对从未出现的元素立即成功——解锁框已确认存在，此判定安全）；
+        // 30s 预算：正确密码下解锁页通常秒离，慢渲染（多窗口并发）时放宽
         try {
-          await popup.getByTestId('unlock-page').first().waitFor?.({ state: 'detached', timeout: 15000 })
+          await popup.getByTestId('unlock-page').first().waitFor?.({ state: 'detached', timeout: 30000 })
         } catch {
           throw new Error('MetaMask 解锁失败（密码错误或解锁页未离开）')
         }
@@ -56,17 +63,28 @@ export class MetaMaskAdapter implements WalletAdapter {
       }
       await sleep(500)
     }
-    throw new Error('MetaMask 弹窗状态未出现（解锁框/连接确认 20s 均未渲染）')
+    throw new Error('MetaMask 弹窗状态未出现（解锁框/连接确认轮询超时均未渲染）')
   }
 
   /**
    * 连接确认：先等确认按钮渲染（testid 候选 → 角色名回退），点击后成功判定 =
    * 弹窗 close 事件 或 连接页「先存在后消失」（比特浏览器后台/最小化时 close 事件不可靠）；
    * 最多 3 轮（覆盖连接 → 签名等多步授权）
-   * @throws 3 轮后仍未完成
+   * 每轮先检测解锁框：存在说明钱包已锁定且未配置密码（配置密码时 unlock 已先行解锁），
+   * 立即抛明确错误，避免角色名回退误点「解锁」按钮后 3 轮空转
+   * @throws 钱包锁定未配密码 / 3 轮后仍未完成
    */
   async ensureConnected(popup: PopupPage): Promise<void> {
     for (let i = 0; i < 3; i++) {
+      if (popup.isClosed?.()) break
+      const lockLoc = popup.getByTestId('unlock-password').first()
+      let locked = false
+      try {
+        locked = ((await lockLoc.count?.()) ?? 0) > 0
+      } catch {
+        if (popup.isClosed?.()) break
+      }
+      if (locked) throw new Error('MetaMask 已锁定且未配置解锁密码（请在 config/.env 配置 WALLET_PASSWORDS 或 config.local.json 的 wallet.passwords）')
       const btn = await this.waitConfirmBtn(popup, 10000)
       if (!btn) break
       await btn.click()

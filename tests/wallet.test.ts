@@ -139,8 +139,8 @@ describe('MetaMaskAdapter 解锁轮询', () => {
     await expect(adapter.unlock!(popup, 'bad')).rejects.toThrow(/解锁失败/)
   })
 
-  it('20s 无任何状态抛错', async () => {
-    const adapter = new MetaMaskAdapter()
+  it('轮询预算内无任何状态抛错（预算可配置，默认 45s）', async () => {
+    const adapter = new MetaMaskAdapter({ unlockWaitMs: 300 })
     const popup = makePopup({ getByTestId: () => makeLocator({ count: async () => 0 }) })
     await expect(adapter.unlock!(popup, 'secret123')).rejects.toThrow(/弹窗状态未出现/)
   })

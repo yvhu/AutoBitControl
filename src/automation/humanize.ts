@@ -6,7 +6,7 @@
  *   且与比特浏览器 CDP 连接模型统一（详见 docs/API-GUIDE.md「CDP 派发原理」）
  */
 import { path as ghostPath } from 'ghost-cursor'
-import type { Page, CDPSession } from 'patchright'
+import type { Page, Locator, CDPSession } from 'patchright'
 
 export interface HumanizeOptions {
   /** 移动类动作的最小停顿（毫秒） */
@@ -88,13 +88,20 @@ export class Humanizer {
   /**
    * 拟人点击：hover 预热（失败容错，部分元素无 hover 态）→ 轨迹移动 →
    * 短暂停顿 → 按下/抬起（间隔 40-150ms 模拟真实按压时长）
-   * @throws 元素不存在（boundingBox 为空）
+   * 坐标经 evaluate 读取（不用 boundingBox）：boundingBox 带稳定性等待，
+   * 在带持续动画的按钮（脉冲/渐入等）上会 30s 超时（真机实测 inception 落地页按钮）
+   * @throws 元素未挂载 / 不可见 / 无尺寸（10s 轮询后仍不满足）
    */
   async click(selector: string): Promise<void> {
-    const box = await this.page.locator(selector).first().boundingBox()
-    if (!box) throw new Error(`点击失败: 找不到元素 ${selector}`)
+    const loc = this.page.locator(selector).first()
+    try {
+      await loc.waitFor({ state: 'attached', timeout: 30000 })
+    } catch {
+      throw new Error(`点击失败: 找不到元素 ${selector}`)
+    }
+    const box = await this.resolveBox(loc, selector)
     const target = randomPointInBox(box)
-    await this.page.locator(selector).first().hover({ timeout: 5000 }).catch(() => {})
+    await loc.hover({ timeout: 5000 }).catch(() => {})
     await this.moveTo(target.x, target.y)
     // 点击前犹豫：使用构造注入的 min/max 停顿区间（默认 0.8-3s，可调快调慢）
     await Humanizer.sleep(this.minDelay, this.maxDelay)
@@ -102,6 +109,24 @@ export class Humanizer {
     await s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 })
     await Humanizer.sleep(40, 150)
     await s.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 })
+  }
+
+  /** 轮询取元素盒：先滚动进视野再读坐标（视口外按钮场景），可见且有尺寸才返回，最多 10s */
+  private async resolveBox(loc: Locator, selector: string): Promise<Box> {
+    const end = Date.now() + 10000
+    for (;;) {
+      const r = await loc.evaluate((el) => {
+        const target = el as HTMLElement
+        target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+        const b = target.getBoundingClientRect()
+        return { x: b.x, y: b.y, width: b.width, height: b.height }
+      }).catch(() => null)
+      if (r && r.width > 0 && r.height > 0) {
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      }
+      if (Date.now() > end) throw new Error(`点击失败: 找不到元素 ${selector}`)
+      await new Promise(res => setTimeout(res, 500))
+    }
   }
 
   /**

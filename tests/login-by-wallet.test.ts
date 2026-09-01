@@ -34,6 +34,22 @@ function makePopup(over: Partial<PopupPage> = {}): PopupPage {
   }
 }
 
+/** 有状态弹窗 mock：unlock-password 在 fill 后消失（模拟真实解锁后 UI 变化） */
+function makeLockedPopup(onFill: (t: string) => void): PopupPage {
+  let locked = true
+  return makePopup({
+    getByTestId: (id: string) => {
+      if (id === 'unlock-password') {
+        return makeLocator({
+          count: async () => (locked ? 1 : 0),
+          fill: async (t: string) => { locked = false; onFill(t) },
+        })
+      }
+      return makeLocator()
+    },
+  })
+}
+
 class WalletTask implements SiteTask {
   meta: TaskMeta = { key: 'wallet-task', name: '钱包任务', url: '', wallet: 'metamask' }
   async run(_ctx: TaskContext) {}
@@ -63,34 +79,26 @@ describe('loginByWallet 密码按钱包类型取用', () => {
 
   it('metamask/petra 密码不同：解锁使用 meta.wallet 对应类型的密码', async () => {
     const filled: string[] = []
-    const popup = makePopup({
-      getByTestId: (id: string) => id === 'unlock-password'
-        ? makeLocator({ fill: async (t: string) => { filled.push(t) } })
-        : makeLocator(),
-    })
+    const popup = makeLockedPopup((t) => { filled.push(t) })
     vi.mocked(waitForPopup).mockResolvedValue(popup as never)
     const ctx = makeCtx({ metamask: 'mm-pw', petra: 'pt-pw' })
     await ctx.loginByWallet()
     expect(filled).toEqual(['mm-pw'])
   })
 
-  it('该钱包类型未配置密码：跳过解锁直接走连接确认', async () => {
+  it('该钱包类型未配置密码且钱包锁定：抛明确错误提示配置 WALLET_PASSWORDS', async () => {
     const filled: string[] = []
-    const popup = makePopup({
-      getByTestId: (id: string) => id === 'unlock-password'
-        ? makeLocator({ fill: async (t: string) => { filled.push(t) } })
-        : makeLocator(),
-    })
+    const popup = makeLockedPopup((t) => { filled.push(t) })
     vi.mocked(waitForPopup).mockResolvedValue(popup as never)
     const ctx = makeCtx({ petra: 'pt-pw' })
-    await ctx.loginByWallet()
+    await expect(ctx.loginByWallet()).rejects.toThrow('MetaMask 已锁定且未配置解锁密码')
     expect(filled).toEqual([])
   })
 
-  it('钱包弹窗等待 30s 且扫描全部 context', async () => {
-    vi.mocked(waitForPopup).mockResolvedValue(makePopup({ url: () => 'chrome-extension://abc/home.html' }) as never)
+  it('钱包弹窗等待 60s 且扫描全部 context', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(makeLockedPopup(() => {}) as never)
     const ctx = makeCtx({ metamask: 'pw' })
     await ctx.loginByWallet()
-    expect(vi.mocked(waitForPopup).mock.calls[0][2]).toBe(30000)
+    expect(vi.mocked(waitForPopup).mock.calls[0][2]).toBe(60000)
   })
 })
