@@ -19,6 +19,7 @@ import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
 import { TaskContext } from './task-context'
 import { isIntervalSchedule, type TaskMeta } from './task'
 import type { WalletRegistry } from '../automation/wallet/types'
+import { WalletSession } from '../automation/wallet/session'
 
 /** 浏览器连接抽象：测试注入假驱动，生产用 PatchrightDriver */
 export interface BrowserDriver {
@@ -138,6 +139,9 @@ export class WindowRunner {
         return results
       }
       const page = connected.page
+      // 窗口会话级钱包扩展检测：每轮会话一个实例（内存态，会话结束即丢弃；
+      // 扩展状态随浏览器实例重置，新会话必须重建）
+      const walletSession = new WalletSession(page)
       // IP 探活：代理 IP 未生效时整窗口跳过，避免用错误 IP 跑任务触发风控
       const probeOk = await this.probeWithRetry(page)
       if (!probeOk) {
@@ -171,7 +175,7 @@ export class WindowRunner {
           logger.warn({ profile: profile.name, task: key }, '窗口熔断，跳过任务')
           continue
         }
-        results.set(key, await this.runTask(profile, key, page, date))
+        results.set(key, await this.runTask(profile, key, page, date, walletSession))
       }
       return results
     } finally {
@@ -240,7 +244,7 @@ export class WindowRunner {
    * 非首次尝试先复位页面（about:blank），避免上一轮残留 DOM/事件干扰
    * 成功重置熔断计数；终态失败（failed/captcha_failed）熔断计数 +1
    */
-  private async runTask(profile: ProfileRow, taskKey: string, page: Page, date: string): Promise<RunRow | null> {
+  private async runTask(profile: ProfileRow, taskKey: string, page: Page, date: string, walletSession: WalletSession): Promise<RunRow | null> {
     const { cfg, db, logger } = this.deps
     const task = this.deps.tasks.get(taskKey)
     if (!task) {
@@ -298,6 +302,7 @@ export class WindowRunner {
           walletPasswords: this.deps.walletPasswords,
           captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
+          walletSession,
           accountRow,
           // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
           onCaptchaLog: (kind, ok, costPoints) => {

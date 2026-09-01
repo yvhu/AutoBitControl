@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
 import type { AppDb, ProfileRow, RunRow } from '../src/infrastructure/db'
-import type { SiteTask } from '../src/tasks/base'
+import { TaskContext, type SiteTask } from '../src/tasks/base'
+import { WalletRegistry } from '../src/automation/wallet/types'
+import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
+import { WalletSession } from '../src/automation/wallet/session'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
   return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0, ...over }
@@ -52,14 +55,14 @@ const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
 const scheduleRetry = vi.fn()
 
-function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null> }) {
+function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>; wallets?: WalletRegistry }) {
   return new WindowRunner({
     cfg: over.cfgOver ?? cfg,
     db: over.db ?? makeDb(),
     bitbrowser: bitbrowser as never,
     driver: over.driver ?? makeDriver(),
     tasks: over.tasks ?? new Map([['ok-task', new OkTask()]]),
-    wallets: null as never,
+    wallets: over.wallets ?? (null as never),
     captcha: null as never,
     logger,
     artifactsDir,
@@ -89,6 +92,12 @@ class IntervalTask implements SiteTask {
 class StaggerTask implements SiteTask {
   meta = { key: 'daily', name: 'DAILY', url: 'https://a.io', schedule: { stagger: ['09:00', '11:00'] as [string, string] } }
   run = vi.fn().mockResolvedValue(undefined)
+}
+
+/** 钱包探针任务 fixture：run 内调用 ensureWalletReady，验证 WalletSession 注入链路 */
+class WalletProbeTask implements SiteTask {
+  meta = { key: 'wallet-probe', name: 'WP', url: 'https://x.io', wallet: 'metamask' }
+  run = vi.fn(async (ctx: TaskContext) => { await ctx.ensureWalletReady() })
 }
 
 /** 提取 upsertRun 调用序列的状态列 */
@@ -338,5 +347,31 @@ describe('WindowRunner', () => {
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls.every(c => c[3] === 2)).toBe(true) // 新轮次沿用 nextRunSlot 计算出的 slot=2
     expect(nextRunSlot).toHaveBeenCalledWith(1, 'ok-task', expect.any(String))
+  })
+
+  it('WalletSession 注入任务：扩展缺失时任务快速失败（错误提示重启窗口）', async () => {
+    const db = makeDb()
+    // fake 页面：provider 缺失（evaluate 恒 false）、CDP 探测失败（newCDPSession reject）、
+    // waitForTimeout 立即返回——完整探测路径在 mock 下瞬时完成
+    const page = {
+      ...okPage,
+      evaluate: vi.fn().mockResolvedValue(false),
+      waitForTimeout: vi.fn().mockResolvedValue(undefined),
+      context: () => ({ newCDPSession: vi.fn().mockRejectedValue(new Error('no extension')) }),
+    }
+    const wallets = new WalletRegistry()
+    wallets.register(new MetaMaskAdapter())
+    const task = new WalletProbeTask()
+    const runner = makeRunner({
+      db,
+      wallets,
+      tasks: new Map([['wallet-probe', task]]),
+      driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }),
+    })
+    await runner.runWindowTasks(makeProfile(), ['wallet-probe'])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.map(c => c[4])).toEqual(['running', 'retry_wait'])
+    expect(String(calls[1][5].error)).toContain('钱包扩展未加载')
+    expect(task.run).toHaveBeenCalledTimes(1)
   })
 })
