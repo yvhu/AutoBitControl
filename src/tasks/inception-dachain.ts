@@ -27,21 +27,12 @@ const INSUFFICIENT_TEXT = 'Insufficient QE'
 const SIDEBAR_TEXT = 'Quantum Crate'
 // 未登录落地页按钮
 const ENTER_TEXT = 'Enter Inception'
-// AppKit 钱包列表里的 MetaMask 入口（data-testid，与 UI 语言无关）
-const METAMASK_ENTRY = '[data-testid="wallet-selector-io.metamask"]'
+// AppKit 钱包列表里的 MetaMask 入口 testid 值（与 UI 语言无关；AppKit 封装内补全 data-testid 选择器）
+const METAMASK_ENTRY = 'wallet-selector-io.metamask'
 
 // —— 时间/次数配置（全部经真机实测校准；改动前重新真机验证）——
-const STATE_WAIT_MS = 20000 // 初始登录状态竞速（SPA 渲染延迟容忍）
-const STATE_RELOAD_ROUNDS = 10 // 状态不明时刷新轮数
-const STATE_RELOAD_WAIT_MS = 15000 // 每轮刷新后竞速
-const RELOAD_TIMEOUT_MS = 45000 // page.reload 超时
+const RELOAD_TIMEOUT_MS = 45000 // page.reload 超时（登录态判定与目录等待共用）
 const GET_STARTED_WAIT_MS = 45000 // Enter Inception → Get Started 断言（高负载下弹窗渲染慢）
-const APP_KIT_MODAL_WAIT_MS = 45000 // AppKit 弹窗出现等待（高负载下渲染慢）
-const APP_KIT_NORMALIZE_ROUNDS = 5 // 弹窗视图归一化轮数
-const APP_KIT_ROUND_SLEEP_MS = 3000 // 每轮归一化后停顿
-const SIDEBAR_PASSIVE_MS = 45000 // 钱包连接后被动等目录（登录 API 慢，实测可 >60s）
-const SIDEBAR_RELOAD_ROUNDS = 2 // 目录不出现时刷新轮数
-const SIDEBAR_RELOAD_WAIT_MS = 30000 // 每轮等目录
 const CRATE_PAGE_WAIT_MS = 20000 // 目录点击后等 Open Free
 const CRATE_PAGE_ATTEMPTS = 2 // 目录点击补点次数（SPA 路由未生效场景）
 const CRATE_LOOP_MAX = 8 // 开箱循环上限（5 箱 + 上限提示判定余量）
@@ -72,22 +63,9 @@ export class InceptionDachainTask extends SiteTask {
     captcha: { auto: true, maxCost: 1500 },
   }
 
-  // —— 通用竞速等待 ——
-
-  /** 多文案竞速：任一出现返回其键，都等不到返回 null（Promise.race 统一实现） */
-  private async raceTexts(ctx: TaskContext, entries: Array<[RaceKey, string]>, timeoutMs: number): Promise<RaceKey | null> {
-    const r = await Promise.race(entries.map(([k, text]) => ctx.waitForText(text, timeoutMs).then(() => k).catch(() => null)))
-    return r ?? null
-  }
-
-  /** 登录状态竞速：已登录（目录栏）/ 未登录（Enter Inception） */
-  private raceLoginState(ctx: TaskContext, timeoutMs: number): Promise<RaceKey | null> {
-    return this.raceTexts(ctx, [['loggedIn', SIDEBAR_TEXT], ['landing', ENTER_TEXT]], timeoutMs)
-  }
-
-  /** 点 Open Free 后竞速：上限提示 / 开箱弹窗 / 余额不足 */
+  /** 点 Open Free 后竞速：上限提示 / 开箱弹窗 / 余额不足（通用竞速 ctx.raceTexts） */
   private raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<RaceKey | null> {
-    return this.raceTexts(ctx, [['limit', LIMIT_TEXT], ['modal', MODAL_TITLE], ['insufficient', INSUFFICIENT_TEXT]], timeoutMs)
+    return ctx.raceTexts([['limit', LIMIT_TEXT], ['modal', MODAL_TITLE], ['insufficient', INSUFFICIENT_TEXT]], timeoutMs)
   }
 
   /** 开箱结果竞速：结果文案任一 / 余额不足 / 弹窗内上限提示（达上限时弹窗无结果） */
@@ -97,7 +75,7 @@ export class InceptionDachainTask extends SiteTask {
       ['insufficient', INSUFFICIENT_TEXT],
       ['limit', LIMIT_TEXT],
     ]
-    return this.raceTexts(ctx, entries, timeoutMs)
+    return ctx.raceTexts(entries, timeoutMs)
   }
 
   // —— 页面状态工具 ——
@@ -116,32 +94,6 @@ export class InceptionDachainTask extends SiteTask {
     }).catch(() => null)
   }
 
-  /** 元素是否可见（任何异常按不可见处理） */
-  private async visible(ctx: TaskContext, selector: string): Promise<boolean> {
-    try {
-      const loc = ctx.page.locator(selector).first()
-      if ((await loc.count()) === 0) return false
-      return await loc.isVisible()
-    } catch {
-      return false
-    }
-  }
-
-  /** 等元素消失或隐藏（元素从未出现视为已消失；最多 timeoutMs） */
-  private async waitGoneOrHidden(ctx: TaskContext, selector: string, timeoutMs: number): Promise<void> {
-    const end = Date.now() + timeoutMs
-    while (Date.now() < end) {
-      try {
-        const loc = ctx.page.locator(selector).first()
-        if ((await loc.count()) === 0) return
-        if (!(await loc.isVisible().catch(() => false))) return
-      } catch {
-        return
-      }
-      await ctx.page.waitForTimeout(500)
-    }
-  }
-
   /** 达上限成功：截图 + 日志（三个信号的统一收尾） */
   private async finishAtLimit(ctx: TaskContext, signal: string): Promise<void> {
     ctx.log.info({ step: 'crates', window: ctx.profile.name, signal }, '每日上限已达成')
@@ -155,7 +107,10 @@ export class InceptionDachainTask extends SiteTask {
     await ctx.closeOtherTabs()
     await ctx.goto()
 
-    const state = await this.detectState(ctx)
+    // 登录状态竞速判定：goto 后 SPA 渲染有延迟（真机实测 0-3s 判定会误判），
+    // 已登录窗口若误入登录分支，仪表盘永远不出现 Enter Inception（假报网络异常）；
+    // 状态不明时反复刷新（每轮两种状态都认，已登录窗口刷新后直接走已登录分支）
+    const state = await ctx.detectPageState({ loggedInText: SIDEBAR_TEXT, landingText: ENTER_TEXT, waitMs: 20000, rounds: 10, roundWaitMs: 15000, reloadTimeoutMs: RELOAD_TIMEOUT_MS })
     let popupFailed = false
     if (state === 'landing') {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '未登录，进入钱包登录流程')
@@ -174,7 +129,9 @@ export class InceptionDachainTask extends SiteTask {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '已登录（cookie 有效），跳过登录')
     }
 
-    if (!(await this.waitForSidebar(ctx))) {
+    // 等登录完成（左侧目录栏出现）——真机实测：钱包连接成功后站点侧登录 API
+    // 在网络差时很慢（可能 >60s）或需要刷新后才呈现：先被动等，再刷新 2 轮
+    if (!(await ctx.waitForTextWithReloads(SIDEBAR_TEXT, { passiveMs: 45000, rounds: 2, roundWaitMs: 30000, reloadTimeoutMs: RELOAD_TIMEOUT_MS }))) {
       throw new Error(
         popupFailed
           ? '钱包弹窗未出现且登录未完成：该窗口 MetaMask 可能未启用，或站点静默连接失败（重试将重启浏览器窗口）'
@@ -187,88 +144,20 @@ export class InceptionDachainTask extends SiteTask {
   }
 
   /**
-   * 登录状态竞速判定：goto 后 SPA 渲染有延迟（真机实测 0-3s 判定会误判），
-   * 已登录窗口若误入登录分支，仪表盘永远不出现 Enter Inception（假报网络异常）；
-   * 状态不明时反复刷新（每轮两种状态都认，已登录窗口刷新后直接走已登录分支）
-   */
-  private async detectState(ctx: TaskContext): Promise<'loggedIn' | 'landing'> {
-    let state = await this.raceLoginState(ctx, STATE_WAIT_MS)
-    for (let i = 0; i < STATE_RELOAD_ROUNDS && !state; i++) {
-      await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-      state = await this.raceLoginState(ctx, STATE_RELOAD_WAIT_MS)
-    }
-    if (!state) throw new Error('多次刷新后仍未出现 Enter Inception 或 Quantum Crate（网络异常）')
-    return state as 'loggedIn' | 'landing'
-  }
-
-  /**
    * 钱包登录（未登录分支）：Enter Inception → WALLET → AppKit 归一化 → MetaMask → 钱包弹窗
    * @returns 钱包弹窗是否未出现（静默连接容忍：由调用方结合目录栏判定）
    */
   private async loginByMetaMask(ctx: TaskContext): Promise<boolean> {
-    // 会话级钱包扩展就绪检查：provider 轮询（isMetaMask 验证）、 CDP 扩展页探测（预热），
+    // 会话级钱包扩展就绪检查：provider 轮询（isMetaMask 验证）+ CDP 扩展页探测（预热），
     // 结果按类型缓存；扩展未加载时快速失败（重试将重启浏览器窗口，扩展随之重载）
     await ctx.ensureWalletReady()
 
-    // Enter Inception → 登录方式选择弹窗（Get Started）→ 点 WALLET
+    // Enter Inception → 登录方式选择弹窗（Get Started）——站点特有入口
     await ctx.clickCheckin('button:has-text("Enter Inception")', { assert: 'text=Get Started', assertTimeoutMs: GET_STARTED_WAIT_MS })
-    await ctx.human.click('button:has-text("WALLET")')
 
-    // AppKit 弹窗视图归一化：初始视图不固定（钱包列表 / 上次钱包 QR 页 / 列表收起），
-    // 依次尝试 直接命中 → header-back 回退 → all-wallets 展开 → tab-browser 切换
-    await ctx.assertVisible('[data-testid="w3m-modal-card"]', APP_KIT_MODAL_WAIT_MS)
-    const entryFound = await this.normalizeAppKit(ctx)
-    if (!entryFound) throw new Error('AppKit 弹窗未出现 MetaMask 入口（弹窗视图异常，归一化未命中）')
-
-    await ctx.human.click(METAMASK_ENTRY)
-
-    // 钱包弹窗 → 解锁 → 确认连接；已授权过站点的窗口可能不再弹弹窗（静默连接），
-    // 弹窗未出现不立即判失败，交给后面的左侧目录判定；
-    // 8s 内未出现则补点一次入口（AppKit 动画未稳定时首次点击可能不注册）
-    try {
-      await ctx.loginByWallet({ reclick: { selector: METAMASK_ENTRY, afterMs: 8000 } })
-      return false
-    } catch (e) {
-      if ((e as Error).message.includes('钱包弹窗未出现')) return true
-      throw e
-    }
-  }
-
-  /** AppKit 弹窗内找 MetaMask 入口（找不到时按视图状态归一化后重试） */
-  private async normalizeAppKit(ctx: TaskContext): Promise<boolean> {
-    for (let i = 0; i < APP_KIT_NORMALIZE_ROUNDS; i++) {
-      if (await this.visible(ctx, METAMASK_ENTRY)) return true
-      if (await this.visible(ctx, '[data-testid="header-back"]')) {
-        await ctx.human.click('[data-testid="header-back"]')
-      } else if (await this.visible(ctx, '[data-testid="all-wallets"]')) {
-        await ctx.human.click('[data-testid="all-wallets"]')
-      } else if (await this.visible(ctx, '[data-testid="tab-browser"]')) {
-        await ctx.human.click('[data-testid="tab-browser"]')
-      }
-      await ctx.page.waitForTimeout(APP_KIT_ROUND_SLEEP_MS)
-    }
-    return false
-  }
-
-  /**
-   * 等登录完成（左侧目录栏出现）——真机实测：钱包连接成功后站点侧登录 API
-   * 在网络差时很慢（可能 >60s）或需要刷新后才呈现：先被动等，再刷新 2 轮
-   */
-  private async waitForSidebar(ctx: TaskContext): Promise<boolean> {
-    const waitFor = async (ms: number): Promise<boolean> => {
-      const end = Date.now() + ms
-      while (Date.now() < end) {
-        if (await ctx.textPresent(SIDEBAR_TEXT)) return true
-        await ctx.page.waitForTimeout(5000)
-      }
-      return false
-    }
-    if (await waitFor(SIDEBAR_PASSIVE_MS)) return true
-    for (let round = 0; round < SIDEBAR_RELOAD_ROUNDS; round++) {
-      await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-      if (await waitFor(SIDEBAR_RELOAD_WAIT_MS)) return true
-    }
-    return false
+    // AppKit 弹窗打开 + 视图归一化 + MetaMask 入口点击 + 钱包弹窗连接（通用封装）；
+    // 已授权过站点的窗口可能不再弹弹窗（静默连接）——弹窗未出现不立即判失败
+    return ctx.openAppKitWallet({ walletKey: 'metamask', openSelector: 'button:has-text("WALLET")', entryTestId: METAMASK_ENTRY })
   }
 
   /** 点左侧目录栏 Quantum Crate → 等 Open Free；点击可能未生效（SPA 路由慢）则补点 */
@@ -316,7 +205,7 @@ export class InceptionDachainTask extends SiteTask {
       if (revealed !== 'revealed') throw new Error('等待开箱结果超时（视频/接口过慢）')
       await ctx.human.click('button:has-text("Close")')
       // 等弹窗真正消失再开下一箱（固定 sleep 在弹窗未关时会导致下一轮 Open Free 点击被遮挡）
-      await this.waitGoneOrHidden(ctx, `text=${MODAL_TITLE}`, MODAL_GONE_MS)
+      await ctx.waitGoneOrHidden(`text=${MODAL_TITLE}`, MODAL_GONE_MS)
       ctx.log.info({ step: 'crates', window: ctx.profile.name, opened: i + 1 }, '开箱完成')
     }
     throw new Error('开箱次数超过预期仍未出现每日上限提示')
@@ -327,7 +216,7 @@ export class InceptionDachainTask extends SiteTask {
     const deadline = Date.now() + REVEAL_TOTAL_MS
     await ctx.human.click('button:has-text("Open for")')
     let revealed = await this.raceReveal(ctx, REVEAL_RECLICK_AT_MS)
-    if (!revealed && (await this.visible(ctx, 'button:has-text("Open for")'))) {
+    if (!revealed && (await ctx.visible('button:has-text("Open for")'))) {
       await ctx.human.click('button:has-text("Open for")')
     }
     if (!revealed) revealed = await this.raceReveal(ctx, Math.max(0, deadline - Date.now()))

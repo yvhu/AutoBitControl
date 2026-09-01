@@ -52,33 +52,16 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
   })
 }
 
-// 私有辅助方法经类型断言直接测试（纯竞速/等待逻辑，与页面无关）
+// 私有辅助方法经类型断言直接测试（纯竞速/等待逻辑，与页面无关）；
+// 通用竞速/可见性/消失等待已下沉 ctx（见 task-context-generic.test.ts），此处仅测任务级组合
 type TaskHelpers = {
-  raceLoginState(ctx: TaskContext, timeoutMs: number): Promise<'loggedIn' | 'landing' | null>
   raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<'limit' | 'modal' | 'insufficient' | null>
   raceReveal(ctx: TaskContext, timeoutMs: number): Promise<'revealed' | 'insufficient' | 'limit' | null>
-  waitGoneOrHidden(ctx: TaskContext, selector: string, timeoutMs: number): Promise<void>
-  visible(ctx: TaskContext, selector: string): Promise<boolean>
   dailyOpens(ctx: TaskContext): Promise<{ opened: number; total: number } | null>
 }
 const helpers = new InceptionDachainTask() as unknown as TaskHelpers
 
 describe('InceptionDachainTask 竞速与等待逻辑', () => {
-  it('raceLoginState：目录栏先出现 → loggedIn（已登录窗口跳过登录）', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Quantum Crate': 80, 'Enter Inception': 160 }))
-    expect(await helpers.raceLoginState(ctx, 1000)).toBe('loggedIn')
-  })
-
-  it('raceLoginState：Enter Inception 先出现 → landing（走登录流程）', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Quantum Crate': 160, 'Enter Inception': 80 }))
-    expect(await helpers.raceLoginState(ctx, 1000)).toBe('landing')
-  })
-
-  it('raceLoginState：两者都不出现 → null（交给刷新重试循环）', async () => {
-    const ctx = makeCtx(makeFakePage({}))
-    expect(await helpers.raceLoginState(ctx, 200)).toBeNull()
-  })
-
   it('raceAfterOpenFree：命中每日上限提示 → limit（任务成功）', async () => {
     const ctx = makeCtx(makeFakePage({ 'Daily limit reached': 100 }))
     expect(await helpers.raceAfterOpenFree(ctx, 1000)).toBe('limit')
@@ -129,31 +112,5 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
   it('dailyOpens：计数器未渲染/改版 → null（走文案竞速兜底）', async () => {
     const ctx = makeCtx(makeFakePage({}, { bodyText: 'SYS://DASHBOARD.MAIN | 21,804 | QE' }))
     expect(await helpers.dailyOpens(ctx)).toBeNull()
-  })
-
-  it('waitGoneOrHidden：元素不存在立即返回', async () => {
-    const ctx = makeCtx(makeFakePage({}, { count: 0 }))
-    const start = Date.now()
-    await helpers.waitGoneOrHidden(ctx, 'text=What is inside?', 2000)
-    expect(Date.now() - start).toBeLessThan(1000)
-  })
-
-  it('waitGoneOrHidden：元素隐藏立即返回', async () => {
-    const ctx = makeCtx(makeFakePage({}, { count: 1, visible: false }))
-    const start = Date.now()
-    await helpers.waitGoneOrHidden(ctx, 'text=What is inside?', 2000)
-    expect(Date.now() - start).toBeLessThan(1000)
-  })
-
-  it('waitGoneOrHidden：一直可见则等满超时（弹窗未关场景）', async () => {
-    const ctx = makeCtx(makeFakePage({}, { count: 1, visible: true }))
-    const start = Date.now()
-    await helpers.waitGoneOrHidden(ctx, 'text=What is inside?', 300)
-    expect(Date.now() - start).toBeGreaterThanOrEqual(300)
-  })
-
-  it('visible：count 为 0 或异常均返回 false', async () => {
-    const ctx = makeCtx(makeFakePage({}, { count: 0 }))
-    expect(await helpers.visible(ctx, '[data-testid="x"]')).toBe(false)
   })
 })
