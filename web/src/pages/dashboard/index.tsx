@@ -26,6 +26,7 @@ import dayjs, { type Dayjs } from 'dayjs'
 import StatusPill from '../../components/StatusPill'
 import type { DashboardData, RunRow, TaskMetaView } from '../../types'
 import { useDashboard, useTasks, useTriggerTask, useRerunFailed } from './hooks'
+import { formatDuration } from './format'
 
 const STATUS_FILTERS: Record<string, (r: RunRow) => boolean> = {
   all: () => true,
@@ -167,6 +168,20 @@ export default function DashboardPage() {
       key: 'startedAt',
       width: 130,
       render: (v: string | null) => (v ? (v.includes('T') ? v.slice(11, 23) : v) : '—'),
+    },
+    {
+      title: '结束时间',
+      dataIndex: 'finishedAt',
+      key: 'finishedAt',
+      width: 130,
+      render: (v: string | null) => (v ? (v.includes('T') ? v.slice(11, 23) : v) : '—'),
+    },
+    {
+      title: '总耗时',
+      dataIndex: 'durationSec',
+      key: 'durationSec',
+      width: 90,
+      render: (sec: number | null) => formatDuration(sec),
     },
     { title: '状态', dataIndex: 'status', key: 'status', width: 110, render: (s: RunRow['status']) => <StatusPill status={s} /> },
     { title: '尝试', dataIndex: 'attempts', key: 'attempts', width: 70 },
