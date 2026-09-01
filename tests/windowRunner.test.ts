@@ -6,7 +6,6 @@ import type { AppDb, ProfileRow, RunRow } from '../src/infrastructure/db'
 import { TaskContext, type SiteTask } from '../src/tasks/base'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
-import { WalletSession } from '../src/automation/wallet/session'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
   return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0, ...over }

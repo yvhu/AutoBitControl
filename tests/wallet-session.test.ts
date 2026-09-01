@@ -56,7 +56,7 @@ describe('WalletSession', () => {
   })
 
   it('provider 缺失但 CDP 探测成功（注入慢）→ 追加轮询后 ready', async () => {
-    const page = makeFakePage({ providerOk: true, cdpOk: true, evaluateDelay: 2 })
+    const page = makeFakePage({ providerOk: true, cdpOk: true, evaluateDelay: 12 })
     const s = new WalletSession(page as never, { pollIntervalMs: 5 })
     expect(await s.ensureReady('metamask', adapter)).toBe('ready')
   })

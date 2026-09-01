@@ -196,9 +196,9 @@ export class TaskContext {
   async ensureWalletReady(): Promise<void> {
     const walletKey = this.deps.task.meta.wallet
     if (!walletKey) return
-    if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const session = this.deps.walletSession
     if (!session) return
+    if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(walletKey)
     const state = await session.ensureReady(walletKey, adapter)
     if (state === 'missing') {
