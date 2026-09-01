@@ -310,6 +310,86 @@ export class TaskContext {
     }
   }
 
+  /** 多文案竞速：任一出现返回其键，都等不到返回 null（通用竞速等待） */
+  async raceTexts<K extends string>(entries: Array<[K, string]>, timeoutMs: number): Promise<K | null> {
+    const r = await Promise.race(entries.map(([k, text]) => this.waitForText(text, timeoutMs).then(() => k).catch(() => null)))
+    return r ?? null
+  }
+
+  /** 元素是否可见（任何异常按不可见处理） */
+  async visible(selector: string): Promise<boolean> {
+    try {
+      const loc = this.page.locator(selector).first()
+      if ((await loc.count()) === 0) return false
+      return await loc.isVisible()
+    } catch {
+      return false
+    }
+  }
+
+  /** 等元素消失或隐藏（元素从未出现视为已消失；最多 timeoutMs） */
+  async waitGoneOrHidden(selector: string, timeoutMs: number): Promise<void> {
+    const end = Date.now() + timeoutMs
+    while (Date.now() < end) {
+      try {
+        const loc = this.page.locator(selector).first()
+        if ((await loc.count()) === 0) return
+        if (!(await loc.isVisible().catch(() => false))) return
+      } catch {
+        return
+      }
+      await this.page.waitForTimeout(500)
+    }
+  }
+
+  /**
+   * 等文案出现 + 刷新兜底：先被动等 passiveMs，再最多 rounds 轮刷新（每轮等 roundWaitMs）
+   * @returns 出现 true / 全部超时 false
+   */
+  async waitForTextWithReloads(
+    text: string,
+    opts: { passiveMs: number; rounds?: number; roundWaitMs?: number; reloadTimeoutMs?: number },
+  ): Promise<boolean> {
+    const waitFor = async (ms: number): Promise<boolean> => {
+      const end = Date.now() + ms
+      while (Date.now() < end) {
+        if (await this.textPresent(text)) return true
+        await this.page.waitForTimeout(5000)
+      }
+      return false
+    }
+    if (await waitFor(opts.passiveMs)) return true
+    for (let round = 0; round < (opts.rounds ?? 0); round++) {
+      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      if (await waitFor(opts.roundWaitMs ?? 30000)) return true
+    }
+    return false
+  }
+
+  /**
+   * 登录状态竞速判定：已登录文案 / 未登录文案谁先出现；都不出现则刷新重试
+   * （已登录窗口误入登录分支时，仪表盘永远不出现未登录文案——假报网络异常的根因修复）
+   * @throws 多轮刷新后两者均未出现
+   */
+  async detectPageState(opts: {
+    loggedInText: string
+    landingText: string
+    waitMs: number
+    rounds?: number
+    roundWaitMs?: number
+    reloadTimeoutMs?: number
+  }): Promise<'loggedIn' | 'landing'> {
+    const race = async (ms: number): Promise<'loggedIn' | 'landing' | null> =>
+      this.raceTexts([['loggedIn', opts.loggedInText], ['landing', opts.landingText]], ms)
+    let state = await race(opts.waitMs)
+    for (let i = 0; i < (opts.rounds ?? 10) && !state; i++) {
+      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      state = await race(opts.roundWaitMs ?? 15000)
+    }
+    if (!state) throw new Error(`多次刷新后仍未出现 ${opts.loggedInText} 或 ${opts.landingText}（网络异常）`)
+    return state
+  }
+
   /**
    * 关闭页面弹窗/遮罩（公告、通知、引导层等挡路弹窗）
    * 策略按顺序尝试：候选关闭按钮 → 点遮罩空白处 → 按 Esc；
