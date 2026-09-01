@@ -27,6 +27,7 @@ import StatusPill from '../../components/StatusPill'
 import type { DashboardData, RunRow, TaskMetaView } from '../../types'
 import { useDashboard, useTasks, useTriggerTask, useRerunFailed } from './hooks'
 import { formatDuration } from './format'
+import { groupRuns, latestStats, historyMap } from './groupRuns'
 
 const STATUS_FILTERS: Record<string, (r: RunRow) => boolean> = {
   all: () => true,
@@ -124,15 +125,26 @@ export default function DashboardPage() {
     return map
   }, [tasks.data])
 
-  const rows = useMemo(() => {
-    const runs = dashboard.data?.runs ?? []
-    return runs.filter(
-      (r) =>
-        STATUS_FILTERS[statusFilter]?.(r) &&
-        (!taskFilter || r.taskKey === taskFilter) &&
-        (!profileSearch || (r.profileName ?? '').toLowerCase().includes(profileSearch.toLowerCase())),
-    )
-  }, [dashboard.data, statusFilter, taskFilter, profileSearch])
+  const groups = useMemo(() => groupRuns(dashboard.data?.runs ?? []), [dashboard.data])
+  const historyOf = useMemo(() => historyMap(dashboard.data?.runs ?? []), [dashboard.data])
+  // 筛选只作用于最新轮（顶层行）；展开出的历史行不被二次过滤
+  const rows = useMemo(
+    () =>
+      groups
+        .filter(
+          (g) =>
+            STATUS_FILTERS[statusFilter]?.(g.latest) &&
+            (!taskFilter || g.latest.taskKey === taskFilter) &&
+            (!profileSearch || (g.latest.profileName ?? '').toLowerCase().includes(profileSearch.toLowerCase())),
+        )
+        .map((g) => g.latest),
+    [groups, statusFilter, taskFilter, profileSearch],
+  )
+  // 统计口径：按每窗口每任务最新一轮计数（与表格行数一致）
+  const displayData = useMemo(
+    () => (dashboard.data ? { ...dashboard.data, stats: latestStats(dashboard.data.runs) } : dashboard.data),
+    [dashboard.data],
+  )
 
   const bitbrowserOf = (profileId: number) =>
     dashboard.data?.profiles.find((p) => p.id === profileId)?.bitbrowserId
@@ -185,6 +197,15 @@ export default function DashboardPage() {
     },
     { title: '状态', dataIndex: 'status', key: 'status', width: 110, render: (s: RunRow['status']) => <StatusPill status={s} /> },
     { title: '尝试', dataIndex: 'attempts', key: 'attempts', width: 70 },
+    {
+      title: '轮次',
+      key: 'round',
+      width: 100,
+      render: (_, r) => {
+        const n = historyOf.get(r.id)?.length ?? 0
+        return n > 0 ? <Tag color="blue">历史 {n} 轮</Tag> : '—'
+      },
+    },
     {
       title: '错误',
       dataIndex: 'error',
@@ -252,16 +273,16 @@ export default function DashboardPage() {
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
-          <CompleteCard data={dashboard.data} loading={dashboard.isPending} />
+          <CompleteCard data={displayData} loading={dashboard.isPending} />
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <DistributionCard data={dashboard.data ?? EMPTY_DASHBOARD} />
+          <DistributionCard data={displayData ?? EMPTY_DASHBOARD} />
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <CaptchaCard data={dashboard.data ?? EMPTY_DASHBOARD} />
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <LiveCard data={dashboard.data ?? EMPTY_DASHBOARD} />
+          <LiveCard data={displayData ?? EMPTY_DASHBOARD} />
         </Col>
       </Row>
 
@@ -311,6 +332,34 @@ export default function DashboardPage() {
           columns={columns}
           dataSource={rows}
           loading={dashboard.isPending}
+          expandable={{
+            rowExpandable: (r) => (historyOf.get(r.id)?.length ?? 0) > 0,
+            expandedRowRender: (r) => {
+              const hist = historyOf.get(r.id) ?? []
+              return (
+                <Table<RunRow>
+                  size="small"
+                  rowKey={(h) => `${h.id}-${h.taskKey}`}
+                  pagination={false}
+                  dataSource={hist}
+                  columns={[
+                    { title: '轮次', dataIndex: 'slot', width: 80, render: (s: number) => `#${s}` },
+                    { title: '开始时间', dataIndex: 'startedAt', width: 130, render: (v: string | null) => (v ? (v.includes('T') ? v.slice(11, 23) : v) : '—') },
+                    { title: '结束时间', dataIndex: 'finishedAt', width: 130, render: (v: string | null) => (v ? (v.includes('T') ? v.slice(11, 23) : v) : '—') },
+                    { title: '总耗时', dataIndex: 'durationSec', width: 90, render: (sec: number | null) => formatDuration(sec) },
+                    { title: '状态', dataIndex: 'status', width: 110, render: (s: RunRow['status']) => <StatusPill status={s} /> },
+                    { title: '错误', dataIndex: 'error', ellipsis: true, render: (err: string | null) => (err ? <Typography.Text type="danger" ellipsis={{ tooltip: err }} style={{ maxWidth: 240 }}>{err}</Typography.Text> : '—') },
+                    { title: '截图', dataIndex: 'screenshot', width: 90, render: (shot: string | null) => (shot ? <Button type="link" size="small" onClick={() => window.open(`/api/screenshots?path=${encodeURIComponent(shot)}`, '_blank')}>🖼 查看</Button> : '—') },
+                    { title: '操作', width: 100, render: (_, h) => {
+                      const failed = h.status === 'failed' || h.status === 'captcha_failed'
+                      const id = bitbrowserOf(h.profileId)
+                      return <Button type="link" size="small" loading={trigger.isPending} disabled={!id} onClick={() => { if (id) trigger.mutate({ key: h.taskKey, bitbrowserId: id }) }}>{failed ? '重跑' : '执行'}</Button>
+                    } },
+                  ]}
+                />
+              )
+            },
+          }}
           pagination={{ defaultPageSize: 50, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (t) => `共 ${t} 条` }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行记录" /> }}
           scroll={{ x: 900 }}
