@@ -6,12 +6,13 @@
  */
 import { loadConfig } from './infrastructure/config'
 import { createLogger } from './infrastructure/logger'
-import { AppDb, todayStr } from './infrastructure/db'
+import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { TaskQueue, CoalescingEnqueuer } from './engine/queue'
 import { Scheduler } from './engine/scheduler'
+import { recoverRetryTasks } from './engine/retry-recovery'
 import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
@@ -205,35 +206,11 @@ export async function startApp(): Promise<void> {
   await scheduler.start()
 
   // 重试恢复：重试定时器是内存态，进程重启后丢失会让 retry_wait 行孤儿化（当天任务永不完成）——
-  // 启动时扫描当日 retry_wait 行：退避已到期的立即重新入队，未到期的重新挂定时器（与 scheduleRetry 同语义）
-  void (async () => {
-    try {
-      const rows = (await db.listRunsForDate(todayStr())).filter(r => r.status === 'retry_wait')
-      let recovered = 0
-      for (const r of rows) {
-        const profile = (await db.listProfiles(false)).find(p => p.id === r.profileId)
-        if (!profile) continue
-        const taskMeta = tasks.get(r.taskKey)?.meta
-        const backoffMs = (taskMeta?.retry?.backoffSec ?? cfg.execution.retryBackoffSec) * 1000
-        const finished = r.finishedAt ? new Date(r.finishedAt.replace(' ', 'T')).getTime() : NaN
-        const delay = Number.isNaN(finished) ? 0 : Math.max(0, finished + backoffMs - Date.now())
-        recovered++
-        setTimeout(() => {
-          void (async () => {
-            try {
-              const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
-              if (p) enqueuer.enqueue(p, r.taskKey)
-            } catch (e) {
-              logger.warn({ task: r.taskKey, err: (e as Error).message }, '重试恢复入队失败，放弃本次重试')
-            }
-          })()
-        }, delay)
-      }
-      if (recovered > 0) logger.info({ count: recovered }, '已恢复待重试任务')
-    } catch (e) {
-      logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
-    }
-  })()
+  // 启动时扫描当日 retry_wait 行：退避已到期的立即重新入队，未到期的重新挂定时器（与 scheduleRetry 同语义）；
+  // 已被后续轮次取代的陈旧行结算为 failed，避免每次重启重复执行
+  void recoverRetryTasks({ db, tasks, enqueuer, logger, retryBackoffSec: cfg.execution.retryBackoffSec }).catch((e) => {
+    logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
+  })
 
   // 优雅退出：先停调度器 → server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
   let finishing = false

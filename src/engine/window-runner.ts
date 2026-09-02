@@ -116,8 +116,7 @@ export class WindowRunner {
       }
     } catch (e) {
       for (const key of taskKeys) {
-        const slot = await this.nextSlot(profile, key, date)
-        const row = await this.safeDb(() => db.upsertRun(profile.id, key, date, slot, 'skipped', { error: `开窗失败: ${(e as Error).message}`, finishedAt: localWallNow() }), null)
+        const row = await this.settleWindowSkip(profile, key, date, 'skipped', `开窗失败: ${(e as Error).message}`)
         results.set(key, row)
       }
       logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
@@ -131,8 +130,7 @@ export class WindowRunner {
         connected = await this.deps.driver.connect(`http://${open.http}`)
       } catch (e) {
         for (const key of taskKeys) {
-          const slot = await this.nextSlot(profile, key, date)
-          const row = await this.safeDb(() => db.upsertRun(profile.id, key, date, slot, 'failed', { error: `CDP 连接失败: ${(e as Error).message}`, finishedAt: localWallNow() }), null)
+          const row = await this.settleWindowSkip(profile, key, date, 'failed', `CDP 连接失败: ${(e as Error).message}`)
           results.set(key, row)
         }
         logger.error({ profile: profile.name }, `CDP 连接失败: ${(e as Error).message}`)
@@ -146,8 +144,7 @@ export class WindowRunner {
       const probeOk = await this.probeWithRetry(page)
       if (!probeOk) {
         for (const key of taskKeys) {
-          const slot = await this.nextSlot(profile, key, date)
-          const row = await this.safeDb(() => db.upsertRun(profile.id, key, date, slot, 'skipped', { error: 'IP 探活失败', finishedAt: localWallNow() }), null)
+          const row = await this.settleWindowSkip(profile, key, date, 'skipped', 'IP 探活失败')
           results.set(key, row)
         }
         logger.warn({ profile: profile.name }, 'IP 探活失败，本轮跳过')
@@ -160,8 +157,7 @@ export class WindowRunner {
         const key = taskKeys[i]
         if (Date.now() >= deadline) {
           for (const rest of taskKeys.slice(i)) {
-            const slot = await this.nextSlot(profile, rest, date)
-            const row = await this.safeDb(() => db.upsertRun(profile.id, rest, date, slot, 'skipped', { error: '窗口超时', finishedAt: localWallNow() }), null)
+            const row = await this.settleWindowSkip(profile, rest, date, 'skipped', '窗口超时')
             results.set(rest, row)
           }
           logger.warn({ profile: profile.name }, '窗口超时，剩余任务跳过')
@@ -169,8 +165,7 @@ export class WindowRunner {
         }
         // 窗口级熔断：计数达阈值后当日不再跑（成功一次即重置，见 runTask）
         if (shouldSkipAfterBreaker(profile.circuitBreakerCount, cfg.execution.circuitBreakerThreshold)) {
-          const slot = await this.nextSlot(profile, key, date)
-          const row = await this.safeDb(() => db.upsertRun(profile.id, key, date, slot, 'skipped', { error: '窗口熔断', finishedAt: localWallNow() }), null)
+          const row = await this.settleWindowSkip(profile, key, date, 'skipped', '窗口熔断')
           results.set(key, row)
           logger.warn({ profile: profile.name, task: key }, '窗口熔断，跳过任务')
           continue
@@ -234,6 +229,17 @@ export class WindowRunner {
   private async nextSlot(profile: ProfileRow, taskKey: string, date: string): Promise<number> {
     const n = await this.safeDb(() => this.deps.db.nextRunSlot(profile.id, taskKey, date), null)
     return typeof n === 'number' ? n : 0
+  }
+
+  /**
+   * 窗口级跳过/失败的落库：若该任务存在待续跑的 retry_wait 行（上次失败后重试尚未执行），
+   * 直接结算该行（沿用原 slot 落终态），否则按新轮次落库——
+   * 不结算会留下孤儿 retry_wait 行，每次进程重启都会被重试恢复扫描重新入队重复执行
+   */
+  private async settleWindowSkip(profile: ProfileRow, taskKey: string, date: string, status: 'skipped' | 'failed', error: string): Promise<RunRow | null> {
+    const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, taskKey, date), null)
+    const slot = existing?.status === 'retry_wait' ? existing.slot : await this.nextSlot(profile, taskKey, date)
+    return this.safeDb(() => this.deps.db.upsertRun(profile.id, taskKey, date, slot, status, { error, finishedAt: localWallNow() }), null)
   }
 
   /**

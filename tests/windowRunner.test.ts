@@ -222,6 +222,33 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['skipped'])
   })
 
+  it('窗口级跳过结算待重试行：retry_wait 行沿用原 slot 落终态（不新开轮次）', async () => {
+    const db = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 3 } as Partial<RunRow>),
+    })
+    const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
+    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }) })
+    await runner.runWindowTasks(makeProfile(), ['ok-task'])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls).toHaveLength(1)
+    expect(calls[0][3]).toBe(3) // 沿用 retry_wait 行的 slot，而非 nextRunSlot 新开轮
+    expect(calls[0][4]).toBe('skipped')
+    expect(db.nextRunSlot).not.toHaveBeenCalled()
+  })
+
+  it('窗口级跳过无待重试行时仍新开轮次（终态行为不变）', async () => {
+    const db = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'success', attempts: 1, slot: 1 } as Partial<RunRow>),
+      nextRunSlot: vi.fn().mockResolvedValue(2),
+    })
+    const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
+    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }) })
+    await runner.runWindowTasks(makeProfile(), ['ok-task'])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[0][3]).toBe(2)
+    expect(calls[0][4]).toBe('skipped')
+  })
+
   it('IP 探活前两次失败第三次成功仍算通过', async () => {
     const runner = makeRunner({})
     let attempts = 0
