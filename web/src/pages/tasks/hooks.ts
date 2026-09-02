@@ -50,6 +50,7 @@ export function useTasks() {
   return useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
+    refetchInterval: 5000,
   })
 }
 

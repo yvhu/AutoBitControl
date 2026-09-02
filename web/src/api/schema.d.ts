@@ -42,6 +42,7 @@ export interface paths {
                                 lastUpdated?: string | null;
                                 deprecated?: boolean;
                                 enabled?: boolean;
+                                inFlight?: boolean;
                                 wallet?: string | null;
                                 /** @description cron 字符串或错峰窗口对象 {stagger:[start,end]} */
                                 schedule?: Record<string, never> | null;

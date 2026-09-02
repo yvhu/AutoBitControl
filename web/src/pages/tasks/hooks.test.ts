@@ -44,3 +44,14 @@ describe('scheduleText', () => {
     expect(scheduleText({ everyHours: 8 })).toBe('每 8 小时')
   })
 })
+
+import { triggerButton } from './index'
+
+describe('triggerButton', () => {
+  it('在途 → disabled + 「运行中」', () => {
+    expect(triggerButton(true)).toEqual({ disabled: true, label: '运行中' })
+  })
+  it('非在途 → 可点 + 「立即触发」', () => {
+    expect(triggerButton(false)).toEqual({ disabled: false, label: '立即触发' })
+  })
+})

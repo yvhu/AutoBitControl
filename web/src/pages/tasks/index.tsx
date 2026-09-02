@@ -69,9 +69,10 @@ function TaskCard({ task }: { task: TaskMetaView }) {
               size="small"
               icon={<ThunderboltOutlined />}
               loading={trigger.isPending && trigger.variables === task.key}
+              disabled={triggerButton(task.inFlight).disabled}
               onClick={() => trigger.mutate(task.key)}
             >
-              立即触发
+              {triggerButton(task.inFlight).label}
             </Button>
           )}
         </Space>
@@ -115,4 +116,9 @@ export default function TasksPage() {
       </Typography.Text>
     </Space>
   )
+}
+
+/** 触发按钮态：在途禁用显示「运行中」，否则可点「立即触发」（isPending 时由 antd loading 接管） */
+export function triggerButton(inFlight: boolean): { disabled: boolean; label: string } {
+  return inFlight ? { disabled: true, label: '运行中' } : { disabled: false, label: '立即触发' }
 }
