@@ -74,4 +74,41 @@ describe('CoalescingEnqueuer', () => {
     await q.onIdle()
     expect(run).toHaveBeenCalledTimes(1)
   })
+
+  it('hasTaskInFlight：running 会话与 pending 条目均判在途', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>(r => { release = r })
+    const run = vi.fn((_profile: { id: number }, _taskKeys: string[]) => gate.then(() => undefined))
+    const q = new TaskQueue(1)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
+    const p1 = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    const p2 = { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(p1, 'task-a')
+    await new Promise(r => setTimeout(r, 10))
+    expect(enq.hasTaskInFlight('task-a')).toBe(true)
+    expect(enq.hasTaskInFlight('task-b')).toBe(false)
+    enq.enqueue(p2, 'task-b')
+    await new Promise(r => setTimeout(r, 10))
+    expect(enq.hasTaskInFlight('task-b')).toBe(true)
+    release()
+    await q.onIdle()
+    expect(enq.hasTaskInFlight('task-a')).toBe(false)
+    expect(enq.hasTaskInFlight('task-b')).toBe(false)
+  })
+
+  it('hasTaskInFlight 指定窗口只看该窗口', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>(r => { release = r })
+    const run = vi.fn((_profile: { id: number }, _taskKeys: string[]) => gate.then(() => undefined))
+    const q = new TaskQueue(2)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger)
+    const p1 = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    const p2 = { id: 2, bitbrowserId: 'bb-2', name: 'B', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(p1, 'task-a')
+    await new Promise(r => setTimeout(r, 10))
+    expect(enq.hasTaskInFlight('task-a', 1)).toBe(true)
+    expect(enq.hasTaskInFlight('task-a', 2)).toBe(false)
+    release()
+    await q.onIdle()
+  })
 })

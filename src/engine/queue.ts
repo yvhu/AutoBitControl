@@ -49,8 +49,8 @@ interface Entry {
 export class CoalescingEnqueuer {
   /** 尚未启动的窗口会话合并区（按窗口 id） */
   private pending = new Map<number, Entry>()
-  /** 正在运行的窗口 id 集合 */
-  private running = new Set<number>()
+  /** 正在运行的窗口 → 会话内任务集合（in-flight 判定用，会话结束即删） */
+  private running = new Map<number, Set<string>>()
   /** 运行中窗口收到的追加任务（本轮结束后重新入队） */
   private followUp = new Map<number, Entry>()
 
@@ -86,7 +86,7 @@ export class CoalescingEnqueuer {
       // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
       await Promise.resolve()
       this.pending.delete(profile.id)
-      this.running.add(profile.id)
+      this.running.set(profile.id, new Set(fresh.taskKeys))
       try {
         await this.runner.runWindowTasks(fresh.profile, [...fresh.taskKeys])
       } catch (e) {
@@ -101,5 +101,19 @@ export class CoalescingEnqueuer {
         for (const k of fu.taskKeys) this.enqueue(fu.profile, k)
       }
     })
+  }
+
+  /**
+   * 某任务是否在途：排队中（pending 条目）或正在跑（running 会话）的窗口会话包含该任务；
+   * 指定 profileId 时只看该窗口（看板行级判定用）。followUp 是「已合并待重排」不算在途
+   */
+  hasTaskInFlight(taskKey: string, profileId?: number): boolean {
+    const inSet = (keys: Set<string> | undefined) => !!keys?.has(taskKey)
+    if (profileId !== undefined) {
+      return inSet(this.pending.get(profileId)?.taskKeys) || inSet(this.running.get(profileId))
+    }
+    for (const e of this.pending.values()) if (e.taskKeys.has(taskKey)) return true
+    for (const keys of this.running.values()) if (keys.has(taskKey)) return true
+    return false
   }
 }
