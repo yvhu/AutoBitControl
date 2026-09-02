@@ -5,6 +5,7 @@
  */
 import { Router } from 'express'
 import { todayStr, type AppDb, type RunStatus } from '../../infrastructure/db'
+import type { CoalescingEnqueuer } from '../../engine/queue'
 import { ok, asyncHandler } from '../http/response'
 
 /**
@@ -59,6 +60,7 @@ import { ok, asyncHandler } from '../http/response'
  *                           finishedAt: { type: string, nullable: true }
  *                           durationSec: { type: integer, nullable: true, description: '总耗时（秒）；startedAt/finishedAt 任一缺失为 null' }
  *                           profileName: { type: string }
+ *                           inFlight: { type: boolean, description: '该窗口该任务是否有在途 run（当天 pending/running/retry_wait 或排队会话）' }
  *                     profiles:
  *                       type: array
  *                       items:
@@ -87,12 +89,17 @@ function runDurationSec(startedAt: string | null, finishedAt: string | null): nu
   return Math.round((f - s) / 1000)
 }
 
-export function dashboardRouter(deps: { db: AppDb }): Router {
+export function dashboardRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer }): Router {
   const router = Router()
   router.get('/dashboard', asyncHandler(async (req, res) => {
     // date 查询参数缺省为今天（面板日期切换用）
     const date = typeof req.query.date === 'string' ? req.query.date : todayStr()
-    const runs = (await deps.db.listRunsForDate(date)).map((r) => ({ ...r, durationSec: runDurationSec(r.startedAt, r.finishedAt) }))
+    const rows = await deps.db.listRunsForDate(date)
+    const runs = await Promise.all(rows.map(async (r) => ({
+      ...r,
+      durationSec: runDurationSec(r.startedAt, r.finishedAt),
+      inFlight: (await deps.db.countInFlightRuns(r.taskKey, date, r.profileId)) > 0 || deps.enqueuer.hasTaskInFlight(r.taskKey, r.profileId),
+    })))
     const count = (s: RunStatus) => runs.filter(r => r.status === s).length
     const profiles = await deps.db.listProfiles(false)
     ok(res, {

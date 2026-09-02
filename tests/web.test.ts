@@ -115,6 +115,19 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data.runs[2].durationSec).toBeNull()
   })
 
+  it('GET /api/dashboard runs 附加 inFlight（该窗口该任务在途）', async () => {
+    const deps = makeDeps()
+    deps.db.listRunsForDate.mockResolvedValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+      { id: 2, profileId: 2, taskKey: 't1', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口2' },
+    ])
+    deps.db.countInFlightRuns.mockImplementation((_k: string, _d: string, pid?: number) => Promise.resolve(pid === 1 ? 1 : 0))
+    const res = await request(createApp(deps as never)).get('/api/dashboard?date=2026-08-28')
+    expect(res.status).toBe(200)
+    expect(res.body.data.runs[0].inFlight).toBe(true)
+    expect(res.body.data.runs[1].inFlight).toBe(false)
+  })
+
   it('GET /api/tasks 返回任务元信息列表', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
     expect(res.body.code).toBe(0)
