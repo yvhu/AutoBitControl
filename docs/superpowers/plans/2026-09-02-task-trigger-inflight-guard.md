@@ -484,10 +484,10 @@ import { triggerButton } from './index'
 
 describe('triggerButton', () => {
   it('在途 → disabled + 「运行中」', () => {
-    expect(triggerButton(true, false)).toEqual({ disabled: true, label: '运行中' })
+    expect(triggerButton(true)).toEqual({ disabled: true, label: '运行中' })
   })
   it('非在途 → 可点 + 「立即触发」', () => {
-    expect(triggerButton(false, false)).toEqual({ disabled: false, label: '立即触发' })
+    expect(triggerButton(false)).toEqual({ disabled: false, label: '立即触发' })
   })
 })
 ```
@@ -527,7 +527,7 @@ export function useTasks() {
 
 ```tsx
 /** 触发按钮态：在途禁用显示「运行中」，否则可点「立即触发」（isPending 时由 antd loading 接管） */
-export function triggerButton(inFlight: boolean, _isPending: boolean): { disabled: boolean; label: string } {
+export function triggerButton(inFlight: boolean): { disabled: boolean; label: string } {
   return inFlight ? { disabled: true, label: '运行中' } : { disabled: false, label: '立即触发' }
 }
 ```
@@ -541,10 +541,10 @@ export function triggerButton(inFlight: boolean, _isPending: boolean): { disable
               size="small"
               icon={<ThunderboltOutlined />}
               loading={trigger.isPending && trigger.variables === task.key}
-              disabled={triggerButton(task.inFlight, trigger.isPending).disabled}
+              disabled={triggerButton(task.inFlight).disabled}
               onClick={() => trigger.mutate(task.key)}
             >
-              {triggerButton(task.inFlight, trigger.isPending).label}
+              {triggerButton(task.inFlight).label}
             </Button>
           )}
 ```
