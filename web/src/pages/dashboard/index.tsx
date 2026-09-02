@@ -248,7 +248,7 @@ export default function DashboardPage() {
             type="link"
             size="small"
             loading={trigger.isPending && trigger.variables?.bitbrowserId === id}
-            disabled={!id}
+            disabled={!id || r.inFlight}
             onClick={() => {
               if (!id) return
               trigger.mutate({ key: r.taskKey, bitbrowserId: id })
@@ -320,7 +320,13 @@ export default function DashboardPage() {
           <Button icon={<ReloadOutlined />} loading={rerun.isPending} onClick={() => rerun.mutate(dateStr)}>
             重跑今日失败
           </Button>
-          <Button type="primary" icon={<PlayCircleOutlined />} loading={trigger.isPending && !trigger.variables?.bitbrowserId} onClick={handleTriggerAll}>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            loading={trigger.isPending && !trigger.variables?.bitbrowserId}
+            disabled={taskFilter ? (taskNameByKey.get(taskFilter)?.inFlight ?? false) : true}
+            onClick={handleTriggerAll}
+          >
             全部窗口执行
           </Button>
         </Space>

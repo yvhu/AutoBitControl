@@ -14,7 +14,7 @@ export function useDashboard(date: string) {
 }
 
 export function useTasks() {
-  return useQuery({ queryKey: ['tasks'], queryFn: fetchTasks })
+  return useQuery({ queryKey: ['tasks'], queryFn: fetchTasks, refetchInterval: 5000 })
 }
 
 export function useTriggerTask() {

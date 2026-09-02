@@ -952,6 +952,7 @@ export interface paths {
                                     startedAt?: string | null;
                                     finishedAt?: string | null;
                                     durationSec?: number | null;
+                                    inFlight?: boolean;
                                     slot: number;
                                     profileName?: string;
                                 }[];
