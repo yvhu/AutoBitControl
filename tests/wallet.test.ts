@@ -262,11 +262,14 @@ describe('MetaMaskAdapter', () => {
 })
 
 describe('PetraAdapter', () => {
-  it('ensureConnected 点击连接按钮', async () => {
+  it('ensureConnected 按文案定位并点击连接按钮（has-text，不依赖 getByRole）', async () => {
     const clicked = { count: 0 }
     const adapter = new PetraAdapter()
     const popup = makePopup({
-      getByRole: () => makeLocator({ click: async () => { clicked.count++ } }),
+      // 真机实证：Petra Sign In 按钮 getByRole 匹配不到，适配器用 locator('button:has-text(...)')
+      getByRole: () => makeLocator({ count: async () => 0 }),
+      locator: () => makeLocator({ count: async () => 1, click: async () => { clicked.count++ } }),
+      waitForEvent: async () => {},
     })
     await adapter.ensureConnected(popup)
     expect(clicked.count).toBeGreaterThan(0)

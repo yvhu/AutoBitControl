@@ -23,10 +23,12 @@ export interface RetryRecoveryDeps {
 export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number> {
   const { db, tasks, enqueuer, logger, retryBackoffSec } = deps
   const date = todayStr()
-  const rows = (await db.listRunsForDate(date)).filter(r => r.status === 'retry_wait')
+  const rows = await db.listRunsForDate(date)
+  const retryWait = rows.filter(r => r.status === 'retry_wait')
+  const profiles = await db.listProfiles(false)
   let recovered = 0
-  for (const r of rows) {
-    const profile = (await db.listProfiles(false)).find(p => p.id === r.profileId)
+  for (const r of retryWait) {
+    const profile = profiles.find(p => p.id === r.profileId)
     if (!profile) continue
     // 陈旧行判定：该 (窗口,任务,日期) 已出现更新的 slot，重试已被后续轮次取代——
     // 重新入队会造成重复执行，直接结算该行为 failed 终态
@@ -51,6 +53,34 @@ export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number
         }
       })()
     }, delay)
+  }
+  // 崩溃残留清理：进程崩溃时 in-flight 行（pending/running）无人结算，触发接口的
+  // in-flight 守卫会永久挡住这些窗口——启动时统一结算为 failed 并重新入队（自愈）；
+  // 正常退出不会留下此类行（任务状态机必然结算为终态）
+  const stale = rows.filter(r => r.status === 'pending' || r.status === 'running')
+  for (const r of stale) {
+    const profile = profiles.find(p => p.id === r.profileId)
+    if (!profile) continue
+    const latest = await db.getLatestRun(r.profileId, r.taskKey, date)
+    if (latest && latest.slot > r.slot) {
+      await db.upsertRun(r.profileId, r.taskKey, date, r.slot, 'failed', { error: '进程崩溃残留（已被后续轮次取代）', finishedAt: localWallNow() })
+      continue
+    }
+    await db.upsertRun(r.profileId, r.taskKey, date, r.slot, 'failed', { error: '进程崩溃残留（in-flight 未结算，重启自愈）', finishedAt: localWallNow() })
+    logger.warn({ profile: profile.name, task: r.taskKey }, '崩溃残留 in-flight 行已结算为失败并重新入队')
+    const taskMeta = tasks.get(r.taskKey)?.meta
+    if (!taskMeta) continue
+    recovered++
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
+          if (p) enqueuer.enqueue(p, r.taskKey)
+        } catch (e) {
+          logger.warn({ task: r.taskKey, err: (e as Error).message }, '崩溃残留恢复入队失败，放弃')
+        }
+      })()
+    }, 0)
   }
   if (recovered > 0) logger.info({ count: recovered }, '已恢复待重试任务')
   return recovered

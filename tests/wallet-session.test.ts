@@ -77,4 +77,19 @@ describe('WalletSession', () => {
     expect(await s.ensureReady('metamask', adapter)).toBe('ready')
     expect(await s.ensureReady('petra', petra)).toBe('missing')
   })
+
+  it('expectsProvider=false（Petra 不注入 provider）：跳过 provider 轮询，CDP 探测成功即 ready', async () => {
+    const page = makeFakePage({ providerOk: false, cdpOk: true })
+    const s = new WalletSession(page as never, { pollIntervalMs: 5 })
+    const petra = { ...adapter, key: 'petra', providerFlag: 'isPetra', expectsProvider: false }
+    expect(await s.ensureReady('petra', petra)).toBe('ready')
+    expect(page.__evaluateCalls()).toBe(0)
+  })
+
+  it('expectsProvider=false 且 CDP 探测失败 → missing', async () => {
+    const page = makeFakePage({ providerOk: true, cdpOk: false })
+    const s = new WalletSession(page as never, { pollIntervalMs: 5 })
+    const petra = { ...adapter, key: 'petra', providerFlag: 'isPetra', expectsProvider: false }
+    expect(await s.ensureReady('petra', petra)).toBe('missing')
+  })
 })

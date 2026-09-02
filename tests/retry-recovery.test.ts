@@ -60,4 +60,27 @@ describe('recoverRetryTasks', () => {
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
     expect(deps.enqueuer.enqueue.mock.calls[0][1]).toBe('t')
   })
+
+  it('崩溃残留 running 行：结算 failed 并重新入队（自愈）', async () => {
+    vi.useFakeTimers()
+    const row = makeRetryRow({ status: 'running', finishedAt: null })
+    const deps = makeDeps([row], null)
+    deps.tasks.set('t', { meta: { retry: { backoffSec: 600 } } })
+    const count = await recoverRetryTasks(deps as never)
+    expect(count).toBe(1)
+    expect(deps.db.upsertRun).toHaveBeenCalledWith(1, 't', '2026-09-02', 0, 'failed', expect.objectContaining({ error: expect.stringContaining('崩溃残留') }))
+    await vi.runAllTimersAsync()
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('崩溃残留 pending 行：同样结算 failed 并重新入队', async () => {
+    vi.useFakeTimers()
+    const row = makeRetryRow({ status: 'pending', finishedAt: null })
+    const deps = makeDeps([row], null)
+    deps.tasks.set('t', { meta: { retry: { backoffSec: 600 } } })
+    const count = await recoverRetryTasks(deps as never)
+    expect(count).toBe(1)
+    await vi.runAllTimersAsync()
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+  })
 })

@@ -42,6 +42,8 @@ export interface WalletAdapter {
   probePath: string
   /** 页面 provider 标识字段：区分其它钱包注入的 window.ethereum（isMetaMask / isPetra） */
   providerFlag: string
+  /** 该钱包是否注入页面 provider：false 时跳过 provider 轮询，仅 CDP 扩展页探测判定就绪（Petra 实测不注入 window.petra） */
+  expectsProvider?: boolean
   unlock?(popup: PopupPage, password: string): Promise<void>
   ensureConnected(popup: PopupPage): Promise<void>
 }

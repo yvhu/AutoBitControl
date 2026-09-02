@@ -75,6 +75,10 @@ export class WalletSession {
   }
 
   private async probe(adapter: WalletAdapter): Promise<WalletReadyState> {
+    // 不注入 provider 的钱包（Petra 实测 window.petra 恒不存在）：只做 CDP 扩展页探测
+    if (adapter.expectsProvider === false) {
+      return (await this.probeExtensionPage(adapter)) ? 'ready' : 'missing'
+    }
     if (await this.providerPresent(adapter, PROVIDER_POLL_ROUNDS)) {
       // 已注入：CDP 探测仅作预热（失败不影响判定）
       await this.probeExtensionPage(adapter)

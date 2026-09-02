@@ -28,12 +28,15 @@ export interface BrowserDriver {
 
 /**
  * 真实驱动：经 CDP 接管比特浏览器已开窗口（复用首个 context 与首个 page）
+ * 页面选择避开扩展弹窗页（chrome-extension://）：上次会话遗留的钱包弹窗可能排在 pages()[0]，
+ * 弹窗关闭后任务页面随之关闭 → 全部操作报 Target closed（真机实测 portal-rhuna 多窗口失败根因）
  */
 export class PatchrightDriver implements BrowserDriver {
   async connect(endpointUrl: string): Promise<{ page: Page; close(): Promise<void> }> {
     const browser = await chromium.connectOverCDP(endpointUrl)
     const context = browser.contexts()[0] ?? (await browser.newContext())
-    const page = context.pages()[0] ?? (await context.newPage())
+    const pages = context.pages()
+    const page = pages.find((p) => !p.url().startsWith('chrome-extension://')) ?? pages[0] ?? (await context.newPage())
     return {
       page,
       close: async () => {

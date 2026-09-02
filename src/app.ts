@@ -65,12 +65,25 @@ export async function startApp(): Promise<void> {
   const cfg = loadConfig()
   const logger = createLogger(cfg)
 
-  // 快速失败策略：未捕获异常直接退出（挂着的半死进程比重启更危险）
+  // 快速失败策略：未捕获异常直接退出（挂着的半死进程比重启更危险）；
+  // 例外：CDP 会话级瞬时错误（窗口中途关闭/崩溃时 patchright 内部协议错误，如
+  // Network.setCacheDisabled session closed——真机实测全量并发跑时必现）只记录不退出：
+  // 单窗口瞬时错误不应杀死整个服务，该窗口任务按失败落库后由重试机制兜底
+  const TRANSIENT_PATTERN = /Protocol error|session closed|Target page|target crashed|Navigation failed|Execution context was destroyed|browser has been closed/i
   process.on('uncaughtException', (err) => {
+    if (TRANSIENT_PATTERN.test((err as Error).message)) {
+      logger.warn({ err: (err as Error).message }, '窗口会话级瞬时异常，忽略（不退出进程）')
+      return
+    }
     logger.error({ err }, '未捕获异常，进程退出')
     process.exit(1)
   })
   process.on('unhandledRejection', (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (TRANSIENT_PATTERN.test(msg)) {
+      logger.warn({ err: msg }, '窗口会话级瞬时 Promise 拒绝，忽略（不退出进程）')
+      return
+    }
     logger.error({ err }, '未处理的 Promise 拒绝，进程退出')
     process.exit(1)
   })
