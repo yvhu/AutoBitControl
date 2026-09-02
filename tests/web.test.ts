@@ -20,8 +20,9 @@ interface MockDeps {
     getOpenWindow: Mock
     setOpenWindow: Mock
     clearOpenWindow: Mock
+    countInFlightRuns: Mock
   }
-  enqueuer: { enqueue: Mock }
+  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string; enabled?: boolean } }>
   cfg: {
     web: { port: number }
@@ -58,8 +59,9 @@ function makeDeps(): MockDeps {
       getOpenWindow: vi.fn().mockResolvedValue(null),
       setOpenWindow: vi.fn().mockResolvedValue(undefined),
       clearOpenWindow: vi.fn().mockResolvedValue(undefined),
+      countInFlightRuns: vi.fn().mockResolvedValue(0),
     },
-    enqueuer: { enqueue: vi.fn() },
+    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
     cfg: {
       web: { port: 3000 },
@@ -126,6 +128,43 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.status).toBe(200)
     expect(res.body.code).toBe(0)
     expect(deps.enqueuer.enqueue).toHaveBeenCalled()
+  })
+
+  it('触发任务存在在途 run 返回 409（业务码 40902）', async () => {
+    const deps = makeDeps()
+    deps.db.countInFlightRuns.mockResolvedValue(1)
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe(40902)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('触发任务队列内存态在途返回 409', async () => {
+    const deps = makeDeps()
+    deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(409)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('单窗口触发该窗口在途返回 409', async () => {
+    const deps = makeDeps()
+    deps.db.countInFlightRuns.mockImplementation((_k: string, _d: string, pid?: number) => Promise.resolve(pid === 1 ? 1 : 0))
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe(40902)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('GET /api/tasks 附加 inFlight（DB 在途与队列在途任一命中）', async () => {
+    const deps = makeDeps()
+    deps.db.countInFlightRuns.mockResolvedValue(2)
+    const res = await request(createApp(deps as never)).get('/api/tasks')
+    expect(res.body.data[0].inFlight).toBe(true)
+    deps.db.countInFlightRuns.mockResolvedValue(0)
+    deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
+    const res2 = await request(createApp(deps as never)).get('/api/tasks')
+    expect(res2.body.data[0].inFlight).toBe(true)
   })
 
   it('POST /api/tasks/:key/trigger 缺参数 404 或 400', async () => {

@@ -8,6 +8,7 @@ import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
+import { todayStr } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
 
@@ -40,6 +41,7 @@ import type { SiteTask } from '../../tasks/base'
  *                       lastUpdated: { type: string, nullable: true }
  *                       deprecated: { type: boolean }
  *                       enabled: { type: boolean }
+ *                       inFlight: { type: boolean, description: '是否有在途 run（当天 pending/running/retry_wait 或排队中的窗口会话）' }
  *                       wallet: { type: string, nullable: true }
  *                       schedule:
  *                         type: object
@@ -138,7 +140,7 @@ import type { SiteTask } from '../../tasks/base'
  *       '404':
  *         description: 任务或窗口不存在（业务码 40401/40402）
  *       '409':
- *         description: 任务已停用（业务码 40901）
+ *         description: 任务已停用（40901）或执行中（40902）
  */
 
 export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; onToggle?: (key: string, enabled: boolean) => void }): Router {
@@ -157,6 +159,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         lastUpdated: m.lastUpdated ?? null,
         deprecated: m.deprecated ?? false,
         enabled: await deps.db.getTaskEnabled(m.key, m.enabled ?? true),
+        inFlight: (await deps.db.countInFlightRuns(m.key, todayStr())) > 0 || deps.enqueuer.hasTaskInFlight(m.key),
         wallet: m.wallet ?? null,
         schedule: m.schedule ?? null,
         timeoutSec: m.timeoutSec ?? null,
@@ -186,11 +189,17 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if (body.bitbrowserId) {
       const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)
       if (!profile) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${body.bitbrowserId}`)
+      if ((await deps.db.countInFlightRuns(key, todayStr(), profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(key, profile.id)) {
+        throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '该窗口任务执行中，请等待结束后再触发')
+      }
       deps.enqueuer.enqueue(profile, key)
       ok(res, { scope: 'single' })
       return
     }
     // 未指定：全部启用窗口触发
+    if ((await deps.db.countInFlightRuns(key, todayStr())) > 0 || deps.enqueuer.hasTaskInFlight(key)) {
+      throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '任务执行中，请等待全部窗口结束后再触发')
+    }
     for (const p of await deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key)
     ok(res, { scope: 'all' })
   }))
