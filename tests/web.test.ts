@@ -342,6 +342,50 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
+  it('重跑今日失败只跑最新轮：历史轮失败但最新轮成功则不重跑', async () => {
+    const deps = makeDeps()
+    ;(deps.db.listRunsForDate as Mock).mockResolvedValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', slot: 0, status: 'failed', attempts: 1, error: 'boom', screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+      { id: 2, profileId: 1, taskKey: 't1', date: '2026-08-28', slot: 1, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(0)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('重跑今日失败只跑最新轮：最新轮失败则入队一次（历史轮不重复入队）', async () => {
+    const deps = makeDeps()
+    ;(deps.db.listRunsForDate as Mock).mockResolvedValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+      { id: 2, profileId: 1, taskKey: 't1', date: '2026-08-28', slot: 1, status: 'failed', attempts: 2, error: 'boom', screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(1)
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+    expect(deps.enqueuer.enqueue.mock.calls[0][1]).toBe('t1')
+  })
+
+  it('重跑今日失败跳过在途任务（DB 在途行或队列会话，任一命中不重跑）', async () => {
+    const deps = makeDeps()
+    ;(deps.db.listRunsForDate as Mock).mockResolvedValue([
+      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', slot: 0, status: 'failed', attempts: 1, error: 'boom', screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
+    ])
+    deps.db.countInFlightRuns.mockResolvedValue(1)
+    const res = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.count).toBe(0)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+
+    deps.db.countInFlightRuns.mockResolvedValue(0)
+    deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
+    const res2 = await request(createApp(deps as never)).post('/api/runs/rerun-failed').send({ date: '2026-08-28' })
+    expect(res2.body.code).toBe(0)
+    expect(res2.body.data.count).toBe(0)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
   it('POST /api/bitbrowser/test 返回连接状态', async () => {
     const res = await request(createApp(makeDeps() as never)).post('/api/bitbrowser/test')
     expect(res.body.code).toBe(0)
