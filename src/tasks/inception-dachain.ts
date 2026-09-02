@@ -52,7 +52,7 @@ export class InceptionDachainTask extends SiteTask {
     url: 'https://inception.dachain.io/',
     sourceUrl: ['https://airdrops.io/dac/', 'https://cryptorank.io/zh/drophunting/arc-chain-activity911'],
     note: '真机核实：免费箱按钮实为 OPEN FOR 150 QE（余额 ≥150 QE 才可点，不足报 Insufficient QE）；弹窗 Close 按钮常驻（开箱结果需等 You Won / Better luck next time 出现）；开箱视频很卡放宽等待；每日 5 箱上限，达到后成功判定有 3 个信号（toast / 页面 DAILY OPENS 计数器 / 弹窗内提示）；落地页网络差时常渲染失败需刷新重试；MetaMask 为中文界面（适配器按 testid 定位）；并行实测补充：已登录窗口仪表盘不出现 Enter Inception，必须竞速判定登录状态；AppKit 弹窗初始视图不固定（钱包列表/SafePal QR 页），需归一化后找 MetaMask',
-    category: 'faucet',
+    category: 'checkin',
     lastUpdated: '2026-09-01',
     enabled: true,
     // 无 schedule：仅手动触发/窗口立即跑（按模板默认）
