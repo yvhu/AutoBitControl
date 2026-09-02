@@ -338,6 +338,15 @@ export class AppDb {
     return (await this.exec(`${SELECT_RUN} WHERE r.date = ? ORDER BY p.id, r.task_key, r.slot`, [date])) as unknown as RunRow[]
   }
 
+  /** 某任务当天在途 run 数（pending/running/retry_wait 计入，终态不计）；可选按窗口过滤（看板行级判定用） */
+  async countInFlightRuns(taskKey: string, date: string, profileId?: number): Promise<number> {
+    const base = `SELECT COUNT(*) AS c FROM runs WHERE task_key = ? AND date = ? AND status IN ('pending','running','retry_wait')`
+    const rows = profileId === undefined
+      ? await this.exec(base, [taskKey, date])
+      : await this.exec(`${base} AND profile_id = ?`, [taskKey, date, profileId])
+    return Number(rows[0]?.c ?? 0)
+  }
+
   /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
   async logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): Promise<void> {
     const now = new Date()
