@@ -16,7 +16,7 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { CopyOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
+import { CopyOutlined, ReloadOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import StatusPill from '../../components/StatusPill'
@@ -30,7 +30,6 @@ import {
   usePatchProfile,
   useProfiles,
   useResetBreaker,
-  useRunProfile,
   useSyncProfiles,
   useTodayDashboard,
 } from './hooks'
@@ -60,7 +59,6 @@ export default function ProfilesPage() {
   const today = useTodayDashboard()
   const thresholdQ = useBreakerThreshold()
   const patch = usePatchProfile()
-  const run = useRunProfile()
   const open = useOpenProfile()
   const close = useCloseProfile()
   const reset = useResetBreaker()
@@ -247,15 +245,6 @@ export default function ProfilesPage() {
               onClick={() => (p.open ? close.mutate(p.id) : open.mutate(p.id))}
             >
               {p.open ? '关闭' : '打开'}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              icon={<PlayCircleOutlined />}
-              loading={run.isPending && run.variables === p.id}
-              onClick={() => run.mutate(p.id)}
-            >
-              立即跑
             </Button>
             <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
               复制ID

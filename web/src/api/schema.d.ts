@@ -538,61 +538,6 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/profiles/{id}/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 该窗口跑全部启用任务（停用任务排除，返回实际入队数） */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description 窗口内部 id */
-                    id: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 入队完成 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @example 0 */
-                            code?: number;
-                            /** @example ok */
-                            message?: string;
-                            data?: {
-                                /** @description 实际入队任务数 */
-                                count?: number;
-                            };
-                        };
-                    };
-                };
-                /** @description 窗口不存在（业务码 40402） */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/profiles/{id}/breaker/reset": {
         parameters: {
             query?: never;

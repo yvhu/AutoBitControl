@@ -9,7 +9,6 @@ import {
   openProfile,
   patchProfile,
   resetBreaker,
-  runProfile,
   syncProfiles,
 } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
@@ -68,20 +67,6 @@ export function usePatchProfile() {
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => patchProfile(id, { enabled }),
     onSuccess: (_res, { enabled }) => {
       message.success(enabled ? '已启用窗口' : '已停用窗口')
-      queryClient.invalidateQueries({ queryKey: ['profiles'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    },
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-export function useRunProfile() {
-  const { message } = App.useApp()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: number) => runProfile(id),
-    onSuccess: (res) => {
-      message.success(`已入队 ${res.count} 个任务`)
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },

@@ -214,15 +214,6 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.message).toContain('停用')
   })
 
-  it('窗口立即跑排除停用任务（云端开关覆盖为 false）', async () => {
-    const deps = makeDeps()
-    deps.db.getTaskEnabled.mockResolvedValue(false)
-    const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
-    expect(res.body.code).toBe(0)
-    expect(res.body.data.count).toBe(0)
-    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
-  })
-
   it('PATCH /api/profiles/:id 修改启用状态', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).patch('/api/profiles/1').send({ enabled: false })
@@ -235,13 +226,6 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).patch('/api/profiles/1').send({ password: 'secret' })
     expect(res.body.code).toBe(0)
     expect(deps.db.setProfileEnabled).not.toHaveBeenCalled()
-  })
-
-  it('POST /api/profiles/:id/run 入队全部任务', async () => {
-    const deps = makeDeps()
-    const res = await request(createApp(deps as never)).post('/api/profiles/1/run')
-    expect(res.body.code).toBe(0)
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1')
   })
 
   it('POST /api/profiles/:id/breaker/reset 重置熔断', async () => {
@@ -551,7 +535,6 @@ describe('OpenAPI 文档与统一错误码', () => {
       '/api/tasks/{key}/trigger',
       '/api/profiles',
       '/api/profiles/{id}',
-      '/api/profiles/{id}/run',
       '/api/profiles/{id}/open',
       '/api/profiles/{id}/close',
       '/api/profiles/{id}/breaker/reset',
@@ -582,7 +565,7 @@ describe('OpenAPI 文档与统一错误码', () => {
   })
 
   it('窗口不存在返回业务码 40402', async () => {
-    const res = await request(createApp(makeDeps() as never)).post('/api/profiles/999/run')
+    const res = await request(createApp(makeDeps() as never)).post('/api/profiles/999/open')
     expect(res.status).toBe(404)
     expect(res.body.code).toBe(40402)
   })
