@@ -10,8 +10,9 @@ import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
-import { TaskQueue, CoalescingEnqueuer } from './engine/queue'
+import { CoalescingEnqueuer } from './engine/queue'
 import { recoverRetryTasks } from './engine/retry-recovery'
+import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
 import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
@@ -178,8 +179,8 @@ export async function startApp(): Promise<void> {
       }, delayMs)
     },
   })
-  const queue = new TaskQueue(cfg.execution.concurrency)
-  enqueuer = new CoalescingEnqueuer(queue, runner, logger, cfg.execution.staggerMaxSec)
+  // 任务级并发：enqueuer 内部按 meta.concurrency 控制每任务并行窗口数（缺省 DEFAULT_TASK_CONCURRENCY）
+  enqueuer = new CoalescingEnqueuer(runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec)
 
   const app = createApp({
     db,
