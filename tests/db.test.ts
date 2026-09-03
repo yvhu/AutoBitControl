@@ -158,19 +158,6 @@ describe('runs slot 多轮次', () => {
   })
 })
 
-describe('task_states 间隔锚点', () => {
-  it('setTaskFiredAt 只增不减且不覆盖 enabled', async () => {
-    const db = await AppDb.open({ url: 'file::memory:', authToken: '' })
-    await db.setTaskEnabled('t', false)
-    await db.setTaskFiredAt('t', '2026-08-31T09:00:00.000Z')
-    expect(await db.getTaskFiredAt('t')).toBe('2026-08-31T09:00:00.000Z')
-    await db.setTaskFiredAt('t', '2026-08-31T08:00:00.000Z')
-    expect(await db.getTaskFiredAt('t')).toBe('2026-08-31T09:00:00.000Z')
-    expect(await db.getTaskEnabled('t', true)).toBe(false)
-    db.close()
-  })
-})
-
 describe('runs 老库迁移', () => {
   it('缺 slot 列的旧表重建后数据保留且 slot=0', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'abc-migrate-'))
@@ -189,7 +176,6 @@ describe('runs 老库迁移', () => {
     const rows = await db.listRunsForDate('2026-08-30')
     expect(rows.length).toBe(1)
     expect(rows[0].slot).toBe(0)
-    await db.setTaskFiredAt('t', '2026-08-31T09:00:00.000Z')
     db.close()
     // 重新打开已迁移库：第二次 migrate() 幂等无错、数据仍在、slot 仍为 0
     const db2 = await AppDb.open({ url: `file:${file}`, authToken: '' })

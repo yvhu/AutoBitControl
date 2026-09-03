@@ -117,8 +117,7 @@ const SCHEMA = [
   )`,
   `CREATE TABLE IF NOT EXISTS task_states (
     task_key TEXT PRIMARY KEY,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    last_fired_at TEXT
+    enabled INTEGER NOT NULL DEFAULT 1
   )`,
   // 窗口打开状态登记表：主进程（面板打开/关闭）与 task:run 脚本跨进程共享，
   // 一行 = 一个已打开的窗口（http 调试地址供 CDP 复用）；pid 是否存活由调用方实测
@@ -170,11 +169,6 @@ export class AppDb {
     ]
     for (const [col, type] of extraCols) {
       if (!existing.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
-    }
-    // 老库补列：task_states.last_fired_at（间隔调度锚点，毫秒 ISO）
-    const tsInfo = await this.client.execute(`PRAGMA table_info(task_states)`)
-    if (!tsInfo.rows.some((r) => String(r.name) === 'last_fired_at')) {
-      await this.client.execute(`ALTER TABLE task_states ADD COLUMN last_fired_at TEXT`)
     }
     // 老库重建：runs 表加 slot 列 + 唯一键改为 (profile_id, task_key, date, slot)——
     // SQLite 无法 ALTER 删除表级 UNIQUE 约束，必须建新表迁移数据（事务内完成，中断自动回滚）
@@ -257,27 +251,6 @@ export class AppDb {
   /** 写入任务开关（面板运行时覆盖，云端持久，跨机器生效） */
   async setTaskEnabled(taskKey: string, enabled: boolean): Promise<void> {
     await this.exec('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled', [taskKey, enabled ? 1 : 0])
-  }
-
-  /** 读间隔调度锚点（最近一次成功 finished_at，毫秒 ISO；无记录 null） */
-  async getTaskFiredAt(taskKey: string): Promise<string | null> {
-    const rows = await this.exec(`SELECT last_fired_at AS lastFiredAt FROM task_states WHERE task_key = ?`, [taskKey])
-    const v = rows[0]?.lastFiredAt
-    return v ? String(v) : null
-  }
-
-  /**
-   * 回写间隔调度锚点（毫秒 ISO）：只增不减（多窗口并发成功时取最晚时刻），
-   * 不覆盖 enabled 位（首次写入补默认 enabled=1 行）
-   */
-  async setTaskFiredAt(taskKey: string, iso: string): Promise<void> {
-    await this.exec(
-      `INSERT INTO task_states (task_key, enabled, last_fired_at) VALUES (?, 1, ?)
-       ON CONFLICT(task_key) DO UPDATE SET last_fired_at = CASE
-         WHEN task_states.last_fired_at IS NULL OR excluded.last_fired_at > task_states.last_fired_at
-         THEN excluded.last_fired_at ELSE task_states.last_fired_at END`,
-      [taskKey, iso],
-    )
   }
 
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */
