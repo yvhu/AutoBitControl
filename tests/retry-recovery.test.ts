@@ -1,20 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import type { RunRow } from '../src/infrastructure/db'
+import { todayStr, type RunRow } from '../src/infrastructure/db'
 import { recoverRetryTasks } from '../src/engine/retry-recovery'
 
 function makeRetryRow(over: Partial<RunRow> = {}): RunRow {
+  const date = todayStr()
   return {
     id: 1,
     profileId: 1,
     taskKey: 't',
-    date: '2026-09-02',
+    date,
     slot: 0,
     status: 'retry_wait',
     attempts: 1,
     error: 'boom',
     screenshot: null,
-    startedAt: '2026-09-02 09:00:00.000',
-    finishedAt: '2026-09-02 09:05:00.000',
+    startedAt: `${date} 09:00:00.000`,
+    finishedAt: `${date} 09:05:00.000`,
     profileName: '窗口1',
     ...over,
   }
@@ -44,7 +45,7 @@ describe('recoverRetryTasks', () => {
     const deps = makeDeps([stale], { status: 'success', slot: 1 } as Partial<RunRow>)
     const count = await recoverRetryTasks(deps as never)
     expect(count).toBe(0)
-    expect(deps.db.upsertRun).toHaveBeenCalledWith(1, 't', '2026-09-02', 0, 'failed', expect.objectContaining({ error: '重试已被后续轮次取代' }))
+    expect(deps.db.upsertRun).toHaveBeenCalledWith(1, 't', todayStr(), 0, 'failed', expect.objectContaining({ error: '重试已被后续轮次取代' }))
     expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
@@ -68,7 +69,7 @@ describe('recoverRetryTasks', () => {
     deps.tasks.set('t', { meta: { retry: { backoffSec: 600 } } })
     const count = await recoverRetryTasks(deps as never)
     expect(count).toBe(1)
-    expect(deps.db.upsertRun).toHaveBeenCalledWith(1, 't', '2026-09-02', 0, 'failed', expect.objectContaining({ error: expect.stringContaining('崩溃残留') }))
+    expect(deps.db.upsertRun).toHaveBeenCalledWith(1, 't', todayStr(), 0, 'failed', expect.objectContaining({ error: expect.stringContaining('崩溃残留') }))
     await vi.runAllTimersAsync()
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
   })
