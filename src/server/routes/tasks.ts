@@ -11,6 +11,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import { todayStr } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
+import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
 
 /**
  * @swagger
@@ -54,8 +55,9 @@ import type { SiteTask } from '../../tasks/base'
  *                         type: object
  *                         nullable: true
  *                         properties:
- *                           auto: { type: boolean, description: 是否自动打码 }
- *                           maxCost: { type: integer, description: 单任务费用上限（点） }
+ *                           auto: { type: boolean, description: '是否自动打码' }
+ *                           maxCost: { type: integer, description: '单任务费用上限（点）' }
+ *                       concurrency: { type: integer, description: '任务级并发：同一时间最多几个窗口并行，缺省 4' }
  */
 
 /**
@@ -160,6 +162,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         timeoutSec: m.timeoutSec ?? null,
         retry: m.retry ?? null,
         captcha: m.captcha ?? null,
+        concurrency: m.concurrency ?? DEFAULT_TASK_CONCURRENCY,
       })
     }
     ok(res, list)

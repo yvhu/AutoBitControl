@@ -23,12 +23,12 @@ interface MockDeps {
     countInFlightRuns: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
-  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean } }>
+  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
-    execution: { concurrency: number; staggerMaxSec: number; circuitBreakerThreshold: number; probeUrl: string }
+    execution: { staggerMaxSec: number; circuitBreakerThreshold: number; probeUrl: string }
     captcha: { clientKey: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
@@ -66,7 +66,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { concurrency: 6, staggerMaxSec: 120, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
     bitbrowser: {
@@ -131,6 +131,12 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data[0].key).toBe('t1')
     expect(res.body.data[0].wallet).toBe('metamask')
+  })
+
+  it('GET /api/tasks 返回任务级并发（meta 未写时缺省 4）', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data[0].concurrency).toBe(4)
   })
 
   it('POST /api/tasks/:key/trigger 入队', async () => {
