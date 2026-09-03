@@ -14,7 +14,6 @@ export class FaucetExampleTask extends SiteTask {
     lastUpdated: '2026-08-28',
     // 默认停用：示例任务不参与日常执行，需调试时在面板打开开关或直接用 task:run 脚本
     enabled: false,
-    schedule: { stagger: ['10:00', '12:00'] },
     wallet: 'metamask',
     timeoutSec: 240,
     retry: { max: 1, backoffSec: 300 },

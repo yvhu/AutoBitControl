@@ -43,10 +43,6 @@ import type { SiteTask } from '../../tasks/base'
  *                       enabled: { type: boolean }
  *                       inFlight: { type: boolean, description: '是否有在途 run（当天 pending/running/retry_wait 或排队中的窗口会话）' }
  *                       wallet: { type: string, nullable: true }
- *                       schedule:
- *                         type: object
- *                         nullable: true
- *                         description: 'cron 字符串 / { stagger: [start, end] } 每日错峰 / { everyHours: N } 每 N 小时（锚点=最近一次成功完成时刻）'
  *                       timeoutSec: { type: integer, nullable: true }
  *                       retry:
  *                         type: object
@@ -143,7 +139,7 @@ import type { SiteTask } from '../../tasks/base'
  *         description: 任务已停用（40901）或执行中（40902）
  */
 
-export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; onToggle?: (key: string, enabled: boolean) => void }): Router {
+export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   router.get('/tasks', asyncHandler(async (req, res) => {
     const list = []
@@ -161,7 +157,6 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         enabled: await deps.db.getTaskEnabled(m.key, m.enabled ?? true),
         inFlight: (await deps.db.countInFlightRuns(m.key, todayStr())) > 0 || deps.enqueuer.hasTaskInFlight(m.key),
         wallet: m.wallet ?? null,
-        schedule: m.schedule ?? null,
         timeoutSec: m.timeoutSec ?? null,
         retry: m.retry ?? null,
         captcha: m.captcha ?? null,
@@ -175,8 +170,6 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if (typeof body.enabled !== 'boolean') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'enabled 必须为布尔值')
     if (!deps.tasks.has(key)) throw new HttpError(404, ERROR_CODES.TASK_NOT_FOUND, `任务不存在: ${key}`)
     await deps.db.setTaskEnabled(key, body.enabled)
-    // 通知调度器即时刷新该任务的 cron（停用即停、启用即注册，无需重启）
-    deps.onToggle?.(key, body.enabled)
     ok(res, { key, enabled: body.enabled })
   }))
   router.post('/tasks/:key/trigger', asyncHandler(async (req, res) => {

@@ -55,7 +55,6 @@ export class InceptionDachainTask extends SiteTask {
     category: 'checkin',
     lastUpdated: '2026-09-01',
     enabled: true,
-    // 无 schedule：仅手动触发/窗口立即跑（按模板默认）
     wallet: 'metamask',
     // 开箱视频慢 + 最多 5 箱，放宽单次超时
     timeoutSec: 900,

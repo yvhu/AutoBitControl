@@ -2,7 +2,7 @@
  * 应用装配（顶层）：startApp 按依赖顺序组装全部模块并启动
  * 依赖方向：顶层依赖所有层，仅被 index.ts 调用（唯一的组装点，compose root）
  * 装配顺序即依赖顺序：配置/日志 → 数据库 → 比特浏览器同步 → 任务/钱包/打码 →
- * 执行器/队列 → Web 服务 → 调度器
+ * 执行器/队列 → Web 服务
  */
 import { loadConfig } from './infrastructure/config'
 import { createLogger } from './infrastructure/logger'
@@ -11,7 +11,6 @@ import { DataSource } from './infrastructure/datasource'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { TaskQueue, CoalescingEnqueuer } from './engine/queue'
-import { Scheduler } from './engine/scheduler'
 import { recoverRetryTasks } from './engine/retry-recovery'
 import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
 import { WalletRegistry } from './automation/wallet/types'
@@ -182,9 +181,6 @@ export async function startApp(): Promise<void> {
   const queue = new TaskQueue(cfg.execution.concurrency)
   enqueuer = new CoalescingEnqueuer(queue, runner, logger)
 
-  // scheduler 前置声明：面板任务开关 PATCH 回调闭包引用它（开关切换即时重注册 cron），
-  // 调度器在 createApp 之后才创建，先声明变量再赋值（与 enqueuer 同法）
-  let scheduler: Scheduler | undefined
   const app = createApp({
     db,
     enqueuer,
@@ -200,7 +196,6 @@ export async function startApp(): Promise<void> {
       get error() { return datasource.error },
       path: cfg.dataSource.path,
     },
-    onToggle: (key) => void scheduler?.refreshTask(key),
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {
       try {
@@ -215,9 +210,6 @@ export async function startApp(): Promise<void> {
     logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, '后端 API 已启动')
   })
 
-  scheduler = new Scheduler(cfg, db, tasks, enqueuer, logger)
-  await scheduler.start()
-
   // 重试恢复：重试定时器是内存态，进程重启后丢失会让 retry_wait 行孤儿化（当天任务永不完成）——
   // 启动时扫描当日 retry_wait 行：退避已到期的立即重新入队，未到期的重新挂定时器（与 scheduleRetry 同语义）；
   // 已被后续轮次取代的陈旧行结算为 failed，避免每次重启重复执行
@@ -225,7 +217,7 @@ export async function startApp(): Promise<void> {
     logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
   })
 
-  // 优雅退出：先停调度器 → server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
+  // 优雅退出：server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
   let finishing = false
   const finish = () => {
     if (finishing) return
@@ -239,7 +231,6 @@ export async function startApp(): Promise<void> {
   }
   const shutdown = () => {
     logger.info('正在关闭...')
-    scheduler.stop()
     server.close(() => finish())
     // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）
     setTimeout(finish, 3000).unref()

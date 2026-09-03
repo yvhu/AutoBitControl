@@ -57,7 +57,6 @@ export class PortalRhunaTask extends SiteTask {
     category: 'checkin',
     lastUpdated: '2026-09-02',
     enabled: true,
-    // 无 schedule：仅手动触发/窗口立即跑（按模板默认）
     wallet: 'petra',
     // 登录弹窗 + 领取处理宽松（接口高负载可慢至 60s+）+ 刷新恢复兜底，放宽单次超时
     timeoutSec: 1200,

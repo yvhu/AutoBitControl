@@ -47,8 +47,6 @@ export interface ServerDeps {
   captchaBalance: () => Promise<{ points: number } | null>
   /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
-  /** 任务开关 PATCH 成功后回调（key, enabled）：调度器按 key 即时重注册/停止 cron */
-  onToggle?: (key: string, enabled: boolean) => void
 }
 
 /**

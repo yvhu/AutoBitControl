@@ -11,7 +11,6 @@ import { ok } from '../http/response'
 export interface PublicSettings {
   bitbrowserApiBase: string
   webPort: number
-  timezone: string
   concurrency: number
   circuitBreakerThreshold: number
   probeUrl: string
@@ -45,7 +44,6 @@ export interface PublicSettings {
  *                   properties:
  *                     bitbrowserApiBase: { type: string }
  *                     webPort: { type: integer }
- *                     timezone: { type: string }
  *                     concurrency: { type: integer }
  *                     circuitBreakerThreshold: { type: integer }
  *                     probeUrl: { type: string }
@@ -98,7 +96,6 @@ export function settingsRouter(deps: {
     ok(res, {
       bitbrowserApiBase: deps.cfg.bitbrowser.apiBase,
       webPort: deps.cfg.web.port,
-      timezone: deps.cfg.execution.timezone,
       concurrency: deps.cfg.execution.concurrency,
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
       probeUrl: deps.cfg.execution.probeUrl,

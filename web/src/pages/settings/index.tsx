@@ -67,7 +67,6 @@ export default function SettingsPage() {
           items={[
             { key: 'concurrency', label: '并发', children: s.concurrency },
             { key: 'probe', label: '探活 URL', children: s.probeUrl },
-            { key: 'timezone', label: '时区', children: s.timezone },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },
             { key: 'version', label: '版本', children: s.version },
           ]}

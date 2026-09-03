@@ -30,7 +30,6 @@ export interface ExecutionConfig {
   retryBackoffSec: number
   circuitBreakerThreshold: number
   probeUrl: string
-  timezone: string
   /** 拟人化交互延迟区间（点击前犹豫的随机停顿范围） */
   humanize: { minDelayMs: number; maxDelayMs: number }
 }
@@ -118,8 +117,6 @@ const defaults: AppConfig = {
     circuitBreakerThreshold: 2,
     // 开窗后的 IP 探活地址：校验代理 IP 已生效才跑任务，避免用错误 IP 触发风控
     probeUrl: 'https://api.ipify.org',
-    // croner 解析调度时间的时区
-    timezone: 'Asia/Shanghai',
     // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
     humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },

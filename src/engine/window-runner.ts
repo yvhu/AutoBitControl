@@ -17,7 +17,7 @@ import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { Humanizer } from '../automation/humanize'
 import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
 import { TaskContext } from './task-context'
-import { isIntervalSchedule, type TaskMeta } from './task'
+import type { TaskMeta } from './task'
 import type { WalletRegistry } from '../automation/wallet/types'
 import { WalletSession } from '../automation/wallet/session'
 
@@ -296,10 +296,6 @@ export class WindowRunner {
         const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
         const finishedAt = localWallNow()
         const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt }), null)
-        // 间隔任务：成功完成时刻回写调度锚点（只增不减），下一轮 = 锚点 + N 小时 + 缓冲
-        if (isIntervalSchedule(task.meta.schedule)) {
-          await this.safeDb(() => db.setTaskFiredAt(taskKey, finishedAt), undefined)
-        }
         await this.safeDb(() => db.resetCircuitBreaker(profile.id), undefined)
         logger.info({ profile: profile.name, task: taskKey }, '签到成功')
         return row

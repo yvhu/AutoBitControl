@@ -20,8 +20,6 @@ export class ExampleCheckinTask extends SiteTask {
     lastUpdated: '2026-08-28',
     // 默认停用：示例任务不参与日常执行，需调试时在面板打开开关或直接用 task:run 脚本
     enabled: false,
-    // 每日错峰执行：9 点到 11 点之间随机取一个时间点
-    schedule: { stagger: ['09:00', '11:00'] },
     // 本任务用 MetaMask 钱包登录，loginByWallet 会按此查找适配器
     wallet: 'metamask',
     // 单次运行超时（秒）

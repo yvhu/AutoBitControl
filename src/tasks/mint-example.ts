@@ -14,7 +14,6 @@ export class MintExampleTask extends SiteTask {
     lastUpdated: '2026-08-28',
     // 默认停用：示例任务不参与日常执行，需调试时在面板打开开关或直接用 task:run 脚本
     enabled: false,
-    schedule: undefined, // 无固定时间，手动触发（面板任务页点"立即触发"）
     wallet: 'petra', // 该站点用 Petra 钱包
     timeoutSec: 300,
     retry: { max: 1, backoffSec: 600 },

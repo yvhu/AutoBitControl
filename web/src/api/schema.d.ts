@@ -241,7 +241,6 @@ export interface paths {
                             data?: {
                                 bitbrowserApiBase?: string;
                                 webPort?: number;
-                                timezone?: string;
                                 concurrency?: number;
                                 circuitBreakerThreshold?: number;
                                 probeUrl?: string;

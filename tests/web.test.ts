@@ -23,12 +23,12 @@ interface MockDeps {
     countInFlightRuns: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
-  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; schedule: string; enabled?: boolean } }>
+  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
-    execution: { timezone: string; concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
+    execution: { concurrency: number; circuitBreakerThreshold: number; probeUrl: string }
     captcha: { clientKey: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
@@ -40,7 +40,6 @@ interface MockDeps {
     error: string
     path: string
   }
-  onToggle: Mock
 }
 
 function makeDeps(): MockDeps {
@@ -62,12 +61,12 @@ function makeDeps(): MockDeps {
       countInFlightRuns: vi.fn().mockResolvedValue(0),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
-    tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask', schedule: '0 9 * * *' } }]]),
+    tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask' } }]]),
     cfg: {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { timezone: 'Asia/Shanghai', concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+      execution: { concurrency: 6, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
     bitbrowser: {
@@ -86,7 +85,6 @@ function makeDeps(): MockDeps {
       error: '',
       path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx',
     },
-    onToggle: vi.fn(),
   }
 }
 
@@ -193,7 +191,6 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data).toEqual({ key: 't1', enabled: false })
     expect(deps.db.setTaskEnabled).toHaveBeenCalledWith('t1', false)
-    expect(deps.onToggle).toHaveBeenCalledWith('t1', false)
   })
 
   it('PATCH /api/tasks/:key 非布尔 enabled 返回 400', async () => {
@@ -201,7 +198,6 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: 'no' })
     expect(res.status).toBe(400)
     expect(res.body.code).not.toBe(0)
-    expect(deps.onToggle).not.toHaveBeenCalled()
   })
 
   it('PATCH /api/tasks/:key 未知任务返回 404', async () => {

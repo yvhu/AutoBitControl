@@ -1,6 +1,6 @@
 /**
  * 窗口任务队列（engine 层）：p-queue 并发控制 + 同窗口任务合并
- * 依赖方向：依赖 p-queue 与基础设施类型，被 scheduler 与 server 路由依赖
+ * 依赖方向：依赖 p-queue 与基础设施类型，被 server 路由依赖
  */
 import PQueue from 'p-queue'
 import type { ProfileRow } from '../infrastructure/db'

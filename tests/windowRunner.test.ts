@@ -19,7 +19,6 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     listProfiles: vi.fn().mockResolvedValue([]),
     getLatestRun: vi.fn().mockResolvedValue(null),
     nextRunSlot: vi.fn().mockResolvedValue(0),
-    setTaskFiredAt: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as unknown as AppDb
 }
@@ -79,18 +78,6 @@ class OkTask implements SiteTask {
 class FailTask implements SiteTask {
   meta = { key: 'fail-task', name: 'FAIL', url: 'https://x.io' }
   run = vi.fn().mockRejectedValue(new Error('boom'))
-}
-
-/** 间隔调度（everyHours）任务 fixture：成功回写锚点用例用 */
-class IntervalTask implements SiteTask {
-  meta = { key: 'iv', name: 'IV', url: 'https://a.io', schedule: { everyHours: 8 } }
-  run = vi.fn().mockResolvedValue(undefined)
-}
-
-/** 错峰窗口（stagger）任务 fixture：非间隔任务不回写锚点用例用 */
-class StaggerTask implements SiteTask {
-  meta = { key: 'daily', name: 'DAILY', url: 'https://a.io', schedule: { stagger: ['09:00', '11:00'] as [string, string] } }
-  run = vi.fn().mockResolvedValue(undefined)
 }
 
 /** 钱包探针任务 fixture：run 内调用 ensureWalletReady，验证 WalletSession 注入链路 */
@@ -307,20 +294,6 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toContain('success')
     expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
-  })
-
-  it('间隔任务成功后回写锚点（只增不减）', async () => {
-    const db = makeDb()
-    const runner = makeRunner({ db, tasks: new Map([['iv', new IntervalTask()]]) })
-    await runner.runWindowTasks(makeProfile(), ['iv'])
-    expect(db.setTaskFiredAt).toHaveBeenCalled()
-  })
-
-  it('非间隔任务成功不回写锚点', async () => {
-    const db = makeDb()
-    const runner = makeRunner({ db, tasks: new Map([['daily', new StaggerTask()]]) })
-    await runner.runWindowTasks(makeProfile(), ['daily'])
-    expect(db.setTaskFiredAt).not.toHaveBeenCalled()
   })
 
   it('新轮次使用 nextRunSlot（终态行后开新轮），续跑沿用原 slot', async () => {
