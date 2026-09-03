@@ -179,7 +179,7 @@ export async function startApp(): Promise<void> {
     },
   })
   const queue = new TaskQueue(cfg.execution.concurrency)
-  enqueuer = new CoalescingEnqueuer(queue, runner, logger)
+  enqueuer = new CoalescingEnqueuer(queue, runner, logger, cfg.execution.staggerMaxSec)
 
   const app = createApp({
     db,

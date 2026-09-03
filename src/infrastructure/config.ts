@@ -24,6 +24,8 @@ export interface BitBrowserConfig {
 /** 执行引擎配置：并发、超时、重试与熔断的全局默认值（任务级可覆盖部分字段） */
 export interface ExecutionConfig {
   concurrency: number
+  /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
+  staggerMaxSec: number
   windowTimeoutMs: number
   taskTimeoutMs: number
   retryMax: number
@@ -106,6 +108,8 @@ const defaults: AppConfig = {
   execution: {
     // 窗口级并发上限：p-queue 同时最多开 6 个窗口会话（比特浏览器 API 压力与单机负载的折中）
     concurrency: 6,
+    // 窗口会话启动随机错峰上限（秒）：打散批量触发时各窗口的开窗起点，避免同时冲击网络/站点；0 = 关闭
+    staggerMaxSec: 120,
     // 单窗口会话超时 15 分钟（开窗+探活+全部任务），防止异常卡死占用并发槽位
     windowTimeoutMs: 900000,
     // 单任务默认超时 3 分钟（任务 meta.timeoutSec 可覆盖）

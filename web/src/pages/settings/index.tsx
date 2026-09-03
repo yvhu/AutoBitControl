@@ -66,6 +66,7 @@ export default function SettingsPage() {
           column={{ xs: 1, md: 2 }}
           items={[
             { key: 'concurrency', label: '并发', children: s.concurrency },
+            { key: 'stagger', label: '错峰上限', children: `${s.staggerMaxSec} 秒` },
             { key: 'probe', label: '探活 URL', children: s.probeUrl },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },
             { key: 'version', label: '版本', children: s.version },

@@ -240,6 +240,7 @@ export interface paths {
                                 bitbrowserApiBase?: string;
                                 webPort?: number;
                                 concurrency?: number;
+                                staggerMaxSec?: number;
                                 circuitBreakerThreshold?: number;
                                 probeUrl?: string;
                                 version?: string;

@@ -12,6 +12,7 @@ export interface PublicSettings {
   bitbrowserApiBase: string
   webPort: number
   concurrency: number
+  staggerMaxSec: number
   circuitBreakerThreshold: number
   probeUrl: string
   version: string
@@ -45,6 +46,7 @@ export interface PublicSettings {
  *                     bitbrowserApiBase: { type: string }
  *                     webPort: { type: integer }
  *                     concurrency: { type: integer }
+ *                     staggerMaxSec: { type: integer }
  *                     circuitBreakerThreshold: { type: integer }
  *                     probeUrl: { type: string }
  *                     version: { type: string }
@@ -97,6 +99,7 @@ export function settingsRouter(deps: {
       bitbrowserApiBase: deps.cfg.bitbrowser.apiBase,
       webPort: deps.cfg.web.port,
       concurrency: deps.cfg.execution.concurrency,
+      staggerMaxSec: deps.cfg.execution.staggerMaxSec,
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
       probeUrl: deps.cfg.execution.probeUrl,
       version: deps.version,
