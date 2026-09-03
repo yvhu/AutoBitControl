@@ -83,7 +83,11 @@ export class CoalescingEnqueuer {
     const gate = this.gateFor(taskKey)
     // 额度已满：进等待队列（同窗口同任务去重），额度释放后滚动续跑
     if (gate.active >= gate.concurrency) {
-      if (!gate.waiting.some(e => e.profile.id === profile.id && e.taskKeys.has(taskKey))) {
+      const dup = gate.waiting.find(e => e.profile.id === profile.id && e.taskKeys.has(taskKey))
+      if (dup) {
+        // 同窗口同任务已在等待：升级 immediate 标记（手动入口要求不等待错峰）
+        if (opts?.immediate) dup.immediate = true
+      } else {
         gate.waiting.push({ profile, taskKeys: new Set([taskKey]), immediate: opts?.immediate })
       }
       return
@@ -97,8 +101,8 @@ export class CoalescingEnqueuer {
     gate.active++
     const entry = this.pending.get(profile.id)
     if (entry) {
+      // 已排入错峰等待的条目按原调度时间开窗：immediate 不回溯改写（定时器已排，标志无效）
       entry.taskKeys.add(taskKey)
-      if (immediate) entry.immediate = true
       return
     }
     const fresh: Entry = { profile, taskKeys: new Set([taskKey]), immediate }
@@ -151,6 +155,7 @@ export class CoalescingEnqueuer {
     if (this.running.has(next.profile.id)) {
       const fu = this.followUp.get(next.profile.id) ?? { profile: next.profile, taskKeys: new Set<string>() }
       fu.taskKeys.add(taskKey)
+      if (next.immediate) fu.immediate = true
       this.followUp.set(next.profile.id, fu)
       return
     }
