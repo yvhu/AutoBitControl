@@ -24,7 +24,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
 - `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`（云数据库，未配置启动直接报错退出）、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
-**写代码前先读 `config/config.json` 和 `config/.env` 确认当前值**（端口、并发数、开关等以文件为准）。`config/.env`、`config.local.json`、`config/accounts.xlsx` 含真实密钥/账号，绝不提交或外泄；示例值一律写进 `.env.example` / `accounts.example.xlsx`。
+**写代码前先读 `config/config.json` 和 `config/.env` 确认当前值**（端口、开关等以文件为准）。`config/.env`、`config.local.json`、`config/accounts.xlsx` 含真实密钥/账号，绝不提交或外泄；示例值一律写进 `.env.example` / `accounts.example.xlsx`。
 
 ## 分层架构（依赖方向不可反向）
 
@@ -37,7 +37,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(Turso libsql) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、yescaptcha.ts
 - `automation/`：humanize.ts（拟人操作）、wallet/（types 注册表 + metamask/petra 适配器）
-- `engine/`：queue(p-queue 并发 + 同窗口任务合并 CoalescingEnqueuer)、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `engine/`：queue（任务级并发额度 + 同窗口任务合并 CoalescingEnqueuer）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,settings,docs}
@@ -48,7 +48,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；无定时调度，仅手动触发（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入云端 task_states 覆盖代码默认值。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；无定时调度，仅手动触发（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入云端 task_states 覆盖代码默认值。
 
 ## 数据层
 

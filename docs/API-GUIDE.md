@@ -163,6 +163,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
 | `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见[第 5 章](#5-验证码)）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
+| `concurrency` | `number?` | `4` | 任务级并发：同一时间最多几个窗口并行跑该任务；批量触发时按此额度滚动分批跑完所有启用窗口；缺省 4（`DEFAULT_TASK_CONCURRENCY`，定义于 `src/engine/task.ts`）。portal-rhuna 为 2，其余任务为 4 |
 
 示例（省略了部分可选字段，完整字段见上表；摘自 [example-checkin.ts（打开源码视图）](src://example-checkin.ts)）：
 
@@ -179,6 +180,7 @@ meta: TaskMeta = {
   timeoutSec: 180,
   retry: { max: 2, backoffSec: 600 },
   captcha: { auto: true, maxCost: 1500 },
+  concurrency: 4,
 }
 ```
 
@@ -856,7 +858,7 @@ randomMicroMove(): Promise<void>
 
 ### 入队语义
 
-所有入口最终都调用 `CoalescingEnqueuer.enqueue(profile, taskKey)`：同一窗口的多个任务合并为一次开窗会话（开窗/连接/探活只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**。
+所有入口最终都调用 `CoalescingEnqueuer.enqueue(profile, taskKey)`：同一窗口的多个任务合并为一次开窗会话（开窗/连接/探活只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。
 
 批量触发与失败重试的窗口会话开窗前自带**随机错峰**：每个窗口在 `[0, execution.staggerMaxSec]`（默认 120 秒）内随机取一个延迟才开窗，把各窗口的操作起点打散、避免同时冲击网络/站点；设为 `0` 关闭错峰。看板行级「执行/重跑」与 task:run 调试脚本不等待（立即开窗）。
 
@@ -878,7 +880,7 @@ randomMicroMove(): Promise<void>
 | --- | --- | --- |
 | `cloud` | `url`、`authToken` | 云数据库（Turso/libsql）连接信息。**必须配置，否则启动报错退出**；`npm run task:run` 脚本同样需要，缺了直接退出。环境变量 `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` 覆盖配置文件同名字段 |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
-| `execution` | `concurrency`、`staggerMaxSec`、`windowTimeoutMs`、`probeUrl`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：窗口并发默认 6；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
+| `execution` | `staggerMaxSec`、`windowTimeoutMs`、`probeUrl`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
 | `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
@@ -893,7 +895,7 @@ randomMicroMove(): Promise<void>
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、今日成功/失败数、熔断计数与进度条、启用开关、操作列；表头可排序）。行内「复制ID」一键复制比特窗口 ID 到剪贴板；「详情」打开右侧 **Drawer 抽屉**，展示该窗口今日任务时间线（Timeline，含状态与错误）与「重置熔断」按钮。
 - **任务页**：任务卡片网格（每卡两列），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/重试/验证码摘要、备注、来源页链接；停用或已失效任务半透明显示。卡片开关写入云端 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
-- **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（并发/错峰上限/探活 URL/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
+- **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/探活 URL/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
 ### 8.3 REST 接口总表
 
@@ -1162,7 +1164,7 @@ await ctx.clickCheckin('#step-next', { assert: '#step-2' })
 
 重试要点：
 
-- **重试不占窗**：进入 `retry_wait` 后立即释放窗口（不 sleep 占并发名额），当前窗口会话正常继续处理其他任务或关闭；退避到期由重试定时器重新入队，开新一轮窗口会话从续跑轮次开始执行。
+- **重试不占窗**：进入 `retry_wait` 后立即释放窗口（不 sleep 占任务并发额度），当前窗口会话正常继续处理其他任务或关闭；退避到期由重试定时器重新入队，开新一轮窗口会话从续跑轮次开始执行。
 - **跨会话续算**：尝试计数存在数据库 run 记录里（`attempts=N` 表示已跑 N 次），重启服务后到期的重试仍从 N+1 续跑，重试上限跨会话生效，最终必达 `failed`，不会无限重试。
 - 重试前页面自动复位（`about:blank`），避免上一轮残留 DOM/事件干扰。
 
