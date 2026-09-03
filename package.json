@@ -26,7 +26,6 @@
     "express": "^5.2.1",
     "ghost-cursor": "1.4.2",
     "log4js": "^6.9.1",
-    "p-queue": "^9.3.3",
     "patchright": "1.62.1",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1"

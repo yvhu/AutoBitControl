@@ -12,7 +12,6 @@ describe('loadConfig', () => {
   it('无配置文件时返回默认值', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
-    expect(cfg.execution.concurrency).toBe(6)
     expect(cfg.execution.staggerMaxSec).toBe(120)
     expect(cfg.captcha.clientKey).toBe('')
   })
@@ -22,14 +21,14 @@ describe('loadConfig', () => {
     mkdirSync(configDir, { recursive: true })
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { concurrency: 3, probeUrl: 'https://base.example' },
+      execution: { windowTimeoutMs: 123000, probeUrl: 'https://base.example' },
     }))
     writeFileSync(join(configDir, 'config.local.json'), JSON.stringify({
-      execution: { concurrency: 8 },
+      execution: { windowTimeoutMs: 999000 },
     }))
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:9999')
-    expect(cfg.execution.concurrency).toBe(8)
+    expect(cfg.execution.windowTimeoutMs).toBe(999000)
     expect(cfg.execution.probeUrl).toBe('https://base.example')
     expect(cfg.web.port).toBe(3000)
   })
