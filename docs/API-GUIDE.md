@@ -87,7 +87,7 @@ AutoBitControl 一共三块，分工如下：
 
 **第 1 步：建文件** `src/tasks/my-checkin.ts`。
 
-**第 2 步：写 meta**（任务的基本信息：叫什么、几点跑、要不要钱包，字段含义见[第 2 章](#2-taskmeta-字段全解)）。
+**第 2 步：写 meta**（任务的基本信息：叫什么、要不要钱包，字段含义见[第 2 章](#2-taskmeta-字段全解)）。
 
 **第 3 步：写 run**（具体操作步骤，可用方法见[第 3 章](#3-taskcontext-方法全解)）。
 
@@ -1011,7 +1011,7 @@ await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
 if (await ctx.textPresent('已签到')) return
 ```
 
-### 冷却中 vs 已领取（间隔任务必看）
+### 冷却中 vs 已领取（任务必看）
 
 站点限频提示分两种语义，判定必须分开写：
 - **已领取**（今日限额已用完，如 DAC 的 `Daily limit reached`）→ 直接成功返回

@@ -8,7 +8,6 @@ import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
-import type { CoalescingEnqueuer } from '../../engine/queue'
 
 /**
  * @swagger
@@ -166,7 +165,6 @@ import type { CoalescingEnqueuer } from '../../engine/queue'
 
 export function profilesRouter(deps: {
   db: AppDb
-  enqueuer: CoalescingEnqueuer
   bitbrowser: {
     openBrowser(id: string): Promise<{ http: string; ws: string }>
     closeBrowser(id: string): Promise<void>
