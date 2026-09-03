@@ -42,13 +42,18 @@ const CHECKIN_ROUNDS = 6 // 领取弹窗操作轮数（卡处理中/刷新丢弹
 /** 弹窗竞速结果标识 */
 type RaceKey = 'success' | 'claim'
 
+// 人机验证方框 iframe（站点 interaction-only Turnstile 组件：点 Claim 后渲染在右下角浮层，
+// 真机实测 ISP IP 一点即过——之前代码从不点它，只会等 token 超时报错）
+// 优先站点自建容器内（div[data-turnstile-container]），兜底任意可见挑战 iframe
+const TURNSTILE_FRAME_SEL = ['div[data-turnstile-container] iframe:visible', 'iframe[src*="challenges.cloudflare.com"]:visible']
+
 export class PortalRhunaTask extends SiteTask {
   meta: TaskMeta = {
     key: 'portal-rhuna',
     name: 'Rhuna 签到',
     url: 'https://portal.rhuna.io/',
     sourceUrl: ['https://cryptorank.io/zh/drophunting/rhuna-activity958'],
-    note: '真机核实：登录用 Petra（点 Connect Wallet 直接唤起扩展弹窗 prompt.html，无站内钱包选择）；弹窗流程为输密码+Unlock → Sign In 签名（必须在新鲜请求上点，过期请求签名后站点不登录）；Petra 在本环境不注入页面 provider（window.petra 恒不存在），就绪判定仅靠 CDP 扩展页探测；部分窗口弹窗出现慢或偶发不出现，等 60s+8s 补点，未出现则刷新重试；getByRole 匹配不到 Sign In 按钮须用 has-text；Daily Check-in 卡片桌面/移动双 DOM，卡片整体可点；已领取弹窗直接显示 Quest completed successfully!（同样算成功）；站点间歇性报 Network Error / Turnstile token request timed out / chrome-error 错误页——token 存 localStorage，刷新即恢复，任务全程"刷新恢复导向"（错误文案立即刷 + 关键等待周期刷 + 弹窗打开失败无条件刷）；登录态不跨浏览器重启（sessionStorage），每次新会话都走登录；个别窗口代理不稳 IP 探活会失败，属窗口环境问题',
+    note: '真机核实：登录用 Petra（点 Connect Wallet 直接唤起扩展弹窗 prompt.html，无站内钱包选择）；弹窗流程为输密码+Unlock → Sign In 签名（必须在新鲜请求上点，过期请求签名后站点不登录）；Petra 在本环境不注入页面 provider（window.petra 恒不存在），就绪判定仅靠 CDP 扩展页探测；部分窗口弹窗出现慢或偶发不出现，等 60s+8s 补点，未出现则刷新重试；getByRole 匹配不到 Sign In 按钮须用 has-text；Daily Check-in 卡片桌面/移动双 DOM，卡片整体可点；已领取弹窗直接显示 Quest completed successfully!（同样算成功）；领取时站点弹出 interaction-only 人机验证方框（右下角浮层，点方框即完成验证，ISP IP 一点即过）——任务自动拟人点击方框；站点间歇性报 Network Error / Turnstile token request timed out / Turnstile script failed to load（站点代码在 claim 时轮询 window.turnstile 10 秒未定义即报）/ chrome-error 错误页——token 存 localStorage，刷新即恢复，任务全程"刷新恢复导向"（错误文案立即刷 + 关键等待周期刷 + 弹窗打开失败无条件刷）；token 超时时调用 yescaptcha 打码回填兜底；登录态不跨浏览器重启（sessionStorage），每次新会话都走登录；个别窗口代理不稳 IP 探活会失败，属窗口环境问题',
     category: 'checkin',
     lastUpdated: '2026-09-02',
     enabled: true,
@@ -242,9 +247,10 @@ export class PortalRhunaTask extends SiteTask {
         continue
       }
 
-      // 点 Claim → 等处理中提示（10s 未见则补点一次，首次点击未注册场景）
+      // 点 Claim → 人机验证方框出现即拟人点击（interaction-only 组件点方框即完成验证）
       const claimBtn = '[role="dialog"] button:has-text("Claim")'
       await ctx.human.click(claimBtn)
+      await this.autoClickTurnstile(ctx)
       const processing = await ctx.raceTexts([['processing', PROCESSING_TEXT], ['success', SUCCESS_TEXT]], CLAIM_RECHECK_MS)
       if (processing === null) {
         await ctx.human.click(claimBtn).catch(() => {})
@@ -277,8 +283,14 @@ export class PortalRhunaTask extends SiteTask {
     const end = Date.now() + SUCCESS_WAIT_MS
     let clicks = 0
     let lastRefresh = Date.now()
+    let lastCheckClick = 0
     while (Date.now() < end) {
       if (await ctx.textPresent(SUCCESS_TEXT)) return true
+      // 人机验证方框出现（补点后重新渲染）：立即拟人点击（每 15s 最多点一次）
+      if (Date.now() - lastCheckClick > 15000 && (await this.clickTurnstileCheckbox(ctx))) {
+        lastCheckClick = Date.now()
+        continue
+      }
       const errText = await this.recoverErrorText(ctx)
       if (errText !== '') {
         ctx.log.info({ step: 'recover', window: ctx.profile.name, errText }, '领取等待中出现可恢复错误，刷新')
@@ -307,6 +319,39 @@ export class PortalRhunaTask extends SiteTask {
         continue
       }
       await ctx.page.waitForTimeout(3000)
+    }
+    return false
+  }
+
+  /**
+   * 点击人机验证方框（interaction-only Turnstile 组件）：
+   * 组件渲染为右下角浮层 iframe（站点容器 div[data-turnstile-container]，z-index 最高），
+   * 方框在 iframe 左侧——拟人点击即完成验证（真机实测 ISP IP 一点即过，无需图片题）
+   * @returns 是否执行了点击
+   */
+  private async clickTurnstileCheckbox(ctx: TaskContext): Promise<boolean> {
+    for (const sel of TURNSTILE_FRAME_SEL) {
+      const box = await ctx.page
+        .locator(sel)
+        .first()
+        .boundingBox()
+        .catch(() => null)
+      if (!box || box.width < 20 || box.height < 20) continue
+      const x = box.x + Math.min(30, box.width * 0.4)
+      const y = box.y + box.height / 2
+      ctx.log.info({ step: 'checkin', window: ctx.profile.name, x: Math.round(x), y: Math.round(y) }, '出现人机验证方框，拟人点击')
+      await ctx.human.clickAt(x, y)
+      return true
+    }
+    return false
+  }
+
+  /** 等验证方框出现并点击（方框在点 Claim 后 1-3s 渲染，最多等 budgetMs） */
+  private async autoClickTurnstile(ctx: TaskContext, budgetMs = 10000): Promise<boolean> {
+    const end = Date.now() + budgetMs
+    while (Date.now() < end) {
+      if (await this.clickTurnstileCheckbox(ctx)) return true
+      await ctx.page.waitForTimeout(500)
     }
     return false
   }
