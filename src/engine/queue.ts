@@ -45,8 +45,8 @@ interface Entry {
  *   pending 会再占一个槽位并发开同一窗口（同窗口两会话会互相打架）；
  *   因此运行中的窗口的新任务进 followUp，等本轮结束后重新入队
  * 结果：同窗口永不并发跑两个会话；不同窗口各自独立
- * - 错峰：首次入队时随机延迟 staggerMaxSec 内再投递开窗（批量触发打散各窗口起点；
- *   单窗口 runManual 不经此路径不等待；0 = 关闭）
+ * - 错峰：首次入队时随机延迟 staggerMaxSec 内再投递开窗（批量触发与失败重试打散各窗口起点；
+ *   单窗口手动入口（看板行级执行/重跑、task:run 脚本）不等待；0 = 关闭）
  */
 export class CoalescingEnqueuer {
   /** 尚未启动的窗口会话合并区（按窗口 id） */
@@ -68,8 +68,9 @@ export class CoalescingEnqueuer {
    * 为某窗口入队一个任务（自动合并）
    * @param profile 窗口记录
    * @param taskKey 任务 key
+   * @param opts.immediate 单窗口手动入口：跳过错峰立即投递（看板行级执行/重跑）
    */
-  enqueue(profile: ProfileRow, taskKey: string): void {
+  enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean }): void {
     // 窗口正在跑：追加到 followUp，本轮结束后统一重排（不能进 pending，见类注释）
     if (this.running.has(profile.id)) {
       const fu = this.followUp.get(profile.id) ?? { profile, taskKeys: new Set<string>() }
@@ -86,6 +87,11 @@ export class CoalescingEnqueuer {
     // 首次入队：建条目，随机错峰延迟后投递 p-queue（等待期间条目留在 pending，继续合并/判在途）
     const fresh: Entry = { profile, taskKeys: new Set([taskKey]) }
     this.pending.set(profile.id, fresh)
+    if (opts?.immediate) {
+      // 单窗口手动入口：跳过错峰立即投递（看板行级执行/重跑）
+      this.dispatch(fresh)
+      return
+    }
     const delayMs = Math.floor(Math.random() * this.staggerMaxSec * 1000)
     if (delayMs <= 0) {
       this.dispatch(fresh)

@@ -185,7 +185,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
       if ((await deps.db.countInFlightRuns(key, todayStr(), profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(key, profile.id)) {
         throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '该窗口任务执行中，请等待结束后再触发')
       }
-      deps.enqueuer.enqueue(profile, key)
+      deps.enqueuer.enqueue(profile, key, { immediate: true })
       ok(res, { scope: 'single' })
       return
     }

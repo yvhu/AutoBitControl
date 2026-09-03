@@ -147,15 +147,15 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     expect(run.mock.calls[0][1]).toEqual(['task-a', 'task-b'])
   })
 
-  it('不同窗口各自独立随机延迟', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  it('不同窗口各自独立条目、各自延迟投递', async () => {
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.25).mockReturnValueOnce(0.75)
     const run = vi.fn().mockResolvedValue(undefined)
     const q = new TaskQueue(4)
     const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
     const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, circuitBreakerCount: 0 })
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(90_000)
     await q.onIdle()
     expect(run).toHaveBeenCalledTimes(2)
   })
@@ -171,5 +171,16 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     await q.onIdle()
     expect(enq.hasTaskInFlight('task-a')).toBe(false)
+  })
+
+  it('immediate 入口跳过错峰立即投递', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const run = vi.fn().mockResolvedValue(undefined)
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(profile, 'task-a', { immediate: true })
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })

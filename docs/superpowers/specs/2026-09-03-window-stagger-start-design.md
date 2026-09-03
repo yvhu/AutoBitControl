@@ -18,7 +18,7 @@
 
 ## 方案（enqueuer 延迟投递）
 
-时差实现在 `CoalescingEnqueuer.enqueue`：窗口首次入队建条目时随机取延迟，到点才投递 p-queue 拿槽位开窗。对比 runner 内等待方案，本方案不占并发槽位、不空开窗口；单窗口入口（`runManual` 不经 enqueuer）天然跳过等待，无需额外参数。
+时差实现在 `CoalescingEnqueuer.enqueue`：窗口首次入队建条目时随机取延迟，到点才投递 p-queue 拿槽位开窗。对比 runner 内等待方案，本方案不占并发槽位、不空开窗口；单窗口入口不等待：看板行级触发走 `enqueue(..., { immediate: true })` 跳过延迟；task:run 脚本走 `runManual` 不经 enqueuer 天然不等待
 
 ## 改动清单
 
