@@ -32,9 +32,14 @@ export interface TaskMeta {
   retry?: { max: number; backoffSec: number }
   /** 验证码自动处理开关与单任务费用上限（点） */
   captcha?: { auto?: boolean; maxCost?: number }
+  /** 任务级并发：同一时间最多几个窗口并行跑该任务；缺省 DEFAULT_TASK_CONCURRENCY（4）；批量触发时滚动分批跑完 */
+  concurrency?: number
 }
 
 /** 任务引用（runner 内部持有的最小视图） */
 export interface TaskRef {
   meta: TaskMeta
 }
+
+/** 任务级并发缺省值：meta.concurrency 未写时生效 */
+export const DEFAULT_TASK_CONCURRENCY = 4

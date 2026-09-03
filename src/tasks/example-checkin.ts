@@ -28,6 +28,7 @@ export class ExampleCheckinTask extends SiteTask {
     retry: { max: 2, backoffSec: 600 },
     // 验证码自动处理，单任务打码费用上限 1500 点（¥1.5）
     captcha: { auto: true, maxCost: 1500 },
+    concurrency: 4,
   }
 
   async run(ctx: TaskContext): Promise<void> {

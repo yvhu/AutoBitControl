@@ -62,6 +62,7 @@ export class PortalRhunaTask extends SiteTask {
     timeoutSec: 1200,
     retry: { max: 2, backoffSec: 600 },
     captcha: { auto: true, maxCost: 1500 },
+    concurrency: 2,
   }
 
   async run(ctx: TaskContext): Promise<void> {

@@ -60,6 +60,7 @@ export class InceptionDachainTask extends SiteTask {
     timeoutSec: 900,
     retry: { max: 2, backoffSec: 600 },
     captcha: { auto: true, maxCost: 1500 },
+    concurrency: 4,
   }
 
   /** 点 Open Free 后竞速：上限提示 / 开箱弹窗 / 余额不足（通用竞速 ctx.raceTexts） */

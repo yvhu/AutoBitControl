@@ -18,6 +18,7 @@ export class FaucetExampleTask extends SiteTask {
     timeoutSec: 240,
     retry: { max: 1, backoffSec: 300 },
     captcha: { auto: true, maxCost: 1500 },
+    concurrency: 4,
   }
 
   async run(ctx: TaskContext): Promise<void> {

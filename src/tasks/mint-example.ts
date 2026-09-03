@@ -18,6 +18,7 @@ export class MintExampleTask extends SiteTask {
     timeoutSec: 300,
     retry: { max: 1, backoffSec: 600 },
     captcha: { auto: true, maxCost: 3000 },
+    concurrency: 4,
   }
 
   async run(ctx: TaskContext): Promise<void> {
