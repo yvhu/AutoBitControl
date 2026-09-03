@@ -20,12 +20,12 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { SearchOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { SearchOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { type Dayjs } from 'dayjs'
 import StatusPill from '../../components/StatusPill'
 import type { DashboardData, RunRow, TaskMetaView } from '../../types'
-import { useDashboard, useTasks, useTriggerTask, useRerunFailed } from './hooks'
+import { useDashboard, useTasks, useTriggerTask } from './hooks'
 import { formatDuration } from './format'
 import { groupRuns, latestStats, historyMap } from './groupRuns'
 
@@ -113,7 +113,6 @@ export default function DashboardPage() {
   const dashboard = useDashboard(dateStr)
   const tasks = useTasks()
   const trigger = useTriggerTask()
-  const rerun = useRerunFailed()
 
   const taskOptions = useMemo(
     () => (tasks.data ?? []).map((t) => ({ value: t.key, label: `${t.name}（${t.key}）` })),
@@ -317,9 +316,6 @@ export default function DashboardPage() {
             value={profileSearch}
             onChange={(e) => setProfileSearch(e.target.value)}
           />
-          <Button icon={<ReloadOutlined />} loading={rerun.isPending} onClick={() => rerun.mutate(dateStr)}>
-            重跑今日失败
-          </Button>
           <Button
             type="primary"
             icon={<PlayCircleOutlined />}

@@ -18,7 +18,6 @@ import { openapiSpec } from './openapi'
 import { dashboardRouter } from './routes/dashboard'
 import { tasksRouter } from './routes/tasks'
 import { profilesRouter } from './routes/profiles'
-import { runsRouter } from './routes/runs'
 import { captchaRouter } from './routes/captcha'
 import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
@@ -62,7 +61,6 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(dashboardRouter({ db: deps.db, enqueuer: deps.enqueuer }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
-  api.use(runsRouter(deps))
   api.use(captchaRouter(deps))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))

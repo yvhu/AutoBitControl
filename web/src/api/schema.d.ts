@@ -358,61 +358,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/runs/rerun-failed": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 当日失败记录重新入队（failed/captcha_failed 两类终态） */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": {
-                        /**
-                         * Format: date
-                         * @description 指定日期 YYYY-MM-DD（缺省今天）
-                         */
-                        date?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description 重跑条数 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @example 0 */
-                            code?: number;
-                            /** @example ok */
-                            message?: string;
-                            data?: {
-                                /** @description 重新入队的失败条数 */
-                                count?: number;
-                            };
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/profiles": {
         parameters: {
             query?: never;
