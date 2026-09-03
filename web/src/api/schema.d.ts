@@ -44,8 +44,6 @@ export interface paths {
                                 enabled?: boolean;
                                 inFlight?: boolean;
                                 wallet?: string | null;
-                                /** @description cron 字符串或错峰窗口对象 {stagger:[start,end]} */
-                                schedule?: Record<string, never> | null;
                                 timeoutSec?: number | null;
                                 retry?: {
                                     /** @description 额外重试次数 */

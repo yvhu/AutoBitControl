@@ -25,7 +25,7 @@ export type RunRow = EnvelopeData<'/api/dashboard'>['runs'][number]
 
 export type DashboardData = EnvelopeData<'/api/dashboard'>
 
-// 任务 meta 视图：与 /api/tasks envelope data 一致（schedule/retry/captcha 均为对象或 null，见 server 注解）
+// 任务 meta 视图：与 /api/tasks envelope data 一致（retry/captcha 均为对象或 null，见 server 注解）
 export type TaskMetaView = EnvelopeData<'/api/tasks'>[number]
 
 export type SettingsBase = EnvelopeData<'/api/settings'>

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import {
-  App,
   Avatar,
   Button,
   Card,
@@ -20,7 +19,7 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { SearchOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { type Dayjs } from 'dayjs'
 import StatusPill from '../../components/StatusPill'
@@ -102,7 +101,6 @@ function CompleteCard({ data, loading }: { data: DashboardData | undefined; load
 }
 
 export default function DashboardPage() {
-  const { message } = App.useApp()
   const { token } = theme.useToken()
   const [date, setDate] = useState<Dayjs>(dayjs())
   const [taskFilter, setTaskFilter] = useState<string | undefined>(undefined)
@@ -260,14 +258,6 @@ export default function DashboardPage() {
     },
   ]
 
-  const handleTriggerAll = () => {
-    if (!taskFilter) {
-      message.warning('请先选择一个任务')
-      return
-    }
-    trigger.mutate({ key: taskFilter })
-  }
-
   return (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
       <Row gutter={[16, 16]}>
@@ -316,15 +306,6 @@ export default function DashboardPage() {
             value={profileSearch}
             onChange={(e) => setProfileSearch(e.target.value)}
           />
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            loading={trigger.isPending && !trigger.variables?.bitbrowserId}
-            disabled={taskFilter ? (taskNameByKey.get(taskFilter)?.inFlight ?? false) : true}
-            onClick={handleTriggerAll}
-          >
-            全部窗口执行
-          </Button>
         </Space>
       </Card>
 

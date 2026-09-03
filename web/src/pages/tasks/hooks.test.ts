@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { categoryColor, categoryLabel, scheduleText } from './hooks'
+import { categoryColor, categoryLabel } from './hooks'
 
 describe('categoryColor', () => {
   it('checkin 绿 / faucet 蓝 / mint 金 / other 灰', () => {
@@ -24,24 +24,6 @@ describe('categoryLabel', () => {
 
   it('缺省（null）回退「其他」', () => {
     expect(categoryLabel(null)).toBe('其他')
-  })
-})
-
-describe('scheduleText', () => {
-  it('字符串 → cron <值>', () => {
-    expect(scheduleText('0 8 * * *')).toBe('cron 0 8 * * *')
-  })
-
-  it('对象 → cron <a>-<b> 错峰', () => {
-    expect(scheduleText({ stagger: ['10', '20'] })).toBe('cron 10-20 错峰')
-  })
-
-  it('null → 手动触发', () => {
-    expect(scheduleText(null)).toBe('手动触发')
-  })
-
-  it('每 N 小时间隔调度文案', () => {
-    expect(scheduleText({ everyHours: 8 })).toBe('每 8 小时')
   })
 })
 
