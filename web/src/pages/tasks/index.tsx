@@ -41,7 +41,13 @@ function TaskCard({ task }: { task: TaskMetaView }) {
           </div>
           {task.note && (
             <div style={{ marginTop: 4, fontSize: 12 }}>
-              <Typography.Text type="secondary">📝 {task.note}</Typography.Text>
+              <Typography.Paragraph
+                type="secondary"
+                style={{ marginBottom: 0 }}
+                ellipsis={{ rows: 3, expandable: true, symbol: (expanded) => (expanded ? '收起' : '展开') }}
+              >
+                📝 {task.note}
+              </Typography.Paragraph>
             </div>
           )}
           {task.sourceUrl && (
