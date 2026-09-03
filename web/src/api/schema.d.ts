@@ -57,6 +57,7 @@ export interface paths {
                                     /** @description 单任务费用上限（点） */
                                     maxCost?: number;
                                 } | null;
+                                concurrency?: number;
                             }[];
                         };
                     };
@@ -239,7 +240,6 @@ export interface paths {
                             data?: {
                                 bitbrowserApiBase?: string;
                                 webPort?: number;
-                                concurrency?: number;
                                 staggerMaxSec?: number;
                                 circuitBreakerThreshold?: number;
                                 probeUrl?: string;
