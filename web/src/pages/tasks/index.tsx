@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Button, Card, Col, Empty, Row, Space, Spin, Switch, Tag, Typography } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 import type { TaskMetaView } from '../../types'
@@ -15,13 +16,30 @@ function walletIcon(wallet: string | null): string {
   return (wallet && WALLET_ICON[wallet]) || '▣'
 }
 
+/** note 折叠样式：超 3 行截断（-webkit-box 多行省略） */
+const NOTE_CLAMP: CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 3,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+}
+
 function TaskCard({ task }: { task: TaskMetaView }) {
   const setEnabled = useSetTaskEnabled()
   const trigger = useTriggerTask()
   const dimmed = task.deprecated || task.enabled === false
+  const [noteExpanded, setNoteExpanded] = useState(false)
+  const noteRef = useRef<HTMLSpanElement>(null)
+  const [noteOverflow, setNoteOverflow] = useState(false)
+
+  // 折叠态测量是否超 3 行（scrollHeight > clientHeight 即溢出），决定「展开」按钮显隐
+  useLayoutEffect(() => {
+    const el = noteRef.current
+    setNoteOverflow(el ? el.scrollHeight > el.clientHeight + 1 : false)
+  }, [task.note])
 
   return (
-    <Card size="small" style={dimmed ? { opacity: 0.45 } : undefined}>
+    <Card size="small" style={{ height: '100%', ...(dimmed ? { opacity: 0.45 } : undefined) }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <div style={{ fontSize: 22, lineHeight: 1.4 }}>{walletIcon(task.wallet)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -41,13 +59,16 @@ function TaskCard({ task }: { task: TaskMetaView }) {
           </div>
           {task.note && (
             <div style={{ marginTop: 4, fontSize: 12 }}>
-              <Typography.Paragraph
-                type="secondary"
-                style={{ marginBottom: 0 }}
-                ellipsis={{ rows: 3, expandable: true, symbol: (expanded) => (expanded ? '收起' : '展开') }}
-              >
-                📝 {task.note}
-              </Typography.Paragraph>
+              <Typography.Text type="secondary">
+                <span ref={noteRef} style={noteExpanded ? undefined : NOTE_CLAMP}>
+                  📝 {task.note}
+                </span>
+              </Typography.Text>
+              {noteOverflow && (
+                <Typography.Link style={{ marginLeft: 4 }} onClick={() => setNoteExpanded((v) => !v)}>
+                  {noteExpanded ? '收起' : '展开'}
+                </Typography.Link>
+              )}
             </div>
           )}
           {task.sourceUrl && (
@@ -109,7 +130,7 @@ export default function TasksPage() {
 
   return (
     <Space direction="vertical" size={8} style={{ display: 'flex' }}>
-      <Row gutter={[12, 12]}>
+      <Row gutter={[12, 12]} align="stretch">
         {tasks.data.map((t) => (
           <Col key={t.key} xs={24} xl={12}>
             <TaskCard task={t} />
