@@ -48,7 +48,7 @@ const bitbrowser = {
 const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
 const cfg = {
   bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
-  execution: { probeUrl: 'https://probe.io', taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 60000 },
+  execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 60000 },
 } as never
 const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
@@ -214,20 +214,12 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['skipped'])
   })
 
-  it('IP 探活失败熔断所有任务', async () => {
-    const db = makeDb()
-    const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
-    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }) })
-    await runner.runWindowTasks(makeProfile(), ['ok-task'])
-    expect(statuses(db)).toEqual(['skipped'])
-  })
-
   it('窗口级跳过结算待重试行：retry_wait 行沿用原 slot 落终态（不新开轮次）', async () => {
     const db = makeDb({
       getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 3 } as Partial<RunRow>),
     })
-    const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
-    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }) })
+    const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), ['ok-task'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls).toHaveLength(1)
@@ -241,32 +233,12 @@ describe('WindowRunner', () => {
       getLatestRun: vi.fn().mockResolvedValue({ status: 'success', attempts: 1, slot: 1 } as Partial<RunRow>),
       nextRunSlot: vi.fn().mockResolvedValue(2),
     })
-    const page = { ...okPage, goto: vi.fn().mockRejectedValue(new Error('网络错误')) }
-    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }) })
+    const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), ['ok-task'])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls[0][3]).toBe(2)
     expect(calls[0][4]).toBe('skipped')
-  })
-
-  it('IP 探活前两次失败第三次成功仍算通过', async () => {
-    const runner = makeRunner({})
-    let attempts = 0
-    const page = {
-      goto: vi.fn().mockImplementation(async () => {
-        attempts++
-        if (attempts < 3) throw new Error('SOCKS 失败')
-      }),
-    } as never
-    const ok = await runner.probeWithRetry(page)
-    expect(ok).toBe(true)
-    expect(attempts).toBe(3)
-  })
-
-  it('IP 探活三次全失败返回 false', async () => {
-    const runner = makeRunner({})
-    const page = { goto: vi.fn().mockRejectedValue(new Error('失败')) } as never
-    expect(await runner.probeWithRetry(page)).toBe(false)
   })
 
   it('CDP 连接失败标记 failed 且不抛异常', async () => {
@@ -283,7 +255,7 @@ describe('WindowRunner', () => {
     const ok2 = new OkTask()
     const cfgZero = {
       bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
-      execution: { probeUrl: 'https://probe.io', taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 0 },
+      execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 0 },
     } as never
     const runner = new WindowRunner({ cfg: cfgZero, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', ok1], ['ok2', ok2]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), ['ok-task', 'ok2'])

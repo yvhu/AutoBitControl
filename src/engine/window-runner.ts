@@ -1,5 +1,5 @@
 /**
- * 窗口执行器（engine 层）：一次完整窗口会话的编排——开窗→连接→探活→逐个跑任务→关窗
+ * 窗口执行器（engine 层）：一次完整窗口会话的编排——开窗→连接→逐个跑任务→关窗
  * 依赖方向：依赖 integrations/automation/infrastructure，被 app 顶层装配；不依赖 server 层
  * 设计思路：三段 try 把异常分区为不同终态——
  *   开窗重试耗尽 → 全部任务 skipped（环境问题，重试无意义）
@@ -96,7 +96,7 @@ export class WindowRunner {
   /**
    * 跑一个窗口的一次会话：本窗口当日所有 taskKeys 依次执行
    * 异常分区（见文件头注释）：开窗失败全部 skipped；连接失败全部 failed；
-   * IP 探活失败全部 skipped；熔断中的任务逐个 skipped；其余逐任务执行
+   * 熔断中的任务逐个 skipped；其余逐任务执行
    * @returns 各任务本轮最终运行行（key → 行；DB 写失败降级时为 null）——
    * 内存传递供调用方（run-task 脚本等）直接取结果，避免执行后再读库的竞态
    */
@@ -126,7 +126,7 @@ export class WindowRunner {
       return results
     }
     let connected: { page: Page; close(): Promise<void> } | null = null
-    // 第二段 try：连接/探活/执行——finally 保证无论成败都关连接、关窗口
+    // 第二段 try：连接/执行——finally 保证无论成败都关连接、关窗口
     try {
       // 内层 try：连接失败单独分区为 failed 终态
       try {
@@ -143,16 +143,6 @@ export class WindowRunner {
       // 窗口会话级钱包扩展检测：每轮会话一个实例（内存态，会话结束即丢弃；
       // 扩展状态随浏览器实例重置，新会话必须重建）
       const walletSession = new WalletSession(page)
-      // IP 探活：代理 IP 未生效时整窗口跳过，避免用错误 IP 跑任务触发风控
-      const probeOk = await this.probeWithRetry(page)
-      if (!probeOk) {
-        for (const key of taskKeys) {
-          const row = await this.settleWindowSkip(profile, key, date, 'skipped', 'IP 探活失败')
-          results.set(key, row)
-        }
-        logger.warn({ profile: profile.name }, 'IP 探活失败，本轮跳过')
-        return results
-      }
       // 第三段（循环内）：逐任务执行，失败只影响当前任务
       // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证并发槽位不被长时间占用）
       const deadline = Date.now() + cfg.execution.windowTimeoutMs
@@ -210,22 +200,6 @@ export class WindowRunner {
       }
     }
     throw lastErr ?? new Error('开窗失败')
-  }
-
-  /**
-   * 访问探活地址校验 IP 生效：3 次尝试、每次 30s 超时、间隔 5s——
-   * S5 代理连接建立初期常失败，单次判定会把整窗口误跳过
-   */
-  async probeWithRetry(page: Page): Promise<boolean> {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await page.goto(this.deps.cfg.execution.probeUrl, { timeout: 30000, waitUntil: 'domcontentloaded' })
-        return true
-      } catch {
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 5000))
-      }
-    }
-    return false
   }
 
   /** 取某任务当日下一轮 slot（库失败兜底 0——不阻塞任务执行） */
