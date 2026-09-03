@@ -45,6 +45,8 @@ interface Entry {
  *   pending 会再占一个槽位并发开同一窗口（同窗口两会话会互相打架）；
  *   因此运行中的窗口的新任务进 followUp，等本轮结束后重新入队
  * 结果：同窗口永不并发跑两个会话；不同窗口各自独立
+ * - 错峰：首次入队时随机延迟 staggerMaxSec 内再投递开窗（批量触发打散各窗口起点；
+ *   单窗口 runManual 不经此路径不等待；0 = 关闭）
  */
 export class CoalescingEnqueuer {
   /** 尚未启动的窗口会话合并区（按窗口 id） */
@@ -58,6 +60,8 @@ export class CoalescingEnqueuer {
     private queue: TaskQueue,
     private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<unknown> },
     private logger: Logger,
+    /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
+    private staggerMaxSec = 0,
   ) {}
 
   /**
@@ -79,25 +83,35 @@ export class CoalescingEnqueuer {
       entry.taskKeys.add(taskKey)
       return
     }
-    // 首次入队：建条目并投递 p-queue
+    // 首次入队：建条目，随机错峰延迟后投递 p-queue（等待期间条目留在 pending，继续合并/判在途）
     const fresh: Entry = { profile, taskKeys: new Set([taskKey]) }
     this.pending.set(profile.id, fresh)
+    const delayMs = Math.floor(Math.random() * this.staggerMaxSec * 1000)
+    if (delayMs <= 0) {
+      this.dispatch(fresh)
+    } else {
+      setTimeout(() => this.dispatch(fresh), delayMs)
+    }
+  }
+
+  /** 把合并完成的窗口会话投递 p-queue 拿槽位开窗（delayMs=0 时与 enqueue 同步） */
+  private dispatch(entry: Entry): void {
     void this.queue.add(async () => {
       // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
       await Promise.resolve()
-      this.pending.delete(profile.id)
-      this.running.set(profile.id, new Set(fresh.taskKeys))
+      this.pending.delete(entry.profile.id)
+      this.running.set(entry.profile.id, new Set(entry.taskKeys))
       try {
-        await this.runner.runWindowTasks(fresh.profile, [...fresh.taskKeys])
+        await this.runner.runWindowTasks(entry.profile, [...entry.taskKeys])
       } catch (e) {
         // 单窗口会话异常不影响其他窗口，只记日志
         this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
       }
-      this.running.delete(profile.id)
+      this.running.delete(entry.profile.id)
       // 本轮期间收到的追加任务重新入队（下一轮会话）
-      const fu = this.followUp.get(profile.id)
+      const fu = this.followUp.get(entry.profile.id)
       if (fu) {
-        this.followUp.delete(profile.id)
+        this.followUp.delete(entry.profile.id)
         for (const k of fu.taskKeys) this.enqueue(fu.profile, k)
       }
     })

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TaskQueue, CoalescingEnqueuer } from '../src/engine/queue'
 
 describe('TaskQueue', () => {
@@ -110,5 +110,66 @@ describe('CoalescingEnqueuer', () => {
     expect(enq.hasTaskInFlight('task-a', 2)).toBe(false)
     release()
     await q.onIdle()
+  })
+})
+
+describe('CoalescingEnqueuer 随机错峰', () => {
+  const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
+
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+
+  it('staggerMaxSec > 0：窗口会话延迟到期才投递开窗', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5) // 120s * 0.5 = 60s
+    const run = vi.fn().mockResolvedValue(undefined)
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(profile, 'task-a')
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(run).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('等待期内同窗口任务继续合并为一次会话', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const run = vi.fn().mockResolvedValue(undefined)
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
+    const profile = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(profile, 'task-a')
+    enq.enqueue(profile, 'task-b')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls[0][1]).toEqual(['task-a', 'task-b'])
+  })
+
+  it('不同窗口各自独立随机延迟', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const run = vi.fn().mockResolvedValue(undefined)
+    const q = new TaskQueue(4)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
+    const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, circuitBreakerCount: 0 })
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await q.onIdle()
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it('等待期间 hasTaskInFlight 判在途，会话结束后解除', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const run = vi.fn().mockResolvedValue(undefined)
+    const q = new TaskQueue(2)
+    const enq = new CoalescingEnqueuer(q, { runWindowTasks: run } as never, logger, 120)
+    const p1 = { id: 1, bitbrowserId: 'bb-1', name: 'A', enabled: 1, circuitBreakerCount: 0 }
+    enq.enqueue(p1, 'task-a')
+    expect(enq.hasTaskInFlight('task-a')).toBe(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+    await q.onIdle()
+    expect(enq.hasTaskInFlight('task-a')).toBe(false)
   })
 })
