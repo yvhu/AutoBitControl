@@ -139,6 +139,15 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data[0].concurrency).toBe(4)
   })
 
+  it('GET /api/tasks meta 显式写并发时透传该值', async () => {
+    const deps = makeDeps()
+    deps.tasks.set('t2', { meta: { key: 't2', name: '任务2', url: '', wallet: 'petra', concurrency: 2 } })
+    const res = await request(createApp(deps as never)).get('/api/tasks')
+    expect(res.body.code).toBe(0)
+    const t2 = res.body.data.find((t: { key: string }) => t.key === 't2')
+    expect(t2.concurrency).toBe(2)
+  })
+
   it('POST /api/tasks/:key/trigger 入队', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })

@@ -190,6 +190,20 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
+  it('pending 期间同窗口同任务重复 enqueue 去重：不双跑且额度不泄漏', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const run = vi.fn().mockResolvedValue(undefined)
+    const enq = makeEnq(run, () => 1, 120)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(run).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+  })
+
   it('等待期间 hasTaskInFlight 判在途，会话结束后解除', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const run = vi.fn().mockResolvedValue(undefined)

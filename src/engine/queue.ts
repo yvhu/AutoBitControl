@@ -34,7 +34,7 @@ interface Gate {
  * 结果：同窗口永不并发跑两个会话；不同窗口各自独立
  * - 额度：每个任务 active 计数不超过 concurrency；超额窗口进 waiting，release 时滚动续跑
  * - 错峰：首次入队随机延迟 staggerMaxSec 内再投递开窗（批量触发打散各窗口起点；
- *   单窗口 runManual 不经此路径不等待；0 = 关闭）
+ *   task:run 调试脚本独立进程直接跑 runManual，不经本队列；0 = 关闭）
  */
 export class CoalescingEnqueuer {
   /** 尚未启动的窗口会话合并区（按窗口 id） */
@@ -59,7 +59,7 @@ export class CoalescingEnqueuer {
   private gateFor(taskKey: string): Gate {
     let gate = this.gates.get(taskKey)
     if (!gate) {
-      gate = { concurrency: this.taskConcurrencyOf(taskKey), active: 0, waiting: [] }
+      gate = { concurrency: Math.max(1, this.taskConcurrencyOf(taskKey)), active: 0, waiting: [] }
       this.gates.set(taskKey, gate)
     }
     return gate
@@ -80,6 +80,8 @@ export class CoalescingEnqueuer {
       this.followUp.set(profile.id, fu)
       return
     }
+    // 已排队未启动：同窗口同任务去重（并发触发竞态下防止额度重复占用与同窗口双跑）
+    if (this.pending.get(profile.id)?.taskKeys.has(taskKey)) return
     const gate = this.gateFor(taskKey)
     // 额度已满：进等待队列（同窗口同任务去重），额度释放后滚动续跑
     if (gate.active >= gate.concurrency) {
@@ -98,13 +100,16 @@ export class CoalescingEnqueuer {
   /** 占额度并进入 pending 合并区（已排队未启动的合并进已有条目；否则新建 + 错峰投递，immediate 跳过延迟） */
   private occupy(taskKey: string, profile: ProfileRow, immediate = false): void {
     const gate = this.gateFor(taskKey)
-    gate.active++
     const entry = this.pending.get(profile.id)
     if (entry) {
+      // 纵深去重：并发触发竞态下同窗口同任务已在 pending 时不重复占额度（不双跑、不泄漏）
+      if (entry.taskKeys.has(taskKey)) return
       // 已排入错峰等待的条目按原调度时间开窗：immediate 不回溯改写（定时器已排，标志无效）
       entry.taskKeys.add(taskKey)
+      gate.active++
       return
     }
+    gate.active++
     const fresh: Entry = { profile, taskKeys: new Set([taskKey]), immediate }
     this.pending.set(profile.id, fresh)
     if (fresh.immediate) {
