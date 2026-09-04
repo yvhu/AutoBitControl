@@ -76,6 +76,239 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
   return out
 }
 
+/**
+ * @swagger
+ * /api/schedules:
+ *   get:
+ *     summary: 定时计划列表（面板视图）
+ *     responses:
+ *       '200':
+ *         description: 计划列表
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       enabled: { type: boolean }
+ *                       mode: { type: string, enum: [interval, daily, weekly, monthly] }
+ *                       config:
+ *                         type: object
+ *                         nullable: true
+ *                         properties:
+ *                           everyHours: { type: integer, nullable: true }
+ *                           times: { type: array, nullable: true, items: { type: string } }
+ *                           weekdays: { type: array, nullable: true, items: { type: integer } }
+ *                           days: { type: array, nullable: true, items: { type: integer } }
+ *                       taskKeys: { type: array, items: { type: string } }
+ *                       taskNames:
+ *                         type: array
+ *                         description: 与 taskKeys 对齐的任务显示名，未知 key 为 null
+ *                         items: { type: string, nullable: true }
+ *                       ruleText: { type: string, description: '触发规则摘要' }
+ *                       nextRun: { type: string, description: '下次执行的墙上时间文本' }
+ *                       createdAt: { type: string }
+ *                       updatedAt: { type: string }
+ */
+
+/**
+ * @swagger
+ * /api/schedules:
+ *   post:
+ *     summary: 新建定时计划
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               mode: { type: string, enum: [interval, daily, weekly, monthly] }
+ *               config:
+ *                 type: object
+ *                 nullable: true
+ *                 properties:
+ *                   everyHours: { type: integer, nullable: true }
+ *                   times: { type: array, nullable: true, items: { type: string } }
+ *                   weekdays: { type: array, nullable: true, items: { type: integer } }
+ *                   days: { type: array, nullable: true, items: { type: integer } }
+ *               taskKeys: { type: array, items: { type: string } }
+ *             required: [name, mode, taskKeys]
+ *     responses:
+ *       '200':
+ *         description: 新建成功（返回面板视图）
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     enabled: { type: boolean }
+ *                     mode: { type: string, enum: [interval, daily, weekly, monthly] }
+ *                     config:
+ *                       type: object
+ *                       nullable: true
+ *                       properties:
+ *                         everyHours: { type: integer, nullable: true }
+ *                         times: { type: array, nullable: true, items: { type: string } }
+ *                         weekdays: { type: array, nullable: true, items: { type: integer } }
+ *                         days: { type: array, nullable: true, items: { type: integer } }
+ *                     taskKeys: { type: array, items: { type: string } }
+ *                     taskNames: { type: array, items: { type: string, nullable: true } }
+ *                     ruleText: { type: string }
+ *                     nextRun: { type: string }
+ *                     createdAt: { type: string }
+ *                     updatedAt: { type: string }
+ *       '400':
+ *         description: 参数校验失败（业务码 40000）
+ */
+
+/**
+ * @swagger
+ * /api/schedules/{id}:
+ *   patch:
+ *     summary: 更新定时计划（字段可部分传）
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 计划 id
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               enabled: { type: boolean }
+ *               mode: { type: string, enum: [interval, daily, weekly, monthly] }
+ *               config:
+ *                 type: object
+ *                 nullable: true
+ *                 properties:
+ *                   everyHours: { type: integer, nullable: true }
+ *                   times: { type: array, nullable: true, items: { type: string } }
+ *                   weekdays: { type: array, nullable: true, items: { type: integer } }
+ *                   days: { type: array, nullable: true, items: { type: integer } }
+ *               taskKeys: { type: array, items: { type: string } }
+ *     responses:
+ *       '200':
+ *         description: 更新成功（返回面板视图）
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     enabled: { type: boolean }
+ *                     mode: { type: string, enum: [interval, daily, weekly, monthly] }
+ *                     config:
+ *                       type: object
+ *                       nullable: true
+ *                       properties:
+ *                         everyHours: { type: integer, nullable: true }
+ *                         times: { type: array, nullable: true, items: { type: string } }
+ *                         weekdays: { type: array, nullable: true, items: { type: integer } }
+ *                         days: { type: array, nullable: true, items: { type: integer } }
+ *                     taskKeys: { type: array, items: { type: string } }
+ *                     taskNames: { type: array, items: { type: string, nullable: true } }
+ *                     ruleText: { type: string }
+ *                     nextRun: { type: string }
+ *                     createdAt: { type: string }
+ *                     updatedAt: { type: string }
+ *       '400':
+ *         description: 参数校验失败（业务码 40000）
+ *       '404':
+ *         description: 计划不存在（业务码 40406）
+ */
+
+/**
+ * @swagger
+ * /api/schedules/{id}:
+ *   delete:
+ *     summary: 删除定时计划
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 计划 id
+ *     responses:
+ *       '200':
+ *         description: 删除成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data: { type: object, nullable: true }
+ *       '404':
+ *         description: 计划不存在（业务码 40406）
+ */
+
+/**
+ * @swagger
+ * /api/schedules/{id}/run:
+ *   post:
+ *     summary: 立即运行定时计划
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *         description: 计划 id
+ *     responses:
+ *       '200':
+ *         description: 触发成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     taskKeys: { type: array, items: { type: string } }
+ *                     skipped:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           taskKey: { type: string }
+ *                           reason: { type: string, enum: [unknown-task, task-disabled, in-flight] }
+ *       '404':
+ *         description: 计划不存在（业务码 40406）
+ *       '409':
+ *         description: 计划已停用（业务码 40903）
+ */
+
 export function schedulesRouter(deps: { db: AppDb; scheduler: { runNow(s: ScheduleRow): Promise<RunNowResult> }; tasks: Map<string, SiteTask>; timezone: string }): Router {
   const router = Router()
   router.get('/schedules', asyncHandler(async (_req, res) => {

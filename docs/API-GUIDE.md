@@ -1156,6 +1156,11 @@ randomMicroMove(): Promise<void>
 | GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 本地库开关状态） |
 | PATCH | `/api/tasks/:key` | 任务开关（写本地库，立即生效） |
 | POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
+| GET | `/api/schedules` | 定时计划列表（面板视图：规则摘要/下次执行/任务名等） |
+| POST | `/api/schedules` | 新建定时计划（name/mode/config/taskKeys） |
+| PATCH | `/api/schedules/:id` | 更新定时计划（字段可部分传） |
+| DELETE | `/api/schedules/:id` | 删除定时计划 |
+| POST | `/api/schedules/:id/run` | 立即运行定时计划（在途/停用任务跳过） |
 | GET | `/api/profiles` | 窗口列表（含启用状态、熔断计数与打开状态） |
 | PATCH | `/api/profiles/:id` | 窗口开关 |
 | POST | `/api/profiles/:id/open` | 打开窗口（登记 open_windows，任务会话复用该窗口） |
