@@ -1,5 +1,5 @@
-import { get, post, patch } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo } from '../types'
+import { get, post, patch, del } from './client'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -19,3 +19,9 @@ export const reloadDatasource = () => post<DatasourceInfo>('/api/datasource/relo
 export const fetchGuide = () => get<{ content: string }>('/api/docs/guide')
 export const fetchExamples = () => get<{ name: string; label: string }[]>('/api/docs/examples')
 export const fetchExampleSource = (name: string) => get<{ content: string }>(`/api/docs/examples/${encodeURIComponent(name)}`)
+
+export const fetchSchedules = () => get<ScheduleItem[]>('/api/schedules')
+export const createSchedule = (body: { name: string; mode: ScheduleItem['mode']; config: ScheduleConfigInput; taskKeys: string[] }) => post<ScheduleItem>('/api/schedules', body)
+export const updateSchedule = (id: number, body: Partial<{ name: string; enabled: boolean; mode: ScheduleItem['mode']; config: ScheduleConfigInput; taskKeys: string[] }>) => patch<ScheduleItem>(`/api/schedules/${id}`, body)
+export const deleteSchedule = (id: number) => del<null>(`/api/schedules/${id}`)
+export const runSchedule = (id: number) => post<{ taskKeys: string[]; skipped: Array<{ taskKey: string; reason: string }> }>(`/api/schedules/${id}/run`, {})

@@ -32,6 +32,17 @@ export type RunRow = EnvelopeData<'/api/batches/{id}'>['runs'][number]
 // 任务 meta 视图：与 /api/tasks envelope data 一致（retry/captcha 均为对象或 null，见 server 注解）
 export type TaskMetaView = EnvelopeData<'/api/tasks'>[number]
 
+// 定时计划视图：与 /api/schedules envelope data 一致（config 已解析为对象）
+export type ScheduleItem = EnvelopeData<'/api/schedules'>[number]
+
+// 计划时间配置的写入形态（创建/更新接口入参；视图侧 config 因 DeepRequired 各字段必填可空）
+export type ScheduleConfigInput = {
+  everyHours?: number
+  times?: string[]
+  weekdays?: number[]
+  days?: number[]
+}
+
 export type SettingsBase = EnvelopeData<'/api/settings'>
 
 export type DatasourceInfo = EnvelopeData<'/api/settings'>['datasource']

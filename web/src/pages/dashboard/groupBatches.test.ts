@@ -25,11 +25,19 @@ describe('splitBatches 散批聚合', () => {
     expect(bulk.map((b) => b.id)).toEqual([1, 3])
     expect(single.map((b) => b.id)).toEqual([2, 4])
   })
+
+  it('kind=schedule 归入 bulk 主列表', () => {
+    const { bulk, single } = splitBatches([
+      makeBatch({ id: 5, kind: 'schedule', source: '计划#1 每日签到' }),
+    ])
+    expect(bulk.map((b) => b.id)).toEqual([5])
+    expect(single).toHaveLength(0)
+  })
 })
 
 describe('batchProgress 批次完成率', () => {
   it('done = 终态行数；pct 四舍五入；total=0 时 pct=0', () => {
-    const p = batchProgress(makeBatch({ stats: { total: 50, success: 40, failed: 3, captchaFailed: 2, skipped: 1, running: 2, pending: 2 } }))
+    const p = batchProgress(makeBatch({ stats: { total: 50, success: 40, failed: 3, captchaFailed: 2, skipped: 1, running: 2, pending: 2, retryWait: 0 } }))
     expect(p.done).toBe(46)
     expect(p.pct).toBe(92)
     expect(batchProgress(makeBatch({})).pct).toBe(0)

@@ -4,6 +4,333 @@
  */
 
 export interface paths {
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 定时计划列表（面板视图） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 计划列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example 0 */
+                            code?: number;
+                            /** @example ok */
+                            message?: string;
+                            data?: {
+                                id?: number;
+                                name?: string;
+                                enabled?: boolean;
+                                mode?: "interval" | "daily" | "weekly" | "monthly";
+                                config?: {
+                                    everyHours?: number | null;
+                                    times?: string[] | null;
+                                    weekdays?: number[] | null;
+                                    days?: number[] | null;
+                                };
+                                taskKeys?: string[];
+                                /** @description 与 taskKeys 对齐的任务显示名，未知 key 为 null */
+                                taskNames?: (string | null)[];
+                                /** @description 触发规则摘要 */
+                                ruleText?: string;
+                                /** @description 下次执行的墙上时间文本 */
+                                nextRun?: string;
+                                createdAt?: string;
+                                updatedAt?: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** 新建定时计划 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        name?: string;
+                        mode?: "interval" | "daily" | "weekly" | "monthly";
+                        config?: {
+                            everyHours?: number | null;
+                            times?: string[] | null;
+                            weekdays?: number[] | null;
+                            days?: number[] | null;
+                        };
+                        taskKeys?: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description 新建成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                id?: number;
+                                name?: string;
+                                enabled?: boolean;
+                                mode?: string;
+                                config?: {
+                                    everyHours?: number | null;
+                                    times?: string[] | null;
+                                    weekdays?: number[] | null;
+                                    days?: number[] | null;
+                                };
+                                taskKeys?: string[];
+                                taskNames?: (string | null)[];
+                                ruleText?: string;
+                                nextRun?: string;
+                                createdAt?: string;
+                                updatedAt?: string;
+                            };
+                        };
+                    };
+                };
+                /** @description 参数校验失败 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+                /** @description 计划不存在 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        name?: string;
+                        enabled?: boolean;
+                        mode?: "interval" | "daily" | "weekly" | "monthly";
+                        config?: {
+                            everyHours?: number | null;
+                            times?: string[] | null;
+                            weekdays?: number[] | null;
+                            days?: number[] | null;
+                        };
+                        taskKeys?: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description 更新成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                id?: number;
+                                name?: string;
+                                enabled?: boolean;
+                                mode?: string;
+                                config?: {
+                                    everyHours?: number | null;
+                                    times?: string[] | null;
+                                    weekdays?: number[] | null;
+                                    days?: number[] | null;
+                                };
+                                taskKeys?: string[];
+                                taskNames?: (string | null)[];
+                                ruleText?: string;
+                                nextRun?: string;
+                                createdAt?: string;
+                                updatedAt?: string;
+                            };
+                        };
+                    };
+                };
+                /** @description 参数校验失败 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+                /** @description 计划不存在 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/schedules/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 触发成功 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                taskKeys?: string[];
+                                skipped?: {
+                                    taskKey?: string;
+                                    reason?: "unknown-task" | "task-disabled" | "in-flight";
+                                }[];
+                            };
+                        };
+                    };
+                };
+                /** @description 计划不存在 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+                /** @description 计划已停用 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -812,7 +1139,7 @@ export interface paths {
                                 batches?: {
                                     id?: number;
                                     /** @enum {string} */
-                                    kind?: "bulk" | "single";
+                                    kind?: "bulk" | "single" | "schedule";
                                     taskKey?: string;
                                     source?: string;
                                     createdAt?: string;
@@ -881,7 +1208,7 @@ export interface paths {
                                 batch?: {
                                     id?: number;
                                     /** @enum {string} */
-                                    kind?: "bulk" | "single";
+                                    kind?: "bulk" | "single" | "schedule";
                                     taskKey?: string;
                                     source?: string;
                                     createdAt?: string;
