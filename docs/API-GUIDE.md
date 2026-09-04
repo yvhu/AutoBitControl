@@ -911,7 +911,7 @@ wallets.register(new PhantomAdapter())
 | `hcaptcha` | `iframe[src*="hcaptcha.com/captcha"]` | `HCaptchaTaskProxyless` | 30 |
 | `image` | 手动场景 | `ImageToTextTask` | 4 |
 
-费用仅为估算（`ESTIMATED_COST_POINTS`），用于每次打码的日志统计（`logCaptcha`，看板「验证码」卡片汇总）。sitekey 从 iframe src 的 `k=`/`sitekey=` 参数或页面 `data-sitekey` 属性读取；检测每 300ms 轮询一次，最多 5 秒，没检测到返回 `none`。
+费用仅为估算（`ESTIMATED_COST_POINTS`），用于每次打码的日志统计（`logCaptcha`，看板顶部打码统计汇总）。sitekey 从 iframe src 的 `k=`/`sitekey=` 参数或页面 `data-sitekey` 属性读取；检测每 300ms 轮询一次，最多 5 秒，没检测到返回 `none`。
 
 ### auto 配置
 
@@ -1058,7 +1058,7 @@ randomMicroMove(): Promise<void>
 | 入口 | 接口 | 语义 |
 | --- | --- | --- |
 | 面板任务页「立即触发」 | `POST /api/tasks/:key/trigger`（不带 body） | 该任务推给**全部启用窗口** |
-| 面板看板行级「执行」（失败行显示「重跑」） | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId }` | **单窗口单任务**：只把该窗口的该任务入队（对应矩阵里那一行） |
+| 面板看板行级「执行」（失败行显示「重跑」） | `POST /api/tasks/:key/trigger`，body `{ bitbrowserId }` | **单窗口单任务**：只把该窗口的该任务入队（对应批次明细里那一行） |
 | 失败重试（自动） | — | 任务失败进入 `retry_wait` 后退避到期自动重新入队（进程重启后由重试恢复扫描接续，见[第 9 章「任务的一生」](#任务的一生状态流转)） |
 
 ### 触发守卫
@@ -1105,7 +1105,7 @@ randomMicroMove(): Promise<void>
 
 面板基于 antd 构建（`web/`，Vite + React），左侧导航五个页面，顶栏右侧有主题切换 Segmented（浅色/深色/跟随系统，选择写入浏览器 localStorage 即时生效，设置页也有同样的「主题」卡片）。每个页面「在哪 / 能干什么」如下：
 
-- **看板（首页）**：四张统计卡（今日完成率环形图、结果分布标签、验证码花费与次数、实时运行窗口数）＋ 日期选择（DatePicker，可按天回看）＋ 任务筛选下拉 ＋ 状态 Segmented（全部/失败/成功/进行中）＋ 窗口搜索框 ＋ 运行记录表（窗口/任务/状态/尝试/错误/截图/操作）。行级「执行」= 单窗口单任务触发（失败行显示「重跑」）。停留在看板页时每 15 秒自动刷新。
+- **看板（首页）**：运行批次时间线——顶部 Segmented 选时间范围（今天/近 7 天/全部）＋ 实时运行窗口数与今日打码花费统计；每次触发形成一张批次卡（时间/类型徽章/任务名/完成进度条/各状态计数，点击展开窗口明细表）；单窗口散批与未分批历史收进虚线卡折叠区。明细行含窗口/任务/开始/耗时/状态/错误/截图，行级「执行/重跑」= 单窗口单任务触发。停留在看板页时每 15 秒自动刷新。
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、今日成功/失败数、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；「详情」打开右侧 **Drawer 抽屉**，展示该窗口今日任务时间线（Timeline，含状态与错误）与「重置熔断」按钮。
 - **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入云端 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
@@ -1117,7 +1117,8 @@ randomMicroMove(): Promise<void>
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/dashboard` | 看板全部数据（统计/矩阵/窗口/打码成本） |
+| GET | `/api/batches` | 运行批次列表（可选 `?range=today/7d/all`，含每批统计、未分批行与全局数字，看板时间线数据源） |
+| GET | `/api/batches/:id` | 批次明细（该批全部窗口运行行，展开批次时懒加载） |
 | GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 云端开关状态） |
 | PATCH | `/api/tasks/:key` | 任务开关（写云端，立即生效） |
 | POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
@@ -1473,7 +1474,7 @@ if (done) return   // 今日已做 → 直接成功
 
 - `yescaptcha 余额不足: X 点 < Y 点` → 充值或下调 `config.json` 的 `captcha.maxCostPerTask`；
 - `yescaptcha 创建任务失败` / `yescaptcha 解题超时` → 检查 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持；
-- 看板「验证码」卡片汇总每次打码的 `kind/cost/ok`；运行状态 `captcha_failed` 表示打码失败（不重试）。
+- 看板顶部「今日打码」统计汇总每次打码的 `kind/cost/ok`；运行状态 `captcha_failed` 表示打码失败（不重试）。
 
 ### 熔断触发与重置
 
@@ -1482,7 +1483,7 @@ if (done) return   // 今日已做 → 直接成功
 
 ### 截图与日志位置
 
-- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板矩阵行内可点开截图。
+- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板批次明细行内可点开截图。
 - **日志**：`data/logs/app.log`（当天，纯文本 `[时间] 级别 消息`）＋ `data/logs/app.log.<日期>`（按天滚动的历史文件，如 `app.log.2026-08-31`，保留最近 N 天由 `config.json` 的 `storage.logRetainDays` 控制，默认 7 天——启动时与滚动时均清理过期文件，numBackups=N 表示保留 N 个归档 + 当前文件，共 N+1 个；级别由 `storage.logLevel` 控制，控制台同步输出，error 及以上走 stderr、其余走 stdout）；任务失败时日志携带 `status/err`。
 - **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。各状态含义、进入条件与面板颜色见[第 9 章「任务的一生（状态流转）」](#任务的一生状态流转)。
 

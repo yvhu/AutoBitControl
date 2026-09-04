@@ -52,7 +52,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 数据层
 
-Turso 云数据库（libsql），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次连接自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一）、`captcha_logs`、`task_states`、`open_windows`。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（tests 与 db 均用注入隔离，不连真库）。
+Turso 云数据库（libsql），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次连接自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`captcha_logs`、`task_states`、`open_windows`。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（tests 与 db 均用注入隔离，不连真库）。
 
 ## 前端与 API 变更
 
