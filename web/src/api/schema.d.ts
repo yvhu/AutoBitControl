@@ -242,7 +242,6 @@ export interface paths {
                                 webPort?: number;
                                 staggerMaxSec?: number;
                                 circuitBreakerThreshold?: number;
-                                probeUrl?: string;
                                 version?: string;
                                 datasource?: {
                                     available?: boolean;
