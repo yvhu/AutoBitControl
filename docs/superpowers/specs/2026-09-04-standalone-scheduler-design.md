@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 **触发批次**：复用 `batches` 表，`kind` 增加 `'schedule'` 值（TEXT 列，无 schema 变更），`source` 记 `计划#id name`，看板天然可见。
 
+## 与现有系统的交互（共用状态，设计使然）
+
+定时触发与手动触发共享 run 行、批次、在途守卫与熔断计数，行为互通但不互相破坏：
+
+1. **run 行/批次完全兼容**：定时触发走与手动相同的 `upsertRun`（`ON CONFLICT DO UPDATE`，db.ts:323）与 slot 分配（`nextRunSlot` = 当日 MAX+1，db.ts:422）。同一任务同一天手动跑 slot 0、定时再跑即 slot 1，唯一键 `(profile_id, task_key, date, slot)` 不会撞；看板该任务一天多行（按 slot），批次列表多一个 `kind='schedule'` 批次。
+2. **在途守卫互相「挡」**：手动「立即触发」的 409 守卫把 pending/running/retry_wait 都算在途（db.ts:434）——定时运行期间手动触发该任务会 409；反向定时到点发现任务在途则跳过并记日志（见触发流程第 3 步）。极端竞态（几乎同秒）时双方都过守卫入队，由队列窗口级合并合成一次运行。
+3. **熔断计数共用**：定时任务的终态失败同样 `incrCircuitBreaker`（window-runner.ts:341），连续 2 次失败触发当日窗口熔断，之后该窗口所有任务（含手动）skipped，需在窗口页手动重置熔断；反向同理。语义统一，不区分触发来源。
+
 ## 调度引擎行为
 
 ### 时区处理
