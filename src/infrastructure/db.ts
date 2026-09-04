@@ -14,10 +14,28 @@ import { createClient, type Client, type Row } from '@libsql/client'
  */
 export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'captcha_failed' | 'retry_wait' | 'skipped'
 
+/** batches 表 kind 联合类型 */
+export type BatchKind = 'bulk' | 'single' | 'schedule'
+
+/** schedules 表行：一个定时计划（config/taskKeys 为 JSON 原文，语义见 engine/schedule.ts） */
+export interface ScheduleRow {
+  id: number
+  name: string
+  /** 0/1（SQLite 无布尔，读出保持数字由调用方判断） */
+  enabled: number
+  mode: 'interval' | 'daily' | 'weekly' | 'monthly'
+  /** JSON 原文：interval {everyHours} / daily {times} / weekly {weekdays,times} / monthly {days,times} */
+  config: string
+  /** JSON 原文：任务 key 字符串数组 */
+  taskKeys: string
+  createdAt: string
+  updatedAt: string
+}
+
 /** batches 表行：一次触发动作 */
 export interface BatchRow {
   id: number
-  kind: 'bulk' | 'single'
+  kind: BatchKind
   taskKey: string
   source: string
   createdAt: string
@@ -152,6 +170,17 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS task_states (
     task_key TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 1
+  )`,
+  // 定时计划表：计划（时间配置 + 任务列表）与任务代码完全解耦，由面板「定时任务」栏目管理
+  `CREATE TABLE IF NOT EXISTS schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    mode TEXT NOT NULL,
+    config TEXT NOT NULL,
+    task_keys TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   )`,
   // 窗口打开状态登记表：主进程（面板打开/关闭）与 task:run 脚本跨进程共享，
   // 一行 = 一个已打开的窗口（http 调试地址供 CDP 复用）；pid 是否存活由调用方实测
@@ -302,6 +331,46 @@ export class AppDb {
     await this.exec('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled', [taskKey, enabled ? 1 : 0])
   }
 
+  // ===== schedules 定时计划 CRUD（config/taskKeys 以 JSON 原文落库，语义解析在 engine/schedule.ts）=====
+
+  /** 全部计划（按创建顺序）；引擎 tick 与面板列表共用 */
+  async listSchedules(): Promise<ScheduleRow[]> {
+    return (await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, created_at AS createdAt, updated_at AS updatedAt FROM schedules ORDER BY id`)) as unknown as ScheduleRow[]
+  }
+
+  /** 按 id 查计划（不存在返回 null） */
+  async getSchedule(id: number): Promise<ScheduleRow | null> {
+    const rows = await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, created_at AS createdAt, updated_at AS updatedAt FROM schedules WHERE id = ?`, [id])
+    return (rows[0] as unknown as ScheduleRow | undefined) ?? null
+  }
+
+  /** 新建计划（enabled 默认 1）；createdAt/updatedAt 为本地墙钟时间（与 batches 同口径） */
+  async createSchedule(input: { name: string; mode: string; config: string; taskKeys: string }): Promise<ScheduleRow> {
+    const now = localWallNow()
+    const rs = await this.client.execute({
+      sql: `INSERT INTO schedules (name, enabled, mode, config, task_keys, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?)`,
+      args: [input.name, input.mode, input.config, input.taskKeys, now, now],
+    })
+    return (await this.getSchedule(Number(rs.lastInsertRowid)))!
+  }
+
+  /** 部分更新计划（缺省字段不动）；不存在返回 null */
+  async updateSchedule(id: number, patch: { name?: string; enabled?: boolean; mode?: string; config?: string; taskKeys?: string }): Promise<ScheduleRow | null> {
+    const current = await this.getSchedule(id)
+    if (!current) return null
+    await this.exec(
+      `UPDATE schedules SET name = ?, enabled = ?, mode = ?, config = ?, task_keys = ?, updated_at = ? WHERE id = ?`,
+      [patch.name ?? current.name, patch.enabled === undefined ? current.enabled : patch.enabled ? 1 : 0, patch.mode ?? current.mode, patch.config ?? current.config, patch.taskKeys ?? current.taskKeys, localWallNow(), id],
+    )
+    return this.getSchedule(id)
+  }
+
+  /** 删除计划；返回是否存在过 */
+  async deleteSchedule(id: number): Promise<boolean> {
+    const rs = await this.client.execute({ sql: 'DELETE FROM schedules WHERE id = ?', args: [id] })
+    return Number(rs.rowsAffected) > 0
+  }
+
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */
   async incrCircuitBreaker(profileId: number): Promise<number> {
     await this.exec('UPDATE profiles SET circuit_breaker_count = circuit_breaker_count + 1 WHERE id = ?', [profileId])
@@ -339,7 +408,7 @@ export class AppDb {
   }
 
   /** 创建批次（每次触发动作一行）；createdAt 缺省当前本地墙钟时间 */
-  async createBatch(kind: 'bulk' | 'single', taskKey: string, source: string, createdAt = localWallNow()): Promise<BatchRow> {
+  async createBatch(kind: BatchKind, taskKey: string, source: string, createdAt = localWallNow()): Promise<BatchRow> {
     const rs = await this.client.execute({
       sql: 'INSERT INTO batches (kind, task_key, source, created_at) VALUES (?, ?, ?, ?)',
       args: [kind, taskKey, source, createdAt],
