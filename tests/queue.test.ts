@@ -18,7 +18,7 @@ const tick = () => new Promise<void>(r => setTimeout(r, 10))
 describe('CoalescingEnqueuer 任务级并发', () => {
   it('并发额度内窗口立即执行，超额窗口等待释放后滚动续跑', async () => {
     const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _taskKeys: string[]) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
     const enq = makeEnq(run, () => 2)
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
@@ -36,14 +36,14 @@ describe('CoalescingEnqueuer 任务级并发', () => {
 
   it('任务额度相互独立：A 排队不影响 B 立即执行', async () => {
     const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _taskKeys: string[]) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
     const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4))
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
     enq.enqueue(mk(3, 'bb-3'), 'task-b')
     await tick()
     expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual(['task-b'])
+    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
     releases[1]()
     await tick()
     expect(run).toHaveBeenCalledTimes(3)
@@ -58,17 +58,46 @@ describe('CoalescingEnqueuer 任务级并发', () => {
     const enq = makeEnq(run)
     const p = mk(1, 'bb-1')
     enq.enqueue(p, 'task-a')
-    enq.enqueue(p, 'task-b')
+    enq.enqueue(p, 'task-b', { batchId: 7 })
     enq.enqueue(p, 'task-c')
     await tick()
     expect(run).toHaveBeenCalledTimes(1)
-    expect(run.mock.calls[0][1]).toEqual(['task-a', 'task-b', 'task-c'])
+    expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b', batchId: 7 }, { taskKey: 'task-c' }])
+  })
+
+  it('batchId 随 enqueue 透传并在 followUp 重入队时保留', async () => {
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>((r) => { releaseFirst = r })
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
+      if (run.mock.calls.length === 1) return firstGate.then(() => undefined)
+      return Promise.resolve(undefined)
+    })
+    const enq = makeEnq(run)
+    const profile = mk(1, 'bb-1')
+    enq.enqueue(profile, 'task-a')
+    await tick()
+    enq.enqueue(profile, 'task-b', { batchId: 9 })
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+    releaseFirst()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b', batchId: 9 }])
+  })
+
+  it('pendingCount 返回错峰等待中的窗口数', async () => {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const enq = makeEnq(run, () => 4, 1000)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    expect(enq.pendingCount()).toBe(2)
+    await tick()
   })
 
   it('运行中再次 enqueue 排队为第二批且不与第一批并发', async () => {
     let releaseFirst: () => void = () => {}
     const firstGate = new Promise<void>(r => { releaseFirst = r })
-    const run = vi.fn((profile: { id: number }, taskKeys: string[]) => {
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
       if (profile.id === 1 && run.mock.calls.length === 1) return firstGate.then(() => undefined)
       return Promise.resolve(undefined)
     })
@@ -83,7 +112,7 @@ describe('CoalescingEnqueuer 任务级并发', () => {
     releaseFirst()
     await tick()
     expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual(['task-b'])
+    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
   })
 
   it('runner 抛错不会产生未处理的 rejection', async () => {
@@ -96,7 +125,7 @@ describe('CoalescingEnqueuer 任务级并发', () => {
 
   it('释放额度时窗口正被其他任务会话占用：转入 followUp 不并发开窗', async () => {
     const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _taskKeys: string[]) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
     const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4))
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
@@ -110,7 +139,7 @@ describe('CoalescingEnqueuer 任务级并发', () => {
     await tick()
     expect(run).toHaveBeenCalledTimes(3)
     expect(run.mock.calls[2][0].id).toBe(2)
-    expect(run.mock.calls[2][1]).toEqual(['task-a'])
+    expect(run.mock.calls[2][1]).toEqual([{ taskKey: 'task-a' }])
     releases[2]()
     await tick()
   })
@@ -139,7 +168,7 @@ describe('CoalescingEnqueuer 任务级并发', () => {
   it('followUp 追加任务判在途', async () => {
     let release: () => void = () => {}
     const gate = new Promise<void>(r => { release = r })
-    const run = vi.fn((_profile: { id: number }, _taskKeys: string[]) => gate.then(() => undefined))
+    const run = vi.fn((_profile: { id: number }, _tasks: Array<{ taskKey: string }>) => gate.then(() => undefined))
     const enq = makeEnq(run)
     const p1 = mk(1, 'bb-1')
     enq.enqueue(p1, 'task-a')
@@ -177,7 +206,7 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     enq.enqueue(profile, 'task-b')
     await vi.advanceTimersByTimeAsync(60_000)
     expect(run).toHaveBeenCalledTimes(1)
-    expect(run.mock.calls[0][1]).toEqual(['task-a', 'task-b'])
+    expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b' }])
   })
 
   it('不同窗口各自独立随机延迟', async () => {
@@ -228,7 +257,7 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     // 第一次 random 取 0：task-b 错峰延迟为 0 立即开窗；之后取 0.5：无 immediate 时错峰 60s，用于证明重排确实跳过了定时器
     vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValue(0.5)
     const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _taskKeys: string[]) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
     const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4), 120)
     enq.enqueue(mk(1, 'bb-1'), 'task-a', { immediate: true })
     await Promise.resolve()
@@ -237,7 +266,7 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     enq.enqueue(mk(2, 'bb-2'), 'task-b')
     await Promise.resolve()
     expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual(['task-b'])
+    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
     releases[1]()
     await Promise.resolve()
     expect(run).toHaveBeenCalledTimes(2)
@@ -246,7 +275,7 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     await Promise.resolve()
     expect(run).toHaveBeenCalledTimes(3)
     expect(run.mock.calls[2][0].id).toBe(2)
-    expect(run.mock.calls[2][1]).toEqual(['task-a'])
+    expect(run.mock.calls[2][1]).toEqual([{ taskKey: 'task-a' }])
     expect(vi.getTimerCount()).toBe(0)
     releases[2]()
     await Promise.resolve()

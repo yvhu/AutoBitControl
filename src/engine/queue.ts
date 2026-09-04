@@ -10,10 +10,16 @@
 import type { ProfileRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 
+/** 窗口会话要跑的一个任务（batchId 可选：重试恢复等场景不带） */
+export interface SessionTask {
+  taskKey: string
+  batchId?: number
+}
+
 /** 一个窗口的合并任务条目 */
 interface Entry {
   profile: ProfileRow
-  taskKeys: Set<string>
+  tasks: SessionTask[]
   /** 单窗口手动入口（看板行级执行/重跑）标记：跳过错峰立即投递 */
   immediate?: boolean
 }
@@ -47,7 +53,7 @@ export class CoalescingEnqueuer {
   private gates = new Map<string, Gate>()
 
   constructor(
-    private runner: { runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<unknown> },
+    private runner: { runWindowTasks(profile: ProfileRow, tasks: SessionTask[]): Promise<unknown> },
     private logger: Logger,
     /** 任务并发上限取值（meta.concurrency，缺省 DEFAULT_TASK_CONCURRENCY=4） */
     private taskConcurrencyOf: (taskKey: string) => number,
@@ -65,52 +71,64 @@ export class CoalescingEnqueuer {
     return gate
   }
 
+  /** 条目内是否已含某任务（去重用） */
+  private static hasTask(entry: Entry | undefined, taskKey: string): boolean {
+    return !!entry?.tasks.some((t) => t.taskKey === taskKey)
+  }
+
+  /** 追加任务到条目（去重） */
+  private static addTask(entry: Entry, taskKey: string, batchId?: number): void {
+    if (entry.tasks.some((t) => t.taskKey === taskKey)) return
+    entry.tasks.push(batchId === undefined ? { taskKey } : { taskKey, batchId })
+  }
+
   /**
    * 为某窗口入队一个任务（自动合并 + 任务级额度控制）
    * @param profile 窗口记录
    * @param taskKey 任务 key
    * @param opts.immediate 单窗口手动入口（看板行级执行/重跑）：跳过错峰立即投递
+   * @param opts.batchId 运行批次 id（批次看板落库归属；重试恢复等场景不带）
    */
-  enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean }): void {
+  enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean; batchId?: number }): void {
     // 窗口正在跑：追加到 followUp，本轮结束后统一重排（不能进 pending，见类注释）
     if (this.running.has(profile.id)) {
-      const fu = this.followUp.get(profile.id) ?? { profile, taskKeys: new Set<string>() }
-      fu.taskKeys.add(taskKey)
+      const fu = this.followUp.get(profile.id) ?? { profile, tasks: [] }
+      CoalescingEnqueuer.addTask(fu, taskKey, opts?.batchId)
       if (opts?.immediate) fu.immediate = true
       this.followUp.set(profile.id, fu)
       return
     }
     // 已排队未启动：同窗口同任务去重（并发触发竞态下防止额度重复占用与同窗口双跑）
-    if (this.pending.get(profile.id)?.taskKeys.has(taskKey)) return
+    if (CoalescingEnqueuer.hasTask(this.pending.get(profile.id), taskKey)) return
     const gate = this.gateFor(taskKey)
     // 额度已满：进等待队列（同窗口同任务去重），额度释放后滚动续跑
     if (gate.active >= gate.concurrency) {
-      const dup = gate.waiting.find(e => e.profile.id === profile.id && e.taskKeys.has(taskKey))
+      const dup = gate.waiting.find((e) => e.profile.id === profile.id && e.tasks.some((t) => t.taskKey === taskKey))
       if (dup) {
         // 同窗口同任务已在等待：升级 immediate 标记（手动入口要求不等待错峰）
         if (opts?.immediate) dup.immediate = true
       } else {
-        gate.waiting.push({ profile, taskKeys: new Set([taskKey]), immediate: opts?.immediate })
+        gate.waiting.push({ profile, tasks: [{ taskKey, ...(opts?.batchId === undefined ? {} : { batchId: opts.batchId }) }], immediate: opts?.immediate })
       }
       return
     }
-    this.occupy(taskKey, profile, opts?.immediate)
+    this.occupy(taskKey, profile, opts?.immediate, opts?.batchId)
   }
 
   /** 占额度并进入 pending 合并区（已排队未启动的合并进已有条目；否则新建 + 错峰投递，immediate 跳过延迟） */
-  private occupy(taskKey: string, profile: ProfileRow, immediate = false): void {
+  private occupy(taskKey: string, profile: ProfileRow, immediate = false, batchId?: number): void {
     const gate = this.gateFor(taskKey)
     const entry = this.pending.get(profile.id)
     if (entry) {
       // 纵深去重：并发触发竞态下同窗口同任务已在 pending 时不重复占额度（不双跑、不泄漏）
-      if (entry.taskKeys.has(taskKey)) return
+      if (entry.tasks.some((t) => t.taskKey === taskKey)) return
       // 已排入错峰等待的条目按原调度时间开窗：immediate 不回溯改写（定时器已排，标志无效）
-      entry.taskKeys.add(taskKey)
+      CoalescingEnqueuer.addTask(entry, taskKey, batchId)
       gate.active++
       return
     }
     gate.active++
-    const fresh: Entry = { profile, taskKeys: new Set([taskKey]), immediate }
+    const fresh: Entry = { profile, tasks: [{ taskKey, ...(batchId === undefined ? {} : { batchId }) }], immediate }
     this.pending.set(profile.id, fresh)
     if (fresh.immediate) {
       this.dispatch(fresh)
@@ -130,9 +148,9 @@ export class CoalescingEnqueuer {
       // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
       await Promise.resolve()
       this.pending.delete(entry.profile.id)
-      this.running.set(entry.profile.id, new Set(entry.taskKeys))
+      this.running.set(entry.profile.id, new Set(entry.tasks.map((t) => t.taskKey)))
       try {
-        await this.runner.runWindowTasks(entry.profile, [...entry.taskKeys])
+        await this.runner.runWindowTasks(entry.profile, entry.tasks)
       } catch (e) {
         // 单窗口会话异常不影响其他窗口，只记日志
         this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
@@ -142,10 +160,10 @@ export class CoalescingEnqueuer {
       const fu = this.followUp.get(entry.profile.id)
       if (fu) {
         this.followUp.delete(entry.profile.id)
-        for (const k of fu.taskKeys) this.enqueue(fu.profile, k, { immediate: fu.immediate })
+        for (const t of fu.tasks) this.enqueue(fu.profile, t.taskKey, { immediate: fu.immediate, batchId: t.batchId })
       }
       // 释放本会话各任务额度并滚动续跑等待队列
-      for (const k of entry.taskKeys) this.release(k)
+      for (const t of entry.tasks) this.release(t.taskKey)
     })()
   }
 
@@ -158,13 +176,22 @@ export class CoalescingEnqueuer {
     if (!next) return
     // 等待期间该窗口可能已被其他任务的会话占用：转 followUp，由该会话结束后重新入队
     if (this.running.has(next.profile.id)) {
-      const fu = this.followUp.get(next.profile.id) ?? { profile: next.profile, taskKeys: new Set<string>() }
-      fu.taskKeys.add(taskKey)
+      const fu = this.followUp.get(next.profile.id) ?? { profile: next.profile, tasks: [] }
+      const t = next.tasks.find((x) => x.taskKey === taskKey)
+      CoalescingEnqueuer.addTask(fu, taskKey, t?.batchId)
       if (next.immediate) fu.immediate = true
       this.followUp.set(next.profile.id, fu)
       return
     }
-    this.occupy(taskKey, next.profile, next.immediate)
+    this.occupy(taskKey, next.profile, next.immediate, next.tasks.find((x) => x.taskKey === taskKey)?.batchId)
+  }
+
+  /** 条目任务列表是否含某任务（in-flight 判定辅助） */
+  private hasTask = (keys: SessionTask[] | undefined, taskKey: string) => !!keys?.some((t) => t.taskKey === taskKey)
+
+  /** 错峰等待中的窗口数（已入队未开窗；路由层「实时运行」口径的队列部分） */
+  pendingCount(): number {
+    return this.pending.size
   }
 
   /**
@@ -172,16 +199,15 @@ export class CoalescingEnqueuer {
    * 指定 profileId 时只看该窗口（看板行级判定用）
    */
   hasTaskInFlight(taskKey: string, profileId?: number): boolean {
-    const inSet = (keys: Set<string> | undefined) => !!keys?.has(taskKey)
     if (profileId !== undefined) {
-      if (inSet(this.pending.get(profileId)?.taskKeys)) return true
-      if (inSet(this.running.get(profileId))) return true
-      if (inSet(this.followUp.get(profileId)?.taskKeys)) return true
-      return this.gates.get(taskKey)?.waiting.some(e => e.profile.id === profileId) ?? false
+      if (this.hasTask(this.pending.get(profileId)?.tasks, taskKey)) return true
+      if (this.running.get(profileId)?.has(taskKey)) return true
+      if (this.hasTask(this.followUp.get(profileId)?.tasks, taskKey)) return true
+      return this.gates.get(taskKey)?.waiting.some((e) => e.profile.id === profileId) ?? false
     }
-    for (const e of this.pending.values()) if (e.taskKeys.has(taskKey)) return true
+    for (const e of this.pending.values()) if (this.hasTask(e.tasks, taskKey)) return true
     for (const keys of this.running.values()) if (keys.has(taskKey)) return true
-    for (const e of this.followUp.values()) if (e.taskKeys.has(taskKey)) return true
+    for (const e of this.followUp.values()) if (this.hasTask(e.tasks, taskKey)) return true
     return (this.gates.get(taskKey)?.waiting.length ?? 0) > 0
   }
 }
