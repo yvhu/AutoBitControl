@@ -21,7 +21,13 @@ export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'captcha_
 
 export type ProfileRow = EnvelopeData<'/api/profiles'>[number]
 
-export type RunRow = EnvelopeData<'/api/dashboard'>['runs'][number]
+export type BatchItem = EnvelopeData<'/api/batches'>['batches'][number]
+
+export type BatchesData = EnvelopeData<'/api/batches'>
+
+export type BatchDetailData = EnvelopeData<'/api/batches/{id}'>
+
+export type RunRow = EnvelopeData<'/api/batches/{id}'>['runs'][number]
 
 export type DashboardData = EnvelopeData<'/api/dashboard'>
 

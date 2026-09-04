@@ -1,7 +1,9 @@
 import { get, post, patch } from './client'
-import type { DashboardData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo } from '../types'
+import type { BatchesData, BatchDetailData, DashboardData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo } from '../types'
 
 export const fetchDashboard = (date: string) => get<DashboardData>(`/api/dashboard?date=${date}`)
+export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
+export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
 export const fetchTasks = () => get<TaskMetaView[]>('/api/tasks')
 export const fetchProfiles = () => get<ProfileRow[]>('/api/profiles')
 export const triggerTask = (key: string, bitbrowserId?: string) => post<{ scope: string }>(`/api/tasks/${encodeURIComponent(key)}/trigger`, bitbrowserId ? { bitbrowserId } : {})

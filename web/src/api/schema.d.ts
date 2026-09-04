@@ -784,6 +784,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/batches": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        /** 运行批次列表（含每批统计与全局数字） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 时间范围 today|7d|all（缺省 today） */
+                    range?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 批次列表 */
+                200: {
+                    headers: { [name: string]: unknown; };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                range?: string;
+                                today?: string;
+                                batches?: {
+                                    id?: number;
+                                    /** @enum {string} */
+                                    kind?: "bulk" | "single";
+                                    taskKey?: string;
+                                    source?: string;
+                                    createdAt?: string;
+                                    stats?: {
+                                        total?: number;
+                                        success?: number;
+                                        failed?: number;
+                                        captchaFailed?: number;
+                                        skipped?: number;
+                                        running?: number;
+                                        pending?: number;
+                                    };
+                                }[];
+                                unbatched?: {
+                                    id?: number;
+                                    profileId?: number;
+                                    taskKey?: string;
+                                    date?: string;
+                                    slot?: number;
+                                    /** @enum {string} */
+                                    status?: "pending" | "running" | "success" | "failed" | "captcha_failed" | "skipped" | "retry_wait";
+                                    attempts?: number;
+                                    error?: string | null;
+                                    screenshot?: string | null;
+                                    startedAt?: string | null;
+                                    finishedAt?: string | null;
+                                    batchId?: number | null;
+                                    profileName?: string;
+                                    bitbrowserId?: string;
+                                }[];
+                                running?: number;
+                                captchaToday?: { count?: number; totalCost?: number; };
+                                taskNames?: { [key: string]: string; };
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never;
+    };
+    "/api/batches/{id}": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        /** 批次明细（窗口运行行） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: { id: number; };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 批次明细 */
+                200: {
+                    headers: { [name: string]: unknown; };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                batch?: {
+                                    id?: number;
+                                    /** @enum {string} */
+                                    kind?: "bulk" | "single";
+                                    taskKey?: string;
+                                    source?: string;
+                                    createdAt?: string;
+                                };
+                                runs?: {
+                                    id?: number;
+                                    profileId?: number;
+                                    taskKey?: string;
+                                    date?: string;
+                                    slot?: number;
+                                    /** @enum {string} */
+                                    status?: "pending" | "running" | "success" | "failed" | "captcha_failed" | "skipped" | "retry_wait";
+                                    attempts?: number;
+                                    error?: string | null;
+                                    screenshot?: string | null;
+                                    startedAt?: string | null;
+                                    finishedAt?: string | null;
+                                    batchId?: number | null;
+                                    profileName?: string;
+                                    bitbrowserId?: string;
+                                    durationSec?: number | null;
+                                    inFlight?: boolean;
+                                }[];
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never;
+    };
     "/api/dashboard": {
         parameters: {
             query?: never;
