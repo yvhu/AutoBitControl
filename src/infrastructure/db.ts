@@ -442,7 +442,7 @@ export class AppDb {
       if (!item) {
         item = {
           id,
-          kind: String(r.kind) as 'bulk' | 'single',
+          kind: String(r.kind) as BatchKind,
           taskKey: String(r.taskKey),
           source: String(r.source),
           createdAt: String(r.createdAt),
