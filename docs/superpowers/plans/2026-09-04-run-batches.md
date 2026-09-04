@@ -1317,8 +1317,17 @@ git commit -m "feat: 前端批次类型与纯函数（散批分流/完成率）"
 - Modify: `web/src/types.ts`（删除 `DashboardData`、旧 `RunRow` 由批次版替代）
 - Modify: `web/src/api/endpoints.ts`（删除 `fetchDashboard`）
 - Modify: `web/src/api/schema.d.ts`（删除 `/api/dashboard` 段）
+- Modify: `web/src/pages/profiles/index.tsx`（移除今日运行展示，见下方新增说明）
+- Modify: `web/src/pages/profiles/hooks.ts`（删除 useTodayDashboard 与 profileSorters.success——若只此一处使用）
 - Delete: `web/src/pages/dashboard/groupRuns.ts`、`web/src/pages/dashboard/groupRuns.test.ts`
 - Keep: `web/src/pages/dashboard/format.ts`（formatDuration 继续用）
+
+**新增：profiles 页清理（2026-09-04 会话决策）**——profiles 页的「今日结果」列与详情抽屉的今日任务时间线依赖已删除的 `/api/dashboard`，与新批次看板职责重叠（看板批次时间线展开明细已覆盖窗口级状态；窗口连续失败信号由熔断列承担）。移除以下内容，profiles 页回归纯窗口管理：
+- 删除 `useTodayDashboard` 调用与 `today` 变量、`runsByProfile`、`successOf`、`detailRuns`
+- 删除表格「今日结果」列（key='today' 整列，含 `profileSorters.success` sorter）
+- 删除详情 Drawer 内的 `Timeline` 段（`detailRuns.map(...)` 整块，替换为一行 `今日运行请查看板「运行批次」页` 的 secondary 提示文案）
+- 删除顶部 `TIMELINE_COLOR`、`runTime` 函数、`dayjs` 导入（若只此一处用）、`RunStatus`/`RunRow`/`StatusPill`/`Timeline`/`Progress` 等随之失效的导入（`Progress` 熔断列仍用，保留）
+- `profiles/hooks.ts`：删除 `useTodayDashboard` 与 `fetchDashboard` 导入；检查 `profileSorters`——若 `success` sorter 仅被「今日结果」列使用则删除该 sorter，同时删除 `filterProfiles`/`profileSorters` 中引用 RunRow 的类型（检查 profiles 页 hook 测试 hooks.test.ts 中相关用例一并清理）
 
 **Interfaces:**
 - Consumes: Task 6 的 `fetchBatches/fetchBatchDetail`、`BatchItem/BatchesData/RunRow`、`splitBatches/batchProgress`
