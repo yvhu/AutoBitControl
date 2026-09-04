@@ -252,7 +252,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
-  it('PATCH /api/tasks/:key 写入云端任务开关并返回 key/enabled', async () => {
+  it('PATCH /api/tasks/:key 写入本地库任务开关并返回 key/enabled', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).patch('/api/tasks/t1').send({ enabled: false })
     expect(res.status).toBe(200)
@@ -274,7 +274,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).not.toBe(0)
   })
 
-  it('停用任务触发返回 409（云端开关覆盖为 false）', async () => {
+  it('停用任务触发返回 409（本地库开关覆盖为 false）', async () => {
     const deps = makeDeps()
     deps.db.getTaskEnabled.mockResolvedValue(false)
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})

@@ -82,7 +82,7 @@ export class WindowRunner {
   constructor(private deps: WindowRunnerDeps) {}
 
   /**
-   * 降级策略：任务执行中的数据库写失败不能杀死执行（数据库写失败时任务照跑）
+   * 降级策略：任务执行中的数据库写失败不能杀死执行（写失败时任务照跑）
    * try/catch + logger.warn 后返回 fallback，读取路径按"无记录"处理（fallback null）
    */
   private async safeDb<T>(fn: () => Promise<T>, fallback: T): Promise<T> {

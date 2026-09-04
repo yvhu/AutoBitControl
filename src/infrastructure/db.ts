@@ -187,10 +187,12 @@ export class AppDb {
   }
 
   async migrate(): Promise<void> {
-    // WAL 日志模式：面板进程与 task:run 脚本可能同时开同一文件，读写不互锁（库级设置，幂等；
-    // file::memory: 上执行无副作用）；busy_timeout 为连接级，写竞争时等待 5 秒而非立即报锁错
-    await this.client.execute('PRAGMA journal_mode=WAL')
+    // busy_timeout 为连接级设置，必须先于 WAL 切换执行：首次并发打开时 WAL 初始化遇到锁竞争，
+    // 已设置的 busy_timeout 会等待 5 秒而非立即报 SQLITE_BUSY
     await this.client.execute('PRAGMA busy_timeout=5000')
+    // WAL 日志模式：面板进程与 task:run 脚本可能同时开同一文件，读写不互锁（库级设置，幂等；
+    // file::memory: 上执行无副作用）
+    await this.client.execute('PRAGMA journal_mode=WAL')
     for (const stmt of SCHEMA) await this.client.execute(stmt)
     // 老库补列：profiles 元数据列（remark/seq/last_ip/last_country/core_version）后加，CREATE TABLE 只保证新库自带；
     // PRAGMA table_info 查现有列，缺哪个补哪个（幂等，本地库与老库共享同一迁移逻辑）
@@ -473,12 +475,13 @@ export class AppDb {
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
    * batches/captcha_logs 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
-   * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数会使 cutoff 落入未来（连当天数据也删），调用方不得传负数）
+   * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数按 0 处理：仅清理今天之前的数据）
    * @returns 各表删除行数
    */
   async cleanupOld(retainDays: number): Promise<{ runs: number; batches: number; captcha: number }> {
+    const safeDays = Math.max(0, retainDays)
     const now = new Date()
-    const cutoff = todayStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - retainDays))
+    const cutoff = todayStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - safeDays))
     const r1 = await this.client.execute({ sql: 'DELETE FROM runs WHERE date < ?', args: [cutoff] })
     const r2 = await this.client.execute({ sql: 'DELETE FROM batches WHERE date(created_at) < date(?)', args: [cutoff] })
     const r3 = await this.client.execute({ sql: 'DELETE FROM captcha_logs WHERE date(created_at) < date(?)', args: [cutoff] })
