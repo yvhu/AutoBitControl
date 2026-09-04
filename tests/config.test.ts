@@ -120,4 +120,12 @@ describe('loadConfig', () => {
     }))
     expect(loadConfig({ rootDir: dir }).storage.dbRetainDays).toBe(30)
   })
+
+  it('scheduler.timezone 默认 Asia/Shanghai，可被 config.json 覆盖', () => {
+    expect(loadConfig({ rootDir: dir }).scheduler.timezone).toBe('Asia/Shanghai')
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ scheduler: { timezone: 'UTC' } }))
+    expect(loadConfig({ rootDir: dir }).scheduler.timezone).toBe('UTC')
+  })
 })

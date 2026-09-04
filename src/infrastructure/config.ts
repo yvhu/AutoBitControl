@@ -77,6 +77,12 @@ export interface DataSourceConfig {
   path: string
 }
 
+/** 定时任务调度配置 */
+export interface SchedulerConfig {
+  /** 固定时区（IANA 名称）：面板显示与到点判断统一按此时区的墙上时钟 */
+  timezone: string
+}
+
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -86,6 +92,7 @@ export interface AppConfig {
   storage: StorageConfig
   wallet: WalletConfig
   dataSource: DataSourceConfig
+  scheduler: SchedulerConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -150,6 +157,8 @@ const defaults: AppConfig = {
   wallet: { passwords: {} },
   // 账号数据源：默认 config/accounts.xlsx（文件不存在时仅告警，任务用 faker 兜底）
   dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
+  // 定时任务固定时区：配置与展示统一按此时区（Asia/Shanghai 无 DST，一般无需改动）
+  scheduler: { timezone: 'Asia/Shanghai' },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */
