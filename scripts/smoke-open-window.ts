@@ -1,7 +1,7 @@
 /**
- * 冒烟脚本（scripts）：开窗链路验证——开窗 → CDP 连接 → 打开探活页 → 关窗
+ * 冒烟脚本（scripts）：开窗链路验证——开窗 → CDP 连接 → 打开页面 → 关窗
  * 用法：BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window
- * 用途：部署后快速验证比特浏览器 API、patchright 驱动与代理 IP 是否可用
+ * 用途：部署后快速验证比特浏览器 API 与 patchright 驱动是否可用
  */
 import { loadConfig } from '../src/infrastructure/config'
 import { createLogger } from '../src/infrastructure/logger'
@@ -21,8 +21,8 @@ async function main(): Promise<void> {
   logger.info({ open }, '开窗成功')
   try {
     const conn = await new PatchrightDriver().connect(`http://${open.http}`)
-    // 打开探活页（失败不中断：验证目的只是确认 CDP 连接可用）
-    await conn.page.goto(cfg.execution.probeUrl, { waitUntil: 'domcontentloaded' }).catch(() => {})
+    // 打开一个轻量页面（失败不中断：验证目的只是确认 CDP 连接可用）
+    await conn.page.goto('https://example.com', { waitUntil: 'domcontentloaded' }).catch(() => {})
     logger.info({ url: conn.page.url() }, '页面打开成功')
     await conn.close()
   } finally {

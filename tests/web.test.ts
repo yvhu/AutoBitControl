@@ -33,7 +33,7 @@ interface MockDeps {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
-    execution: { staggerMaxSec: number; circuitBreakerThreshold: number; probeUrl: string }
+    execution: { staggerMaxSec: number; circuitBreakerThreshold: number }
     captcha: { clientKey: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
@@ -76,7 +76,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2 },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
     bitbrowser: {

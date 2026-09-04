@@ -30,7 +30,6 @@ export interface ExecutionConfig {
   retryMax: number
   retryBackoffSec: number
   circuitBreakerThreshold: number
-  probeUrl: string
   /** 拟人化交互延迟区间（点击前犹豫的随机停顿范围） */
   humanize: { minDelayMs: number; maxDelayMs: number }
 }
@@ -102,7 +101,7 @@ const defaults: AppConfig = {
   execution: {
     // 窗口会话启动随机错峰上限（秒）：打散批量触发时各窗口的开窗起点，避免同时冲击网络/站点；0 = 关闭（单位秒，建议 0-600）
     staggerMaxSec: 120,
-    // 单窗口会话超时 15 分钟（开窗+探活+全部任务），防止异常卡死占用并发槽位
+    // 单窗口会话超时 15 分钟（开窗+全部任务），防止异常卡死占用并发槽位
     windowTimeoutMs: 900000,
     // 单任务默认超时 3 分钟（任务 meta.timeoutSec 可覆盖）
     taskTimeoutMs: 180000,
@@ -111,8 +110,6 @@ const defaults: AppConfig = {
     retryBackoffSec: 600,
     // 连续失败该次数后本窗口当日熔断（后续任务直接 skipped）
     circuitBreakerThreshold: 2,
-    // 开窗后的 IP 探活地址：校验代理 IP 已生效才跑任务，避免用错误 IP 触发风控
-    probeUrl: 'https://api.ipify.org',
     // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
     humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },

@@ -13,7 +13,6 @@ export interface PublicSettings {
   webPort: number
   staggerMaxSec: number
   circuitBreakerThreshold: number
-  probeUrl: string
   version: string
   datasource: {
     available: boolean
@@ -46,7 +45,6 @@ export interface PublicSettings {
  *                     webPort: { type: integer }
  *                     staggerMaxSec: { type: integer }
  *                     circuitBreakerThreshold: { type: integer }
- *                     probeUrl: { type: string }
  *                     version: { type: string }
  *                     datasource:
  *                       type: object
@@ -98,7 +96,6 @@ export function settingsRouter(deps: {
       webPort: deps.cfg.web.port,
       staggerMaxSec: deps.cfg.execution.staggerMaxSec,
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
-      probeUrl: deps.cfg.execution.probeUrl,
       version: deps.version,
       // 数据源状态：面板设置页展示（行数/列名/可用性），路径仅提示用途不泄密
       datasource: {

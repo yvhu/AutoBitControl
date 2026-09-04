@@ -12,7 +12,6 @@
     "retryMax": 2,
     "retryBackoffSec": 600,
     "circuitBreakerThreshold": 2,
-    "probeUrl": "https://api.ipify.org",
     "humanize": { "minDelayMs": 800, "maxDelayMs": 3000 }
   },
   "captcha": {

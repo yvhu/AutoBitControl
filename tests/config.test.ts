@@ -21,7 +21,7 @@ describe('loadConfig', () => {
     mkdirSync(configDir, { recursive: true })
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { windowTimeoutMs: 123000, probeUrl: 'https://base.example' },
+      execution: { windowTimeoutMs: 123000 },
     }))
     writeFileSync(join(configDir, 'config.local.json'), JSON.stringify({
       execution: { windowTimeoutMs: 999000 },
@@ -29,7 +29,6 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:9999')
     expect(cfg.execution.windowTimeoutMs).toBe(999000)
-    expect(cfg.execution.probeUrl).toBe('https://base.example')
     expect(cfg.web.port).toBe(3000)
   })
 
