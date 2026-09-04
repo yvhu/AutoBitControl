@@ -16,6 +16,8 @@ import type { CaptchaService } from '../integrations/yescaptcha'
 import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
+import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/turnstile'
+import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
 
@@ -370,10 +372,75 @@ export class TaskContext {
     }
     if (await waitFor(opts.passiveMs)) return true
     for (let round = 0; round < (opts.rounds ?? 0); round++) {
-      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
       if (await waitFor(opts.roundWaitMs ?? 30000)) return true
     }
     return false
+  }
+
+  /** 当前页面命中的可恢复错误文案（任一命中即返回；无则空串，日志排障用） */
+  async recoverErrorText(texts: string[]): Promise<string> {
+    for (const t of texts) {
+      if (await this.textPresent(t)) return t
+    }
+    return ''
+  }
+
+  /**
+   * 等文案出现（刷新恢复导向）：页面出现可恢复错误文案立即刷新；
+   * 配置 refreshEveryMs 时即使无错误也按周期主动刷新（站点 token 存 localStorage 的场景：
+   * 页面 JS 状态坏了刷新即恢复，多数"卡住"场景刷新解决）
+   * @returns 预算内文案出现 true / 超时 false
+   */
+  async waitForTextRecover(
+    text: string,
+    opts: { budgetMs: number; refreshEveryMs?: number; recoverTexts?: string[]; reloadTimeoutMs?: number; settleMs?: number },
+  ): Promise<boolean> {
+    const reloadTimeoutMs = opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS
+    const settleMs = opts.settleMs ?? 5000
+    const end = Date.now() + opts.budgetMs
+    let lastRefresh = Date.now()
+    while (Date.now() < end) {
+      if (await this.textPresent(text)) return true
+      const stale = (opts.refreshEveryMs ?? 0) > 0 && Date.now() - lastRefresh >= (opts.refreshEveryMs as number)
+      const errText = await this.recoverErrorText(opts.recoverTexts ?? [])
+      if (stale || errText !== '') {
+        this.log.info({ step: 'recover', window: this.deps.profile.name, errText }, '刷新页面恢复（错误提示或周期刷新）')
+        await this.page.reload({ timeout: reloadTimeoutMs, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await this.page.waitForTimeout(settleMs)
+        lastRefresh = Date.now()
+        continue
+      }
+      await this.page.waitForTimeout(3000)
+    }
+    return false
+  }
+
+  /** Turnstile 模块日志包装：注入窗口名（模块消息为通用措辞）；断言绕过 log4js 重载签名检查 */
+  private turnstileLogger(): Pick<Logger, 'info' | 'warn'> {
+    return {
+      info: (meta: Record<string, unknown>, msg: string) => this.log.info({ ...meta, window: this.deps.profile.name }, msg),
+      warn: (meta: Record<string, unknown>, msg: string) => this.log.warn({ ...meta, window: this.deps.profile.name }, msg),
+    } as Pick<Logger, 'info' | 'warn'>
+  }
+
+  /**
+   * 交互式 Turnstile 人机验证方框：检测到即拟人点击（ISP IP 一点即过），
+   * 点击被浏览器拒绝（iframe 重渲染瞬时态）自动重新取盒重试（最多 3 次，非瞬时错误直接抛）
+   * @returns 执行了点击 true / 方框未出现 false
+   */
+  async clickTurnstileBox(opts?: { selectors?: string[]; maxAttempts?: number }): Promise<boolean> {
+    return runTurnstileClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, opts)
+  }
+
+  /** Turnstile 方框当前是否可见（轻量检查，低频追踪用） */
+  async turnstileVisible(selectors?: string[]): Promise<boolean> {
+    return isTurnstileVisible(this.page, selectors)
+  }
+
+  /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
+  async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
+    return runTurnstileAutoClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, budgetMs)
   }
 
   /**
@@ -393,7 +460,7 @@ export class TaskContext {
       this.raceTexts([['loggedIn', opts.loggedInText], ['landing', opts.landingText]], ms)
     let state = await race(opts.waitMs)
     for (let i = 0; i < (opts.rounds ?? 10) && !state; i++) {
-      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
       state = await race(opts.roundWaitMs ?? 15000)
     }
     if (!state) throw new Error(`多次刷新后仍未出现 ${opts.loggedInText} 或 ${opts.landingText}（网络异常）`)

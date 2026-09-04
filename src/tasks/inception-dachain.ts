@@ -13,6 +13,7 @@
  *   → 重复直到每日上限（toast / 页面计数器 / 弹窗内提示，任一命中即成功）
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'
+import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 
 // —— 站点文案（真机核实，与 UI 语言无关的部分用 testid）——
 // 每日上限提示文案（站点 toast 原文，数字随配置变化故只匹配前缀）
@@ -31,7 +32,6 @@ const ENTER_TEXT = 'Enter Inception'
 const METAMASK_ENTRY = 'wallet-selector-io.metamask'
 
 // —— 时间/次数配置（全部经真机实测校准；改动前重新真机验证）——
-const RELOAD_TIMEOUT_MS = 45000 // page.reload 超时（登录态判定与目录等待共用）
 const GET_STARTED_WAIT_MS = 45000 // Enter Inception → Get Started 断言（高负载下弹窗渲染慢）
 const CRATE_PAGE_WAIT_MS = 20000 // 目录点击后等 Open Free
 const CRATE_PAGE_ATTEMPTS = 2 // 目录点击补点次数（SPA 路由未生效场景）
@@ -110,7 +110,7 @@ export class InceptionDachainTask extends SiteTask {
     // 登录状态竞速判定：goto 后 SPA 渲染有延迟（真机实测 0-3s 判定会误判），
     // 已登录窗口若误入登录分支，仪表盘永远不出现 Enter Inception（假报网络异常）；
     // 状态不明时反复刷新（每轮两种状态都认，已登录窗口刷新后直接走已登录分支）
-    const state = await ctx.detectPageState({ loggedInText: SIDEBAR_TEXT, landingText: ENTER_TEXT, waitMs: 20000, rounds: 10, roundWaitMs: 15000, reloadTimeoutMs: RELOAD_TIMEOUT_MS })
+    const state = await ctx.detectPageState({ loggedInText: SIDEBAR_TEXT, landingText: ENTER_TEXT, waitMs: 20000, rounds: 10, roundWaitMs: 15000, reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS })
     let popupFailed = false
     if (state === 'landing') {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '未登录，进入钱包登录流程')
@@ -131,7 +131,7 @@ export class InceptionDachainTask extends SiteTask {
 
     // 等登录完成（左侧目录栏出现）——真机实测：钱包连接成功后站点侧登录 API
     // 在网络差时很慢（可能 >60s）或需要刷新后才呈现：先被动等，再刷新 2 轮
-    if (!(await ctx.waitForTextWithReloads(SIDEBAR_TEXT, { passiveMs: 45000, rounds: 2, roundWaitMs: 30000, reloadTimeoutMs: RELOAD_TIMEOUT_MS }))) {
+    if (!(await ctx.waitForTextWithReloads(SIDEBAR_TEXT, { passiveMs: 45000, rounds: 2, roundWaitMs: 30000, reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS }))) {
       throw new Error(
         popupFailed
           ? '钱包弹窗未出现且登录未完成：该窗口 MetaMask 可能未启用，或站点静默连接失败（重试将重启浏览器窗口）'

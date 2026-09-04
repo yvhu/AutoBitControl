@@ -113,3 +113,74 @@ describe('TaskContext 通用页面工具', () => {
     expect(page.reload).toHaveBeenCalledTimes(2)
   })
 })
+
+/** 可脚本化假页面：texts 为当前出现文案集合；reload 执行 onReload 改写集合（模拟刷新恢复） */
+function makeRecoverPage(initTexts: string[], onReload: () => string[]) {
+  let texts = [...initTexts]
+  let reloads = 0
+  return {
+    __reloads: () => reloads,
+    getByText: (text: string) => ({
+      first: () => ({
+        waitFor: async () => {
+          throw new Error(`等待文案超时: ${text}`)
+        },
+      }),
+      count: async () => (texts.includes(text) ? 1 : 0),
+    }),
+    waitForTimeout: vi.fn(async () => {}),
+    reload: async () => {
+      reloads++
+      texts = onReload()
+    },
+  }
+}
+
+function makeRecoverCtx(page: ReturnType<typeof makeRecoverPage>): TaskContext {
+  return new TaskContext({
+    page: page as never,
+    task: new FakeTask(),
+    human: {} as never,
+    profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+    cfg: {} as never,
+    logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+    artifactsDir: '',
+    walletPasswords: {},
+  })
+}
+
+describe('TaskContext 刷新恢复工具', () => {
+  it('recoverErrorText：命中返回文案，未命中返回空串', async () => {
+    const ctx = makeRecoverCtx(makeRecoverPage(['Network Error'], () => ['x']))
+    expect(await ctx.recoverErrorText(['Network Error', 'Turnstile 超时'])).toBe('Network Error')
+    expect(await ctx.recoverErrorText(['别的错误'])).toBe('')
+  })
+
+  it('waitForTextRecover：目标文案已出现 → true 且不刷新', async () => {
+    const page = makeRecoverPage(['Hello,'], () => ['x'])
+    const ctx = makeRecoverCtx(page)
+    expect(await ctx.waitForTextRecover('Hello,', { budgetMs: 300, recoverTexts: ['Network Error'] })).toBe(true)
+    expect(page.__reloads()).toBe(0)
+  })
+
+  it('waitForTextRecover：错误文案出现 → 刷新后目标出现 → true', async () => {
+    const page = makeRecoverPage(['Network Error'], () => ['Hello,'])
+    const ctx = makeRecoverCtx(page)
+    expect(await ctx.waitForTextRecover('Hello,', { budgetMs: 1000, recoverTexts: ['Network Error'] })).toBe(true)
+    expect(page.__reloads()).toBeGreaterThan(0)
+  })
+
+  it('waitForTextRecover：预算耗尽仍未出现 → false', async () => {
+    const page = makeRecoverPage(['x'], () => ['x'])
+    const ctx = makeRecoverCtx(page)
+    expect(await ctx.waitForTextRecover('Hello,', { budgetMs: 200, recoverTexts: ['Network Error'] })).toBe(false)
+  })
+
+  it('waitForTextRecover：refreshEveryMs 周期刷新直至目标出现 → true', async () => {
+    let n = 0
+    const page = makeRecoverPage(['loading'], () => (++n >= 3 ? ['Hello,'] : ['loading']))
+    const ctx = makeRecoverCtx(page)
+    expect(await ctx.waitForTextRecover('Hello,', { budgetMs: 3000, refreshEveryMs: 50 })).toBe(true)
+    expect(page.__reloads()).toBeGreaterThanOrEqual(3)
+  })
+})

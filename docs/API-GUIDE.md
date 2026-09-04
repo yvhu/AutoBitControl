@@ -190,7 +190,7 @@ meta: TaskMeta = {
 
 `TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
-下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)、[waitForTextRecover](#waitfortextrecover)、[recoverErrorText](#recovererrortext)、[clickTurnstileBox](#clickturnstilebox--turnstilevisible--autoclickturnstile)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
 
 ### closeOtherTabs
 
@@ -574,6 +574,74 @@ await ctx.closeModal({ close: ['.popup-close'] })
 | `opts.timeoutMs` | 最终兜底验证超时（默认 10000） |
 
 - **注意什么**：策略顺序**固定**：候选关闭按钮（依序）→ 点遮罩空白处 → 按 Esc。每尝试一次就用 `gone` 快速验证（600ms）是否已关闭，成功即返回；单个策略失败（按钮存在但不可点等）不阻断回退链，继续下一个。全部策略跑完后若 `gone` 仍在，用完整超时兜底验证（失败抛 `元素未消失: <gone>`）。
+
+### waitForTextRecover
+
+```ts
+async waitForTextRecover(text: string, opts: {
+  budgetMs: number
+  refreshEveryMs?: number
+  recoverTexts?: string[]
+  reloadTimeoutMs?: number
+  settleMs?: number
+}): Promise<boolean>
+```
+
+- **是什么**：等文案出现（**刷新恢复导向**）——页面出现可恢复错误文案（如 Network Error）**立即刷新**；配置 `refreshEveryMs` 时即使无错误也按周期主动刷新；预算内文案出现返回 true，超时 false。
+- **什么时候用**：站点 token 存 localStorage、页面 JS 状态坏了刷新即恢复的场景（Web3 站点普遍模式）：登录完成等待、页面跳转等待、多步骤表单中途等待。
+- **怎么用**：
+
+```ts
+// 等登录完成标志：Network Error 出现立即刷；每 25s 周期主动刷（token 刷新后自动完成登录 UI）
+if (await ctx.waitForTextRecover('Hello,', { budgetMs: 60000, refreshEveryMs: 25000, recoverTexts: ['Network Error', 'Turnstile token request timed out'] })) return
+
+// 纯被动等 + 错误恢复（不周期刷新）
+await ctx.waitForTextRecover('Daily Check-in', { budgetMs: 60000, recoverTexts: ['Network Error'] })
+```
+
+| 参数 | 含义 |
+| --- | --- |
+| `opts.budgetMs` | 总预算（毫秒） |
+| `opts.refreshEveryMs` | 周期主动刷新间隔（毫秒）；缺省 0 = 不周期刷新 |
+| `opts.recoverTexts` | 可恢复错误文案列表，任一出现立即刷新；缺省空 |
+| `opts.reloadTimeoutMs` | reload 超时（默认 `DEFAULT_RELOAD_TIMEOUT_MS` 45s） |
+| `opts.settleMs` | 刷新后的沉降等待（默认 5s） |
+
+- **注意什么**：返回 false 只是超时，**不抛错**——由任务决定后续（重试/抛错）。与 `waitForTextWithReloads`（被动等 + 固定轮次刷新）互补：本方法是「错误驱动 + 周期驱动」的刷新，前者是「轮次兜底」的刷新。
+
+### recoverErrorText
+
+```ts
+async recoverErrorText(texts: string[]): Promise<string>
+```
+
+- **是什么**：检查页面是否出现给定错误文案之一，命中返回该文案，无则返回空串。
+- **什么时候用**：任务循环里需要知道「具体哪个错误」以便打日志/分支处理（如领取等待循环里发现 Network Error 立即刷新）。
+- **注意什么**：轻量即时检查（不等）；仅用于状态判断，日志排障建议与 `waitForTextRecover` 搭配使用。
+
+### clickTurnstileBox / turnstileVisible / autoClickTurnstile
+
+```ts
+async clickTurnstileBox(opts?: { selectors?: string[]; maxAttempts?: number }): Promise<boolean>
+async turnstileVisible(selectors?: string[]): Promise<boolean>
+async autoClickTurnstile(budgetMs = 10000): Promise<boolean>
+```
+
+- **是什么**：交互式 Cloudflare Turnstile 人机验证方框处理——检测右下角浮层 iframe 里的方框并**拟人点击**（ISP 住宅 IP 一点即过，无需图片题）。实现位于 `src/automation/turnstile.ts`。
+- **什么时候用**：站点点 Claim/提交后弹出 interaction-only Turnstile 方框（右下角浮层）时。
+- **怎么用**：
+
+```ts
+// 点 Claim 后：方框 1-3s 内渲染即自动点击（预算 10s）
+await ctx.human.click(claimBtn)
+await ctx.autoClickTurnstile()
+
+// 领取等待循环里：方框补点（每 15s 最多一次）+ 追踪方框持续存在
+if (await ctx.clickTurnstileBox()) { /* 已点击 */ }
+if (await ctx.turnstileVisible()) { /* 方框仍在：验证未通过 */ }
+```
+
+- **注意什么**：`clickTurnstileBox` 点击被浏览器拒绝（iframe 重渲染期间的 `Protocol error` 瞬时错误）会**自动重新取盒重试**（最多 3 次、间隔 1-2s 随机；非瞬时错误直接抛）；方框未出现返回 false。选择器默认 `div[data-turnstile-container] iframe:visible` + `iframe[src*="challenges.cloudflare.com"]:visible`，站点结构特殊时用 `opts.selectors` 覆盖。
 
 ### 方法对比速查
 

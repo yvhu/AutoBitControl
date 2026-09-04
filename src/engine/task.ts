@@ -1,6 +1,6 @@
 /**
  * 任务元数据类型（engine 层）：TaskMeta 描述一个站点的静态信息
- * 依赖方向：纯类型模块，被 tasks/server 依赖
+ * 依赖方向：纯类型与常量模块，被 tasks/server 依赖
  * 设计思路：运行参数全部挂在 meta 上（面板可读可展示、API 原样返回），
  * 执行逻辑只依赖 TaskContext，实现与元数据分离
  */

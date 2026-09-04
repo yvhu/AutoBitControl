@@ -10,6 +10,7 @@
  *   → 点 Claim → Processing your quest...（约 15s）→ Quest completed successfully! 即成功
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'
+import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 
 // —— 站点文案（真机核实）——
 // 登录成功标志（头部 Hello, 0x...!）
@@ -31,7 +32,6 @@ const TURNSTILE_ERROR_TEXT = 'Turnstile token request timed out'
 const RECOVER_ERROR_TEXTS = [NETWORK_ERROR_TEXT, TURNSTILE_ERROR_TEXT]
 
 // —— 时间/次数配置（真机实测校准）——
-const RELOAD_TIMEOUT_MS = 45000 // page.reload 超时（登录态判定与目录等待共用）
 const HELLO_WAIT_MS = 60000 // Sign In 后等 Hello（后端链路约 5s；Network Error 时循环内自动刷新）
 const QUESTS_WAIT_MS = 60000 // 进 Quests 后等 Daily Check-in（含 Network Error 恢复）
 const CLAIM_RACE_MS = 15000 // 弹窗内竞速：成功文案 / Claim 按钮
@@ -41,18 +41,6 @@ const CHECKIN_ROUNDS = 6 // 领取弹窗操作轮数（卡处理中/刷新丢弹
 
 /** 弹窗竞速结果标识 */
 type RaceKey = 'success' | 'claim'
-
-// 人机验证方框 iframe（站点 interaction-only Turnstile 组件：点 Claim 后渲染在右下角浮层，
-// 真机实测 ISP IP 一点即过——之前代码从不点它，只会等 token 超时报错）
-// 优先站点自建容器内（div[data-turnstile-container]），兜底任意可见挑战 iframe
-const TURNSTILE_FRAME_SEL = ['div[data-turnstile-container] iframe:visible', 'iframe[src*="challenges.cloudflare.com"]:visible']
-
-// 方框点击重试：点击后 Turnstile iframe 重渲染期间 CDP 派发会被浏览器拒绝
-// （Protocol error / Invalid parameters，真机实测 09-04 凌晨 15+ 窗口因此失败，
-// 且「再点一次」大多能过）——瞬时错误最多重试 3 次，间隔 1-2s 拟人化随机
-const TURNSTILE_CLICK_MAX = 3
-// CDP 会话级瞬时错误模式：与 app.ts TRANSIENT_PATTERN 同语义（点击方框场景的窄化子集）
-const CDP_TRANSIENT = /Protocol error|session closed/
 
 export class PortalRhunaTask extends SiteTask {
   meta: TaskMeta = {
@@ -85,7 +73,7 @@ export class PortalRhunaTask extends SiteTask {
       waitMs: 20000,
       rounds: 10,
       roundWaitMs: 15000,
-      reloadTimeoutMs: RELOAD_TIMEOUT_MS,
+      reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS,
     })
     if (state === 'landing') {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '未登录，进入 Petra 登录流程')
@@ -108,16 +96,16 @@ export class PortalRhunaTask extends SiteTask {
       if (round > 0) {
         // 重登前清理上一轮遗留的钱包弹窗页并刷新站点（保证干净落地页 + 新签名请求）
         await ctx.closeOtherTabs()
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
         await ctx.page.waitForTimeout(5000)
       }
       await this.loginByPetra(ctx)
       // 等登录完成（头部 Hello, 出现）——后端 siwa/verify + validate 链路约 5s；
       // 站点 token 存 localStorage：每 25s 主动刷新一次，刷新后自动完成登录 UI
-      if (await this.waitForTextRecover(ctx, HELLO_TEXT, HELLO_WAIT_MS, 25000)) return
+      if (await ctx.waitForTextRecover(HELLO_TEXT, { budgetMs: HELLO_WAIT_MS, refreshEveryMs: 25000, recoverTexts: RECOVER_ERROR_TEXTS })) return
       // 仍未完成：重查登录态——已登录则收尾，仍落地页则重登，状态不明则抛错
       const st = await ctx
-        .detectPageState({ loggedInText: HELLO_TEXT, landingText: CONNECT_TEXT, waitMs: 15000, rounds: 3, roundWaitMs: 10000, reloadTimeoutMs: RELOAD_TIMEOUT_MS })
+        .detectPageState({ loggedInText: HELLO_TEXT, landingText: CONNECT_TEXT, waitMs: 15000, rounds: 3, roundWaitMs: 10000, reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS })
         .catch(() => null)
       if (st === 'loggedIn') return
       if (st === 'landing' && round === 0) {
@@ -126,47 +114,6 @@ export class PortalRhunaTask extends SiteTask {
       }
       throw new Error('钱包签名后登录未完成（等待 Hello, 超时，站点登录接口慢或该窗口账号异常）')
     }
-  }
-
-  /**
-   * 等文案出现（刷新恢复导向）：页面出现可恢复错误（Network Error / Turnstile 超时）立即刷新；
-   * 配置 refreshEveryMs 时即使无错误也按周期主动刷新（真机实测：站点 token 存 localStorage，
-   * 页面 JS 状态坏了时刷新即恢复登录态/路由，多数"卡住"场景刷新解决）
-   * @returns 预算内文案出现 true / 超时 false
-   */
-  private async waitForTextRecover(ctx: TaskContext, text: string, budgetMs: number, refreshEveryMs = 0): Promise<boolean> {
-    const end = Date.now() + budgetMs
-    let lastRefresh = Date.now()
-    while (Date.now() < end) {
-      if (await ctx.textPresent(text)) return true
-      const stale = refreshEveryMs > 0 && Date.now() - lastRefresh >= refreshEveryMs
-      const errText = await this.recoverErrorText(ctx)
-      if (stale || errText !== '') {
-        ctx.log.info({ step: 'recover', window: ctx.profile.name, errText }, '刷新页面恢复（错误提示或周期刷新）')
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-        await ctx.page.waitForTimeout(5000)
-        lastRefresh = Date.now()
-        continue
-      }
-      await ctx.page.waitForTimeout(3000)
-    }
-    return false
-  }
-
-  /** 页面是否出现可恢复错误文案 */
-  private async hasRecoverError(ctx: TaskContext): Promise<boolean> {
-    for (const t of RECOVER_ERROR_TEXTS) {
-      if (await ctx.textPresent(t)) return true
-    }
-    return false
-  }
-
-  /** 当前页面命中的可恢复错误文案（日志排障用；无则空串） */
-  private async recoverErrorText(ctx: TaskContext): Promise<string> {
-    for (const t of RECOVER_ERROR_TEXTS) {
-      if (await ctx.textPresent(t)) return t
-    }
-    return ''
   }
 
   /**
@@ -181,12 +128,12 @@ export class PortalRhunaTask extends SiteTask {
       if (attempt > 0) {
         ctx.log.info({ step: 'login', window: ctx.profile.name }, '钱包弹窗未出现，刷新后重试连接')
         await ctx.closeOtherTabs()
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
         await ctx.page.waitForTimeout(8000)
         // 刷新后可能已登录（连接静默完成）：直接收尾
         if (!(await ctx.visible(connect))) {
           const st = await ctx
-            .detectPageState({ loggedInText: HELLO_TEXT, landingText: CONNECT_TEXT, waitMs: 10000, rounds: 3, roundWaitMs: 10000, reloadTimeoutMs: RELOAD_TIMEOUT_MS })
+            .detectPageState({ loggedInText: HELLO_TEXT, landingText: CONNECT_TEXT, waitMs: 10000, rounds: 3, roundWaitMs: 10000, reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS })
             .catch(() => null)
           if (st === 'loggedIn') return
           if (st !== 'landing') break
@@ -209,12 +156,12 @@ export class PortalRhunaTask extends SiteTask {
     if (await ctx.visible(startBtn)) {
       await ctx.human.click(startBtn)
       // 点击后等 Daily Check-in（含 Network Error 刷新恢复 + 25s 周期主动刷新）
-      if (await this.waitForTextRecover(ctx, CHECKIN_TEXT, QUESTS_WAIT_MS, 25000)) return
+      if (await ctx.waitForTextRecover(CHECKIN_TEXT, { budgetMs: QUESTS_WAIT_MS, refreshEveryMs: 25000, recoverTexts: RECOVER_ERROR_TEXTS })) return
     }
     // 兜底：直达 /quests（goto 自带 3 次重试）
     await ctx.goto('https://portal.rhuna.io/quests')
-    if (!(await this.waitForTextRecover(ctx, CHECKIN_TEXT, QUESTS_WAIT_MS, 25000))) {
-      if (!(await ctx.waitForTextWithReloads(CHECKIN_TEXT, { passiveMs: 30000, rounds: 2, roundWaitMs: 20000, reloadTimeoutMs: RELOAD_TIMEOUT_MS }))) {
+    if (!(await ctx.waitForTextRecover(CHECKIN_TEXT, { budgetMs: QUESTS_WAIT_MS, refreshEveryMs: 25000, recoverTexts: RECOVER_ERROR_TEXTS }))) {
+      if (!(await ctx.waitForTextWithReloads(CHECKIN_TEXT, { passiveMs: 30000, rounds: 2, roundWaitMs: 20000, reloadTimeoutMs: DEFAULT_RELOAD_TIMEOUT_MS }))) {
         throw new Error('Quests 页未出现 Daily Check-in（页面或网络异常）')
       }
     }
@@ -234,7 +181,7 @@ export class PortalRhunaTask extends SiteTask {
         // 点击未注册/弹窗未渲染/页面错误页：一律刷新恢复后下一轮重开
         // （真机实测：该窗口代理不稳时页面会变 chrome-error 错误页，无错误文案可检测，只能无条件刷新）
         ctx.log.info({ step: 'recover', window: ctx.profile.name }, '领取弹窗打开失败，刷新恢复')
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
         await ctx.page.waitForTimeout(5000)
         continue
       }
@@ -257,7 +204,7 @@ export class PortalRhunaTask extends SiteTask {
       // 点 Claim → 人机验证方框出现即拟人点击（interaction-only 组件点方框即完成验证）
       const claimBtn = '[role="dialog"] button:has-text("Claim")'
       await ctx.human.click(claimBtn)
-      await this.autoClickTurnstile(ctx)
+      await ctx.autoClickTurnstile()
       const processing = await ctx.raceTexts([['processing', PROCESSING_TEXT], ['success', SUCCESS_TEXT]], CLAIM_RECHECK_MS)
       if (processing === null) {
         await ctx.human.click(claimBtn).catch(() => {})
@@ -295,19 +242,19 @@ export class PortalRhunaTask extends SiteTask {
     while (Date.now() < end) {
       if (await ctx.textPresent(SUCCESS_TEXT)) return true
       // 人机验证方框出现（补点后重新渲染）：立即拟人点击（每 15s 最多点一次）
-      if (Date.now() - lastCheckClick > 15000 && (await this.clickTurnstileCheckbox(ctx))) {
+      if (Date.now() - lastCheckClick > 15000 && (await ctx.clickTurnstileBox())) {
         lastCheckClick = Date.now()
         continue
       }
       // 方框已点击但验证未通过（方框仍存在）：低频追踪日志（每 30s 一条，定位点击被拒/验证卡住的窗口）
-      if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await this.turnstileVisible(ctx))) {
+      if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await ctx.turnstileVisible())) {
         lastCheckLog = Date.now()
         ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '验证方框已点击但仍存在（验证未通过），冷却期满后重点')
       }
-      const errText = await this.recoverErrorText(ctx)
+      const errText = await ctx.recoverErrorText(RECOVER_ERROR_TEXTS)
       if (errText !== '') {
         ctx.log.info({ step: 'recover', window: ctx.profile.name, errText }, '领取等待中出现可恢复错误，刷新')
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
         await ctx.page.waitForTimeout(5000)
         lastRefresh = Date.now()
         continue
@@ -326,74 +273,13 @@ export class PortalRhunaTask extends SiteTask {
       // 无处理中、无按钮、无错误：弹窗丢失/页面状态异常 → 周期刷新恢复
       if (Date.now() - lastRefresh >= 30000) {
         ctx.log.info({ step: 'recover', window: ctx.profile.name }, '刷新页面恢复（错误提示或周期刷新）')
-        await ctx.page.reload({ timeout: RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+        await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
         await ctx.page.waitForTimeout(5000)
         lastRefresh = Date.now()
         continue
       }
       await ctx.page.waitForTimeout(3000)
     }
-    return false
-  }
-
-  /**
-   * 点击人机验证方框（interaction-only Turnstile 组件）：
-   * 组件渲染为右下角浮层 iframe（站点容器 div[data-turnstile-container]，z-index 最高），
-   * 方框在 iframe 左侧——拟人点击即完成验证（真机实测 ISP IP 一点即过，无需图片题）
-   * 瞬时失败重试：点击后 iframe 重渲染期间 CDP 派发会被浏览器拒绝（Invalid parameters），
-   * 每次重试重新取盒（不用旧坐标点已移动的 iframe），非瞬时错误不重试直接抛
-   * @returns 是否执行了点击
-   */
-  private async clickTurnstileCheckbox(ctx: TaskContext): Promise<boolean> {
-    let lastErr: Error | null = null
-    for (let attempt = 1; attempt <= TURNSTILE_CLICK_MAX; attempt++) {
-      const box = await this.turnstileBox(ctx)
-      if (!box) return false
-      const x = box.x + Math.min(30, box.width * 0.4)
-      const y = box.y + box.height / 2
-      ctx.log.info({ step: 'checkin', window: ctx.profile.name, x: Math.round(x), y: Math.round(y), attempt }, '出现人机验证方框，拟人点击')
-      try {
-        await ctx.human.clickAt(x, y)
-        return true
-      } catch (e) {
-        lastErr = e as Error
-        if (!CDP_TRANSIENT.test(lastErr.message)) throw lastErr
-        ctx.log.warn({ step: 'checkin', window: ctx.profile.name, attempt, x: Math.round(x), y: Math.round(y), err: lastErr.message }, '验证方框点击被浏览器拒绝（iframe 重渲染瞬时态），等待后重试')
-        await ctx.page.waitForTimeout(1000 + Math.floor(Math.random() * 1000))
-      }
-    }
-    throw lastErr ?? new Error('人机验证方框点击失败（重试耗尽）')
-  }
-
-  /** 取验证方框盒（不可见/尺寸过小返回 null）：重试循环每次重新取盒 */
-  private async turnstileBox(ctx: TaskContext): Promise<{ x: number; y: number; width: number; height: number } | null> {
-    for (const sel of TURNSTILE_FRAME_SEL) {
-      const box = await ctx.page
-        .locator(sel)
-        .first()
-        .boundingBox()
-        .catch(() => null)
-      if (box && box.width >= 20 && box.height >= 20) return box
-    }
-    return null
-  }
-
-  /** 验证方框当前是否可见（轻量 count 检查，claimLoop 低频追踪用） */
-  private async turnstileVisible(ctx: TaskContext): Promise<boolean> {
-    for (const sel of TURNSTILE_FRAME_SEL) {
-      if (await ctx.page.locator(sel).first().count() > 0) return true
-    }
-    return false
-  }
-
-  /** 等验证方框出现并点击（方框在点 Claim 后 1-3s 渲染，最多等 budgetMs） */
-  private async autoClickTurnstile(ctx: TaskContext, budgetMs = 10000): Promise<boolean> {
-    const end = Date.now() + budgetMs
-    while (Date.now() < end) {
-      if (await this.clickTurnstileCheckbox(ctx)) return true
-      await ctx.page.waitForTimeout(500)
-    }
-    ctx.log.info({ step: 'checkin', window: ctx.profile.name, budgetMs }, '预算内未检测到人机验证方框（可能免验证或方框未渲染）')
     return false
   }
 }

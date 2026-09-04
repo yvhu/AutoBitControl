@@ -12,6 +12,7 @@ import { createBitBrowserClient, type BitBrowserClient } from './integrations/bi
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
 import { recoverRetryTasks } from './engine/retry-recovery'
+import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
 import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
 import { WalletRegistry } from './automation/wallet/types'
@@ -69,9 +70,8 @@ export async function startApp(): Promise<void> {
   // 例外：CDP 会话级瞬时错误（窗口中途关闭/崩溃时 patchright 内部协议错误，如
   // Network.setCacheDisabled session closed——真机实测全量并发跑时必现）只记录不退出：
   // 单窗口瞬时错误不应杀死整个服务，该窗口任务按失败落库后由重试机制兜底
-  const TRANSIENT_PATTERN = /Protocol error|session closed|Target page|target crashed|Navigation failed|Execution context was destroyed|browser has been closed/i
   process.on('uncaughtException', (err) => {
-    if (TRANSIENT_PATTERN.test((err as Error).message)) {
+    if (CDP_TRANSIENT_PATTERN.test((err as Error).message)) {
       logger.warn({ err: (err as Error).message }, '窗口会话级瞬时异常，忽略（不退出进程）')
       return
     }
@@ -80,7 +80,7 @@ export async function startApp(): Promise<void> {
   })
   process.on('unhandledRejection', (err) => {
     const msg = err instanceof Error ? err.message : String(err)
-    if (TRANSIENT_PATTERN.test(msg)) {
+    if (CDP_TRANSIENT_PATTERN.test(msg)) {
       logger.warn({ err: msg }, '窗口会话级瞬时 Promise 拒绝，忽略（不退出进程）')
       return
     }
