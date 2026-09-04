@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { wallClockIn, isDueMinute, modeLabel, ruleText, nextRunText, validateScheduleConfig } from '../src/engine/schedule'
+import { Scheduler, type SchedulerDeps } from '../src/engine/scheduler'
+import type { ScheduleRow } from '../src/infrastructure/db'
 
 const TZ = 'Asia/Shanghai'
 
@@ -106,5 +108,149 @@ describe('validateScheduleConfig', () => {
     expect(validateScheduleConfig('weekly', { weekdays: [], times: ['09:00'] })).toBeTruthy()
     expect(validateScheduleConfig('weekly', { weekdays: [8], times: ['09:00'] })).toBeTruthy()
     expect(validateScheduleConfig('monthly', { days: [32], times: ['09:00'] })).toBeTruthy()
+  })
+})
+
+// ===== Scheduler 类（假 db/enqueuer，注入固定 now，不经真定时器）=====
+
+const TZ2 = 'Asia/Shanghai'
+
+function makeSchedule(over: Partial<ScheduleRow> = {}): ScheduleRow {
+  return {
+    id: 1, name: '每日签到', enabled: 1, mode: 'daily',
+    config: '{"times":["09:00"]}', taskKeys: '["task-a"]',
+    createdAt: '2026-09-04 00:00:00.000', updatedAt: '2026-09-04 00:00:00.000',
+    ...over,
+  }
+}
+
+type Mock = ReturnType<typeof vi.fn>
+
+/** 用例要断言 mock 调用：db/enqueuer 成员保留 vi.fn 的 Mock 类型（与 web.test.ts 的 MockDeps 同款） */
+interface MockDeps extends SchedulerDeps {
+  db: {
+    listSchedules: Mock
+    getTaskEnabled: Mock
+    countInFlightRuns: Mock
+    createBatch: Mock
+    listProfiles: Mock
+  }
+  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
+}
+
+function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
+  const deps: MockDeps = {
+    db: {
+      listSchedules: vi.fn().mockResolvedValue([]),
+      getTaskEnabled: vi.fn().mockResolvedValue(true),
+      countInFlightRuns: vi.fn().mockResolvedValue(0),
+      createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'schedule', taskKey: 'task-a', source: '', createdAt: '' }),
+      listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }]),
+    },
+    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
+    tasks: new Map([['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }]]),
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    timezone: TZ2,
+    now: () => new Date('2026-09-04T01:00:30Z'), // 上海 09:00:30，命中 09:00
+    ...over,
+  }
+  return deps
+}
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('Scheduler', () => {
+  it('到点触发：建 schedule 批次并按启用窗口入队（不带 immediate）', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    const s = new Scheduler(deps)
+    await s.tick()
+    expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'task-a', '计划#1 每日签到')
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88 })
+  })
+
+  it('同一分钟只触发一次（去重 Map）', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    const s = new Scheduler(deps)
+    await s.tick()
+    await s.tick()
+    expect(deps.db.createBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('分钟不匹配不触发', async () => {
+    const deps = makeDeps({ now: () => new Date('2026-09-04T01:59:00Z') }) // 上海 09:59
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    const s = new Scheduler(deps)
+    await s.tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+  })
+
+  it('停用计划跳过', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule({ enabled: 0 })])
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+  })
+
+  it('任务 key 未注册 → 跳过并告警', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule({ taskKeys: '["ghost"]' })])
+    const s = new Scheduler(deps)
+    await s.tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
+
+  it('任务开关关闭（getTaskEnabled=false）→ 跳过', async () => {
+    const deps = makeDeps()
+    deps.db.getTaskEnabled.mockResolvedValue(false)
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+  })
+
+  it('在途守卫（DB 有在途 run 或队列在途）→ 跳过', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    deps.db.countInFlightRuns.mockResolvedValue(1)
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+
+    // 队列在途分支用独立实例（避免与上一个实例的去重 Map 冲突）
+    const deps2 = makeDeps()
+    deps2.db.listSchedules.mockResolvedValue([makeSchedule()])
+    deps2.enqueuer.hasTaskInFlight.mockReturnValue(true)
+    await new Scheduler(deps2).tick()
+    expect(deps2.db.createBatch).not.toHaveBeenCalled()
+  })
+
+  it('runNow 不受时间与去重限制，直接触发', async () => {
+    const deps = makeDeps({ now: () => new Date('2026-09-04T01:59:00Z') }) // 09:59 不到点
+    const s = new Scheduler(deps)
+    const result = await s.runNow(makeSchedule())
+    expect(result.taskKeys).toEqual(['task-a'])
+    expect(deps.db.createBatch).toHaveBeenCalledTimes(1)
+    await s.runNow(makeSchedule())
+    expect(deps.db.createBatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('runNow 汇总跳过原因（停用任务）', async () => {
+    const deps = makeDeps()
+    deps.db.getTaskEnabled.mockResolvedValue(false)
+    const result = await new Scheduler(deps).runNow(makeSchedule())
+    expect(result.taskKeys).toEqual([])
+    expect(result.skipped).toEqual([{ taskKey: 'task-a', reason: 'task-disabled' }])
+  })
+
+  it('start/stop 挂载与清除定时器', () => {
+    const deps = makeDeps()
+    const s = new Scheduler(deps)
+    const setSpy = vi.spyOn(global, 'setInterval').mockReturnValue(123 as unknown as ReturnType<typeof setInterval>)
+    const clearSpy = vi.spyOn(global, 'clearInterval').mockImplementation(() => {})
+    s.start()
+    expect(setSpy).toHaveBeenCalledWith(expect.any(Function), 15000)
+    s.stop()
+    expect(clearSpy).toHaveBeenCalledWith(123)
   })
 })
