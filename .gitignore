@@ -150,3 +150,6 @@ vite.config.ts.timestamp-*
 .vite/
 
 .superpowers/
+
+# git worktree 隔离目录（特性开发用）
+.worktrees/
