@@ -60,6 +60,8 @@ async function main(): Promise<void> {
   )
   const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
   let runner!: WindowRunner
+  // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后 scheduleRetry 重跑）沿用同一批次
+  let lastBatchId: number | null = null
   // 本轮会话的复用目标（open_windows 登记 + pid 实测存活才复用）；闭包捕获，重试会话每次重新探测
   let reuse: { http: string } | null = null
   // 数据库关闭标记：终态后关库，防止重试定时器触发时访问已关闭的连接（今早实测崩溃场景）
@@ -73,7 +75,10 @@ async function main(): Promise<void> {
     reuse = row && wasOpen ? { http: row.http } : null
     if (row && !wasOpen) await db.clearOpenWindow(profileId).catch(() => {})
     // runManual 直接返回本轮最终运行行（内存传递，不做执行后再读库的竞态判定）
-    const row2 = await runner.runManual(profileId, taskKey)
+    if (lastBatchId === null) {
+      lastBatchId = (await db.createBatch('single', taskKey, 'task-run')).id
+    }
+    const row2 = await runner.runManual(profileId, taskKey, lastBatchId)
     if (row2) {
       logger.info({ status: row2.status, error: row2.error, screenshot: row2.screenshot }, '任务运行结果')
     } else {
