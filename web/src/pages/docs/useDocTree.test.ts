@@ -27,6 +27,16 @@ describe('extractChapterTree', () => {
     ])
   })
 
+  it('CRLF 行尾（Windows 检出）也能提取章节', () => {
+    const md = ['# 手册标题', '## 1. 快速开始', '### 写一个任务', '## 2. TaskMeta 字段全解'].join('\r\n')
+    expect(extractChapterTree(md)).toEqual([
+      { key: '1-快速开始', title: '1. 快速开始', children: [
+        { key: '写一个任务', title: '写一个任务' },
+      ] },
+      { key: '2-taskmeta-字段全解', title: '2. TaskMeta 字段全解', children: [] },
+    ])
+  })
+
   it('跳过围栏代码块内形似标题的行', () => {
     const md = [
       '## 1. 快速开始',

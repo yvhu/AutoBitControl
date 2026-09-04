@@ -10,7 +10,7 @@ export function extractChapterTree(markdown: string): DocNode[] {
   const chapters: DocNode[] = []
   let current: DocNode | null = null
   let inFence = false
-  for (const line of markdown.split('\n')) {
+  for (const line of markdown.split(/\r?\n/)) {
     if (/^\s*```/.test(line)) {
       inFence = !inFence
       continue
