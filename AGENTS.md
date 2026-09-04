@@ -65,7 +65,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ## 踩坑提醒
 
 - 未捕获异常默认退出进程，但 CDP 会话级瞬时错误（Protocol error/session closed 等，见 src/app.ts TRANSIENT_PATTERN）只告警不退出——修 bug 时别把这类错误当致命
-- 开窗后先 IP 探活（execution.probeUrl）再跑任务；窗口连续 2 任务失败触发当日熔断
+- 窗口连续 2 任务失败触发当日熔断；代理失效由任务自身失败暴露（已无前置 IP 校验）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec

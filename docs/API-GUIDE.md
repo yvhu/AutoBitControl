@@ -73,7 +73,6 @@ AutoBitControl 一共三块，分工如下：
 | 贝塞尔轨迹 | Bezier path | 一种像人手抖出来的平滑曲线，鼠标移动沿它逐点走 |
 | 窗口 | Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 |
 | 退避 | Backoff | 重试前的等待时间；失败越多往往等得越久，给站点限流留冷却时间 |
-| 探活 | Probe | 开窗后先访问一个探活地址，确认代理 IP 已生效再跑任务 |
 | 数据源 | DataSource | 预先准备的账号/素材 Excel 表格（`config/accounts.xlsx`），每个窗口按行领取自己的数据（邮箱/邀请码/图片等） |
 | patchright | patchright | 我们用的「隐形浏览器驱动」，自动屏蔽自动化痕迹 |
 | ghost-cursor | ghost-cursor | 生成人类鼠标轨迹的库 |
@@ -137,7 +136,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 1. **本地测试**：参考 `tests/task-base.test.ts` 的模式（注入假驱动，秒级反馈）。把选择器换成本地 fixture 页面先验证流程逻辑，不依赖真实站点与窗口。
 2. **单窗口单任务真实验证**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`——只开一个窗口、只跑指定任务、打印结果后退出（脚本：`scripts/run-task.ts`），比面板全量触发轻量。
 3. **面板验证**：面板看板行级「执行」（单窗口单任务）或任务页「立即触发」（全部启用窗口），人工核对截图与日志。
-4. **开窗冒烟（部署后先跑这个）**：`BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window`——验证「开窗 → CDP 接管 → 打开探活页 → 关窗」整条链路（脚本：`scripts/smoke-open-window.ts`），一次确认比特浏览器 API、驱动与代理 IP 都可用。
+4. **开窗冒烟（部署后先跑这个）**：`BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window`——验证「开窗 → CDP 接管 → 打开页面 → 关窗」整条链路（脚本：`scripts/smoke-open-window.ts`），一次确认比特浏览器 API 与驱动可用。
 5. **钱包冒烟**：`BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra npm run smoke:wallet`——打开站点后手动点「连接钱包」，脚本等 60 秒检测弹窗并自动确认（脚本：`scripts/smoke-wallet.ts`）。**新钱包适配器写好后，用这个验证弹窗识别正则是否命中真实插件**（见[第 4 章「新增钱包适配器步骤」](#新增钱包适配器步骤)）。
 
 示例任务默认 `enabled: false`（不参与日常执行），调试时把代码改为 `true` 并重启服务、直接在面板任务页打开开关（立即生效，无需重启），或用第 2 层的 `task:run` 脚本（不受开关限制）。
@@ -1072,7 +1071,7 @@ randomMicroMove(): Promise<void>
 
 ### 入队语义
 
-面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接/探活只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**；并发触发竞态下同窗口同任务自动去重（pending 合并区与等待队列不重复占额度，不双跑、不泄漏额度）。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
+面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**；并发触发竞态下同窗口同任务自动去重（pending 合并区与等待队列不重复占额度，不双跑、不泄漏额度）。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
 
 批量触发与失败重试的窗口会话开窗前自带**随机错峰**：每个窗口在 `[0, execution.staggerMaxSec]`（默认 120 秒）内随机取一个延迟才开窗，把各窗口的操作起点打散、避免同时冲击网络/站点；设为 `0` 关闭错峰。看板行级「执行/重跑」与 task:run 调试脚本不等待（立即开窗）。
 
@@ -1093,7 +1092,7 @@ randomMicroMove(): Promise<void>
 | 配置段 | 关键键 | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
-| `execution` | `staggerMaxSec`、`windowTimeoutMs`、`probeUrl`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`probeUrl` 是开窗后的探活地址；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
+| `execution` | `staggerMaxSec`、`windowTimeoutMs`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
 | `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
@@ -1108,7 +1107,7 @@ randomMicroMove(): Promise<void>
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；熔断计数 > 0 时显示「重置熔断」按钮（点击计数归零，按钮随之消失）。
 - **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入本地库 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
-- **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/探活 URL/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
+- **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
 ### 8.3 REST 接口总表
 
@@ -1146,7 +1145,7 @@ randomMicroMove(): Promise<void>
 
 ```
 pending（排队，还没轮到它）
-   │ 窗口轮到这个任务：开窗 → CDP 接管 → 探活通过
+   │ 窗口轮到这个任务：开窗 → CDP 接管
    ▼
 running（执行中，正在一步步跑你的 run()）
    ├─ run() 正常跑完（没抛错）───────────────────────────▶ success（成功）
@@ -1158,7 +1157,7 @@ running（执行中，正在一步步跑你的 run()）
    └─ 超过 timeoutSec 还没跑完 ────────────────────────────▶ 按普通失败处理（可重试）
 ```
 
-另外还有一条「没开跑就结束」的支线——`skipped`（跳过）不经过 `running`，直接终态：**开窗失败 / IP 探活失败**（整轮任务全部跳过）、**窗口熔断 / 窗口超时**（剩余任务逐个跳过）。skipped 行里会记具体原因，面板上点开就能看到。
+另外还有一条「没开跑就结束」的支线——`skipped`（跳过）不经过 `running`，直接终态：**开窗失败**（整轮任务全部跳过）、**窗口熔断 / 窗口超时**（剩余任务逐个跳过）。skipped 行里会记具体原因，面板上点开就能看到。
 
 **每个状态什么意思（大白话 + 面板颜色）：**
 
@@ -1170,7 +1169,7 @@ running（执行中，正在一步步跑你的 run()）
 | `success` | 成功：`run()` 无抛错跑完（**断言都过了才算**，不是「点到了按钮」） | `run()` 正常返回 | 绿色「成功」 |
 | `failed` | 失败：重试到上限还是失败 | 普通错误重试耗尽 | 红色「失败」 |
 | `captcha_failed` | 验证码失败：打码业务失败，**不重试**（重试大概率再失败，白烧钱） | 抛 `CaptchaFailure` | 蓝色「验证码失败」 |
-| `skipped` | 跳过：根本没跑就终态，原因记在行内 | 开窗失败/IP 探活失败/窗口熔断/窗口超时 | 灰色「跳过」 |
+| `skipped` | 跳过：根本没跑就终态，原因记在行内 | 开窗失败/窗口熔断/窗口超时 | 灰色「跳过」 |
 
 **对用户意味着什么：**
 
@@ -1436,7 +1435,6 @@ if (done) return   // 今日已做 → 直接成功
 | `任务未注册` | 队列里有这个 key，但框架里找不到任务 | key 拼错；任务没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组（见[第 1 章第 4 步](#1-快速开始)） |
 | `窗口熔断` | 该窗口连续失败太多，剩下任务全跳过 | 前面任务终态失败（failed/captcha_failed）把熔断计数顶到阈值（默认 2） | 先修掉失败任务；面板「窗口」页「重置熔断」，或任一任务成功后自动清零（见[熔断触发与重置](#熔断触发与重置)） |
 | `窗口超时` | 单窗口会话到点（默认 15 分钟），剩余任务跳过 | 窗口任务太多/某任务跑太久 | 精简该窗口任务；查哪个任务耗时异常；上调 `execution.windowTimeoutMs` |
-| `IP 探活失败` | 代理 IP 没生效，整轮任务全跳过 | 代理过期/未配置；探活地址（`execution.probeUrl`）访问失败（30 秒超时） | 检查窗口代理配置；看日志确认网络；核对探活地址 |
 | `开窗失败` | 比特浏览器窗口打不开，整轮任务全跳过 | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 面板「设置」页「测试连接」；核对窗口 ID 与比特客户端状态 |
 | `CDP 连接失败` | 窗口开了但接管浏览器失败，整轮任务全 failed | 调试端口异常/内核版本不匹配 | 看日志与截图；重启比特客户端后重试 |
 | `数据源无当前窗口对应的行（窗口: X）` | 严格取数时表里没有这个窗口的行 | 数据源没填这个窗口；「窗口」列填了窗口名但窗口改名了 | 补行；按窗口 ID 填列更稳（见[第 9 章「数据源与 faker」](#数据源与-faker)） |
@@ -1483,7 +1481,7 @@ if (done) return   // 今日已做 → 直接成功
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；失败尝试存 `<日期>-attempt<n>.png`，成功存 `<日期>-success.png`，`run` 内自定义截图同目录。看板批次明细行内可点开截图。
 - **日志**：`data/logs/app.log`（当天，纯文本 `[时间] 级别 消息`）＋ `data/logs/app.log.<日期>`（按天滚动的历史文件，如 `app.log.2026-08-31`，保留最近 N 天由 `config.json` 的 `storage.logRetainDays` 控制，默认 7 天——启动时与滚动时均清理过期文件，numBackups=N 表示保留 N 个归档 + 当前文件，共 N+1 个；级别由 `storage.logLevel` 控制，控制台同步输出，error 及以上走 stderr、其余走 stdout）；任务失败时日志携带 `status/err`。
-- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/探活失败/窗口超时/熔断跳过。各状态含义、进入条件与面板颜色见[第 9 章「任务的一生（状态流转）」](#任务的一生状态流转)。
+- **运行状态速查**：`pending → running → success | failed | captcha_failed | retry_wait → …`，`skipped` 表示开窗失败/窗口超时/熔断跳过。各状态含义、进入条件与面板颜色见[第 9 章「任务的一生（状态流转）」](#任务的一生状态流转)。
 
 ---
 
