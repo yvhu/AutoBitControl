@@ -1,9 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import dayjs from 'dayjs'
 import {
   closeProfile,
-  fetchDashboard,
   fetchProfiles,
   fetchSettings,
   openProfile,
@@ -30,23 +28,12 @@ export const profileSorters = {
   name: (a: ProfileRow, b: ProfileRow) => a.name.localeCompare(b.name, 'zh-CN'),
   breaker: (a: ProfileRow, b: ProfileRow) => a.circuitBreakerCount - b.circuitBreakerCount,
   enabled: (a: ProfileRow, b: ProfileRow) => a.enabled - b.enabled,
-  success: (successOf: (p: ProfileRow) => number) => (a: ProfileRow, b: ProfileRow) => successOf(a) - successOf(b),
 }
 
 export function useProfiles() {
   return useQuery({
     queryKey: ['profiles'],
     queryFn: fetchProfiles,
-    refetchInterval: 15000,
-  })
-}
-
-/** 今日看板（今日结果列与详情抽屉时间线共用，15s 轮询） */
-export function useTodayDashboard() {
-  const date = dayjs().format('YYYY-MM-DD')
-  return useQuery({
-    queryKey: ['dashboard', date],
-    queryFn: () => fetchDashboard(date),
     refetchInterval: 15000,
   })
 }
@@ -68,7 +55,6 @@ export function usePatchProfile() {
     onSuccess: (_res, { enabled }) => {
       message.success(enabled ? '已启用窗口' : '已停用窗口')
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
     onError: (e) => message.error(errMsg(e)),
   })
@@ -108,7 +94,6 @@ export function useResetBreaker() {
     onSuccess: () => {
       message.success('已重置熔断计数')
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
     onError: (e) => message.error(errMsg(e)),
   })
@@ -122,7 +107,6 @@ export function useSyncProfiles() {
     onSuccess: (res) => {
       message.success(`已同步 ${res.count} 个窗口`)
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
     onError: (e) => message.error(errMsg(e)),
   })

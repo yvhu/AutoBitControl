@@ -68,14 +68,4 @@ describe('profileSorters', () => {
     ]
     expect(sorted(rows, profileSorters.enabled).map((p) => p.enabled)).toEqual([0, 1])
   })
-
-  it('success 按传入的成功数函数升序', () => {
-    const rows = [
-      mk(1, '窗口A', 'a'),
-      mk(2, '窗口B', 'b'),
-      mk(3, '窗口C', 'c'),
-    ]
-    const successOf = (p: ProfileRow) => (p.id === 1 ? 3 : p.id === 2 ? 1 : 2)
-    expect(sorted(rows, profileSorters.success(successOf)).map((p) => p.id)).toEqual([2, 3, 1])
-  })
 })

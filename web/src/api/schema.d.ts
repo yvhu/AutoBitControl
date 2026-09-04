@@ -842,6 +842,8 @@ export interface paths {
                                     batchId?: number | null;
                                     profileName?: string;
                                     bitbrowserId?: string;
+                                    durationSec?: number | null;
+                                    inFlight?: boolean;
                                 }[];
                                 running?: number;
                                 captchaToday?: { count?: number; totalCost?: number; };
@@ -908,104 +910,6 @@ export interface paths {
             };
         };
         put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never;
-    };
-    "/api/dashboard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 看板全部数据（统计/矩阵/窗口/打码成本） */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description 查询日期 YYYY-MM-DD（缺省今天） */
-                    date?: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 看板数据 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @example 0 */
-                            code?: number;
-                            /** @example ok */
-                            message?: string;
-                            data?: {
-                                /** Format: date */
-                                date?: string;
-                                stats?: {
-                                    total?: number;
-                                    success?: number;
-                                    failed?: number;
-                                    captchaFailed?: number;
-                                    skipped?: number;
-                                    running?: number;
-                                    pending?: number;
-                                };
-                                runs?: {
-                                    id?: number;
-                                    profileId?: number;
-                                    taskKey?: string;
-                                    date?: string;
-                                    /** @enum {string} */
-                                    status?: "pending" | "running" | "success" | "failed" | "captcha_failed" | "skipped" | "retry_wait";
-                                    attempts?: number;
-                                    error?: string | null;
-                                    screenshot?: string | null;
-                                    startedAt?: string | null;
-                                    finishedAt?: string | null;
-                                    durationSec?: number | null;
-                                    inFlight?: boolean;
-                                    slot: number;
-                                    profileName?: string;
-                                }[];
-                                profiles?: {
-                                    id?: number;
-                                    bitbrowserId?: string;
-                                    name?: string;
-                                    /** @description 0/1 开关 */
-                                    enabled?: number;
-                                    circuitBreakerCount?: number;
-                                    /** @description 比特客户端窗口备注 */
-                                    remark?: string | null;
-                                    /** @description 比特客户端排序号 */
-                                    seq?: number | null;
-                                    /** @description 最近探测 IP */
-                                    lastIp?: string | null;
-                                    /** @description 最近探测国家 */
-                                    lastCountry?: string | null;
-                                    /** @description 浏览器内核版本 */
-                                    coreVersion?: string | null;
-                                }[];
-                                captcha?: {
-                                    count?: number;
-                                    totalCost?: number;
-                                };
-                                profilesTotal?: number;
-                                profilesEnabled?: number;
-                            };
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
     };
     "/api/captcha/balance": {
         parameters: {

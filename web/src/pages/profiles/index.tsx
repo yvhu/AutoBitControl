@@ -12,15 +12,12 @@ import {
   Switch,
   Table,
   Tag,
-  Timeline,
   Typography,
   theme,
 } from 'antd'
 import { CopyOutlined, ReloadOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import dayjs from 'dayjs'
-import StatusPill from '../../components/StatusPill'
-import type { ProfileRow, RunRow, RunStatus } from '../../types'
+import type { ProfileRow } from '../../types'
 import {
   filterProfiles,
   profileSorters,
@@ -31,23 +28,7 @@ import {
   useProfiles,
   useResetBreaker,
   useSyncProfiles,
-  useTodayDashboard,
 } from './hooks'
-
-const TIMELINE_COLOR: Record<RunStatus, string> = {
-  success: 'green',
-  failed: 'red',
-  captcha_failed: 'cyan',
-  running: 'gold',
-  retry_wait: 'gold',
-  skipped: 'gray',
-  pending: 'gray',
-}
-
-function runTime(r: RunRow): string {
-  const t = r.finishedAt ?? r.startedAt
-  return t ? dayjs(t).format('HH:mm:ss') : ''
-}
 
 export default function ProfilesPage() {
   const { message } = App.useApp()
@@ -56,7 +37,6 @@ export default function ProfilesPage() {
   const [detailId, setDetailId] = useState<number | null>(null)
 
   const profiles = useProfiles()
-  const today = useTodayDashboard()
   const thresholdQ = useBreakerThreshold()
   const patch = usePatchProfile()
   const open = useOpenProfile()
@@ -68,16 +48,6 @@ export default function ProfilesPage() {
 
   const rows = useMemo(() => filterProfiles(profiles.data ?? [], search), [profiles.data, search])
 
-  const runsByProfile = useMemo(() => {
-    const map = new Map<number, RunRow[]>()
-    for (const r of today.data?.runs ?? []) {
-      const list = map.get(r.profileId)
-      if (list) list.push(r)
-      else map.set(r.profileId, [r])
-    }
-    return map
-  }, [today.data])
-
   const copyId = async (id: string) => {
     try {
       await navigator.clipboard.writeText(id)
@@ -86,8 +56,6 @@ export default function ProfilesPage() {
       message.error(`复制失败，请手动复制：${id}`)
     }
   }
-
-  const successOf = (p: ProfileRow) => (runsByProfile.get(p.id) ?? []).filter((r) => r.status === 'success').length
 
   const columns: ColumnsType<ProfileRow> = [
     {
@@ -172,27 +140,6 @@ export default function ProfilesPage() {
         ),
     },
     {
-      title: '今日结果',
-      key: 'today',
-      width: 120,
-      sorter: profileSorters.success(successOf),
-      render: (_, p) => {
-        const mine = runsByProfile.get(p.id) ?? []
-        const ok = mine.filter((r) => r.status === 'success').length
-        const fail = mine.filter((r) => r.status === 'failed' || r.status === 'captcha_failed').length
-        return (
-          <span>
-            <Typography.Text type="success">{ok} ✓</Typography.Text>
-            {fail > 0 && (
-              <Typography.Text type="danger" style={{ marginLeft: 8 }}>
-                {fail} ✗
-              </Typography.Text>
-            )}
-          </span>
-        )
-      },
-    },
-    {
       title: '熔断',
       key: 'breaker',
       width: 180,
@@ -259,7 +206,6 @@ export default function ProfilesPage() {
   ]
 
   const detail = detailId != null ? (profiles.data ?? []).find((p) => p.id === detailId) : undefined
-  const detailRuns = detail ? (runsByProfile.get(detail.id) ?? []) : []
 
   return (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
@@ -302,35 +248,7 @@ export default function ProfilesPage() {
       >
         {detail && (
           <Space direction="vertical" size={16} style={{ display: 'flex' }}>
-            {detailRuns.length === 0 ? (
-              <Typography.Text type="secondary">今日暂无任务记录</Typography.Text>
-            ) : (
-              <Timeline
-                items={detailRuns.map((r) => ({
-                  color: TIMELINE_COLOR[r.status] ?? 'gray',
-                  children: (
-                    <div>
-                      <Space size="small" wrap>
-                        <Typography.Text strong>{r.taskKey}</Typography.Text>
-                        <StatusPill status={r.status} />
-                        {runTime(r) && (
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {runTime(r)}
-                          </Typography.Text>
-                        )}
-                      </Space>
-                      {r.error && (
-                        <div style={{ marginTop: 4 }}>
-                          <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                            {r.error}
-                          </Typography.Text>
-                        </div>
-                      )}
-                    </div>
-                  ),
-                }))}
-              />
-            )}
+            <Typography.Text type="secondary">今日运行请查看板「运行批次」页</Typography.Text>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 钱包解锁密码：由环境变量 WALLET_PASSWORDS 配置（重启生效）
