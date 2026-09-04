@@ -3,6 +3,7 @@ import {
   DashboardOutlined,
   DesktopOutlined,
   UnorderedListOutlined,
+  ScheduleOutlined,
   ReadOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
@@ -17,6 +18,7 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '看板' },
   { key: '/profiles', icon: <DesktopOutlined />, label: '窗口' },
   { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务' },
+  { key: '/schedules', icon: <ScheduleOutlined />, label: '定时任务' },
   { key: '/docs', icon: <ReadOutlined />, label: '文档' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
