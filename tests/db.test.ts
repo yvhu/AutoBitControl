@@ -322,3 +322,29 @@ describe('批次（batches）', () => {
     legacy.close()
   })
 })
+
+describe('cleanupOld 历史数据清理', () => {
+  it('删除超期 runs/batches，保留期内数据不动', async () => {
+    const db = await AppDb.open('file::memory:')
+    const p = await db.upsertProfile('bb-clean', 'A')
+    // 超期：400 天前（runs.date 直接造；batches.created_at 带时间戳）
+    const oldDate = todayStr(new Date(Date.now() - 400 * 86400000))
+    const today = todayStr()
+    await db.upsertRun(p.id, 't', oldDate, 0, 'success')
+    await db.upsertRun(p.id, 't', today, 0, 'success')
+    await db.createBatch('bulk', 't', 'trigger-all', `${oldDate} 08:00:00.000`)
+    await db.createBatch('bulk', 't', 'trigger-all', `${today} 08:00:00.000`)
+    // captcha 记录 created_at 恒为当前时间，只验证保留期内不被误删
+    await db.logCaptcha(p.id, 't', 'turnstile', 0.01, true)
+    const result = await db.cleanupOld(90)
+    expect(result.runs).toBe(1)
+    expect(result.batches).toBe(1)
+    expect(result.captcha).toBe(0)
+    expect(await db.listRunsForDate(today)).toHaveLength(1)
+    expect(await db.listRunsForDate(oldDate)).toHaveLength(0)
+    const batches = await db.listBatchesForRange(null, today)
+    expect(batches).toHaveLength(1)
+    expect(await db.captchaStats(today).then((s) => s.count)).toBe(1)
+    db.close()
+  })
+})

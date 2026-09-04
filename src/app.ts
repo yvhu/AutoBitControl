@@ -216,6 +216,16 @@ export async function startApp(): Promise<void> {
     logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
   })
 
+  // 历史数据清理：按保留天数删超期 runs/batches/captcha_logs（本地文件无限增长，启动时收敛一次）
+  try {
+    const cleaned = await db.cleanupOld(cfg.storage.dbRetainDays)
+    if (cleaned.runs + cleaned.batches + cleaned.captcha > 0) {
+      logger.info({ retainDays: cfg.storage.dbRetainDays, cleaned }, '已清理超期历史数据')
+    }
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, '历史数据清理失败（不影响运行）')
+  }
+
   // 优雅退出：server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
   let finishing = false
   const finish = () => {

@@ -245,6 +245,8 @@ export class AppDb {
     }
     // 索引放补列块外无条件幂等创建：ALTER 与建索引之间崩溃不会永久丢失索引
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
+    // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
+    await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
   }
 
   close(): void {
@@ -465,5 +467,21 @@ export class AppDb {
   /** 清除窗口打开状态登记（窗口关闭或 pid 实测已死时调用） */
   async clearOpenWindow(bitbrowserId: string): Promise<void> {
     await this.exec('DELETE FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
+  }
+
+  /**
+   * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
+   * batches/captcha_logs 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
+   * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
+   * @param retainDays 保留天数（0 或负数 = 仅清理今天之前的数据）
+   * @returns 各表删除行数
+   */
+  async cleanupOld(retainDays: number): Promise<{ runs: number; batches: number; captcha: number }> {
+    const now = new Date()
+    const cutoff = todayStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - retainDays))
+    const r1 = await this.client.execute({ sql: 'DELETE FROM runs WHERE date < ?', args: [cutoff] })
+    const r2 = await this.client.execute({ sql: 'DELETE FROM batches WHERE date(created_at) < date(?)', args: [cutoff] })
+    const r3 = await this.client.execute({ sql: 'DELETE FROM captcha_logs WHERE date(created_at) < date(?)', args: [cutoff] })
+    return { runs: Number(r1.rowsAffected), batches: Number(r2.rowsAffected), captcha: Number(r3.rowsAffected) }
   }
 }
