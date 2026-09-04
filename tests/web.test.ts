@@ -126,11 +126,18 @@ describe('server API（RESTful + envelope）', () => {
     })
 
     it('GET /api/batches?range=7d 与 all 计算不同下界', async () => {
-      const deps = makeDeps()
-      await request(createApp(deps as never)).get('/api/batches?range=7d')
-      expect(deps.db.listBatchesForRange.mock.calls[0][0]).not.toBeNull()
-      await request(createApp(deps as never)).get('/api/batches?range=all')
-      expect(deps.db.listBatchesForRange.mock.calls[1][0]).toBeNull()
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-04T12:00:00'))
+      try {
+        const deps = makeDeps()
+        await request(createApp(deps as never)).get('/api/batches?range=7d')
+        // 7d = 6 天前（非今天）：2026-09-04 往前 6 天为 2026-08-29（本地日历运算，与时区无关）
+        expect(deps.db.listBatchesForRange.mock.calls[0][0]).toBe('2026-08-29')
+        await request(createApp(deps as never)).get('/api/batches?range=all')
+        expect(deps.db.listBatchesForRange.mock.calls[1][0]).toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('GET /api/batches/:id 返回批次明细并附加 durationSec/inFlight', async () => {
@@ -146,9 +153,19 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.data.runs[0].bitbrowserId).toBe('bb-1')
     })
 
-    it('GET /api/batches/abc 返回 400', async () => {
+    it('GET /api/batches/abc 返回 400（业务码 40000）', async () => {
       const res = await request(createApp(makeDeps() as never)).get('/api/batches/abc')
       expect(res.status).toBe(400)
+      expect(res.body.code).toBe(40000)
+      expect(res.body.message).toBe('批次 id 必须为正整数')
+    })
+
+    it('GET /api/batches/999 批次不存在返回 404（业务码 40405）', async () => {
+      const deps = makeDeps()
+      deps.db.getBatch.mockResolvedValue(null)
+      const res = await request(createApp(deps as never)).get('/api/batches/999')
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe(40405)
     })
   })
 
