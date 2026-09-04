@@ -67,6 +67,8 @@ export interface StorageConfig {
   prettyColorize?: boolean
   /** 日志文件保留天数（按天滚动的历史文件保留 N 天，默认 7） */
   logRetainDays?: number
+  /** 数据库历史数据保留天数（runs/batches/captcha_logs 超期行启动时清理，默认 90） */
+  dbRetainDays: number
 }
 
 /** 钱包配置：解锁密码映射（key 为钱包类型，如 metamask/petra，值环境变量 WALLET_PASSWORDS 优先） */
@@ -150,6 +152,8 @@ const defaults: AppConfig = {
     logLevel: 'info',
     // 历史日志文件保留 7 天，到期由 log4js 自动清理
     logRetainDays: 7,
+    // 数据库历史数据保留 90 天，超期行启动时清理（runs/batches/captcha_logs）
+    dbRetainDays: 90,
   },
   // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供（key 为钱包类型，如 metamask/petra，同类型钱包共用同一密码）
   wallet: { passwords: {} },

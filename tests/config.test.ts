@@ -110,4 +110,14 @@ describe('loadConfig', () => {
     const none = loadConfig({ rootDir: dir })
     expect(none.wallet.parseError).toBeUndefined()
   })
+
+  it('storage.dbRetainDays 默认 90 且可被配置文件覆盖', () => {
+    expect(loadConfig({ rootDir: dir }).storage.dbRetainDays).toBe(90)
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      storage: { dbRetainDays: 30 },
+    }))
+    expect(loadConfig({ rootDir: dir }).storage.dbRetainDays).toBe(30)
+  })
 })

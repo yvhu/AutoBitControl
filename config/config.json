@@ -38,6 +38,7 @@
     "screenshotDir": "data/screenshots",
     "logDir": "data/logs",
     "logLevel": "info",
-    "logRetainDays": 7
+    "logRetainDays": 7,
+    "dbRetainDays": 90
   }
 }
