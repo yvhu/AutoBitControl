@@ -57,7 +57,7 @@ pm2 startup   # 按提示执行输出的命令
 ## 配置
 
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
-云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs/task_states）。
+云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs/task_states/open_windows）。
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按钱包类型配置（JSON 映射，`{"metamask":"密码","petra":"密码"}`，同类型钱包共用同一密码，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，保留最近 N 天；启动时与按天滚动时均清理过期文件）。
 
@@ -94,7 +94,8 @@ chcp 65001
 
 在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts`），在 `src/tasks/index.ts` 的 ALL 数组注册。
 
-- **任务开关**：代码 `meta.enabled`（默认开启）是出厂默认值；面板任务页可拨动开关，写入云端 `task_states` 覆盖并立即生效（调度/窗口跑/手动触发同步感知），跨机器保留
+- **任务开关**：代码 `meta.enabled`（默认开启）是出厂默认值；面板任务页可拨动开关，写入云端 `task_states` 覆盖并立即生效（窗口跑/手动触发同步感知），跨机器保留
+- **任务级并发**：`meta.concurrency`（缺省 4）控制同一时间最多几个窗口并行跑该任务，批量触发时按额度滚动分批跑完
 - 新任务无需任何数据库操作，注册代码后重启即可（无云端行时跟随代码默认值）
 
 ## 测试

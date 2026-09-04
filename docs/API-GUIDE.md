@@ -188,9 +188,9 @@ meta: TaskMeta = {
 
 ## 3. TaskContext 方法全解
 
-`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有四个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
+`TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有五个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.log`（`Logger` 日志器，任务内步骤日志，大批量运行排障用）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
-下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)、[waitForTextRecover](#waitfortextrecover)、[recoverErrorText](#recovererrortext)、[clickTurnstileBox](#clickturnstilebox--turnstilevisible--autoclickturnstile)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[ensureWalletReady](#ensurewalletready)、[openAppKitWallet](#openappkitwallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)、[waitForTextRecover](#waitfortextrecover)、[recoverErrorText](#recovererrortext)、[detectPageState](#detectpagestate)、[raceTexts](#racetexts)、[visible](#visible)、[waitGoneOrHidden](#waitgoneorhidden)、[waitForTextWithReloads](#waitfortextwithreloads)、[clickTurnstileBox](#clickturnstilebox--turnstilevisible--autoclickturnstile)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
 
 ### closeOtherTabs
 
@@ -406,7 +406,7 @@ await ctx.screenshot('faucet-success')   // 存一张名为 faucet-success.png �
 ### loginByWallet
 
 ```ts
-async loginByWallet(): Promise<void>
+async loginByWallet(opts?: { reclick?: { selector: string; afterMs: number } }): Promise<void>
 ```
 
 - **是什么**：完成「站点唤起钱包弹窗 → 解锁（若配了密码）→ 点连接确认」全流程，详见[第 4 章](#4-钱包弹窗)。
@@ -416,9 +416,52 @@ async loginByWallet(): Promise<void>
 ```ts
 await ctx.goto()
 await ctx.loginByWallet()   // 等弹窗 → 解锁 → 连接，一气呵成
+
+// 可选补点：弹窗在 8 秒内没出现时，自动再点一次触发按钮（AppKit 动画未稳定时首次点击可能不注册）
+await ctx.loginByWallet({ reclick: { selector: 'button:has-text("Connect Wallet"):visible', afterMs: 8000 } })
 ```
 
-- **注意什么**：需要任务配置 `meta.wallet`（未配置抛 `任务未配置钱包`）；等待弹窗最多 15 秒，超时抛 `钱包弹窗未出现`；只有该窗口配置了解锁密码才会执行解锁。**若站点要先点页面上的「连接钱包」按钮才弹窗**，先点那个按钮，再调 `loginByWallet()`（它会等弹窗出现并完成连接）。
+- **注意什么**：需要任务配置 `meta.wallet`（未配置抛 `任务未配置钱包`）；等待弹窗最多 60 秒（多窗口并发高负载下弹窗出现可超过 30 秒，真机实测），超时抛 `钱包弹窗未出现`；只有该窗口配置了解锁密码才会执行解锁。**若站点要先点页面上的「连接钱包」按钮才弹窗**，先点那个按钮，再调 `loginByWallet()`（它会等弹窗出现并完成连接）。`reclick` 补点只点一次且安全——已触发的弹窗会被聚焦而非重复打开。
+
+### ensureWalletReady
+
+```ts
+async ensureWalletReady(): Promise<void>
+```
+
+- **是什么**：窗口会话级钱包扩展就绪检查——provider 轮询（带钱包类型标识验证）+ CDP 扩展页探测（顺带唤醒 MV3 后台），结果按钱包类型缓存在当前会话；扩展未加载时快速失败。
+- **什么时候用**：任务登录流程前调一次。扩展没加载就快速失败（重试会重启浏览器窗口，扩展随之重载——真机实测重启即恢复），避免空等 60 秒弹窗超时才暴露。
+- **怎么用**：
+
+```ts
+await ctx.ensureWalletReady()   // 需先配 meta.wallet
+await ctx.human.click('button:has-text("Connect Wallet")')
+await ctx.loginByWallet()
+```
+
+- **注意什么**：未配置 `meta.wallet` 或脚本/测试环境未注入会话时静默跳过；扩展未加载抛 `窗口 X 钱包扩展未加载（重试将重启浏览器窗口）`。MetaMask 用 provider 轮询（`window.ethereum.isMetaMask` 验证）+ CDP 探测；Petra 不注入页面 provider（真机实测 `window.petra` 恒不存在），只做 CDP 扩展页探测。
+
+### openAppKitWallet
+
+```ts
+async openAppKitWallet(opts: AppKitLoginOptions): Promise<boolean>
+```
+
+- **是什么**：站点页内 AppKit（Reown）钱包弹窗登录封装：打开弹窗 → 视图归一化 → 点钱包入口 → 钱包弹窗解锁/连接。真机实测 AppKit 弹窗初始视图不固定（钱包列表 / 上次钱包 QR 页 / 列表收起），此封装集中处理归一化与补点。
+- **什么时候用**：站点用 AppKit 弹窗选钱包（如 DAC Inception：Enter Inception → 登录方式选择 → WALLET → 选 MetaMask）。
+- **怎么用**：
+
+```ts
+// 先点开站点的 AppKit 入口按钮（此处已先 clickCheckin 进入登录方式弹窗）
+const popupFailed = await ctx.openAppKitWallet({
+  walletKey: 'metamask',
+  openSelector: 'button:has-text("WALLET")',   // 站点页上「打开 AppKit 弹窗」的按钮
+  entryTestId: 'wallet-selector-io.metamask',  // 钱包入口 data-testid
+})
+if (popupFailed) { /* 钱包弹窗未出现（可能静默连接），结合登录态判定 */ }
+```
+
+- **注意什么**：返回 `true` 表示钱包弹窗未出现——已授权过站点的窗口可能不再弹弹窗（静默连接），**调用方结合登录态判定，不要直接当失败**；归一化轮数耗尽未找到入口抛 `AppKit 弹窗未出现 X 钱包入口（弹窗视图异常，归一化未命中）`。可覆盖参数：`modalTestId`（默认 `w3m-modal-card`）、`modalWaitMs`（默认 45000）、`normalizeRounds`（默认 5）、`roundSleepMs`（默认 3000）、`reclickAfterMs`（默认 8000）。
 
 ### textPresent
 
@@ -619,6 +662,104 @@ async recoverErrorText(texts: string[]): Promise<string>
 - **什么时候用**：任务循环里需要知道「具体哪个错误」以便打日志/分支处理（如领取等待循环里发现 Network Error 立即刷新）。
 - **注意什么**：轻量即时检查（不等）；仅用于状态判断，日志排障建议与 `waitForTextRecover` 搭配使用。
 
+### detectPageState
+
+```ts
+async detectPageState(opts: {
+  loggedInText: string
+  landingText: string
+  waitMs: number
+  rounds?: number
+  roundWaitMs?: number
+  reloadTimeoutMs?: number
+}): Promise<'loggedIn' | 'landing'>
+```
+
+- **是什么**：登录状态竞速判定——已登录文案 / 未登录文案谁先出现；都不出现则刷新重试（最多 `rounds` 轮）。
+- **什么时候用**：任务第一步判定登录态。已登录窗口若误入登录分支，仪表盘永远不出现未登录文案——假报「网络异常」的根因；真机任务（portal-rhuna、inception-dachain）都用它，新手任务里写死一个判断易翻车。
+- **怎么用**：
+
+```ts
+const state = await ctx.detectPageState({ loggedInText: 'Hello,', landingText: 'Connect Wallet', waitMs: 20000 })
+if (state === 'landing') { /* 未登录，走登录流程 */ } else { /* 已登录，跳过登录 */ }
+```
+
+- **注意什么**：SPA 渲染有延迟（真机实测 0-3 秒判定会误判已登录窗口），`waitMs` 放宽到 10-20 秒；`rounds` 默认 10、`roundWaitMs` 默认 15000。多轮刷新后两者均未出现抛 `多次刷新后仍未出现 X 或 Y（网络异常）`。
+
+### raceTexts
+
+```ts
+async raceTexts<K extends string>(entries: Array<[K, string]>, timeoutMs: number): Promise<K | null>
+```
+
+- **是什么**：多文案竞速——任一文案出现即返回它的键，都等不到返回 `null`。
+- **什么时候用**：一个动作后可能出现多种互斥结果（已领取 / 可领取 / 余额不足 / 处理中）时分别命名竞速，比连续 `textPresent` 判断可靠且更省时间。
+- **怎么用**：
+
+```ts
+// 点开签到弹窗后竞速：完成文案 / Claim 按钮谁先出现
+const outcome = await ctx.raceTexts([['success', 'Quest completed successfully!'], ['claim', 'Claim']], 15000)
+if (outcome === 'success') return          // 今日已领取
+if (outcome === 'claim') { /* 点 Claim */ }
+```
+
+- **注意什么**：都等不到返回 `null` 不抛错，由任务决定后续；键是自定义字符串（泛型 `K`），文案包含即命中。
+
+### visible
+
+```ts
+async visible(selector: string): Promise<boolean>
+```
+
+- **是什么**：元素当前是否可见——轻量即时检查；元素不存在或任何异常一律按不可见处理，**不抛错**。
+- **什么时候用**：分支判断「按钮在不在」（如 Start Quests 按钮优先、兜底直达 URL）；或流程中确认某个元素已消失。
+- **怎么用**：
+
+```ts
+if (await ctx.visible('button:has-text("Start Quests")')) {
+  await ctx.human.click('button:has-text("Start Quests")')
+} else {
+  await ctx.goto('https://example.com/quests')   // 兜底直达
+}
+```
+
+- **注意什么**：与 `assertVisible` 的分工——`visible` 只判断不等待（false 时自行决定兜底），`assertVisible` 蹲点等且超时抛错（失败进入重试）。
+
+### waitGoneOrHidden
+
+```ts
+async waitGoneOrHidden(selector: string, timeoutMs: number): Promise<void>
+```
+
+- **是什么**：等元素消失或隐藏（任一即返回）；元素从未出现视为已消失；最多等 `timeoutMs`。
+- **什么时候用**：关弹窗后等它「真正不挡路」再做下一步（如开箱弹窗点 Close 后等标题消失再开下一箱）——比 `waitForGone` 多认「隐藏」一种状态，弹窗淡出动画期也能通过。
+- **怎么用**：
+
+```ts
+await ctx.human.click('button:has-text("Close")')
+await ctx.waitGoneOrHidden('text=What is inside?', 10000)   // 弹窗没关掉会遮挡下一轮点击
+```
+
+- **注意什么**：超时不抛错（等到 `timeoutMs` 就继续）；只做状态等待，不做判定——是否成功由后续断言负责。
+
+### waitForTextWithReloads
+
+```ts
+async waitForTextWithReloads(text: string, opts: { passiveMs: number; rounds?: number; roundWaitMs?: number; reloadTimeoutMs?: number }): Promise<boolean>
+```
+
+- **是什么**：等文案出现 + 固定轮次刷新兜底——先被动等 `passiveMs`，再最多 `rounds` 轮刷新（每轮等 `roundWaitMs`，默认 30000）。
+- **什么时候用**：等待慢登录/慢渲染页面（如钱包连接后站点侧登录接口很慢，或需刷新后才呈现登录 UI）。与 `waitForTextRecover` 互补：本方法是「轮次兜底」的刷新（固定节奏），前者是「错误驱动 + 周期驱动」的刷新（见上文）。
+- **怎么用**：
+
+```ts
+if (!(await ctx.waitForTextWithReloads('Quantum Crate', { passiveMs: 45000, rounds: 2, roundWaitMs: 30000 }))) {
+  throw new Error('钱包连接后登录未完成（等待目录栏超时）')
+}
+```
+
+- **注意什么**：返回 `false` 只是没等到，不抛错——由任务决定后续（抛错进重试/继续兜底）；内部每 5 秒轮询一次文案，刷新失败静默继续。
+
 ### clickTurnstileBox / turnstileVisible / autoClickTurnstile
 
 ```ts
@@ -700,15 +841,15 @@ WALLET_PASSWORDS={"metamask":"MetaMask 解锁密码","petra":"Petra 解锁密码
 | 适配器 | key | URL 正则 |
 | --- | --- | --- |
 | MetaMask | `metamask` | `chrome-extension://.*/home.html`、`chrome-extension://.*/notification.html`、`metamask://` |
-| Petra | `petra` | `chrome-extension://.*/index.html`、`chrome-extension://.*/popup.html` |
+| Petra | `petra` | `chrome-extension://.*/prompt.html`、`chrome-extension://.*/index.html`、`chrome-extension://.*/popup.html` |
 
-`waitForPopup(context, patterns, timeoutMs)`（`src/automation/wallet/popup.ts`）的实现：用 `new RegExp(pattern).test(page.url())` 匹配；先查已打开的页面，再监听 context 的 `page` 事件，同时每 100ms 轮询一次，超时返回 `null`。`loginByWallet` 传入 15 秒超时。
+`waitForPopup(context, patterns, timeoutMs)`（`src/automation/wallet/popup.ts`）的实现：用 `new RegExp(pattern).test(page.url())` 匹配（扫描浏览器全部 context——比特浏览器部分弹窗开在别的 context）；先查已打开的页面，再监听 context 的 `page` 事件，同时每 100ms 轮询一次，超时返回 `null`。`loginByWallet` 传入 60 秒超时（多窗口并发高负载下弹窗出现可超过 30 秒，真机实测）。
 
-弹窗内操作通过 `PopupPage` 接口（`getByRole`/`getByTestId`/`locator`/`waitForEvent`）完成：
+弹窗内操作通过 `PopupPage` 接口（`getByRole`/`getByTestId`/`locator`/`waitForEvent`）完成。弹窗 UI 渲染有延迟（多窗口并发高负载时尤甚），适配器全部改为**轮询等待状态出现**，不做单次 count 判定：
 
-- MetaMask `unlock`：`getByTestId('unlock-password')` 填密码 → `unlock-submit` 点击 → 等 `close` 事件（15s）。
-- Petra `unlock`：密码输入框填密码 → 按 Enter（无稳定 testid 时的替代方案）。
-- `ensureConnected`：最多 3 轮，按角色正则（`/connect|next|confirm|approve|sign/i`，Petra 另含 `unlock`）找按钮点击，每轮等 `close` 事件 5 秒，弹窗关闭即视为完成。
+- MetaMask `unlock`：45 秒轮询预算，三态判定——解锁框出现则填密码（`unlock-password`）→ 点 `unlock-submit` → 等解锁页消失；连接确认按钮已出现视为已解锁直接返回；弹窗关闭返回。解锁页未离开抛 `MetaMask 解锁失败（密码错误或解锁页未离开）`。
+- Petra `unlock`：45 秒轮询预算——已直显确认页（Sign In/Connect 等按钮存在）直接返回；密码框出现则填密码 → 点 `Unlock`（has-text 定位，无按钮时兜底回车）→ 等密码框消失。
+- `ensureConnected`：先 2 秒沉降等 UI 渲染，再最多 3 轮。MetaMask：每轮先查解锁框（存在且未配置密码立即抛 `MetaMask 已锁定且未配置解锁密码`）→ 轮询确认按钮（testid 候选 `confirm-btn`/`confirm-footer-button`/`permissions-connect-button`/`signature-request-sign-button` + 角色名中英文正则兜底，10 秒）→ 点击 → 等 `close` 事件或连接页消失（15 秒）。Petra：用 has-text 找 `Sign In`/`Connect` 等按钮（**getByRole 匹配不到 Sign In 按钮**——Petra UI 无障碍名异常，真机实测）→ 点击 → 等 `close` 事件。
 
 ### 新增钱包适配器步骤
 
@@ -719,6 +860,9 @@ import type { WalletAdapter, PopupPage } from './types'
 
 export class PhantomAdapter implements WalletAdapter {
   key = 'phantom'
+  extensionId = 'bfnaelmomeimhlpmgjnjophhpkkoljpa'   // 扩展 ID：CDP 探测扩展页用（chrome://extensions 查）
+  probePath = 'home.html'                            // 扩展页探测路径（打开它顺带唤醒 MV3 后台）
+  providerFlag = 'isPhantom'                         // 页面 provider 标识字段：区分其它钱包注入的 window.ethereum
   extensionUrlPatterns = ['chrome-extension://.*/home.html', 'chrome-extension://.*/notification.html']
 
   async unlock(popup: PopupPage, password: string): Promise<void> {
@@ -737,6 +881,8 @@ export class PhantomAdapter implements WalletAdapter {
   }
 }
 ```
+
+钱包不注入页面 provider 时（如 Petra 实测 `window.petra` 恒不存在），加 `expectsProvider = false` 跳过 provider 轮询，就绪判定仅靠 CDP 扩展页探测。扩展就绪检测（`ensureWalletReady` 用）走 `src/automation/wallet/session.ts`：provider 轮询 + CDP 探测，结果按钱包类型缓存在当前窗口会话。
 
 **第 2 步** 在 `src/app.ts` 注册：
 
@@ -825,7 +971,7 @@ click(selector): Promise<void>
 - **是什么**：拟人地点击一个元素。
 - **什么时候用**：`ctx.clickCheckin` 内部就是它；需要点「非签到」按钮时直接调。
 - **怎么用**：`await ctx.human.click('#some-btn')`
-- **注意什么**：boundingBox 定位 → 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms → 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X`。
+- **注意什么**：定位用 evaluate 读盒（先滚动进视野再读坐标、10s 轮询——带持续动画的按钮不再 30s 超时；元素未挂载时先等 attached 30s）→ 在元素内四周各留 7.5%（合计 15%）边距的区域随机取点 → hover（5s 超时，失败忽略）→ 贝塞尔轨迹移动 → 停顿 800-3000ms（构造注入区间，见本章开头）→ 按下 → 停顿 40-150ms → 释放。找不到元素抛 `点击失败: 找不到元素 X`。
 
 ### clickAt
 
@@ -926,7 +1072,7 @@ randomMicroMove(): Promise<void>
 
 ### 入队语义
 
-面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接/探活只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
+面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接/探活只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**；并发触发竞态下同窗口同任务自动去重（pending 合并区与等待队列不重复占额度，不双跑、不泄漏额度）。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
 
 批量触发与失败重试的窗口会话开窗前自带**随机错峰**：每个窗口在 `[0, execution.staggerMaxSec]`（默认 120 秒）内随机取一个延迟才开窗，把各窗口的操作起点打散、避免同时冲击网络/站点；设为 `0` 关闭错峰。看板行级「执行/重跑」与 task:run 调试脚本不等待（立即开窗）。
 
@@ -960,8 +1106,8 @@ randomMicroMove(): Promise<void>
 面板基于 antd 构建（`web/`，Vite + React），左侧导航五个页面，顶栏右侧有主题切换 Segmented（浅色/深色/跟随系统，选择写入浏览器 localStorage 即时生效，设置页也有同样的「主题」卡片）。每个页面「在哪 / 能干什么」如下：
 
 - **看板（首页）**：四张统计卡（今日完成率环形图、结果分布标签、验证码花费与次数、实时运行窗口数）＋ 日期选择（DatePicker，可按天回看）＋ 任务筛选下拉 ＋ 状态 Segmented（全部/失败/成功/进行中）＋ 窗口搜索框 ＋ 运行记录表（窗口/任务/状态/尝试/错误/截图/操作）。行级「执行」= 单窗口单任务触发（失败行显示「重跑」）。停留在看板页时每 15 秒自动刷新。
-- **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、今日成功/失败数、熔断计数与进度条、启用开关、操作列；表头可排序）。行内「复制ID」一键复制比特窗口 ID 到剪贴板；「详情」打开右侧 **Drawer 抽屉**，展示该窗口今日任务时间线（Timeline，含状态与错误）与「重置熔断」按钮。
-- **任务页**：任务卡片网格（每卡两列），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/重试/验证码摘要、备注、来源页链接；停用或已失效任务半透明显示。卡片开关写入云端 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍。
+- **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、今日成功/失败数、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；「详情」打开右侧 **Drawer 抽屉**，展示该窗口今日任务时间线（Timeline，含状态与错误）与「重置熔断」按钮。
+- **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入云端 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
 - **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/探活 URL/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
@@ -975,8 +1121,10 @@ randomMicroMove(): Promise<void>
 | GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 云端开关状态） |
 | PATCH | `/api/tasks/:key` | 任务开关（写云端，立即生效） |
 | POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
-| GET | `/api/profiles` | 窗口列表（含启用状态与熔断计数） |
+| GET | `/api/profiles` | 窗口列表（含启用状态、熔断计数与打开状态） |
 | PATCH | `/api/profiles/:id` | 窗口开关 |
+| POST | `/api/profiles/:id/open` | 打开窗口（登记 open_windows，任务会话复用该窗口） |
+| POST | `/api/profiles/:id/close` | 关闭窗口 |
 | POST | `/api/profiles/:id/breaker/reset` | 重置该窗口熔断计数 |
 | GET | `/api/captcha/balance` | 打码余额查询 |
 | POST | `/api/bitbrowser/test` | 比特浏览器连接测试 |
@@ -1295,7 +1443,9 @@ if (done) return   // 今日已做 → 直接成功
 | `数据源缺少列: X（可用列: …）` | 表头没有这个列名 | 列名拼写/大小写不一致 | 按报错里的「可用列」清单核对拼写 |
 | `数据源列 X 在窗口 Y 的行为空` | 这一格是空的 | 表里这格忘了填 | 补数据；想「缺了就用 faker」改用 `accountRow` 兜底写法 |
 | `图片下载失败: <url> (HTTP <状态码>)` | 上传的图片 URL 下载失败 | 图片地址失效/404/需登录才能访问 | 换可用地址或改用本地路径；核对数据源「图片地址」列 |
-| `钱包弹窗未出现` | 等钱包弹窗 15 秒没等到 | `meta.wallet` 没配或 key 没注册；站点要先点页面上的「连接钱包」按钮才弹窗 | 核对 `meta.wallet`；先在 run 里点连接按钮再调 `loginByWallet()`（见[钱包弹窗不出现](#钱包弹窗不出现)） |
+| `钱包弹窗未出现` | 等钱包弹窗 60 秒没等到 | `meta.wallet` 没配或 key 没注册；站点要先点页面上的「连接钱包」按钮才弹窗；该窗口钱包扩展未加载 | 核对 `meta.wallet`；先在 run 里点连接按钮再调 `loginByWallet()`（见[钱包弹窗不出现](#钱包弹窗不出现)）；登录前先调 `ctx.ensureWalletReady()` 排除扩展未加载 |
+| `窗口 X 钱包扩展未加载（重试将重启浏览器窗口）` | `ensureWalletReady` 探测到该钱包扩展没加载 | 窗口浏览器实例异常/扩展未启用（个别窗口偶发） | 等重试自动重启窗口（扩展随之重载）；连续出现检查比特窗口内扩展安装情况 |
+| `AppKit 弹窗未出现 X 钱包入口` | AppKit 弹窗视图异常，归一化没找到钱包入口 | 站点改版/弹窗渲染异常/`entryTestId` 填错 | 核对 `entryTestId` 与站点当前 AppKit 视图（见[第 3 章](#3-taskcontext-方法全解) openAppKitWallet） |
 | `未注册的钱包适配器: X` | `meta.wallet` 的 key 没人认领 | key 拼错或适配器没在 `src/app.ts` 注册 | 核对 key 与注册列表（见[第 4 章](#4-钱包弹窗)） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec`（默认 180 秒），按普通失败处理 | run 卡死；某个等待动作超时太长 | 核对各等待方法的超时参数；必要时上调 `meta.timeoutSec` 或全局 `execution.taskTimeoutMs` |
 | `yescaptcha 余额不足: X 点 < Y 点` | 打码平台余额不够付这道题 | 余额低于费用上限 | 去平台充值；或下调 `captcha.maxCostPerTask`（见[打码失败与余额](#打码失败与余额)） |
@@ -1312,11 +1462,12 @@ if (done) return   // 今日已做 → 直接成功
 
 ### 钱包弹窗不出现
 
-- **症状**：`loginByWallet` 抛 `钱包弹窗未出现`（15 秒超时）。
+- **症状**：`loginByWallet` 抛 `钱包弹窗未出现`（60 秒超时）。
 - **对策**：
   1. 检查 `meta.wallet` 的 key 是否已注册（未注册报 `未注册的钱包适配器: X`）；
-  2. 用 DevTools 查看弹窗实际 URL，对照适配器 `extensionUrlPatterns` 正则是否匹配；
-  3. 若站点在点击「连接」按钮后才弹窗，先在 `run` 里点击该按钮再调 `loginByWallet()`（它会等弹窗出现并完成连接）。
+  2. 登录前先调 `ctx.ensureWalletReady()`：扩展未加载会快速失败（`钱包扩展未加载`），等重试重启窗口恢复，比空等 60 秒高效；
+  3. 用 DevTools 查看弹窗实际 URL，对照适配器 `extensionUrlPatterns` 正则是否匹配；
+  4. 若站点在点击「连接」按钮后才弹窗，先在 `run` 里点击该按钮再调 `loginByWallet()`（它会等弹窗出现并完成连接）；按钮动画不稳定时可加 `reclick` 补点。
 
 ### 打码失败与余额
 
