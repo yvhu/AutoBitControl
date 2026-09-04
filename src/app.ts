@@ -88,18 +88,15 @@ export async function startApp(): Promise<void> {
     process.exit(1)
   })
 
-  // 云数据库未配置即快速失败：数据层全部走云端，无 url 无法运行
-  if (!cfg.cloud.url) {
-    logger.error('未配置 TURSO_DATABASE_URL（请在 config/.env 或 config/config.json 的 cloud 段配置云数据库地址）')
-    process.exit(1)
-  }
+  // 本地 SQLite 数据库：storage.dbPath 有默认值（data/app.db），打开失败（磁盘/权限问题）快速失败
   let db: AppDb
   try {
-    db = await AppDb.open(cfg.cloud)
+    db = await AppDb.open(cfg.storage.dbPath)
   } catch (e) {
-    logger.error({ err: (e as Error).message }, '云数据库连接失败（请检查 TURSO_DATABASE_URL/TURSO_AUTH_TOKEN 与网络）')
+    logger.error({ err: (e as Error).message }, '本地数据库打开失败（请检查 storage.dbPath 与磁盘状态）')
     process.exit(1)
   }
+  logger.info({ path: cfg.storage.dbPath }, '本地数据库已打开')
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
   // 启动时同步窗口列表到 profiles 表（未就绪仅告警，不阻塞启动）

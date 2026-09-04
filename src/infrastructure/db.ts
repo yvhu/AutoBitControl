@@ -95,10 +95,10 @@ export function localWallNow(): string {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
 }
 
-/** AppDb.open 的参数（cloud 配置段；file: URL 为测试/本地引擎，无需 authToken） */
-export interface AppDbOpenConfig {
-  url: string
-  authToken: string
+/** 本地路径转 file: URL：file: 前缀原样透传（测试 file::memory:），其余反斜杠转正斜杠后加 file: 前缀 */
+function toFileUrl(p: string): string {
+  if (p.startsWith('file:')) return p
+  return `file:${p.replace(/\\/g, '/')}`
 }
 
 // 幂等建表（IF NOT EXISTS）：云库首次启动自动建表，可重复执行
@@ -168,7 +168,7 @@ const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKe
 type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
 
 /**
- * 云数据库访问门面：私有构造 + 异步 open 工厂，保证打开即迁移
+ * 本地 SQLite 访问门面：私有构造 + 异步 open 工厂，保证打开即迁移
  * 设计权衡：不用 ORM——表结构固定、查询简单，原生 SQL 更可控且无额外依赖
  */
 export class AppDb {
@@ -176,18 +176,21 @@ export class AppDb {
 
   /**
    * 打开数据库（创建 client 并执行建表迁移）
-   * @param cfg 云配置（url + authToken）；file:/file::memory: 走本地引擎（测试用，无需 authToken）
-   * @returns 就绪的 AppDb 实例（网络不通/凭据错误时抛错，由调用方处理退出）
+   * @param dbPath 本地数据库文件路径（绝对或相对；file: 前缀原样透传）
+   * @returns 就绪的 AppDb 实例（磁盘/权限错误时抛错，由调用方处理退出）
    */
-  static async open(cfg: AppDbOpenConfig): Promise<AppDb> {
-    const local = cfg.url.startsWith('file:')
-    const client = createClient(local ? { url: cfg.url } : { url: cfg.url, authToken: cfg.authToken })
+  static async open(dbPath: string): Promise<AppDb> {
+    const client = createClient({ url: toFileUrl(dbPath) })
     const db = new AppDb(client)
     await db.migrate()
     return db
   }
 
   async migrate(): Promise<void> {
+    // WAL 日志模式：面板进程与 task:run 脚本可能同时开同一文件，读写不互锁（库级设置，幂等；
+    // file::memory: 上执行无副作用）；busy_timeout 为连接级，写竞争时等待 5 秒而非立即报锁错
+    await this.client.execute('PRAGMA journal_mode=WAL')
+    await this.client.execute('PRAGMA busy_timeout=5000')
     for (const stmt of SCHEMA) await this.client.execute(stmt)
     // 老库补列：profiles 元数据列（remark/seq/last_ip/last_country/core_version）后加，CREATE TABLE 只保证新库自带；
     // PRAGMA table_info 查现有列，缺哪个补哪个（幂等，云库多机共享同一 schema）

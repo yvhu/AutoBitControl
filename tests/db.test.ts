@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { AppDb, todayStr } from '../src/infrastructure/db'
 
 let db: AppDb
-// file::memory: 走 @libsql/client 本地引擎：测试无需云库凭据，每个用例独立空库
-beforeEach(async () => { db = await AppDb.open({ url: 'file::memory:', authToken: '' }) })
+// file::memory: 走 @libsql/client 本地引擎：测试无需凭据，每个用例独立空库
+beforeEach(async () => { db = await AppDb.open('file::memory:') })
 afterEach(() => { db.close() })
 
 describe('AppDb', () => {
@@ -117,25 +117,40 @@ describe('AppDb', () => {
       circuit_breaker_count INTEGER NOT NULL DEFAULT 0
     )`)
     raw.close()
-    const legacy = await AppDb.open({ url: fileUrl, authToken: '' })
+    const legacy = await AppDb.open(fileUrl)
     const p = await legacy.upsertProfile('bb-1', '窗口1', { remark: '老库补列', seq: 7, lastIp: '9.9.9.9', lastCountry: 'US', coreVersion: '150' })
     expect(p.remark).toBe('老库补列')
     expect(p.seq).toBe(7)
     expect(p.coreVersion).toBe('150')
     // 再次 open（重复迁移）不报错、数据仍在
     legacy.close()
-    const again = await AppDb.open({ url: fileUrl, authToken: '' })
+    const again = await AppDb.open(fileUrl)
     const list = await again.listProfiles(false)
     expect(list).toHaveLength(1)
     expect(list[0].lastIp).toBe('9.9.9.9')
     again.close()
     // 注：Windows 下 libsql 关闭连接后文件句柄延迟释放，临时目录交由系统清理（与 upload 夹具同策略）
   })
+
+  it('Windows 绝对路径（反斜杠）转换为 file: URL 后可正常读写且落盘持久', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-winpath-'))
+    const absPath = join(dir, 'app.db')
+    const db2 = await AppDb.open(absPath)
+    const p = await db2.upsertProfile('bb-wp', '窗口')
+    expect(p.bitbrowserId).toBe('bb-wp')
+    db2.close()
+    // 重新打开同一文件：数据仍在（真实落盘验证）
+    const db3 = await AppDb.open(absPath)
+    const list = await db3.listProfiles(false)
+    expect(list).toHaveLength(1)
+    expect(list[0].name).toBe('窗口')
+    db3.close()
+  })
 })
 
 describe('runs slot 多轮次', () => {
   it('nextRunSlot 无记录返回 0，有记录返回 MAX+1', async () => {
-    const db = await AppDb.open({ url: 'file::memory:', authToken: '' })
+    const db = await AppDb.open('file::memory:')
     const p = await db.upsertProfile('bb-slot', 'slot窗口')
     expect(await db.nextRunSlot(p.id, 't', '2026-08-31')).toBe(0)
     await db.upsertRun(p.id, 't', '2026-08-31', 0, 'running')
@@ -145,7 +160,7 @@ describe('runs slot 多轮次', () => {
   })
 
   it('同一天不同 slot 的行互不覆盖', async () => {
-    const db = await AppDb.open({ url: 'file::memory:', authToken: '' })
+    const db = await AppDb.open('file::memory:')
     const p = await db.upsertProfile('bb-slot2', 'slot窗口2')
     await db.upsertRun(p.id, 't', '2026-08-31', 0, 'success')
     await db.upsertRun(p.id, 't', '2026-08-31', 1, 'failed', { error: 'e' })
@@ -170,7 +185,7 @@ describe('runs 老库迁移', () => {
     await raw.execute(`INSERT INTO profiles (id, bitbrowser_id, name) VALUES (1, 'bb-1', '老库窗口')`)
     await raw.execute(`INSERT INTO runs (profile_id, task_key, date, status) VALUES (1, 't', '2026-08-30', 'success')`)
     raw.close()
-    const db = await AppDb.open({ url: `file:${file}`, authToken: '' })
+    const db = await AppDb.open(`file:${file}`)
     const info = await (db as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(runs)`)
     expect(info.rows.map((r) => r.name)).toContain('slot')
     const rows = await db.listRunsForDate('2026-08-30')
@@ -178,7 +193,7 @@ describe('runs 老库迁移', () => {
     expect(rows[0].slot).toBe(0)
     db.close()
     // 重新打开已迁移库：第二次 migrate() 幂等无错、数据仍在、slot 仍为 0
-    const db2 = await AppDb.open({ url: `file:${file}`, authToken: '' })
+    const db2 = await AppDb.open(`file:${file}`)
     const rows2 = await db2.listRunsForDate('2026-08-30')
     expect(rows2.length).toBe(1)
     expect(rows2[0].slot).toBe(0)
@@ -188,7 +203,7 @@ describe('runs 老库迁移', () => {
 
 describe('countInFlightRuns', () => {
   it('计入 pending/running/retry_wait，终态不计', async () => {
-    const db = await AppDb.open({ url: 'file::memory:', authToken: '' })
+    const db = await AppDb.open('file::memory:')
     const p1 = await db.upsertProfile('bb-1', 'A')
     const p2 = await db.upsertProfile('bb-2', 'B')
     await db.upsertRun(p1.id, 't', '2026-09-02', 0, 'pending')
@@ -202,7 +217,7 @@ describe('countInFlightRuns', () => {
   })
 
   it('date 与 profileId 过滤', async () => {
-    const db = await AppDb.open({ url: 'file::memory:', authToken: '' })
+    const db = await AppDb.open('file::memory:')
     const p1 = await db.upsertProfile('bb-1', 'A')
     const p2 = await db.upsertProfile('bb-2', 'B')
     await db.upsertRun(p1.id, 't', '2026-09-02', 0, 'running')
@@ -299,7 +314,7 @@ describe('批次（batches）', () => {
     await raw.execute(`CREATE TABLE profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, bitbrowser_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, circuit_breaker_count INTEGER NOT NULL DEFAULT 0)`)
     await raw.execute(`CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL, task_key TEXT NOT NULL, date TEXT NOT NULL, slot INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, screenshot TEXT, started_at TEXT, finished_at TEXT, UNIQUE(profile_id, task_key, date, slot))`)
     raw.close()
-    const legacy = await AppDb.open({ url: `file:${file}`, authToken: '' })
+    const legacy = await AppDb.open(`file:${file}`)
     const info = await (legacy as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(runs)`)
     expect(info.rows.map((r) => r.name)).toContain('batch_id')
     const b = await legacy.createBatch('bulk', 't', 'trigger-all')

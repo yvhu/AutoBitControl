@@ -41,11 +41,7 @@ async function main(): Promise<void> {
     console.error(`任务未注册: ${taskKey}（可用: ${[...tasks.keys()].join(', ')}）`)
     process.exit(1)
   }
-  if (!cfg.cloud.url) {
-    console.error('未配置 TURSO_DATABASE_URL（请在 config/.env 或 config/config.json 的 cloud 段配置云数据库地址）')
-    process.exit(1)
-  }
-  const db = await AppDb.open(cfg.cloud)
+  const db = await AppDb.open(cfg.storage.dbPath)
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
   // 数据源（与 app.ts 同逻辑就地建）：不可用仅告警，任务以 faker 兜底
   const datasource = new DataSource()
