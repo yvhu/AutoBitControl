@@ -127,6 +127,7 @@ const SCHEMA = [
     screenshot TEXT,
     started_at TEXT,
     finished_at TEXT,
+    batch_id INTEGER,
     UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
@@ -233,12 +234,14 @@ export class AppDb {
         throw e
       }
     }
-    // 老库补列：runs.batch_id（批次归属，可空；不参与 UNIQUE，直接 ADD COLUMN 无需重建表）
+    // 老库补列：runs.batch_id（批次归属，可空；不参与 UNIQUE，直接 ADD COLUMN 无需重建表）——
+    // 仅老库需要补列（新库 CREATE TABLE 已自带）
     const runsInfo2 = await this.client.execute(`PRAGMA table_info(runs)`)
     if (!runsInfo2.rows.some((r) => String(r.name) === 'batch_id')) {
       await this.client.execute(`ALTER TABLE runs ADD COLUMN batch_id INTEGER`)
-      await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     }
+    // 索引放补列块外无条件幂等创建：ALTER 与建索引之间崩溃不会永久丢失索引
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
   }
 
   close(): void {

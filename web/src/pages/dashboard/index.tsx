@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
@@ -49,7 +49,7 @@ function RunsTable({ runs, loading, taskNames }: { runs: RunRow[]; loading: bool
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 240 }}>{e}</Typography.Text> : '—') },
         { title: '截图', dataIndex: 'screenshot', width: 80, render: (s: string | null) => (s ? <Button type="link" size="small" onClick={() => window.open(`/api/screenshots?path=${encodeURIComponent(s)}`, '_blank')}>🖼</Button> : '—') },
         { title: '操作', width: 80, render: (_, r) => (
-          <Button type="link" size="small" disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+          <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
             {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
           </Button>
         ) },
@@ -63,6 +63,10 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
   const detail = useBatchDetail(open ? batch.id : null)
   const { done, pct } = batchProgress(batch)
   const stats = batch.stats
+  // 默认展开的批次跟随实时运行状态：最新批次开始运行后自动展开（用户可手动收起）
+  useEffect(() => {
+    if (defaultOpen && !open) setOpen(true)
+  }, [defaultOpen, open])
   return (
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
@@ -92,13 +96,12 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
 function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Record<string, string> }) {
   const detail = useBatchDetail(batch.id)
   const trigger = useTriggerTask()
-  const run = detail.data?.runs[0]
   return (
     <Table<RunRow>
       size="small"
       rowKey="id"
       pagination={false}
-      dataSource={run ? [run] : []}
+      dataSource={detail.data?.runs ?? []}
       loading={detail.isPending}
       locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
       columns={[
@@ -110,7 +113,7 @@ function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Rec
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
         { title: '操作', width: 80, render: (_, r) => (
-          <Button type="link" size="small" disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+          <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
             {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
           </Button>
         ) },

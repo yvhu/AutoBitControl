@@ -18,6 +18,7 @@ export function useBatchDetail(id: number | null) {
     queryKey: ['batchDetail', id],
     queryFn: () => fetchBatchDetail(id as number),
     enabled: id !== null,
+    refetchInterval: id !== null ? 15000 : false,
   })
 }
 

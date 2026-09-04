@@ -448,4 +448,27 @@ describe('批次透传与 pending 预写', () => {
     expect(row?.batchId).toBe(b.id)
     expect(row?.attempts).toBe(2)
   })
+
+  it('未注册任务就地结算预写 pending 行（沿用 slot 与 batchId，不留孤儿行）', async () => {
+    const db = makeFakeDb()
+    const b = await db.createBatch('bulk', 'ghost-task', 'trigger-all')
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map(), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ghost-task', batchId: b.id }])
+    const row = await db.getLatestRun(1, 'ghost-task', todayStr())
+    expect(row?.status).toBe('failed')
+    expect(row?.error).toContain('任务未注册')
+    // 预写 pending 行就地结算：批次归属保留（COALESCE），不归入未分批
+    expect(row?.batchId).toBe(b.id)
+  })
+
+  it('未注册任务无预写行时兜底新轮次落 failed（nextRunSlot，行为同旧）', async () => {
+    const db = makeDb({ nextRunSlot: vi.fn().mockResolvedValue(3) })
+    const runner = makeRunner({ db, tasks: new Map() })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ghost-task' }])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.map((c) => c[4])).toEqual(['pending', 'failed'])
+    expect(calls[1][3]).toBe(3) // 兜底按 nextRunSlot 新开轮（无预写可结算时）
+    expect(String(calls[1][5].error)).toBe('任务未注册: ghost-task')
+    expect(db.nextRunSlot).toHaveBeenCalled()
+  })
 })

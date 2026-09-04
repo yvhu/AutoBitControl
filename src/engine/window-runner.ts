@@ -248,8 +248,16 @@ export class WindowRunner {
     const { cfg, db, logger } = this.deps
     const task = this.deps.tasks.get(taskKey)
     if (!task) {
+      const finishedAt = localWallNow()
+      // 与 settleWindowSkip 同理：会话启动已预写 pending 行，未注册任务须就地结算该行
+      // （沿用原 slot，不传 batchId 由 COALESCE 保留），否则留下孤儿 pending 行
+      const existing = await this.safeDb(() => db.getLatestRun(profile.id, taskKey, date), null)
+      const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
+      if (existing && !terminal) {
+        return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, existing.slot, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt }), null)
+      }
       const slot = await this.nextSlot(profile, taskKey, date)
-      return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt: localWallNow() }), null)
+      return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt }), null)
     }
     // 任务级参数优先，缺省回落全局默认（任务 meta 未配置时用 execution.*）
     const retryMax = task.meta.retry?.max ?? cfg.execution.retryMax

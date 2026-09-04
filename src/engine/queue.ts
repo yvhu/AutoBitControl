@@ -71,7 +71,7 @@ export class CoalescingEnqueuer {
     return gate
   }
 
-  /** 条目内是否已含某任务（去重用） */
+  /** 条目内是否已含某任务（入队去重 / in-flight 判定共用） */
   private static hasTask(entry: Entry | undefined, taskKey: string): boolean {
     return !!entry?.tasks.some((t) => t.taskKey === taskKey)
   }
@@ -186,9 +186,6 @@ export class CoalescingEnqueuer {
     this.occupy(taskKey, next.profile, next.immediate, next.tasks.find((x) => x.taskKey === taskKey)?.batchId)
   }
 
-  /** 条目任务列表是否含某任务（in-flight 判定辅助） */
-  private hasTask = (keys: SessionTask[] | undefined, taskKey: string) => !!keys?.some((t) => t.taskKey === taskKey)
-
   /** 错峰等待中的窗口数（已入队未开窗；路由层「实时运行」口径的队列部分） */
   pendingCount(): number {
     return this.pending.size
@@ -200,14 +197,14 @@ export class CoalescingEnqueuer {
    */
   hasTaskInFlight(taskKey: string, profileId?: number): boolean {
     if (profileId !== undefined) {
-      if (this.hasTask(this.pending.get(profileId)?.tasks, taskKey)) return true
+      if (CoalescingEnqueuer.hasTask(this.pending.get(profileId), taskKey)) return true
       if (this.running.get(profileId)?.has(taskKey)) return true
-      if (this.hasTask(this.followUp.get(profileId)?.tasks, taskKey)) return true
+      if (CoalescingEnqueuer.hasTask(this.followUp.get(profileId), taskKey)) return true
       return this.gates.get(taskKey)?.waiting.some((e) => e.profile.id === profileId) ?? false
     }
-    for (const e of this.pending.values()) if (this.hasTask(e.tasks, taskKey)) return true
+    for (const e of this.pending.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
     for (const keys of this.running.values()) if (keys.has(taskKey)) return true
-    for (const e of this.followUp.values()) if (this.hasTask(e.tasks, taskKey)) return true
+    for (const e of this.followUp.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
     return (this.gates.get(taskKey)?.waiting.length ?? 0) > 0
   }
 }
