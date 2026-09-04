@@ -6,7 +6,7 @@ Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化 + yescaptch
 
 - Windows 10/11，Node 20.x，比特浏览器（本机运行中）
 - 比特浏览器 API 已开启（默认 http://127.0.0.1:54345，可在 config 修改）
-- Turso 云数据库（数据层全部走云端，无需本地数据文件；首次启动自动建表）
+- 本地 SQLite 数据库（data/app.db，首次启动自动建表，WAL 模式支持多进程并发）
 
 ## 安装
 
@@ -14,7 +14,7 @@ Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化 + yescaptch
 npm install
 npx patchright install chromium
 Copy-Item config/.env.example config/.env
-# 编辑 config/.env 填入 CAPTCHA_CLIENT_KEY、TURSO_DATABASE_URL、TURSO_AUTH_TOKEN
+# 编辑 config/.env 填入 CAPTCHA_CLIENT_KEY
 ```
 
 ## 运行
@@ -57,7 +57,7 @@ pm2 startup   # 按提示执行输出的命令
 ## 配置
 
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
-云数据库在 `config/.env` 用 `TURSO_DATABASE_URL`（libsql:// 地址）与 `TURSO_AUTH_TOKEN`（Turso 令牌）配置，未配置时启动报错退出；也可写在 `config.json`/`config.local.json` 的 `cloud` 段，环境变量优先。表结构首次连接时自动创建（profiles/runs/captcha_logs/task_states/open_windows）。
+数据库为本地 SQLite 文件，路径在 `config.json` 的 `storage.dbPath`（默认 `data/app.db`，已在 .gitignore，不提交）。表结构首次打开时自动创建（profiles/runs/batches/captcha_logs/task_states/open_windows）；`storage.dbRetainDays`（默认 90）控制历史数据保留天数，超期行启动时自动清理。
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按钱包类型配置（JSON 映射，`{"metamask":"密码","petra":"密码"}`，同类型钱包共用同一密码，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，保留最近 N 天；启动时与按天滚动时均清理过期文件）。
 

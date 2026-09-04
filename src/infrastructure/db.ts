@@ -1,7 +1,7 @@
 /**
- * 持久层（infrastructure）：Turso 云数据库数据访问（profiles 窗口 / runs 运行记录 / captcha_logs 打码日志）
+ * 持久层（infrastructure）：本地 SQLite 数据访问（profiles 窗口 / runs 运行记录 / captcha_logs 打码日志）
  * 依赖方向：仅依赖 @libsql/client，被 engine/server 层依赖；RunStatus 类型被全局引用
- * 设计思路：全部数据层走云端（libsql 协议，file: URL 供测试使用本地引擎）；
+ * 设计思路：数据层走本地文件（libsql 本地引擎，file: URL；file::memory: 供测试使用）；
  *           UNIQUE(profile_id, task_key, date) 保证每窗口每天每任务一行；
  *           库内字段用 snake_case、读出时映射为 camelCase
  */
@@ -101,7 +101,7 @@ function toFileUrl(p: string): string {
   return `file:${p.replace(/\\/g, '/')}`
 }
 
-// 幂等建表（IF NOT EXISTS）：云库首次启动自动建表，可重复执行
+// 幂等建表（IF NOT EXISTS）：首次打开自动建表，可重复执行
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,7 +193,7 @@ export class AppDb {
     await this.client.execute('PRAGMA busy_timeout=5000')
     for (const stmt of SCHEMA) await this.client.execute(stmt)
     // 老库补列：profiles 元数据列（remark/seq/last_ip/last_country/core_version）后加，CREATE TABLE 只保证新库自带；
-    // PRAGMA table_info 查现有列，缺哪个补哪个（幂等，云库多机共享同一 schema）
+    // PRAGMA table_info 查现有列，缺哪个补哪个（幂等，本地库与老库共享同一迁移逻辑）
     const info = await this.client.execute(`PRAGMA table_info(profiles)`)
     const existing = new Set(info.rows.map((r) => String(r.name)))
     const extraCols: Array<[string, string]> = [
@@ -473,7 +473,7 @@ export class AppDb {
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
    * batches/captcha_logs 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
-   * @param retainDays 保留天数（0 或负数 = 仅清理今天之前的数据）
+   * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数会使 cutoff 落入未来（连当天数据也删），调用方不得传负数）
    * @returns 各表删除行数
    */
   async cleanupOld(retainDays: number): Promise<{ runs: number; batches: number; captcha: number }> {

@@ -22,7 +22,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 
 - `config/config.json` — 通用参数（已提交）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
-- `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`（云数据库，未配置启动直接报错退出）、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
+- `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
 **写代码前先读 `config/config.json` 和 `config/.env` 确认当前值**（端口、开关等以文件为准）。`config/.env`、`config.local.json`、`config/accounts.xlsx` 含真实密钥/账号，绝不提交或外泄；示例值一律写进 `.env.example` / `accounts.example.xlsx`。
 
@@ -34,7 +34,7 @@ server → {engine, infrastructure}   （唯一例外：server 可对 tasks 做 
 src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ```
 
-- `infrastructure/`：config / logger(log4js) / db(Turso libsql) / datasource(Excel 账号表) / http 封装
+- `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、yescaptcha.ts
 - `automation/`：humanize.ts（拟人操作）、wallet/（types 注册表 + metamask/petra 适配器）
 - `engine/`：queue（任务级并发额度 + 同窗口任务合并 CoalescingEnqueuer）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
@@ -52,7 +52,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 数据层
 
-Turso 云数据库（libsql），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次连接自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`captcha_logs`、`task_states`、`open_windows`。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（tests 与 db 均用注入隔离，不连真库）。
+本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`captcha_logs`、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（tests 与 db 均用注入隔离，不连真库）。
 
 ## 前端与 API 变更
 
