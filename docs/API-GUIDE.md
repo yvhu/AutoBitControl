@@ -158,7 +158,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-08-28'`） |
 | `deprecated` | `boolean?` | `false` | `true` → 面板置灰显示「已失效」（仅能手动触发） |
-| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 手动触发接口返回 409。面板任务页开关写入云端 `task_states` 表覆盖（立即生效，无需重启；跨机器生效、重启保留）。注意：上表的 `true` 只是代码默认值，三个示例任务（[example-checkin.ts](src://example-checkin.ts)/[faucet-example.ts](src://faucet-example.ts)/[mint-example.ts](src://mint-example.ts)）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
+| `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` → 手动触发接口返回 409。面板任务页开关写入本地库 `task_states` 表覆盖（立即生效，无需重启；重启保留；换设备重置回代码默认值）。注意：上表的 `true` 只是代码默认值，三个示例任务（[example-checkin.ts](src://example-checkin.ts)/[faucet-example.ts](src://faucet-example.ts)/[mint-example.ts](src://mint-example.ts)）都显式写了 `enabled: false`（示例不参与日常执行，方便调试） |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见[第 4 章](#4-钱包弹窗)） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
@@ -1066,7 +1066,7 @@ randomMicroMove(): Promise<void>
 `POST /api/tasks/:key/trigger` 的前置检查（顺序）：
 
 1. 任务未注册 → 404（业务码 40401）；
-2. 任务已停用（云端 `task_states` 覆盖或代码 `enabled: false`）→ 409（业务码 40901），提示 `任务已停用`；
+2. 任务已停用（本地库 `task_states` 覆盖或代码 `enabled: false`）→ 409（业务码 40901），提示 `任务已停用`；
 3. 带 `bitbrowserId` 时窗口不存在 → 404（业务码 40402）；
 4. 在途检查：该任务（或该窗口该任务）已有 pending/running/retry_wait 行或已排队 → 409（业务码 40902），提示 `任务执行中`。
 
@@ -1078,7 +1078,7 @@ randomMicroMove(): Promise<void>
 
 ### 面板运行时覆盖
 
-面板任务页每张卡片的开关为**运行时覆盖**：点开关调用 `PATCH /api/tasks/:key`，写入云端 `task_states` 表（`key → enabled`），**立即生效（含重新启用，无需重启服务）**；覆盖值云端持久，重启保留、多台机器部署同库时跨机器生效。无覆盖记录时回落到代码 `meta.enabled ?? true`。停用的任务无法手动触发（409）。
+面板任务页每张卡片的开关为**运行时覆盖**：点开关调用 `PATCH /api/tasks/:key`，写入本地库 `task_states` 表（`key → enabled`），**立即生效（含重新启用，无需重启服务）**；覆盖值本地持久，重启保留（运行时状态，换设备重置回代码默认值）。无覆盖记录时回落到代码 `meta.enabled ?? true`。停用的任务无法手动触发（409）。
 
 ---
 
@@ -1106,7 +1106,7 @@ randomMicroMove(): Promise<void>
 
 - **看板（首页）**：运行批次时间线——顶部 Segmented 选时间范围（今天/近 7 天/全部）＋ 实时运行窗口数与今日打码花费统计；每次触发形成一张批次卡（时间/类型徽章/任务名/完成进度条/各状态计数，点击展开窗口明细表）；单窗口散批与未分批历史收进虚线卡折叠区。明细行含窗口/任务/开始/耗时/状态/错误/截图，行级「执行/重跑」= 单窗口单任务触发。停留在看板页时每 15 秒自动刷新。
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、今日成功/失败数、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；「详情」打开右侧 **Drawer 抽屉**，展示该窗口今日任务时间线（Timeline，含状态与错误）与「重置熔断」按钮。
-- **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入云端 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
+- **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入本地库 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
 - **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/探活 URL/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
@@ -1118,8 +1118,8 @@ randomMicroMove(): Promise<void>
 | --- | --- | --- |
 | GET | `/api/batches` | 运行批次列表（可选 `?range=today/7d/all`，含每批统计、未分批行与全局数字，看板时间线数据源） |
 | GET | `/api/batches/:id` | 批次明细（该批全部窗口运行行，展开批次时懒加载） |
-| GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 云端开关状态） |
-| PATCH | `/api/tasks/:key` | 任务开关（写云端，立即生效） |
+| GET | `/api/tasks` | 任务列表（meta 全字段 ＋ 本地库开关状态） |
+| PATCH | `/api/tasks/:key` | 任务开关（写本地库，立即生效） |
 | POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
 | GET | `/api/profiles` | 窗口列表（含启用状态、熔断计数与打开状态） |
 | PATCH | `/api/profiles/:id` | 窗口开关 |
@@ -1432,7 +1432,7 @@ if (done) return   // 今日已做 → 直接成功
 | `等待跳转超时` | 等网址变化等到超时，地址栏一直没变 | 点击没生效；站点开了新页签（不算当前页跳转）；SPA 路由不匹配 | 确认点击生效；新页签场景用底层 `waitForEvent('page')`（见[配方三：点按钮后跳转等待](#配方三点按钮后跳转等待)） |
 | `元素未消失` | 等某个元素消失等到超时，它还在 | 遮罩/弹窗一直没关掉；选择器指向了常驻元素 | 核对选择器指向「会消失的那层」；关弹窗直接用 `closeModal` |
 | 弹窗没关掉（报 `元素未消失: <弹窗容器>`） | `closeModal` 全部策略跑完，弹窗还赖在页面上 | 关闭按钮选择器没命中；遮罩选择器不对；弹窗需要特殊姿势才能关 | 看失败截图确认弹窗长啥样；补对 `close`/`mask`/`gone` 选择器（见[第 3 章](#3-taskcontext-方法全解)） |
-| `任务已停用` | 手动触发被拒（接口 409） | 任务开关关着（云端 task_states 或代码 `enabled: false`） | 面板任务页打开开关（立即生效）；确实不想跑就别触发 |
+| `任务已停用` | 手动触发被拒（接口 409） | 任务开关关着（本地库 task_states 或代码 `enabled: false`） | 面板任务页打开开关（立即生效）；确实不想跑就别触发 |
 | `任务未注册` | 队列里有这个 key，但框架里找不到任务 | key 拼错；任务没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组（见[第 1 章第 4 步](#1-快速开始)） |
 | `窗口熔断` | 该窗口连续失败太多，剩下任务全跳过 | 前面任务终态失败（failed/captcha_failed）把熔断计数顶到阈值（默认 2） | 先修掉失败任务；面板「窗口」页「重置熔断」，或任一任务成功后自动清零（见[熔断触发与重置](#熔断触发与重置)） |
 | `窗口超时` | 单窗口会话到点（默认 15 分钟），剩余任务跳过 | 窗口任务太多/某任务跑太久 | 精简该窗口任务；查哪个任务耗时异常；上调 `execution.windowTimeoutMs` |

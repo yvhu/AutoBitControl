@@ -48,7 +48,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；无定时调度，仅手动触发（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入云端 task_states 覆盖代码默认值。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；无定时调度，仅手动触发（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）覆盖代码默认值。
 
 ## 数据层
 
