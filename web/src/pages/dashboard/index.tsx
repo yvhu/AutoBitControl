@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
@@ -63,10 +63,12 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
   const detail = useBatchDetail(open ? batch.id : null)
   const { done, pct } = batchProgress(batch)
   const stats = batch.stats
-  // 默认展开的批次跟随实时运行状态：最新批次开始运行后自动展开（用户可手动收起）
+  // 最新批次开始运行时（defaultOpen 由 false→true）自动展开；用户手动收起不受影响
+  const prevDefaultOpen = useRef(defaultOpen)
   useEffect(() => {
-    if (defaultOpen && !open) setOpen(true)
-  }, [defaultOpen, open])
+    if (defaultOpen && !prevDefaultOpen.current) setOpen(true)
+    prevDefaultOpen.current = defaultOpen
+  }, [defaultOpen])
   return (
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
