@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 任务列表（meta 全字段 + 云端开关状态） */
+        /** 任务列表（meta 全字段 + 本地库开关状态） */
         get: {
             parameters: {
                 query?: never;
@@ -85,7 +85,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 任务开关（写云端 task_states，立即生效无需重启） */
+        /** 任务开关（写本地库 task_states，立即生效无需重启） */
         patch: {
             parameters: {
                 query?: never;

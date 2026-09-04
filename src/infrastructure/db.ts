@@ -294,7 +294,7 @@ export class AppDb {
     return rows[0].enabled === 1
   }
 
-  /** 写入任务开关（面板运行时覆盖，云端持久，跨机器生效） */
+  /** 写入任务开关（面板运行时覆盖，本地持久，重启保留） */
   async setTaskEnabled(taskKey: string, enabled: boolean): Promise<void> {
     await this.exec('INSERT INTO task_states (task_key, enabled) VALUES (?, ?) ON CONFLICT(task_key) DO UPDATE SET enabled = excluded.enabled', [taskKey, enabled ? 1 : 0])
   }

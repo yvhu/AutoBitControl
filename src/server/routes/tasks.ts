@@ -17,7 +17,7 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  * @swagger
  * /api/tasks:
  *   get:
- *     summary: 任务列表（meta 全字段 + 云端开关状态）
+ *     summary: 任务列表（meta 全字段 + 本地库开关状态）
  *     responses:
  *       '200':
  *         description: 任务元信息列表
@@ -64,7 +64,7 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  * @swagger
  * /api/tasks/{key}:
  *   patch:
- *     summary: 任务开关（写云端 task_states，立即生效无需重启）
+ *     summary: 任务开关（写本地库 task_states，立即生效无需重启）
  *     parameters:
  *       - in: path
  *         name: key
