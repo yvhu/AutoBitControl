@@ -15,7 +15,7 @@ import type { Logger } from '../infrastructure/logger'
 import type { CoalescingEnqueuer } from '../engine/queue'
 import type { SiteTask } from '../tasks/base'
 import { openapiSpec } from './openapi'
-import { dashboardRouter } from './routes/dashboard'
+import { batchesRouter } from './routes/batches'
 import { tasksRouter } from './routes/tasks'
 import { profilesRouter } from './routes/profiles'
 import { captchaRouter } from './routes/captcha'
@@ -58,7 +58,7 @@ export function createApp(deps: ServerDeps): express.Express {
 
   const api = express.Router()
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
-  api.use(dashboardRouter({ db: deps.db, enqueuer: deps.enqueuer }))
+  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
   api.use(captchaRouter(deps))

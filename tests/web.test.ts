@@ -21,8 +21,13 @@ interface MockDeps {
     setOpenWindow: Mock
     clearOpenWindow: Mock
     countInFlightRuns: Mock
+    createBatch: Mock
+    getBatch: Mock
+    listBatchesForRange: Mock
+    listRunsForBatch: Mock
+    listUnbatchedRuns: Mock
   }
-  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
+  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number } }>
   cfg: {
     web: { port: number }
@@ -59,8 +64,13 @@ function makeDeps(): MockDeps {
       setOpenWindow: vi.fn().mockResolvedValue(undefined),
       clearOpenWindow: vi.fn().mockResolvedValue(undefined),
       countInFlightRuns: vi.fn().mockResolvedValue(0),
+      createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
+      getBatch: vi.fn().mockResolvedValue({ id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
+      listBatchesForRange: vi.fn().mockResolvedValue([]),
+      listRunsForBatch: vi.fn().mockResolvedValue([]),
+      listUnbatchedRuns: vi.fn().mockResolvedValue([]),
     },
-    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
+    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask' } }]]),
     cfg: {
       web: { port: 3000 },
@@ -89,41 +99,57 @@ function makeDeps(): MockDeps {
 }
 
 describe('server API（RESTful + envelope）', () => {
-  it('GET /api/dashboard 返回 {code:0,data:{stats,runs,profiles,...}}', async () => {
-    const res = await request(createApp(makeDeps() as never)).get('/api/dashboard?date=2026-08-28')
-    expect(res.status).toBe(200)
-    expect(res.body.code).toBe(0)
-    expect(res.body.data.stats.success).toBe(1)
-    expect(res.body.data.stats.failed).toBe(1)
-    expect(res.body.data.runs).toHaveLength(2)
-    expect(res.body.data.captcha.totalCost).toBe(230)
-  })
+  describe('batches API', () => {
+    it('GET /api/batches 返回批次列表与全局数字', async () => {
+      const deps = makeDeps()
+      deps.db.listBatchesForRange.mockResolvedValue([
+        { id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000', stats: { total: 2, success: 1, failed: 1, captchaFailed: 0, skipped: 0, running: 0, pending: 0 } },
+      ])
+      deps.db.listUnbatchedRuns.mockResolvedValue([{ id: 9, profileId: 1, taskKey: 't2', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: null, profileName: '窗口1', bitbrowserId: 'bb-1' }])
+      deps.db.countInFlightRuns.mockResolvedValue(3)
+      const res = await request(createApp(deps as never)).get('/api/batches?range=today')
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(res.body.data.batches).toHaveLength(1)
+      expect(res.body.data.batches[0].id).toBe(2)
+      expect(res.body.data.batches[0].stats.failed).toBe(1)
+      expect(res.body.data.unbatched).toHaveLength(1)
+      expect(res.body.data.running).toBeGreaterThan(0)
+      expect(res.body.data.captchaToday).toEqual({ count: 5, totalCost: 230 })
+      expect(res.body.data.taskNames).toEqual({ t1: '任务1' })
+    })
 
-  it('GET /api/dashboard runs 附加 durationSec（started/finished 差值秒；缺失为 null）', async () => {
-    const deps = makeDeps()
-    deps.db.listRunsForDate.mockResolvedValue([
-      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-08-28 10:00:00.000', finishedAt: '2026-08-28 10:01:05.000', profileName: '窗口1' },
-      { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: '2026-08-28 10:02:00.000', finishedAt: null, profileName: '窗口1' },
-      { id: 3, profileId: 1, taskKey: 't3', date: '2026-08-28', status: 'pending', attempts: 0, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
-    ])
-    const res = await request(createApp(deps as never)).get('/api/dashboard?date=2026-08-28')
-    expect(res.status).toBe(200)
-    expect(res.body.data.runs[0].durationSec).toBe(65)
-    expect(res.body.data.runs[1].durationSec).toBeNull()
-    expect(res.body.data.runs[2].durationSec).toBeNull()
-  })
+    it('GET /api/batches 默认 range=today', async () => {
+      const deps = makeDeps()
+      await request(createApp(deps as never)).get('/api/batches')
+      expect(deps.db.listBatchesForRange).toHaveBeenCalledWith(expect.any(String), expect.any(String))
+    })
 
-  it('GET /api/dashboard runs 附加 inFlight（该窗口该任务在途）', async () => {
-    const deps = makeDeps()
-    deps.db.listRunsForDate.mockResolvedValue([
-      { id: 1, profileId: 1, taskKey: 't1', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口1' },
-      { id: 2, profileId: 2, taskKey: 't1', date: '2026-08-28', status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, profileName: '窗口2' },
-    ])
-    deps.db.countInFlightRuns.mockImplementation((_k: string, _d: string, pid?: number) => Promise.resolve(pid === 1 ? 1 : 0))
-    const res = await request(createApp(deps as never)).get('/api/dashboard?date=2026-08-28')
-    expect(res.status).toBe(200)
-    expect(res.body.data.runs[0].inFlight).toBe(true)
-    expect(res.body.data.runs[1].inFlight).toBe(false)
+    it('GET /api/batches?range=7d 与 all 计算不同下界', async () => {
+      const deps = makeDeps()
+      await request(createApp(deps as never)).get('/api/batches?range=7d')
+      expect(deps.db.listBatchesForRange.mock.calls[0][0]).not.toBeNull()
+      await request(createApp(deps as never)).get('/api/batches?range=all')
+      expect(deps.db.listBatchesForRange.mock.calls[1][0]).toBeNull()
+    })
+
+    it('GET /api/batches/:id 返回批次明细并附加 durationSec/inFlight', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([
+        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-09-04 09:00:00.000', finishedAt: '2026-09-04 09:01:05.000', batchId: 2, profileName: '窗口1', bitbrowserId: 'bb-1' },
+      ])
+      deps.db.countInFlightRuns.mockResolvedValue(0)
+      const res = await request(createApp(deps as never)).get('/api/batches/2')
+      expect(res.status).toBe(200)
+      expect(res.body.data.runs[0].durationSec).toBe(65)
+      expect(res.body.data.runs[0].inFlight).toBe(false)
+      expect(res.body.data.runs[0].bitbrowserId).toBe('bb-1')
+    })
+
+    it('GET /api/batches/abc 返回 400', async () => {
+      const res = await request(createApp(makeDeps() as never)).get('/api/batches/abc')
+      expect(res.status).toBe(400)
+    })
   })
 
   it('GET /api/tasks 返回任务元信息列表', async () => {
@@ -148,12 +174,22 @@ describe('server API（RESTful + envelope）', () => {
     expect(t2.concurrency).toBe(2)
   })
 
-  it('POST /api/tasks/:key/trigger 入队', async () => {
+  it('POST /api/tasks/:key/trigger 创建批次并入队（带 batchId）', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-all')
+    expect(deps.enqueuer.enqueue).toHaveBeenCalled()
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88 })
+  })
+
+  it('单窗口触发创建 single 批次', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
     expect(res.status).toBe(200)
-    expect(res.body.code).toBe(0)
-    expect(deps.enqueuer.enqueue).toHaveBeenCalled()
+    expect(deps.db.createBatch).toHaveBeenCalledWith('single', 't1', 'trigger-single')
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ immediate: true, batchId: 88 })
   })
 
   it('触发任务存在在途 run 返回 409（业务码 40902）', async () => {
@@ -481,7 +517,8 @@ describe('OpenAPI 文档与统一错误码', () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/docs/openapi.json')
     const paths = Object.keys(res.body.paths)
     const expected = [
-      '/api/dashboard',
+      '/api/batches',
+      '/api/batches/{id}',
       '/api/tasks',
       '/api/tasks/{key}',
       '/api/tasks/{key}/trigger',

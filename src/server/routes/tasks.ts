@@ -188,7 +188,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
       if ((await deps.db.countInFlightRuns(key, todayStr(), profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(key, profile.id)) {
         throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '该窗口任务执行中，请等待结束后再触发')
       }
-      deps.enqueuer.enqueue(profile, key, { immediate: true })
+      const batch = await deps.db.createBatch('single', key, 'trigger-single')
+      deps.enqueuer.enqueue(profile, key, { immediate: true, batchId: batch.id })
       ok(res, { scope: 'single' })
       return
     }
@@ -196,7 +197,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if ((await deps.db.countInFlightRuns(key, todayStr())) > 0 || deps.enqueuer.hasTaskInFlight(key)) {
       throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '任务执行中，请等待全部窗口结束后再触发')
     }
-    for (const p of await deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key)
+    const batch = await deps.db.createBatch('bulk', key, 'trigger-all')
+    for (const p of await deps.db.listProfiles(true)) deps.enqueuer.enqueue(p, key, { batchId: batch.id })
     ok(res, { scope: 'all' })
   }))
   return router
