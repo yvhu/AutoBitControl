@@ -10,6 +10,8 @@ function makeRetryRow(over: Partial<RunRow> = {}): RunRow {
     taskKey: 't',
     date,
     slot: 0,
+    batchId: null,
+    bitbrowserId: 'bb-1',
     status: 'retry_wait',
     attempts: 1,
     error: 'boom',

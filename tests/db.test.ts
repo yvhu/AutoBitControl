@@ -216,3 +216,94 @@ describe('countInFlightRuns', () => {
     db.close()
   })
 })
+
+describe('批次（batches）', () => {
+  it('createBatch 落库并可读回', async () => {
+    const b = await db.createBatch('bulk', 't1', 'trigger-all')
+    expect(b.id).toBeGreaterThan(0)
+    expect(b.kind).toBe('bulk')
+    expect(b.taskKey).toBe('t1')
+    expect(b.createdAt).toMatch(/^\d{4}-\d{2}-\d{2} /)
+  })
+
+  it('upsertRun 带 batchId 写入新行；不带 batchId 更新时沿用旧值', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const b1 = await db.createBatch('bulk', 't1', 'trigger-all')
+    const b2 = await db.createBatch('single', 't1', 'trigger-single')
+    await db.upsertRun(p.id, 't1', '2026-09-04', 0, 'pending', { batchId: b1.id })
+    // 不带 batchId 更新（续跑）→ 保留 b1
+    const r = await db.upsertRun(p.id, 't1', '2026-09-04', 0, 'success', { attempts: 1 })
+    expect(r.batchId).toBe(b1.id)
+    // 新 slot 带 batchId b2 → 写入 b2
+    const r2 = await db.upsertRun(p.id, 't1', '2026-09-04', 1, 'pending', { batchId: b2.id })
+    expect(r2.batchId).toBe(b2.id)
+    // 不带 batchId 的新行 → null
+    const r3 = await db.upsertRun(p.id, 't2', '2026-09-04', 0, 'running')
+    expect(r3.batchId).toBeNull()
+  })
+
+  it('listBatchesForRange 按时间倒序返回批次并聚合状态统计', async () => {
+    const p1 = await db.upsertProfile('bb-1', 'A')
+    const p2 = await db.upsertProfile('bb-2', 'B')
+    const b1 = await db.createBatch('bulk', 't1', 'trigger-all', '2026-09-04 08:00:00.000')
+    const b2 = await db.createBatch('bulk', 't2', 'trigger-all', '2026-09-04 09:00:00.000')
+    const b3 = await db.createBatch('bulk', 't3', 'trigger-all', '2026-09-05 09:00:00.000')
+    await db.upsertRun(p1.id, 't1', '2026-09-04', 0, 'success', { batchId: b1.id })
+    await db.upsertRun(p2.id, 't1', '2026-09-04', 0, 'failed', { batchId: b1.id })
+    await db.upsertRun(p1.id, 't2', '2026-09-04', 0, 'running', { batchId: b2.id })
+    await db.upsertRun(p1.id, 't3', '2026-09-05', 0, 'success', { batchId: b3.id })
+    const list = await db.listBatchesForRange('2026-09-04', '2026-09-04')
+    expect(list.map((b) => b.id)).toEqual([b2.id, b1.id])
+    expect(list[1].stats.total).toBe(2)
+    expect(list[1].stats.success).toBe(1)
+    expect(list[1].stats.failed).toBe(1)
+    expect(list[0].stats.running).toBe(1)
+  })
+
+  it('listBatchesForRange from=null 查全部区间', async () => {
+    const b1 = await db.createBatch('bulk', 't1', 'trigger-all', '2026-08-01 08:00:00.000')
+    await db.createBatch('single', 't2', 'trigger-single', '2026-09-04 09:00:00.000')
+    const list = await db.listBatchesForRange(null, '2026-09-04')
+    expect(list).toHaveLength(2)
+    expect(list[0].id).toBeGreaterThan(b1.id)
+  })
+
+  it('listRunsForBatch 返回该批次全部 run 行（含 profileName/bitbrowserId）', async () => {
+    const p1 = await db.upsertProfile('bb-1', 'A')
+    const p2 = await db.upsertProfile('bb-2', 'B')
+    const b = await db.createBatch('bulk', 't1', 'trigger-all')
+    await db.upsertRun(p1.id, 't1', '2026-09-04', 0, 'success', { batchId: b.id })
+    await db.upsertRun(p2.id, 't1', '2026-09-04', 0, 'failed', { batchId: b.id })
+    const rows = await db.listRunsForBatch(b.id)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].profileName).toBe('A')
+    expect(rows[0].bitbrowserId).toBe('bb-1')
+    expect(rows[0].batchId).toBe(b.id)
+  })
+
+  it('listUnbatchedRuns 返回区间内 batch_id IS NULL 的行', async () => {
+    const p1 = await db.upsertProfile('bb-1', 'A')
+    const b = await db.createBatch('bulk', 't1', 'trigger-all')
+    await db.upsertRun(p1.id, 't1', '2026-09-04', 0, 'success', { batchId: b.id })
+    await db.upsertRun(p1.id, 't2', '2026-09-04', 0, 'success')
+    await db.upsertRun(p1.id, 't2', '2026-09-01', 0, 'success')
+    const rows = await db.listUnbatchedRuns('2026-09-04', '2026-09-04')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].taskKey).toBe('t2')
+  })
+
+  it('老库 runs 无 batch_id 列时 migrate 自动补列', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-batch-'))
+    const file = join(dir, 'app.db')
+    const raw = createClient({ url: `file:${file}` })
+    await raw.execute(`CREATE TABLE profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, bitbrowser_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, circuit_breaker_count INTEGER NOT NULL DEFAULT 0)`)
+    await raw.execute(`CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL, task_key TEXT NOT NULL, date TEXT NOT NULL, slot INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, error TEXT, screenshot TEXT, started_at TEXT, finished_at TEXT, UNIQUE(profile_id, task_key, date, slot))`)
+    raw.close()
+    const legacy = await AppDb.open({ url: `file:${file}`, authToken: '' })
+    const info = await (legacy as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(runs)`)
+    expect(info.rows.map((r) => r.name)).toContain('batch_id')
+    const b = await legacy.createBatch('bulk', 't', 'trigger-all')
+    expect(b.id).toBeGreaterThan(0)
+    legacy.close()
+  })
+})

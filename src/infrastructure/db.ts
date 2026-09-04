@@ -14,6 +14,26 @@ import { createClient, type Client, type Row } from '@libsql/client'
  */
 export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'captcha_failed' | 'retry_wait' | 'skipped'
 
+/** batches 表行：一次触发动作 */
+export interface BatchRow {
+  id: number
+  kind: 'bulk' | 'single'
+  taskKey: string
+  source: string
+  createdAt: string
+}
+
+/** 批次状态统计（列表接口聚合用；total 含全部行数） */
+export interface BatchStats {
+  total: number
+  success: number
+  failed: number
+  captchaFailed: number
+  skipped: number
+  running: number
+  pending: number
+}
+
 /** profiles 表行：一个比特浏览器窗口 */
 export interface ProfileRow {
   id: number
@@ -43,6 +63,10 @@ export interface RunRow {
   date: string
   /** 当日第几轮（0 起）：每日一次的任务恒为 0；间隔任务一天多轮各占一行 */
   slot: number
+  /** 所属批次 id（NULL = 老数据未分批） */
+  batchId: number | null
+  /** JOIN profiles 得到的窗口比特 id（行级执行用） */
+  bitbrowserId: string
   status: RunStatus
   attempts: number
   error: string | null
@@ -106,6 +130,14 @@ const SCHEMA = [
     UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
+  `CREATE TABLE IF NOT EXISTS batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    task_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at)`,
   `CREATE TABLE IF NOT EXISTS captcha_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER,
@@ -129,7 +161,7 @@ const SCHEMA = [
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
-const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, p.name AS profileName FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
 
 /** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
 type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
@@ -200,6 +232,12 @@ export class AppDb {
         await tx.rollback().catch(() => {})
         throw e
       }
+    }
+    // 老库补列：runs.batch_id（批次归属，可空；不参与 UNIQUE，直接 ADD COLUMN 无需重建表）
+    const runsInfo2 = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo2.rows.some((r) => String(r.name) === 'batch_id')) {
+      await this.client.execute(`ALTER TABLE runs ADD COLUMN batch_id INTEGER`)
+      await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     }
   }
 
@@ -274,18 +312,88 @@ export class AppDb {
    */
   async upsertRun(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
     await this.exec(
-      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date, slot) DO UPDATE SET
          status = excluded.status,
          attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
          error = excluded.error,
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
-         finished_at = COALESCE(excluded.finished_at, runs.finished_at)`,
-      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
+         finished_at = COALESCE(excluded.finished_at, runs.finished_at),
+         batch_id = COALESCE(excluded.batch_id, runs.batch_id)`,
+      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null],
     )
     const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return rows[0] as unknown as RunRow
+  }
+
+  /** 创建批次（每次触发动作一行）；createdAt 缺省当前本地墙钟时间 */
+  async createBatch(kind: 'bulk' | 'single', taskKey: string, source: string, createdAt = localWallNow()): Promise<BatchRow> {
+    const rs = await this.client.execute({
+      sql: 'INSERT INTO batches (kind, task_key, source, created_at) VALUES (?, ?, ?, ?)',
+      args: [kind, taskKey, source, createdAt],
+    })
+    const rows = await this.exec('SELECT id, kind, task_key AS taskKey, source, created_at AS createdAt FROM batches WHERE id = ?', [Number(rs.lastInsertRowid)])
+    return rows[0] as unknown as BatchRow
+  }
+
+  /** 按 id 查批次行（不存在返回 null） */
+  async getBatch(id: number): Promise<BatchRow | null> {
+    const rows = await this.exec('SELECT id, kind, task_key AS taskKey, source, created_at AS createdAt FROM batches WHERE id = ?', [id])
+    return (rows[0] as unknown as BatchRow | undefined) ?? null
+  }
+
+  /** 时间段内的批次列表（含每批状态聚合）；createdAt 倒序；from=null 表示不设下界 */
+  async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats }>> {
+    const rows = await this.exec(
+      `SELECT b.id, b.kind, b.task_key AS taskKey, b.source, b.created_at AS createdAt, r.status, COUNT(r.id) AS c
+       FROM batches b LEFT JOIN runs r ON r.batch_id = b.id
+       WHERE date(b.created_at) >= COALESCE(date(?), '0000-01-01') AND date(b.created_at) <= date(?)
+       GROUP BY b.id, r.status
+       ORDER BY b.created_at DESC, b.id DESC`,
+      [from, to],
+    )
+    const list: Array<BatchRow & { stats: BatchStats }> = []
+    const byId = new Map<number, BatchRow & { stats: BatchStats }>()
+    for (const r of rows) {
+      const id = Number(r.id)
+      let item = byId.get(id)
+      if (!item) {
+        item = {
+          id,
+          kind: String(r.kind) as 'bulk' | 'single',
+          taskKey: String(r.taskKey),
+          source: String(r.source),
+          createdAt: String(r.createdAt),
+          stats: { total: 0, success: 0, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0 },
+        }
+        byId.set(id, item)
+        list.push(item)
+      }
+      const n = Number(r.c)
+      item.stats.total += n
+      const s = String(r.status) as RunStatus
+      if (s === 'success') item.stats.success += n
+      else if (s === 'failed') item.stats.failed += n
+      else if (s === 'captcha_failed') item.stats.captchaFailed += n
+      else if (s === 'skipped') item.stats.skipped += n
+      else if (s === 'running' || s === 'retry_wait') item.stats.running += n
+      else if (s === 'pending') item.stats.pending += n
+    }
+    return list
+  }
+
+  /** 某批次的全部 run 行（窗口明细；按窗口与任务排序） */
+  async listRunsForBatch(batchId: number): Promise<RunRow[]> {
+    return (await this.exec(`${SELECT_RUN} WHERE r.batch_id = ? ORDER BY p.id, r.task_key, r.slot`, [batchId])) as unknown as RunRow[]
+  }
+
+  /** 区间内未分批的 run 行（老数据 batch_id IS NULL）；from=null 不设下界 */
+  async listUnbatchedRuns(from: string | null, to: string): Promise<RunRow[]> {
+    return (await this.exec(
+      `${SELECT_RUN} WHERE r.batch_id IS NULL AND date(r.date) >= COALESCE(?, '0000-01-01') AND date(r.date) <= date(?) ORDER BY p.id, r.task_key, r.slot`,
+      [from, to],
+    )) as unknown as RunRow[]
   }
 
   /** 查询单条运行记录（按轮次；不存在返回 null） */
