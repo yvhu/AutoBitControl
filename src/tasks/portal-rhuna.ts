@@ -48,7 +48,7 @@ export class PortalRhunaTask extends SiteTask {
     name: 'Rhuna 签到',
     url: 'https://portal.rhuna.io/',
     sourceUrl: ['https://cryptorank.io/zh/drophunting/rhuna-activity958'],
-    note: '真机核实：登录用 Petra（点 Connect Wallet 直接唤起扩展弹窗 prompt.html，无站内钱包选择）；弹窗流程为输密码+Unlock → Sign In 签名（必须在新鲜请求上点，过期请求签名后站点不登录）；Petra 在本环境不注入页面 provider（window.petra 恒不存在），就绪判定仅靠 CDP 扩展页探测；部分窗口弹窗出现慢或偶发不出现，等 60s+8s 补点，未出现则刷新重试；getByRole 匹配不到 Sign In 按钮须用 has-text；Daily Check-in 卡片桌面/移动双 DOM，卡片整体可点；已领取弹窗直接显示 Quest completed successfully!（同样算成功）；领取时站点弹出 interaction-only 人机验证方框（右下角浮层，点方框即完成验证，ISP IP 一点即过）——任务自动拟人点击方框；站点间歇性报 Network Error / Turnstile token request timed out / Turnstile script failed to load（站点代码在 claim 时轮询 window.turnstile 10 秒未定义即报）/ chrome-error 错误页——token 存 localStorage，刷新即恢复，任务全程"刷新恢复导向"（错误文案立即刷 + 关键等待周期刷 + 弹窗打开失败无条件刷）；token 超时时调用 yescaptcha 打码回填兜底；登录态不跨浏览器重启（sessionStorage），每次新会话都走登录；个别窗口代理不稳 IP 探活会失败，属窗口环境问题',
+    note: '真机核实：登录用 Petra（点 Connect Wallet 直接唤起扩展弹窗 prompt.html，无站内钱包选择）；弹窗流程为输密码+Unlock → Sign In 签名（必须在新鲜请求上点，过期请求签名后站点不登录）；Petra 在本环境不注入页面 provider（window.petra 恒不存在），就绪判定仅靠 CDP 扩展页探测；部分窗口弹窗出现慢或偶发不出现，等 60s+8s 补点，未出现则刷新重试；getByRole 匹配不到 Sign In 按钮须用 has-text；Daily Check-in 卡片桌面/移动双 DOM，卡片整体可点；已领取弹窗直接显示 Quest completed successfully!（同样算成功）；领取时站点弹出 interaction-only 人机验证方框（右下角浮层，点方框即完成验证，ISP IP 一点即过）——任务自动拟人点击方框；站点间歇性报 Network Error / Turnstile token request timed out / Turnstile script failed to load（站点代码在 claim 时轮询 window.turnstile 10 秒未定义即报）/ chrome-error 错误页——token 存 localStorage，刷新即恢复，任务全程"刷新恢复导向"（错误文案立即刷 + 关键等待周期刷 + 弹窗打开失败无条件刷）；token 超时时调用 yescaptcha 打码回填兜底；登录态不跨浏览器重启（sessionStorage），每次新会话都走登录；个别窗口代理不稳，属窗口环境问题',
     category: 'checkin',
     lastUpdated: '2026-09-02',
     enabled: true,
