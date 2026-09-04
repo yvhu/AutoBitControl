@@ -248,7 +248,7 @@ export default function ProfilesPage() {
       >
         {detail && (
           <Space direction="vertical" size={16} style={{ display: 'flex' }}>
-            <Typography.Text type="secondary">今日运行请查看板「运行批次」页</Typography.Text>
+            <Typography.Text type="secondary">今日运行请查看『运行批次』页</Typography.Text>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 钱包解锁密码：由环境变量 WALLET_PASSWORDS 配置（重启生效）

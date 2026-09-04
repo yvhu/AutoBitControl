@@ -110,7 +110,7 @@ function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Rec
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
         { title: '操作', width: 80, render: (_, r) => (
-          <Button type="link" size="small" disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+          <Button type="link" size="small" disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
             {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
           </Button>
         ) },

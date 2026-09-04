@@ -63,7 +63,11 @@ export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; t
     const today = todayStr()
     const from = range === 'all' ? null : range === '7d' ? daysAgoStr(6) : today
     const batches = await deps.db.listBatchesForRange(from, today)
-    const unbatched = await deps.db.listUnbatchedRuns(from, today)
+    const unbatched = await Promise.all((await deps.db.listUnbatchedRuns(from, today)).map(async (r) => ({
+      ...r,
+      durationSec: runDurationSec(r.startedAt, r.finishedAt),
+      inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0 || deps.enqueuer.hasTaskInFlight(r.taskKey, r.profileId),
+    })))
     // 实时运行：DB 在途行数（跨任务，并发查询后求和）+ 队列错峰等待窗口数（尚未开窗落库）
     let running = (await Promise.all([...deps.tasks.keys()].map((key) => deps.db.countInFlightRuns(key, today)))).reduce((a, b) => a + b, 0)
     running += deps.enqueuer.pendingCount()
