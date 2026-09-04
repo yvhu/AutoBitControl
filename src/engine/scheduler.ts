@@ -82,7 +82,12 @@ export class Scheduler {
       if (!cfg) continue
       if (!isDueMinute(s.mode as ScheduleMode, cfg, wc)) continue
       this.lastFired.set(s.id, minuteKey)
-      await this.fire(s)
+      // set 先于 fire：fire 失败时当日该分钟不再重试（错过即跳过），且不阻塞后续计划
+      try {
+        await this.fire(s)
+      } catch (e) {
+        this.deps.logger.warn({ err: (e as Error).message, schedule: s.name }, '计划触发异常，跳过该计划（不影响其它计划）')
+      }
     }
   }
 
@@ -99,6 +104,10 @@ export class Scheduler {
       keys = JSON.parse(schedule.taskKeys)
     } catch {
       this.deps.logger.warn({ id: schedule.id }, '计划任务列表 JSON 非法，跳过整个计划')
+      return result
+    }
+    if (!Array.isArray(keys) || !keys.every((k) => typeof k === 'string')) {
+      this.deps.logger.warn({ id: schedule.id, name: schedule.name }, '计划任务列表形状非法（须为字符串数组），跳过整个计划')
       return result
     }
     for (const key of keys as string[]) {

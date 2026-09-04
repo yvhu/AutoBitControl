@@ -253,4 +253,23 @@ describe('Scheduler', () => {
     s.stop()
     expect(clearSpy).toHaveBeenCalledWith(123)
   })
+
+  it('某计划 fire 抛错不中断其它计划', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule({ id: 1 }), makeSchedule({ id: 2 })])
+    deps.db.createBatch.mockRejectedValueOnce(new Error('db down'))
+    const s = new Scheduler(deps)
+    await s.tick()
+    expect(deps.db.createBatch).toHaveBeenCalledTimes(2)
+    expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'task-a', '计划#2 每日签到')
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
+
+  it('taskKeys 非字符串数组形状 → 跳过整个计划', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule({ taskKeys: '"not-array"' })])
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
 })
