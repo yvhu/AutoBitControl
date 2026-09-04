@@ -213,7 +213,7 @@ export function profilesRouter(deps: {
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)
     await find(id)
-    // 手动重置熔断：面板详情抽屉入口（连续失败恢复后放行）
+    // 手动重置熔断：面板窗口操作列入口（连续失败恢复后放行）
     await deps.db.resetCircuitBreaker(id)
     ok(res)
   }))

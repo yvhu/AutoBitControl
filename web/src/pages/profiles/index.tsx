@@ -4,7 +4,6 @@ import {
   Avatar,
   Button,
   Card,
-  Drawer,
   Empty,
   Input,
   Progress,
@@ -15,7 +14,7 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { CopyOutlined, ReloadOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
+import { CopyOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { ProfileRow } from '../../types'
 import {
@@ -34,7 +33,6 @@ export default function ProfilesPage() {
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [search, setSearch] = useState('')
-  const [detailId, setDetailId] = useState<number | null>(null)
 
   const profiles = useProfiles()
   const thresholdQ = useBreakerThreshold()
@@ -179,7 +177,7 @@ export default function ProfilesPage() {
     {
       title: '操作',
       key: 'action',
-      width: 300,
+      width: 240,
       render: (_, p) => {
         const toggling = (open.isPending && open.variables === p.id) || (close.isPending && close.variables === p.id)
         return (
@@ -196,16 +194,21 @@ export default function ProfilesPage() {
             <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
               复制ID
             </Button>
-            <Button type="link" size="small" onClick={() => setDetailId(p.id)}>
-              详情
-            </Button>
+            {p.circuitBreakerCount > 0 && (
+              <Button
+                type="link"
+                size="small"
+                loading={reset.isPending && reset.variables === p.id}
+                onClick={() => reset.mutate(p.id)}
+              >
+                重置熔断
+              </Button>
+            )}
           </Space>
         )
       },
     },
   ]
-
-  const detail = detailId != null ? (profiles.data ?? []).find((p) => p.id === detailId) : undefined
 
   return (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
@@ -239,32 +242,6 @@ export default function ProfilesPage() {
           scroll={{ x: 1200 }}
         />
       </Card>
-
-      <Drawer
-        title={detail ? `详情 · ${detail.name}` : '详情'}
-        width={480}
-        open={detailId != null}
-        onClose={() => setDetailId(null)}
-      >
-        {detail && (
-          <Space direction="vertical" size={16} style={{ display: 'flex' }}>
-            <Typography.Text type="secondary">今日运行请查看『运行批次』页</Typography.Text>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                钱包解锁密码：由环境变量 WALLET_PASSWORDS 配置（重启生效）
-              </Typography.Text>
-              <Button
-                size="small"
-                icon={<ReloadOutlined />}
-                loading={reset.isPending && reset.variables === detail.id}
-                onClick={() => reset.mutate(detail.id)}
-              >
-                重置熔断
-              </Button>
-            </div>
-          </Space>
-        )}
-      </Drawer>
     </Space>
   )
 }
