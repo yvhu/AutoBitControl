@@ -102,7 +102,6 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                       mode: { type: string, enum: [interval, daily, weekly, monthly] }
  *                       config:
  *                         type: object
- *                         nullable: true
  *                         properties:
  *                           everyHours: { type: integer, nullable: true }
  *                           times: { type: array, nullable: true, items: { type: string } }
@@ -135,7 +134,6 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *               mode: { type: string, enum: [interval, daily, weekly, monthly] }
  *               config:
  *                 type: object
- *                 nullable: true
  *                 properties:
  *                   everyHours: { type: integer, nullable: true }
  *                   times: { type: array, nullable: true, items: { type: string } }
@@ -162,7 +160,6 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                     mode: { type: string, enum: [interval, daily, weekly, monthly] }
  *                     config:
  *                       type: object
- *                       nullable: true
  *                       properties:
  *                         everyHours: { type: integer, nullable: true }
  *                         times: { type: array, nullable: true, items: { type: string } }
@@ -227,7 +224,6 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                     mode: { type: string, enum: [interval, daily, weekly, monthly] }
  *                     config:
  *                       type: object
- *                       nullable: true
  *                       properties:
  *                         everyHours: { type: integer, nullable: true }
  *                         times: { type: array, nullable: true, items: { type: string } }
@@ -266,7 +262,7 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *               properties:
  *                 code: { type: integer, example: 0 }
  *                 message: { type: string, example: ok }
- *                 data: { type: object, nullable: true }
+ *                 data: { nullable: true }
  *       '404':
  *         description: 计划不存在（业务码 40406）
  */
