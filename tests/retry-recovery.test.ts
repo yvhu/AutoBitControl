@@ -86,4 +86,26 @@ describe('recoverRetryTasks', () => {
     await vi.runAllTimersAsync()
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
   })
+
+  it('retry_wait 恢复重新入队沿用原批次 batchId', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-02 10:00:00'))
+    const row = makeRetryRow({ batchId: 7, finishedAt: '2026-09-02 08:00:00.000' })
+    const deps = makeDeps([row], { status: 'retry_wait', slot: 0 } as Partial<RunRow>)
+    const count = await recoverRetryTasks(deps as never)
+    expect(count).toBe(1)
+    await vi.runAllTimersAsync()
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't', { batchId: 7 })
+  })
+
+  it('崩溃残留重新入队沿用原批次 batchId', async () => {
+    vi.useFakeTimers()
+    const row = makeRetryRow({ status: 'running', finishedAt: null, batchId: 9 })
+    const deps = makeDeps([row], null)
+    deps.tasks.set('t', { meta: { retry: { backoffSec: 600 } } })
+    const count = await recoverRetryTasks(deps as never)
+    expect(count).toBe(1)
+    await vi.runAllTimersAsync()
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't', { batchId: 9 })
+  })
 })

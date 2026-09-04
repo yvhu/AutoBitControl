@@ -47,7 +47,8 @@ export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number
       void (async () => {
         try {
           const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
-          if (p) enqueuer.enqueue(p, r.taskKey)
+          // 沿用原批次（重试不产生新批次）
+          if (p) enqueuer.enqueue(p, r.taskKey, { batchId: r.batchId ?? undefined })
         } catch (e) {
           logger.warn({ task: r.taskKey, err: (e as Error).message }, '重试恢复入队失败，放弃本次重试')
         }
@@ -75,7 +76,8 @@ export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number
       void (async () => {
         try {
           const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
-          if (p) enqueuer.enqueue(p, r.taskKey)
+          // 沿用原批次（崩溃残留恢复不产生新批次）
+          if (p) enqueuer.enqueue(p, r.taskKey, { batchId: r.batchId ?? undefined })
         } catch (e) {
           logger.warn({ task: r.taskKey, err: (e as Error).message }, '崩溃残留恢复入队失败，放弃')
         }

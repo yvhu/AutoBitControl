@@ -165,13 +165,14 @@ export async function startApp(): Promise<void> {
       return row ? { ...row.values } : null
     },
     // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗；
-    // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试
-    scheduleRetry: (profile, taskKey, delayMs) => {
+    // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试；
+    // batchId 沿用原批次（重试不产生新批次）
+    scheduleRetry: (profile, taskKey, delayMs, batchId) => {
       setTimeout(() => {
         void (async () => {
           try {
             const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
-            if (p) enqueuer.enqueue(p, taskKey)
+            if (p) enqueuer.enqueue(p, taskKey, { batchId })
           } catch (e) {
             logger.warn({ err: (e as Error).message }, '重试到期查询窗口失败，放弃本次重试')
           }

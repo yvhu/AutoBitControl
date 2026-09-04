@@ -18,6 +18,7 @@ import { Humanizer } from '../automation/humanize'
 import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
+import type { SessionTask } from './queue'
 import type { WalletRegistry } from '../automation/wallet/types'
 import { WalletSession } from '../automation/wallet/session'
 
@@ -61,9 +62,9 @@ export interface WindowRunnerDeps {
   walletPasswords: Record<string, string>
   /**
    * 重试退避调度（不占窗口）：retry_wait 后由装配层 setTimeout 到期重新入队，
-   * 当前窗口立即继续下一个任务/正常关窗
+   * 当前窗口立即继续下一个任务/正常关窗；batchId 沿用原批次（重试不产生新批次）
    */
-  scheduleRetry: (profile: ProfileRow, taskKey: string, delayMs: number) => void
+  scheduleRetry: (profile: ProfileRow, taskKey: string, delayMs: number, batchId?: number) => void
   /**
    * 数据源行解析（app 层装配注入）：按窗口取数据源行（列名 -> 值）；
    * 返回 null 表示无映射（任务侧 faker 兜底）；未注入时任务 accountRow 恒为 null
@@ -100,10 +101,20 @@ export class WindowRunner {
    * @returns 各任务本轮最终运行行（key → 行；DB 写失败降级时为 null）——
    * 内存传递供调用方（run-task 脚本等）直接取结果，避免执行后再读库的竞态
    */
-  async runWindowTasks(profile: ProfileRow, taskKeys: string[]): Promise<Map<string, RunRow | null>> {
+  async runWindowTasks(profile: ProfileRow, tasks: SessionTask[]): Promise<Map<string, RunRow | null>> {
     const { cfg, db, bitbrowser, logger } = this.deps
     const date = todayStr()
     const results = new Map<string, RunRow | null>()
+    // 预写 pending：新轮次任务落「待执行」行（批次看板在错峰/开窗期间即可见）；
+    // 续跑行（retry_wait 等非终态）不动——重试沿用原行与批次；
+    // batch_id 只在此写入，后续 upsert 一律不传（ON CONFLICT COALESCE 保留）
+    for (const t of tasks) {
+      const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, t.taskKey, date), null)
+      const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
+      if (existing && !terminal) continue
+      const slot = await this.nextSlot(profile, t.taskKey, date)
+      await this.safeDb(() => this.deps.db.upsertRun(profile.id, t.taskKey, date, slot, 'pending', { batchId: t.batchId ?? null }), null)
+    }
     let open: OpenResult | null = null
     // 复用已开窗口时跳过开窗/关窗（面板手动打开的窗口、task:run 复用场景）；
     // 复用地址失效会自然落入 CDP 连接失败 → failed 终态（可接受，见 app.ts 装配注释）
@@ -118,9 +129,9 @@ export class WindowRunner {
         open = await this.openWithRetry(profile.bitbrowserId)
       }
     } catch (e) {
-      for (const key of taskKeys) {
-        const row = await this.settleWindowSkip(profile, key, date, 'skipped', `开窗失败: ${(e as Error).message}`)
-        results.set(key, row)
+      for (const t of tasks) {
+        const row = await this.settleWindowSkip(profile, t.taskKey, date, 'skipped', `开窗失败: ${(e as Error).message}`)
+        results.set(t.taskKey, row)
       }
       logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
       return results
@@ -132,9 +143,9 @@ export class WindowRunner {
       try {
         connected = await this.deps.driver.connect(`http://${open.http}`)
       } catch (e) {
-        for (const key of taskKeys) {
-          const row = await this.settleWindowSkip(profile, key, date, 'failed', `CDP 连接失败: ${(e as Error).message}`)
-          results.set(key, row)
+        for (const t of tasks) {
+          const row = await this.settleWindowSkip(profile, t.taskKey, date, 'failed', `CDP 连接失败: ${(e as Error).message}`)
+          results.set(t.taskKey, row)
         }
         logger.error({ profile: profile.name }, `CDP 连接失败: ${(e as Error).message}`)
         return results
@@ -146,12 +157,12 @@ export class WindowRunner {
       // 第三段（循环内）：逐任务执行，失败只影响当前任务
       // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证并发槽位不被长时间占用）
       const deadline = Date.now() + cfg.execution.windowTimeoutMs
-      for (let i = 0; i < taskKeys.length; i++) {
-        const key = taskKeys[i]
+      for (let i = 0; i < tasks.length; i++) {
+        const key = tasks[i].taskKey
         if (Date.now() >= deadline) {
-          for (const rest of taskKeys.slice(i)) {
-            const row = await this.settleWindowSkip(profile, rest, date, 'skipped', '窗口超时')
-            results.set(rest, row)
+          for (const rest of tasks.slice(i)) {
+            const row = await this.settleWindowSkip(profile, rest.taskKey, date, 'skipped', '窗口超时')
+            results.set(rest.taskKey, row)
           }
           logger.warn({ profile: profile.name }, '窗口超时，剩余任务跳过')
           break
@@ -175,11 +186,11 @@ export class WindowRunner {
   }
 
   /** 手动触发入口（面板单窗口执行）：按 bitbrowserId 找窗口记录再跑一次会话；返回该任务本轮最终运行行 */
-  async runManual(bitbrowserId: string, taskKey: string): Promise<RunRow | null> {
+  async runManual(bitbrowserId: string, taskKey: string, batchId?: number): Promise<RunRow | null> {
     const profiles = await this.safeDb(() => this.deps.db.listProfiles(false), [] as ProfileRow[])
     const profile = profiles.find(p => p.bitbrowserId === bitbrowserId)
     if (!profile) throw new Error(`窗口不存在: ${bitbrowserId}`)
-    const results = await this.runWindowTasks(profile, [taskKey])
+    const results = await this.runWindowTasks(profile, [{ taskKey, ...(batchId === undefined ? {} : { batchId }) }])
     return results.get(taskKey) ?? null
   }
 
@@ -209,13 +220,19 @@ export class WindowRunner {
   }
 
   /**
-   * 窗口级跳过/失败的落库：若该任务存在待续跑的 retry_wait 行（上次失败后重试尚未执行），
-   * 直接结算该行（沿用原 slot 落终态），否则按新轮次落库——
+   * 窗口级跳过/失败的落库：若该任务存在非终态行（retry_wait 待续跑 / 预写 pending），
+   * 直接结算该行（沿用原 slot 与 batch_id），否则按新轮次落库——
    * 不结算会留下孤儿 retry_wait 行，每次进程重启都会被重试恢复扫描重新入队重复执行
    */
   private async settleWindowSkip(profile: ProfileRow, taskKey: string, date: string, status: 'skipped' | 'failed', error: string): Promise<RunRow | null> {
     const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, taskKey, date), null)
-    const slot = existing?.status === 'retry_wait' ? existing.slot : await this.nextSlot(profile, taskKey, date)
+    const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
+    // 非终态行（retry_wait 待续跑 / 预写 pending）直接结算该行——沿用 slot 与 batch_id
+    if (existing && !terminal) {
+      return this.safeDb(() => this.deps.db.upsertRun(profile.id, taskKey, date, existing.slot, status, { error, finishedAt: localWallNow() }), null)
+    }
+    // 终态或无行的兜底新轮次不传 batchId，归入未分批（正常流程预写已带批次）
+    const slot = await this.nextSlot(profile, taskKey, date)
     return this.safeDb(() => this.deps.db.upsertRun(profile.id, taskKey, date, slot, status, { error, finishedAt: localWallNow() }), null)
   }
 
@@ -308,8 +325,9 @@ export class WindowRunner {
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')
         if (status === 'retry_wait') {
           // 重试不占窗：退避期不 sleep，立即返回让窗口继续处理下一个任务/正常关窗；
-          // 到期由 scheduleRetry 重新入队，新一轮窗口会话从续跑 attempts 开始
-          this.deps.scheduleRetry(profile, taskKey, backoffSec * 1000)
+          // 到期由 scheduleRetry 重新入队，新一轮窗口会话从续跑 attempts 开始；
+          // batchId 沿用原行批次（重试不产生新批次）
+          this.deps.scheduleRetry(profile, taskKey, backoffSec * 1000, row?.batchId ?? undefined)
           return row
         }
         // 终态失败：熔断计数 +1（达阈值后本窗口当日不再跑）
