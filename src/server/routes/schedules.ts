@@ -39,6 +39,8 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
   if (body.name !== undefined) {
     if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '计划名称不能为空')
     out.name = body.name.trim()
+  } else if (!existing) {
+    throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'name 必填')
   }
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'enabled 必须为布尔值')

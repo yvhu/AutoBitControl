@@ -216,6 +216,7 @@ describe('server API（RESTful + envelope）', () => {
       const deps = makeDeps()
       const cases = [
         { name: '', mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['t1'] },
+        { mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['t1'] },
         { name: 'x', mode: 'daily', config: { times: ['25:00'] }, taskKeys: ['t1'] },
         { name: 'x', mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['ghost'] },
         { name: 'x', mode: 'bogus', config: { times: ['09:00'] }, taskKeys: ['t1'] },
