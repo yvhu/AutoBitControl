@@ -12,6 +12,7 @@ import { createBitBrowserClient, type BitBrowserClient } from './integrations/bi
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
 import { recoverRetryTasks } from './engine/retry-recovery'
+import { Scheduler } from './engine/scheduler'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
 import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
@@ -180,9 +181,15 @@ export async function startApp(): Promise<void> {
   // 任务级并发：enqueuer 内部按 meta.concurrency 控制每任务并行窗口数（缺省 DEFAULT_TASK_CONCURRENCY）
   enqueuer = new CoalescingEnqueuer(runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec)
 
+  // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
+  // （建 schedule 批次 + 全部启用窗口入队，不带 immediate 沿用全局错峰）
+  const scheduler = new Scheduler({ db, enqueuer, tasks, logger, timezone: cfg.scheduler.timezone })
+  scheduler.start()
+
   const app = createApp({
     db,
     enqueuer,
+    scheduler: { runNow: (s) => scheduler.runNow(s) },
     tasks,
     cfg,
     logger,
@@ -239,6 +246,7 @@ export async function startApp(): Promise<void> {
     process.exit(0)
   }
   const shutdown = () => {
+    scheduler.stop()
     logger.info('正在关闭...')
     server.close(() => finish())
     // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）

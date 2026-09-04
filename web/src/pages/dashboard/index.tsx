@@ -24,6 +24,7 @@ const STATUS_TAG: Array<{ key: keyof BatchItem['stats']; label: string; color: s
 const KIND_TAG: Record<BatchItem['kind'], { label: string; color: string }> = {
   bulk: { label: '批量 · 全部窗口', color: 'blue' },
   single: { label: '单窗口', color: 'default' },
+  schedule: { label: '定时', color: 'purple' },
 }
 
 function runTime(v: string | null): string {

@@ -24,6 +24,8 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
 - `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
+定时任务时区在 `scheduler.timezone`（默认 Asia/Shanghai）。
+
 **写代码前先读 `config/config.json` 和 `config/.env` 确认当前值**（端口、开关等以文件为准）。`config/.env`、`config.local.json`、`config/accounts.xlsx` 含真实密钥/账号，绝不提交或外泄；示例值一律写进 `.env.example` / `accounts.example.xlsx`。
 
 ## 分层架构（依赖方向不可反向）
@@ -37,10 +39,10 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、yescaptcha.ts
 - `automation/`：humanize.ts（拟人操作）、wallet/（types 注册表 + metamask/petra 适配器）
-- `engine/`：queue（任务级并发额度 + 同窗口任务合并 CoalescingEnqueuer）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `engine/`：queue（任务级并发额度 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
-- `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,settings,docs}
+- `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}
 
 ## 新增/修改任务
 
@@ -48,7 +50,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；无定时调度，仅手动触发（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
 
 ## 数据层
 
@@ -66,6 +68,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 - 未捕获异常默认退出进程，但 CDP 会话级瞬时错误（Protocol error/session closed 等，见 src/app.ts TRANSIENT_PATTERN）只告警不退出——修 bug 时别把这类错误当致命
 - 窗口连续 2 任务失败触发当日熔断；代理失效由任务自身失败暴露（已无前置 IP 校验）
+- 定时触发与手动触发共享在途守卫与窗口熔断：定时跑着时手动触发该任务 409；定时失败同样计入熔断（连续 2 次后该窗口当日全部 skipped，含手动）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec

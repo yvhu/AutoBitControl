@@ -28,6 +28,7 @@
       "image": "ImageToTextTask"
     }
   },
+  "scheduler": { "timezone": "Asia/Shanghai" },
   "web": { "host": "127.0.0.1", "port": 3000 },
   "wallet": { "passwords": {} },
   "dataSource": { "path": "config/accounts.xlsx" },

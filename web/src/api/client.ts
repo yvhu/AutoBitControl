@@ -18,3 +18,4 @@ export async function request<T>(path: string, options: { method?: string; body?
 export const get = <T>(path: string) => request<T>(path)
 export const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body })
 export const patch = <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body })
+export const del = <T>(path: string) => request<T>(path, { method: 'DELETE' })
