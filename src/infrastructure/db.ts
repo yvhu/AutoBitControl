@@ -23,7 +23,7 @@ export interface BatchRow {
   createdAt: string
 }
 
-/** 批次状态统计（列表接口聚合用；total 含全部行数） */
+/** 批次状态统计（列表接口聚合用；total 含全部行数；retryWait 重试等待在途单独计，running 不再包含） */
 export interface BatchStats {
   total: number
   success: number
@@ -31,6 +31,7 @@ export interface BatchStats {
   captchaFailed: number
   skipped: number
   running: number
+  retryWait: number
   pending: number
 }
 
@@ -353,18 +354,19 @@ export class AppDb {
     return (rows[0] as unknown as BatchRow | undefined) ?? null
   }
 
-  /** 时间段内的批次列表（含每批状态聚合）；createdAt 倒序；from=null 表示不设下界 */
-  async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats }>> {
+  /** 时间段内的批次列表（含每批状态聚合与最后完成时间）；createdAt 倒序；from=null 表示不设下界 */
+  async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null }>> {
     const rows = await this.exec(
-      `SELECT b.id, b.kind, b.task_key AS taskKey, b.source, b.created_at AS createdAt, r.status, COUNT(r.id) AS c
+      `SELECT b.id, b.kind, b.task_key AS taskKey, b.source, b.created_at AS createdAt,
+              r.status, COUNT(r.id) AS c, MAX(r.finished_at) AS lastFinishedAt
        FROM batches b LEFT JOIN runs r ON r.batch_id = b.id
        WHERE date(b.created_at) >= COALESCE(date(?), '0000-01-01') AND date(b.created_at) <= date(?)
        GROUP BY b.id, r.status
        ORDER BY b.created_at DESC, b.id DESC`,
       [from, to],
     )
-    const list: Array<BatchRow & { stats: BatchStats }> = []
-    const byId = new Map<number, BatchRow & { stats: BatchStats }>()
+    const list: Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null }> = []
+    const byId = new Map<number, BatchRow & { stats: BatchStats; lastFinishedAt: string | null }>()
     for (const r of rows) {
       const id = Number(r.id)
       let item = byId.get(id)
@@ -375,7 +377,8 @@ export class AppDb {
           taskKey: String(r.taskKey),
           source: String(r.source),
           createdAt: String(r.createdAt),
-          stats: { total: 0, success: 0, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0 },
+          lastFinishedAt: r.lastFinishedAt === null || r.lastFinishedAt === undefined ? null : String(r.lastFinishedAt),
+          stats: { total: 0, success: 0, failed: 0, captchaFailed: 0, skipped: 0, running: 0, retryWait: 0, pending: 0 },
         }
         byId.set(id, item)
         list.push(item)
@@ -387,8 +390,12 @@ export class AppDb {
       else if (s === 'failed') item.stats.failed += n
       else if (s === 'captcha_failed') item.stats.captchaFailed += n
       else if (s === 'skipped') item.stats.skipped += n
-      else if (s === 'running' || s === 'retry_wait') item.stats.running += n
+      else if (s === 'running') item.stats.running += n
+      else if (s === 'retry_wait') item.stats.retryWait += n
       else if (s === 'pending') item.stats.pending += n
+      // lastFinishedAt：同批多状态分组的 MAX 取全局最大值（分组聚合不会跨组合并）
+      const v = r.lastFinishedAt === null || r.lastFinishedAt === undefined ? null : String(r.lastFinishedAt)
+      if (v && (item.lastFinishedAt === null || v > item.lastFinishedAt)) item.lastFinishedAt = v
     }
     return list
   }

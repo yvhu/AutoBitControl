@@ -267,12 +267,23 @@ describe('批次（batches）', () => {
     await db.upsertRun(p2.id, 't1', '2026-09-04', 0, 'failed', { batchId: b1.id })
     await db.upsertRun(p1.id, 't2', '2026-09-04', 0, 'running', { batchId: b2.id })
     await db.upsertRun(p1.id, 't3', '2026-09-05', 0, 'success', { batchId: b3.id })
+    await db.upsertRun(p2.id, 't1', '2026-09-04', 1, 'retry_wait', { batchId: b1.id, finishedAt: '2026-09-04 08:05:00.000' })
     const list = await db.listBatchesForRange('2026-09-04', '2026-09-04')
     expect(list.map((b) => b.id)).toEqual([b2.id, b1.id])
-    expect(list[1].stats.total).toBe(2)
+    expect(list[1].stats.total).toBe(3)
     expect(list[1].stats.success).toBe(1)
     expect(list[1].stats.failed).toBe(1)
+    expect(list[1].stats.retryWait).toBe(1)
+    expect(list[1].stats.running).toBe(0)
+    expect(list[1].lastFinishedAt).toBe('2026-09-04 08:05:00.000')
     expect(list[0].stats.running).toBe(1)
+  })
+
+  it('无行的批次 lastFinishedAt 为 null', async () => {
+    await db.createBatch('bulk', 't9', 'trigger-all', '2026-09-04 10:00:00.000')
+    const list = await db.listBatchesForRange('2026-09-04', '2026-09-04')
+    expect(list[0].lastFinishedAt).toBeNull()
+    expect(list[0].stats.total).toBe(0)
   })
 
   it('listBatchesForRange from=null 查全部区间', async () => {

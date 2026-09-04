@@ -816,6 +816,7 @@ export interface paths {
                                     taskKey?: string;
                                     source?: string;
                                     createdAt?: string;
+                                    lastFinishedAt?: string | null;
                                     stats?: {
                                         total?: number;
                                         success?: number;
@@ -823,6 +824,7 @@ export interface paths {
                                         captchaFailed?: number;
                                         skipped?: number;
                                         running?: number;
+                                        retryWait?: number;
                                         pending?: number;
                                     };
                                 }[];

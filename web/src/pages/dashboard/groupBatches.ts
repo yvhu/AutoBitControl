@@ -19,3 +19,14 @@ export function batchProgress(b: BatchItem): { done: number; pct: number } {
   const pct = s.total > 0 ? Math.round((done / s.total) * 100) : 0
   return { done, pct }
 }
+
+/** 批次时间信息：finished = 无任何在途（running/pending/retryWait 全 0）；耗时 = lastFinishedAt - createdAt（秒取整，任一缺失返回 null） */
+export function batchTiming(batch: BatchItem): { finished: boolean; durationSec: number | null } {
+  const s = batch.stats
+  const finished = s.running === 0 && s.pending === 0 && s.retryWait === 0
+  if (!finished || !batch.lastFinishedAt) return { finished, durationSec: null }
+  const end = new Date(batch.lastFinishedAt.replace(' ', 'T')).getTime()
+  const start = new Date(batch.createdAt.replace(' ', 'T')).getTime()
+  const sec = Math.round((end - start) / 1000)
+  return { finished, durationSec: Number.isFinite(sec) ? sec : null }
+}

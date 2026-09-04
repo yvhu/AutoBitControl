@@ -4,7 +4,7 @@ import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask } from './hooks'
 import { formatDuration } from './format'
-import { splitBatches, batchProgress } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming } from './groupBatches'
 
 const RANGE_OPTIONS = [
   { label: '今天', value: 'today' },
@@ -17,6 +17,7 @@ const STATUS_TAG: Array<{ key: keyof BatchItem['stats']; label: string; color: s
   { key: 'failed', label: '失败', color: '#ff4d4f', bg: '#fff2f0', border: '#ffccc7' },
   { key: 'captchaFailed', label: '验证码', color: '#13c2c2', bg: '#e6fffb', border: '#87e8de' },
   { key: 'running', label: '进行中', color: '#faad14', bg: '#fffbe6', border: '#ffe58f' },
+  { key: 'retryWait', label: '重试中', color: '#fa8c16', bg: '#fff7e6', border: '#ffd591' },
   { key: 'pending', label: '待执行', color: '#8c8c8c', bg: '#fafafa', border: '#d9d9d9' },
 ]
 
@@ -62,6 +63,7 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
   const [open, setOpen] = useState(defaultOpen)
   const detail = useBatchDetail(open ? batch.id : null)
   const { done, pct } = batchProgress(batch)
+  const timing = batchTiming(batch)
   const stats = batch.stats
   // 最新批次开始运行时（defaultOpen 由 false→true）自动展开；用户手动收起不受影响
   const prevDefaultOpen = useRef(defaultOpen)
@@ -76,6 +78,11 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
         <Tag color={KIND_TAG[batch.kind].color}>{KIND_TAG[batch.kind].label}</Tag>
         <span style={{ fontWeight: 600 }}>{taskNames[batch.taskKey] ?? batch.taskKey}</span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
+        <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
+          {timing.finished && timing.durationSec != null
+            ? `${batch.lastFinishedAt!.slice(11, 16)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
+            : '进行中'}
+        </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
         <Progress percent={pct} size="small" style={{ flex: 1, minWidth: 120, margin: 0 }} format={() => null} />
