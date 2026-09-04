@@ -47,6 +47,13 @@ type RaceKey = 'success' | 'claim'
 // 优先站点自建容器内（div[data-turnstile-container]），兜底任意可见挑战 iframe
 const TURNSTILE_FRAME_SEL = ['div[data-turnstile-container] iframe:visible', 'iframe[src*="challenges.cloudflare.com"]:visible']
 
+// 方框点击重试：点击后 Turnstile iframe 重渲染期间 CDP 派发会被浏览器拒绝
+// （Protocol error / Invalid parameters，真机实测 09-04 凌晨 15+ 窗口因此失败，
+// 且「再点一次」大多能过）——瞬时错误最多重试 3 次，间隔 1-2s 拟人化随机
+const TURNSTILE_CLICK_MAX = 3
+// CDP 会话级瞬时错误模式：与 app.ts TRANSIENT_PATTERN 同语义（点击方框场景的窄化子集）
+const CDP_TRANSIENT = /Protocol error|session closed/
+
 export class PortalRhunaTask extends SiteTask {
   meta: TaskMeta = {
     key: 'portal-rhuna',
@@ -284,12 +291,18 @@ export class PortalRhunaTask extends SiteTask {
     let clicks = 0
     let lastRefresh = Date.now()
     let lastCheckClick = 0
+    let lastCheckLog = 0
     while (Date.now() < end) {
       if (await ctx.textPresent(SUCCESS_TEXT)) return true
       // 人机验证方框出现（补点后重新渲染）：立即拟人点击（每 15s 最多点一次）
       if (Date.now() - lastCheckClick > 15000 && (await this.clickTurnstileCheckbox(ctx))) {
         lastCheckClick = Date.now()
         continue
+      }
+      // 方框已点击但验证未通过（方框仍存在）：低频追踪日志（每 30s 一条，定位点击被拒/验证卡住的窗口）
+      if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await this.turnstileVisible(ctx))) {
+        lastCheckLog = Date.now()
+        ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '验证方框已点击但仍存在（验证未通过），冷却期满后重点')
       }
       const errText = await this.recoverErrorText(ctx)
       if (errText !== '') {
@@ -327,21 +340,48 @@ export class PortalRhunaTask extends SiteTask {
    * 点击人机验证方框（interaction-only Turnstile 组件）：
    * 组件渲染为右下角浮层 iframe（站点容器 div[data-turnstile-container]，z-index 最高），
    * 方框在 iframe 左侧——拟人点击即完成验证（真机实测 ISP IP 一点即过，无需图片题）
+   * 瞬时失败重试：点击后 iframe 重渲染期间 CDP 派发会被浏览器拒绝（Invalid parameters），
+   * 每次重试重新取盒（不用旧坐标点已移动的 iframe），非瞬时错误不重试直接抛
    * @returns 是否执行了点击
    */
   private async clickTurnstileCheckbox(ctx: TaskContext): Promise<boolean> {
+    let lastErr: Error | null = null
+    for (let attempt = 1; attempt <= TURNSTILE_CLICK_MAX; attempt++) {
+      const box = await this.turnstileBox(ctx)
+      if (!box) return false
+      const x = box.x + Math.min(30, box.width * 0.4)
+      const y = box.y + box.height / 2
+      ctx.log.info({ step: 'checkin', window: ctx.profile.name, x: Math.round(x), y: Math.round(y), attempt }, '出现人机验证方框，拟人点击')
+      try {
+        await ctx.human.clickAt(x, y)
+        return true
+      } catch (e) {
+        lastErr = e as Error
+        if (!CDP_TRANSIENT.test(lastErr.message)) throw lastErr
+        ctx.log.warn({ step: 'checkin', window: ctx.profile.name, attempt, x: Math.round(x), y: Math.round(y), err: lastErr.message }, '验证方框点击被浏览器拒绝（iframe 重渲染瞬时态），等待后重试')
+        await ctx.page.waitForTimeout(1000 + Math.floor(Math.random() * 1000))
+      }
+    }
+    throw lastErr ?? new Error('人机验证方框点击失败（重试耗尽）')
+  }
+
+  /** 取验证方框盒（不可见/尺寸过小返回 null）：重试循环每次重新取盒 */
+  private async turnstileBox(ctx: TaskContext): Promise<{ x: number; y: number; width: number; height: number } | null> {
     for (const sel of TURNSTILE_FRAME_SEL) {
       const box = await ctx.page
         .locator(sel)
         .first()
         .boundingBox()
         .catch(() => null)
-      if (!box || box.width < 20 || box.height < 20) continue
-      const x = box.x + Math.min(30, box.width * 0.4)
-      const y = box.y + box.height / 2
-      ctx.log.info({ step: 'checkin', window: ctx.profile.name, x: Math.round(x), y: Math.round(y) }, '出现人机验证方框，拟人点击')
-      await ctx.human.clickAt(x, y)
-      return true
+      if (box && box.width >= 20 && box.height >= 20) return box
+    }
+    return null
+  }
+
+  /** 验证方框当前是否可见（轻量 count 检查，claimLoop 低频追踪用） */
+  private async turnstileVisible(ctx: TaskContext): Promise<boolean> {
+    for (const sel of TURNSTILE_FRAME_SEL) {
+      if (await ctx.page.locator(sel).first().count() > 0) return true
     }
     return false
   }
@@ -353,6 +393,7 @@ export class PortalRhunaTask extends SiteTask {
       if (await this.clickTurnstileCheckbox(ctx)) return true
       await ctx.page.waitForTimeout(500)
     }
+    ctx.log.info({ step: 'checkin', window: ctx.profile.name, budgetMs }, '预算内未检测到人机验证方框（可能免验证或方框未渲染）')
     return false
   }
 }
