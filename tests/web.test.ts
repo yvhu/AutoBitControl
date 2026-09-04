@@ -26,14 +26,21 @@ interface MockDeps {
     listBatchesForRange: Mock
     listRunsForBatch: Mock
     listUnbatchedRuns: Mock
+    listSchedules: Mock
+    getSchedule: Mock
+    createSchedule: Mock
+    updateSchedule: Mock
+    deleteSchedule: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
+  scheduler: { runNow: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
     execution: { staggerMaxSec: number; circuitBreakerThreshold: number; probeUrl: string }
+    scheduler: { timezone: string }
     captcha: { clientKey: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
@@ -69,14 +76,21 @@ function makeDeps(): MockDeps {
       listBatchesForRange: vi.fn().mockResolvedValue([]),
       listRunsForBatch: vi.fn().mockResolvedValue([]),
       listUnbatchedRuns: vi.fn().mockResolvedValue([]),
+      listSchedules: vi.fn().mockResolvedValue([]),
+      getSchedule: vi.fn().mockResolvedValue(null),
+      createSchedule: vi.fn().mockResolvedValue(null),
+      updateSchedule: vi.fn().mockResolvedValue(null),
+      deleteSchedule: vi.fn().mockResolvedValue(true),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
+    scheduler: { runNow: vi.fn().mockResolvedValue({ taskKeys: ['t1'], skipped: [] }) },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask' } }]]),
     cfg: {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
       execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, probeUrl: 'https://probe.io' },
+      scheduler: { timezone: 'Asia/Shanghai' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
     bitbrowser: {
@@ -169,8 +183,94 @@ describe('server API（RESTful + envelope）', () => {
     })
   })
 
-  it('GET /api/tasks 返回任务元信息列表', async () => {
-    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
+  describe('schedules API', () => {
+    const row = {
+      id: 1, name: '每日签到', enabled: 1, mode: 'daily' as const,
+      config: '{"times":["09:00"]}', taskKeys: '["t1"]',
+      createdAt: '2026-09-04 00:00:00.000', updatedAt: '2026-09-04 00:00:00.000',
+    }
+
+    it('GET /api/schedules 返回视图（taskNames/ruleText/nextRun 已计算）', async () => {
+      const deps = makeDeps()
+      deps.db.listSchedules.mockResolvedValue([row])
+      const res = await request(createApp(deps as never)).get('/api/schedules')
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(res.body.data).toHaveLength(1)
+      expect(res.body.data[0]).toMatchObject({ id: 1, name: '每日签到', enabled: true, mode: 'daily', taskKeys: ['t1'], taskNames: ['任务1'], ruleText: '09:00' })
+      expect(res.body.data[0].nextRun).toBeTruthy()
+    })
+
+    it('POST /api/schedules 合法配置创建成功', async () => {
+      const deps = makeDeps()
+      deps.db.createSchedule.mockResolvedValue(row)
+      const res = await request(createApp(deps as never))
+        .post('/api/schedules')
+        .send({ name: '每日签到', mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['t1'] })
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(deps.db.createSchedule).toHaveBeenCalledWith({ name: '每日签到', mode: 'daily', config: '{"times":["09:00"]}', taskKeys: '["t1"]' })
+    })
+
+    it('POST /api/schedules 非法配置/未知任务 400', async () => {
+      const deps = makeDeps()
+      const cases = [
+        { name: '', mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['t1'] },
+        { name: 'x', mode: 'daily', config: { times: ['25:00'] }, taskKeys: ['t1'] },
+        { name: 'x', mode: 'daily', config: { times: ['09:00'] }, taskKeys: ['ghost'] },
+        { name: 'x', mode: 'bogus', config: { times: ['09:00'] }, taskKeys: ['t1'] },
+      ]
+      for (const body of cases) {
+        const res = await request(createApp(deps as never)).post('/api/schedules').send(body)
+        expect(res.status).toBe(400)
+        expect(res.body.code).toBe(40000)
+      }
+      expect(deps.db.createSchedule).not.toHaveBeenCalled()
+    })
+
+    it('PATCH /api/schedules/:id 部分更新；不存在 404（40406）', async () => {
+      const deps = makeDeps()
+      deps.db.getSchedule.mockResolvedValue(row)
+      deps.db.updateSchedule.mockResolvedValue({ ...row, enabled: 0 })
+      const res = await request(createApp(deps as never)).patch('/api/schedules/1').send({ enabled: false })
+      expect(res.status).toBe(200)
+      expect(res.body.data.enabled).toBe(false)
+      expect(deps.db.updateSchedule).toHaveBeenCalledWith(1, { enabled: false })
+
+      deps.db.getSchedule.mockResolvedValue(null)
+      const miss = await request(createApp(deps as never)).patch('/api/schedules/99').send({ enabled: true })
+      expect(miss.status).toBe(404)
+      expect(miss.body.code).toBe(40406)
+    })
+
+    it('DELETE /api/schedules/:id 成功与 404', async () => {
+      const deps = makeDeps()
+      deps.db.deleteSchedule.mockResolvedValue(true)
+      const ok = await request(createApp(deps as never)).delete('/api/schedules/1')
+      expect(ok.status).toBe(200)
+      expect(ok.body.code).toBe(0)
+
+      deps.db.deleteSchedule.mockResolvedValue(false)
+      const miss = await request(createApp(deps as never)).delete('/api/schedules/99')
+      expect(miss.status).toBe(404)
+      expect(miss.body.code).toBe(40406)
+    })
+
+    it('POST /api/schedules/:id/run 成功转发 runNow；停用 409（40903）', async () => {
+      const deps = makeDeps()
+      deps.db.getSchedule.mockResolvedValue(row)
+      const ok = await request(createApp(deps as never)).post('/api/schedules/1/run').send({})
+      expect(ok.status).toBe(200)
+      expect(deps.scheduler.runNow).toHaveBeenCalledWith(row)
+
+      deps.db.getSchedule.mockResolvedValue({ ...row, enabled: 0 })
+      const disabled = await request(createApp(deps as never)).post('/api/schedules/1/run').send({})
+      expect(disabled.status).toBe(409)
+      expect(disabled.body.code).toBe(40903)
+    })
+  })
+
+  it('GET /api/tasks 返回任务元信息列表', async () => {    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
     expect(res.body.code).toBe(0)
     expect(res.body.data[0].key).toBe('t1')
     expect(res.body.data[0].wallet).toBe('metamask')

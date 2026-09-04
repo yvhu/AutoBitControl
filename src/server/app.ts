@@ -14,6 +14,9 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { CoalescingEnqueuer } from '../engine/queue'
 import type { SiteTask } from '../tasks/base'
+import type { ScheduleRow } from '../infrastructure/db'
+import type { RunNowResult } from '../engine/scheduler'
+import { schedulesRouter } from './routes/schedules'
 import { openapiSpec } from './openapi'
 import { batchesRouter } from './routes/batches'
 import { tasksRouter } from './routes/tasks'
@@ -33,6 +36,8 @@ export interface ServerDeps {
   db: AppDb
   enqueuer: CoalescingEnqueuer
   tasks: Map<string, SiteTask>
+  /** 定时调度器（面板「立即运行」入口；Scheduler.runNow 的薄代理） */
+  scheduler: { runNow(schedule: ScheduleRow): Promise<RunNowResult> }
   cfg: AppConfig
   logger: Logger
   bitbrowser: {
@@ -67,6 +72,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(docsRouter())
   // 公开设置：非敏感配置 + 版本号 + 数据源状态（面板展示，避免前端硬编码）
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
+  api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）
