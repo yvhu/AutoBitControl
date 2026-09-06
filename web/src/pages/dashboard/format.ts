@@ -1,3 +1,8 @@
+/** 批次时间展示：'YYYY-MM-DD HH:mm:ss.SSS' 字符串 → 'YYYY-MM-DD HH:mm'（跨天/跨月可区分） */
+export function formatDateTime(v: string): string {
+  return v.slice(0, 16)
+}
+
 /** 总耗时展示：null（无结束时间）→ '—'；60 秒以内 → 'Xs'；否则 → 'Xh Ym Zs'（不足 1 小时省略小时位，秒为整数值） */
 export function formatDuration(sec: number | null): string {
   if (sec == null) return '—'

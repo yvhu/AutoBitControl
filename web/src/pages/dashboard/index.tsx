@@ -3,7 +3,7 @@ import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, 
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask } from './hooks'
-import { formatDuration } from './format'
+import { formatDuration, formatDateTime } from './format'
 import { splitBatches, batchProgress, batchTiming } from './groupBatches'
 
 const RANGE_OPTIONS = [
@@ -75,13 +75,13 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
   return (
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
-        <b>{batch.createdAt.slice(11, 16)}</b>
+        <b>{formatDateTime(batch.createdAt)}</b>
         <Tag color={KIND_TAG[batch.kind].color}>{KIND_TAG[batch.kind].label}</Tag>
         <span style={{ fontWeight: 600 }}>{taskNames[batch.taskKey] ?? batch.taskKey}</span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
           {timing.finished && timing.durationSec != null
-            ? `${batch.lastFinishedAt!.slice(11, 16)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
+            ? `${formatDateTime(batch.lastFinishedAt!)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
             : '进行中'}
         </span>
       </div>
@@ -115,7 +115,7 @@ function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Rec
       loading={detail.isPending}
       locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
       columns={[
-        { title: '时间', width: 80, render: () => batch.createdAt.slice(11, 16) },
+        { title: '时间', width: 130, render: () => formatDateTime(batch.createdAt) },
         { title: '任务', width: 120, render: () => taskNames[batch.taskKey] ?? batch.taskKey },
         { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
           <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>

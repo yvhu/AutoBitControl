@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { formatDuration } from './format'
+import { formatDuration, formatDateTime } from './format'
+
+describe('formatDateTime 批次时间展示', () => {
+  it("'YYYY-MM-DD HH:mm:ss.SSS' → 'YYYY-MM-DD HH:mm'", () => {
+    expect(formatDateTime('2026-09-04 09:00:00.000')).toBe('2026-09-04 09:00')
+    expect(formatDateTime('2026-09-04 09:26:10.000')).toBe('2026-09-04 09:26')
+  })
+})
 
 describe('formatDuration 总耗时展示', () => {
   it('null（无结束时间）→ —', () => {
