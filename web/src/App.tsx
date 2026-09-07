@@ -10,6 +10,7 @@ import TasksPage from './pages/tasks'
 import SchedulesPage from './pages/schedules'
 import DocsPage from './pages/docs'
 import SettingsPage from './pages/settings'
+import ToolsPage from './pages/tools'
 
 export default function App() {
   const { effective } = useThemeMode()
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="schedules" element={<SchedulesPage />} />
             <Route path="docs" element={<DocsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="tools" element={<ToolsPage />} />
           </Route>
         </Routes>
       </AntApp>

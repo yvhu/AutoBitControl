@@ -6,6 +6,7 @@ import {
   ScheduleOutlined,
   ReadOutlined,
   SettingOutlined,
+  ToolOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -19,6 +20,7 @@ const menuItems = [
   { key: '/profiles', icon: <DesktopOutlined />, label: '窗口' },
   { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务' },
   { key: '/schedules', icon: <ScheduleOutlined />, label: '定时任务' },
+  { key: '/tools', icon: <ToolOutlined />, label: '工具' },
   { key: '/docs', icon: <ReadOutlined />, label: '文档' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
