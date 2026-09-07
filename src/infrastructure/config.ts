@@ -21,7 +21,7 @@ export interface BitBrowserConfig {
   retryBackoffMs: number[]
 }
 
-/** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；并发为任务级 meta.concurrency） */
+/** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；并发为任务级 meta.concurrency + 全局窗口上限 maxConcurrentWindows 双闸门） */
 export interface ExecutionConfig {
   /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
   staggerMaxSec: number

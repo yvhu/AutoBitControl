@@ -281,6 +281,25 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     releases[2]()
     await Promise.resolve()
   })
+
+  it('错峰到期时全局额度已满：进全局队列等释放后续跑', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 120, 1)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a', { immediate: true })
+    await Promise.resolve()
+    expect(run).toHaveBeenCalledTimes(1)
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(run).toHaveBeenCalledTimes(1)
+    releases[1]()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+    releases[2]()
+    await Promise.resolve()
+  })
 })
 
 describe('CoalescingEnqueuer 全局窗口上限', () => {
@@ -387,5 +406,48 @@ describe('CoalescingEnqueuer 全局窗口上限', () => {
     enq.enqueue(mk(3, 'bb-3'), 'task-c')
     await tick()
     expect(run).toHaveBeenCalledTimes(3)
+  })
+
+  it('会话抛错仍释放全局额度并滚动续跑队首', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
+      if (profile.id === 1) return Promise.reject(new Error('boom'))
+      return new Promise<void>(resolve => { releases[profile.id] = resolve })
+    })
+    const enq = makeEnq(run, () => 10, 0, 1)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    await tick()
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    expect(run).toHaveBeenCalledTimes(1)
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+    releases[2]()
+    await tick()
+  })
+
+  it('maxWindows 非法值回退为不限制（不静默失效为 0）', async () => {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const enq = makeEnq(run, () => 4, 0, Number.NaN)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-b')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
+  it('maxWindows 小于 1 时 clamp 到 1', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 0, 0)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-b')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+    releases[1]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+    releases[2]()
+    await tick()
   })
 })

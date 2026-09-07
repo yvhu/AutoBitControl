@@ -79,7 +79,7 @@ private globalWaiting: Entry[] = []
 ## 3. 触发语义
 
 - **批量触发**（任务页「立即触发」）：逐启用窗口 enqueue，任务额度控制下滚动分批，dispatch 时受全局闸门限制，全局满时排队滚动续跑
-- **单窗口触发**（看板行级执行/重跑、task:run 经 enqueuer 的路径）：同样受双闸门限制
+- **单窗口触发**（看板行级「执行/重跑」经 enqueuer 的路径）：同样受双闸门限制；task:run 调试脚本是独立进程直接跑 runManual，不经本队列、不受双闸门限制
 - **409 判定不变**：`hasTaskInFlight`（经 pending 合并区自动覆盖全局排队）覆盖，任务任何窗口在跑/排队（含全局排队）即拒绝重复触发
 - **stagger 错峰**（execution.staggerMaxSec，默认 120 秒）继续作用于每个新窗口会话（occupy 路径）；全局续跑不重复错峰（见上）
 

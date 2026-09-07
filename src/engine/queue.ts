@@ -71,7 +71,8 @@ export class CoalescingEnqueuer {
     /** 全局窗口上限：同时最多开几个窗口会话（机器资源兜底；Infinity = 不限制） */
     maxConcurrentWindows = Number.POSITIVE_INFINITY,
   ) {
-    this.globalMax = Math.max(1, maxConcurrentWindows)
+    // 非法值（NaN/非数字，如配置误写字符串）不静默失效：回退为不限制，由配置层语义兜底
+    this.globalMax = Number.isFinite(maxConcurrentWindows) ? Math.max(1, maxConcurrentWindows) : Number.POSITIVE_INFINITY
   }
 
   /** 取（或懒创建）任务额度表 */
