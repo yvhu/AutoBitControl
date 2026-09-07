@@ -3,9 +3,16 @@
  * - 单测：judgeFundResponse 判定与 runClaimLoop 循环的纯逻辑分支（注入假 page/human，不连真浏览器）
  * - 集成：真实 chromium + 本地 fixture + page.route 拦截，验证 run() 跨两页全链路
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { chromium } from 'patchright'
+import { createServer, type Server } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import type { AddressInfo } from 'node:net'
 import { judgeFundResponse, runClaimLoop, ShelbyFaucetTask, type FundResponse } from '../src/tasks/shelby-faucet'
 import { TaskContext } from '../src/tasks/base'
+import { Humanizer } from '../src/automation/humanize'
 
 /** 假响应：仅含判定所需字段 */
 function resp(body: FundResponse | null): { json: () => Promise<FundResponse | null> } {
@@ -163,4 +170,72 @@ describe('ShelbyFaucetTask 元信息', () => {
     expect(t.meta.category).toBe('faucet')
     expect(t.meta.enabled).toBe(true)
   })
+})
+
+describe('Shelby 领水任务集成（真实浏览器 + 本地 fixture + 路由拦截）', () => {
+  let server: Server
+  let baseUrl: string
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.end(readFileSync(join(__dirname, 'fixtures', 'shelby-faucet.html'), 'utf-8'))
+    })
+    await new Promise<void>((r) => server.listen(0, r))
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((r) => server.close(() => r()))
+  })
+
+  it('run() 完整流程：APT 5 次 + USD 2 次成功后达上限提前退出收敛', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const calls: string[] = []
+      let usdCount = 0
+      await page.route('**/faucet.shelbynet.shelby.xyz/fund*', (route) => {
+        const url = route.request().url()
+        calls.push(url)
+        if (url.includes('asset=shelbyusd')) {
+          usdCount++
+          if (usdCount <= 2) {
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ txn_hashes: ['0xusd'] }) })
+          }
+          return route.fulfill({
+            status: 429,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              message: 'Request rejected by 1 checkers',
+              error_code: 'Rejected',
+              rejection_reasons: [{ reason: 'You have reached the maximum allowed number of requests per day: 10', code: 'UsageLimitExhausted' }],
+              txn_hashes: [],
+            }),
+          })
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ txn_hashes: ['0xapt'] }) })
+      })
+      const task = new ShelbyFaucetTask()
+      task.meta.url = baseUrl + '/aptos'
+      task.usdUrl = baseUrl + '/usd'
+      const ctx = new TaskContext({
+        page,
+        task,
+        human: new Humanizer(page),
+        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+        artifactsDir: join(tmpdir(), 'shelby-faucet-test-artifacts'),
+        walletPasswords: {},
+        accountRow: { petra钱包地址: '0x835e' },
+      })
+      await task.run(ctx)
+      expect(calls.length).toBe(8)
+      expect(calls.filter((u) => u.includes('asset=shelbyusd')).length).toBe(3)
+      expect(await page.locator('input[name="address"]').inputValue()).toBe('0x835e')
+    } finally {
+      await browser.close()
+    }
+  }, 90000)
 })

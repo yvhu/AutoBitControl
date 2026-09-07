@@ -5,7 +5,8 @@
   <button>Fund</button>
   <script>
     document.querySelector('button').addEventListener('click', () => {
-      fetch('https://faucet.shelbynet.shelby.xyz/fund', { method: 'POST' })
+      const asset = location.pathname.includes('usd') ? '?asset=shelbyusd' : ''
+      fetch('https://faucet.shelbynet.shelby.xyz/fund' + asset, { method: 'POST' })
     })
   </script>
 </body>
