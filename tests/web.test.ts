@@ -39,7 +39,7 @@ interface MockDeps {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
-    execution: { staggerMaxSec: number; circuitBreakerThreshold: number }
+    execution: { staggerMaxSec: number; circuitBreakerThreshold: number; maxConcurrentWindows: number }
     scheduler: { timezone: string }
     captcha: { clientKey: string }
   }
@@ -89,7 +89,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2 },
+      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
       captcha: { clientKey: 'test-secret-key-abc123' },
     },
@@ -532,6 +532,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data.bitbrowserApiBase).toBeTruthy()
     expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
+    expect(res.body.data.maxConcurrentWindows).toBe(4)
     expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
     expect(JSON.stringify(res.body.data)).not.toContain('test-secret-key-abc123')
     expect(JSON.stringify(res.body.data)).not.toContain('password')
