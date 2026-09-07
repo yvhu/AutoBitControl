@@ -4,35 +4,40 @@
   <header>
     <button id="connect">Connect Wallet</button>
   </header>
-  <div id="wallet-modal" style="display:none">
-    <button class="petra">Petra</button>
+  <div id="wallet-modal" role="dialog" style="display:none">
+    <button id="dialog-connect">Connect</button>
   </div>
-  <div id="upload-entry" style="display:none">
+  <div id="account-section">
     <button id="upload-files">Upload Files</button>
   </div>
   <div id="upload-dialog" role="dialog" style="display:none">
     <input type="file" />
-    <button id="upload">Upload</button>
+    <button id="upload" disabled>Upload</button>
     <div id="status"></div>
   </div>
   <script>
+    // alreadydone 查询参数只出现在首次导航（meta.url），账号页 goto 会丢掉它：
+    // 用 sessionStorage 把「已上传」标记保持到同一标签页的后续导航
+    if (new URLSearchParams(location.search).has('alreadydone')) sessionStorage.setItem('alreadydone', '1')
     document.getElementById('connect').addEventListener('click', () => {
-      const btn = document.getElementById('connect')
-      if (btn.textContent.startsWith('0x')) {
-        document.getElementById('upload-entry').style.display = 'block'
-        return
-      }
       document.getElementById('wallet-modal').style.display = 'block'
     })
-    document.querySelector('.petra').addEventListener('click', () => {
+    document.getElementById('dialog-connect').addEventListener('click', () => {
       document.getElementById('connect').textContent = '0x1234567890abcdef'
       document.getElementById('wallet-modal').style.display = 'none'
     })
     document.getElementById('upload-files').addEventListener('click', () => {
       document.getElementById('upload-dialog').style.display = 'block'
     })
+    document.querySelector('#upload-dialog input[type="file"]').addEventListener('change', () => {
+      document.getElementById('upload').disabled = false
+    })
     document.getElementById('upload').addEventListener('click', () => {
       const status = document.getElementById('status')
+      if (new URLSearchParams(location.search).has('alreadydone') || sessionStorage.getItem('alreadydone') === '1') {
+        status.textContent = 'Error: Blob name already taken'
+        return
+      }
       status.textContent = 'Uploading files…'
       setTimeout(() => {
         status.textContent = 'All files uploaded successfully'
