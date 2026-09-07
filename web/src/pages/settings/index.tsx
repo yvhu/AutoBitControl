@@ -66,6 +66,7 @@ export default function SettingsPage() {
           column={{ xs: 1, md: 2 }}
           items={[
             { key: 'stagger', label: '错峰上限', children: `${s.staggerMaxSec} 秒` },
+            { key: 'maxWin', label: '全局窗口上限', children: s.maxConcurrentWindows },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },
             { key: 'version', label: '版本', children: s.version },
           ]}

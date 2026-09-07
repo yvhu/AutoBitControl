@@ -569,6 +569,7 @@ export interface paths {
                                 webPort?: number;
                                 staggerMaxSec?: number;
                                 circuitBreakerThreshold?: number;
+                                maxConcurrentWindows?: number;
                                 version?: string;
                                 datasource?: {
                                     available?: boolean;
