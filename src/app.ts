@@ -178,8 +178,9 @@ export async function startApp(): Promise<void> {
       }, delayMs)
     },
   })
-  // 任务级并发：enqueuer 内部按 meta.concurrency 控制每任务并行窗口数（缺省 DEFAULT_TASK_CONCURRENCY）
-  enqueuer = new CoalescingEnqueuer(runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec)
+  // 双闸门：任务级并发（meta.concurrency）+ 全局窗口上限（execution.maxConcurrentWindows），
+  // enqueuer 内部取更严者控制开窗总数
+  enqueuer = new CoalescingEnqueuer(runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec, cfg.execution.maxConcurrentWindows)
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
   // （建 schedule 批次 + 全部启用窗口入队，不带 immediate 沿用全局错峰）
