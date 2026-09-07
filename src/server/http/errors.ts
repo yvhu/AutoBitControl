@@ -8,6 +8,12 @@
 /** 业务错误码表：与 HTTP 状态码联动（code = status*100 + 序号） */
 export const ERROR_CODES = {
   INVALID_ARGUMENT: 40000,
+  // 工具域错误码（与 src/tools/errors.ts 的 TOOL_ERROR_CODES 数值一致）
+  TOOL_DIR_NOT_FOUND: 40001,
+  TOOL_COLUMN_NOT_FOUND: 40002,
+  TOOL_FILES_INSUFFICIENT: 40003,
+  TOOL_TEMPLATE_INVALID: 40004,
+  TOOL_PLAN_INVALID: 40005,
   GENERIC_NOT_FOUND: 40400,
   TASK_NOT_FOUND: 40401,
   PROFILE_NOT_FOUND: 40402,
@@ -18,7 +24,9 @@ export const ERROR_CODES = {
   TASK_DISABLED: 40901,
   TASK_RUNNING: 40902,
   SCHEDULE_DISABLED: 40903,
+  TOOL_BUSY: 40904,
   INTERNAL: 50000,
+  TOOL_IO_FAILED: 50001,
 } as const
 
 /** 业务错误：status 为期望返回的 HTTP 状态码，code 为业务错误码（路由直接 throw 交给 errorHandler） */

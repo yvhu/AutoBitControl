@@ -26,6 +26,7 @@ import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
+import { toolsRouter } from './routes/tools'
 import { notFoundHandler, errorHandler } from './http/error'
 
 // 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
@@ -72,6 +73,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(docsRouter())
   // 公开设置：非敏感配置 + 版本号 + 数据源状态（面板展示，避免前端硬编码）
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
+  api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   app.use('/api', api)
 

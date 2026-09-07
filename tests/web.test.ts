@@ -42,6 +42,7 @@ interface MockDeps {
     execution: { staggerMaxSec: number; circuitBreakerThreshold: number; maxConcurrentWindows: number }
     scheduler: { timezone: string }
     captcha: { clientKey: string }
+    dataSource: { path: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
   captchaBalance: Mock
@@ -92,6 +93,7 @@ function makeDeps(): MockDeps {
       execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
       captcha: { clientKey: 'test-secret-key-abc123' },
+      dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
     bitbrowser: {
       health: vi.fn().mockResolvedValue(true),
