@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Shelby Explorer 上传任务（xyz-shelbynet）：Petra 登录 + 账号页上传文件（数据源「文件地址」列）
  * 依赖方向：仅依赖 ./base 与 infrastructure/constants，经 index.ts 登记
  * 真机核实（2026-09-07，窗口 4e6bc67b83a840c7b665d2723c4837f0 全流程跑通）：
@@ -41,7 +41,7 @@ const UPLOADING_TEXT = 'Uploading files'
 /** 成功判定文案 */
 const SUCCESS_TEXT = 'All files uploaded successfully'
 /** 已上传判定文案（文件 blob name 唯一，重复上传即报此错误，视为成功幂等收敛） */
-const ALREADY_DONE_TEXT = 'Blob name already taken'
+export const ALREADY_DONE_TEXT = 'Blob name already taken'
 /** 可恢复错误文案（刷新恢复，沿用 portal-rhuna 真机经验） */
 const RECOVER_ERROR_TEXTS = ['Network Error', 'Turnstile token request timed out']
 
@@ -189,8 +189,16 @@ export class ShelbyExplorerTask extends SiteTask {
     await ctx.human.click(UPLOAD_BUTTON_SELECTOR)
     // 双钱包签名：register_multiple_blobs → commit_object（真机核实两次 prompt.html 弹窗先后出现；
     // 第一个可能锁屏：Petra 适配器自动输密码 + Unlock 后点 Approve）
-    await ctx.loginByWallet()
-    await ctx.loginByWallet()
+    // 弹窗未出现容忍：文件已上传（Blob name already taken）时站点可能不再发起签名请求，
+    // 弹窗不出现不能提前判失败——终态交给 waitSuccess 裁定（幂等收敛路径可达）
+    for (let i = 0; i < 2; i++) {
+      try {
+        await ctx.loginByWallet()
+      } catch (e) {
+        if (!(e as Error).message.includes('钱包弹窗未出现')) throw e
+        ctx.log.info({ step: 'upload', window: ctx.profile.name }, '钱包弹窗未出现（可能文件已上传不再发起签名），继续等待终态')
+      }
+    }
     const outcome = await this.waitSuccess(ctx)
     if (outcome === 'alreadyDone') {
       ctx.log.info({ step: 'upload', window: ctx.profile.name }, '文件已上传过（Blob name already taken），视为成功')

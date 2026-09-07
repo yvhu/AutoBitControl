@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AddressInfo } from 'node:net'
-import { ShelbyExplorerTask } from '../src/tasks/shelby-explorer'
+import { ShelbyExplorerTask, ALREADY_DONE_TEXT } from '../src/tasks/shelby-explorer'
 import { TaskContext } from '../src/tasks/base'
 import { Humanizer } from '../src/automation/humanize'
 
@@ -179,8 +179,19 @@ describe('ShelbyExplorerTask run 流程', () => {
   it('已上传过：Blob name already taken 出现 → 视为成功不抛错', async () => {
     const task = new ShelbyExplorerTask()
     const { ctx, log } = makeCtx(task)
-    ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === 'Blob name already taken'))
+    ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === ALREADY_DONE_TEXT))
     await task.run(ctx)
+    expect(ctx.screenshot).toHaveBeenCalled()
+    expect(log.info.mock.calls.some((c) => (c[1] as string).includes('已上传过'))).toBe(true)
+  })
+
+  it('已上传且弹窗不出现：双签名被容忍，仍按已上传成功收尾', async () => {
+    const task = new ShelbyExplorerTask()
+    const { ctx, log } = makeCtx(task)
+    ctx.loginByWallet = vi.fn().mockRejectedValue(new Error('钱包弹窗未出现'))
+    ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === ALREADY_DONE_TEXT))
+    await task.run(ctx)
+    expect(ctx.loginByWallet).toHaveBeenCalledTimes(2)
     expect(ctx.screenshot).toHaveBeenCalled()
     expect(log.info.mock.calls.some((c) => (c[1] as string).includes('已上传过'))).toBe(true)
   })
