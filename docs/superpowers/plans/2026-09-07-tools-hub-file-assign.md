@@ -770,7 +770,7 @@ import { join, resolve } from 'node:path'
 import type { AssignPlan, FileAssignTemplate } from './types'
 import { generateUniqueNames, validateTemplate } from './name-template'
 import { readXlsxMeta } from './xlsx'
-import { ToolError, TOOL_ERROR_CODES } from './errors'
+import { ToolError, TOOL_ERROR_CODES } from '../errors'
 
 /** Fisher-Yates 洗牌（返回新数组，不动原数组） */
 export function shuffle<T>(arr: T[], rand: () => number = Math.random): T[] {
@@ -808,6 +808,8 @@ export async function preparePreview(p: PreparePreviewParams): Promise<AssignPla
   const files = readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isFile())
     .map((d) => d.name)
+    // accounts.xlsx 若在源文件夹内绝不能被选中改名，否则会毁掉账号表
+    .filter((name) => resolve(join(dir, name)) !== resolve(p.xlsxPath))
   if (files.length < meta.rows.length) {
     throw new ToolError(400, TOOL_ERROR_CODES.TOOL_FILES_INSUFFICIENT, `文件不足：需要 ${meta.rows.length} 个，实际 ${files.length} 个`)
   }
@@ -1018,7 +1020,7 @@ import { existsSync, readdirSync, renameSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { ApplyParams, ApplyResult } from './types'
 import { readXlsxMeta, writeCells, type XlsxMeta } from './xlsx'
-import { ToolError, TOOL_ERROR_CODES } from './errors'
+import { ToolError, TOOL_ERROR_CODES } from '../errors'
 
 /** 可注入 IO 面：真实实现走本机磁盘，测试替换以验证锁/失败路径 */
 export interface FileAssignIo {
