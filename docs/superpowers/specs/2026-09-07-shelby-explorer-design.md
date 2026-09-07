@@ -5,7 +5,7 @@
 
 ## 目标
 
-新增任务 `xyz-shelbynet`（面板名「shelbynet 领水和任务」）：在 Shelby Explorer（https://explorer.shelby.xyz/shelbynet）用 Petra 钱包登录后，完成「上传文件」任务，成功判定为页面出现 `All files uploaded successfully`。可重复任务（每次执行都走完整上传流程，无「已领取」短路）。
+新增任务 `xyz-shelbynet`（面板名「shelbynet 领水和任务」）：在 Shelby Explorer（https://explorer.shelby.xyz/shelbynet）用 Petra 钱包登录后，完成「上传文件」任务。成功判定两条：① 页面出现 `All files uploaded successfully`（新上传成功）；② 页面出现 `Error: Blob name already taken`（该文件已上传过——每窗口的文件 blob name 唯一、只能传一次，重复上传即报此错误，视为「已上传=成功」，幂等收敛）。
 
 范围说明：任务名含「领水」，但用户确认本任务只做上传文件；领水已由独立任务 `shelby-faucet` 覆盖（docs.shelby.xyz）。
 
@@ -15,6 +15,7 @@
 - 数据源 `config/accounts.xlsx` 已新增「文件地址」列（用户 2026-09-07 添加），每窗口一个本地文件绝对路径（如 `C:\Users\PC\Desktop\空投文件\...\xxx.png`，文件名含 `!` `$` `+` 等特殊字符）
 - 登录方式 Petra：用户描述的登录流程（Connect Wallet → 站内弹窗选 Aptos/Petra → Connect → 可能直接登录；未登录过则 Petra 扩展弹窗输密码 Unlock → Approve）与现有 `portal-rhuna` 的 Petra 登录范式一致
 - 上传时两次钱包确认：Upload 按钮点击后出现「Uploading files…」+ 第一个钱包 Approve 弹窗 → 点 Approve 后又弹第二个钱包 Approve 弹窗 → 点 Approve 后变为 `All files uploaded successfully`
+- **文件一次性（用户 2026-09-07 实测补充）**：每窗口的文件（blob name）只能发送一次；已提交过的窗口再上传会报 `Error: Blob name already taken`——该文案出现视为「已上传=成功」，不判失败
 - 网络切换（Petra 当前网络是否为 Shelbynet）：用户不确定，需真机验证——见「真机验证关卡」
 - 来源页：https://cryptorank.io/zh/drophunting/shelby-activity1120
 
@@ -50,7 +51,10 @@ run 流程（选择器为最佳猜测，真机核实后修正）：
 7. 选文件：`ctx.uploadFile('input[type="file"]', await ctx.account('文件地址'))`（严格模式：缺列/空值即失败，防拿错文件上传）；弹窗若为拖拽区无 file input，真机确认后换选择器
 8. 点弹窗内 Upload 按钮
 9. 双钱包确认：`loginByWallet()` ×2（第一个 Approve 弹窗关闭后等第二个弹窗再 Approve；Petra 适配器 ensureConnected 自动点 Approve 至弹窗关闭）
-10. `waitForText('All files uploaded successfully', 60s)` 即成功 → `screenshot` 留档
+10. 等待终态（waitSuccess 循环）：
+    - `All files uploaded successfully` 出现 → 新上传成功
+    - `Blob name already taken` 出现 → 文件已上传过，视为成功（幂等收敛，同样截图留档）
+    - 可恢复错误（Network Error 等）且不在上传中 → 刷新恢复；超时 → 抛错进失败重试
 
 要点：每步失败抛错 → 走 retry（120s 退避 ×2）；网络错误文案沿用 portal-rhuna 的刷新恢复策略；无验证码显式处理点（captcha auto 保留为兜底）。
 
@@ -65,6 +69,7 @@ run 流程（选择器为最佳猜测，真机核实后修正）：
   - 未登录分支：点 Connect Wallet → loginByWallet 被调用
   - 双弹窗确认顺序：登录 1 次 + 上传后 Approve 2 次（loginByWallet 共 3 次调用）
   - 成功断言：`All files uploaded successfully` 出现 → run 正常返回；超时 → 抛错
+  - 已上传判定：`Blob name already taken` 出现 → run 正常返回（视为成功）；同时与「上传中不刷新」分支正交验证
   - 数据源严格模式：`ctx.account('文件地址')` 缺列/空值抛错
 - 集成测试（沿用 shelby-faucet.test.ts 模式：本地 chromium + fixture + page.route 拦截）：fixture 模拟落地页 → 上传弹窗 → 成功文案，验证全链路
 
