@@ -6,6 +6,7 @@
  *   "Log in or sign up with Social + Petra Web"，Aptos/Solana/Ethereum 标签 + Connect 按钮
  *   （Aptos 标签默认激活 = Petra 入口）；点 Connect 后本窗口静默连接完成登录（扩展已授权，
  *   无钱包弹窗）——登录态判定靠 header 出现 0x 地址按钮，不能用全页 0x 文案（首页表格全是 0x）
+ *   高并发下弹窗渲染慢：真机批量实测窗口 91 首跑弹窗 >15s 未渲染致 retry（现放宽 30s）
  *   登录态不跨浏览器会话（sessionStorage）：每次开窗均为未登录；会话恢复靠站点自身 + 周期刷新
  *   上传入口在账号页 https://explorer.shelby.xyz/shelbynet/account/<petra钱包地址>/blobs
  *   的 Upload Files 按钮（点 header 地址是下拉菜单，无上传入口）
@@ -78,6 +79,9 @@ export class ShelbyExplorerTask extends SiteTask {
   /** 上传弹窗 file input 挂载等待预算毫秒（测试覆盖缩短） */
   uploadDialogWaitMs = 20000
 
+  /** 站内钱包弹窗出现等待预算毫秒（真机实测高并发下弹窗渲染可 >15s，窗口 91 首跑即因此 retry） */
+  walletDialogWaitMs = 30000
+
   /** 站点根地址（集成测试覆盖为本地 fixture 服务） */
   accountBaseUrl = 'https://explorer.shelby.xyz'
 
@@ -144,7 +148,7 @@ export class ShelbyExplorerTask extends SiteTask {
   private async login(ctx: TaskContext): Promise<void> {
     await ctx.ensureWalletReady()
     await ctx.human.click(CONNECT_SELECTOR)
-    await ctx.assertVisible(DIALOG_SELECTOR, 15000)
+    await ctx.assertVisible(DIALOG_SELECTOR, this.walletDialogWaitMs)
     await ctx.human.click(DIALOG_CONNECT_SELECTOR)
     try {
       await ctx.loginByWallet({ reclick: { selector: DIALOG_CONNECT_SELECTOR, afterMs: 8000 } })
