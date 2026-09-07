@@ -47,7 +47,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 新增/修改任务
 
-权威手册是 `docs/API-GUIDE.md`（面板文档页也渲染它）——TaskMeta 字段全解、TaskContext 方法全解、常用模式/排错，写任务前先读对应章节。
+权威手册是 `docs/API-GUIDE.md`（面板文档页也渲染它）——TaskMeta 字段全解、TaskContext 方法全解、常用模式/排错，写任务前先读对应章节。真机踩坑实录见 `docs/TASK-DEVELOPMENT-LESSONS.md`（登录态判定/钱包弹窗/隐藏文件上传/卡死定位等经验，写新任务前必读）。
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
@@ -74,3 +74,4 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec
 - 批量触发（任务页「立即触发」）与重试会话开窗前自带随机错峰（`execution.staggerMaxSec`，默认 120 秒，0 关闭）；单窗口入口（看板行级执行、task:run 脚本）不等待
+- 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/TASK-DEVELOPMENT-LESSONS.md`）
