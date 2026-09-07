@@ -13,6 +13,7 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
     expect(cfg.execution.staggerMaxSec).toBe(120)
+    expect(cfg.execution.maxConcurrentWindows).toBe(4)
     expect(cfg.captcha.clientKey).toBe('')
   })
 
