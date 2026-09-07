@@ -191,19 +191,19 @@ describe('ShelbyExplorerTask run 流程', () => {
     expect(uploadClicks.length).toBe(0)
   })
 
-  it('已上传短路在 Upload 按钮禁用态同样成立（不依赖按钮启用）', async () => {
+  it('上传途中服务端查重报已上传：双签名弹窗未出现被容忍，仍按已上传成功收尾', async () => {
     const task = new ShelbyExplorerTask()
-    task.uploadEnabledWaitMs = 10
     const { ctx, log } = makeCtx(task)
-    // 真机已上传行为：Upload 按钮始终禁用 + 弹窗内出现已上传错误文案
-    ctx.page.locator = vi.fn().mockReturnValue({
-      first: () => ({ isDisabled: vi.fn().mockResolvedValue(true) }),
-      count: vi.fn().mockResolvedValue(1),
+    // waitSettle 阶段无已上传提示（走 Upload 按钮启用分支）；签名尝试后才报已上传
+    let signed = false
+    ctx.loginByWallet = vi.fn().mockImplementation(async () => {
+      signed = true
+      throw new Error('钱包弹窗未出现')
     })
-    ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === ALREADY_DONE_TEXT))
+    ctx.textPresent = vi.fn((t: string) => Promise.resolve(signed && t === ALREADY_DONE_TEXT))
     await task.run(ctx)
+    expect(ctx.loginByWallet).toHaveBeenCalledTimes(2)
     expect(ctx.screenshot).toHaveBeenCalled()
-    expect(ctx.loginByWallet).not.toHaveBeenCalled()
     expect(log.info.mock.calls.some((c) => (c[1] as string).includes('已上传过'))).toBe(true)
   })
 
