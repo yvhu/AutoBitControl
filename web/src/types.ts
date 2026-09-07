@@ -50,3 +50,39 @@ export type DatasourceInfo = EnvelopeData<'/api/settings'>['datasource']
 export interface SettingsData extends Omit<SettingsBase, 'datasource'> {
   datasource: DatasourceInfo
 }
+
+// ===== 工具中心（手补类型：/api/tools 与 /api/tools/file-assign/*） =====
+
+export type ToolItem = { key: string; name: string; description: string }
+
+export type EnglishCase = 'lower' | 'upper' | 'mixed'
+
+export type PositionType = 'replace' | 'before' | 'after' | 'after-position' | 'after-text'
+
+/** 名称模板（与后端 src/tools/file-assign/types.ts 的 FileAssignTemplate 同构） */
+export interface FileAssignTemplate {
+  english: { count: number; caseMode: EnglishCase } | null
+  digits: { count: number } | null
+  special: { count: number; charset: string } | null
+  position: { type: PositionType; value?: string | number }
+}
+
+export interface FileAssignRow {
+  rowNumber: number
+  window: string
+  oldName: string
+  newName: string
+  newPath: string
+}
+
+export interface FileAssignPreview {
+  accountsCount: number
+  filesCount: number
+  plan: FileAssignRow[]
+}
+
+export interface FileAssignApplyResult {
+  renamedCount: number
+  updatedRows: number
+  reloadedRows: number
+}

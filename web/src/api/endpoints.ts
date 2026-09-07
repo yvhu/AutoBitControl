@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -25,3 +25,8 @@ export const createSchedule = (body: { name: string; mode: ScheduleItem['mode'];
 export const updateSchedule = (id: number, body: Partial<{ name: string; enabled: boolean; mode: ScheduleItem['mode']; config: ScheduleConfigInput; taskKeys: string[] }>) => patch<ScheduleItem>(`/api/schedules/${id}`, body)
 export const deleteSchedule = (id: number) => del<null>(`/api/schedules/${id}`)
 export const runSchedule = (id: number) => post<{ taskKeys: string[]; skipped: Array<{ taskKey: string; reason: string }> }>(`/api/schedules/${id}/run`, {})
+
+// ===== 工具中心 =====
+export const fetchTools = () => get<{ tools: ToolItem[] }>('/api/tools')
+export const previewFileAssign = (body: { sourceDir: string; column: string; template: FileAssignTemplate }) => post<FileAssignPreview>('/api/tools/file-assign/preview', body)
+export const applyFileAssign = (body: { sourceDir: string; column: string; plan: FileAssignRow[] }) => post<FileAssignApplyResult>('/api/tools/file-assign/apply', body)
