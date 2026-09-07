@@ -16,7 +16,8 @@
 - 登录方式 Petra：用户描述的登录流程（Connect Wallet → 站内弹窗选 Aptos/Petra → Connect → 可能直接登录；未登录过则 Petra 扩展弹窗输密码 Unlock → Approve）与现有 `portal-rhuna` 的 Petra 登录范式一致
 - 上传时两次钱包确认：Upload 按钮点击后出现「Uploading files…」+ 第一个钱包 Approve 弹窗 → 点 Approve 后又弹第二个钱包 Approve 弹窗 → 点 Approve 后变为 `All files uploaded successfully`
 - **文件一次性（用户 2026-09-07 实测补充）**：每窗口的文件（blob name）只能发送一次；已提交过的窗口再上传会报 `Error: Blob name already taken`——该文案出现视为「已上传=成功」，不判失败
-- 网络切换（Petra 当前网络是否为 Shelbynet）：用户不确定，需真机验证——见「真机验证关卡」
+- **真机核实（2026-09-07，窗口 4e6bc67b83a840c7b665d2723c4837f0）**：已上传路径两次跑通（日志「文件已上传过…视为成功」+ 成功截图）；新上传路径待未提交窗口验证
+- 网络：钱包网络已是 Shelbynet（真机核实结论），无需切链步骤
 - 来源页：https://cryptorank.io/zh/drophunting/shelby-activity1120
 
 ## 方案选择
@@ -34,29 +35,28 @@ meta（TaskMeta）：
 - key `xyz-shelbynet`、name `shelbynet 领水和任务`、url `https://explorer.shelby.xyz/shelbynet`
 - sourceUrl `https://cryptorank.io/zh/drophunting/shelby-activity1120`
 - category `checkin`、lastUpdated `2026-09-07`、enabled `true`
-- wallet `petra`、timeoutSec `600`（上传大文件 + 双签名耗时）
+- wallet `petra`、timeoutSec `900`（登录静默连接 + 会话恢复慢（真机 30-90s）+ 上传大文件 + 双签名，放宽单次超时）
 - retry `{ max: 2, backoffSec: 120 }`、captcha `{ auto: true }`、concurrency `4`
 
-run 流程（选择器为最佳猜测，真机核实后修正）：
+run 流程（真机核实后定稿）：
 
 1. `closeOtherTabs()` → `goto()`
-2. 登录态竞速：`detectPageState({ loggedInText: '0x', landingText: 'Connect Wallet', waitMs: 20000 })`；已登录（cookie 有效）跳过登录
-3. 未登录：`ensureWalletReady()` → 点 header 的 Connect Wallet 按钮（radix dialog-trigger）→ 站内弹窗（Aptos 分区 → Petra 入口 + 右侧 Connect 按钮）→ 点 Petra 入口 → `loginByWallet({ reclick })`（Petra 扩展弹窗输密码 + Unlock → Approve）→ `waitForTextRecover('0x', { budgetMs: 60s, refreshEveryMs: 25s, recoverTexts: [Network Error 等] })`
-   - 若真机确认弹窗为 AppKit（Reown）结构，改用 `openAppKitWallet`
-4. 【网络核对 · 真机验证关卡】确认 Petra 当前网络是否为 Shelbynet：
-   - 若登录时站点发起 switchNetwork/addNetwork 弹窗 → 已被第 3 步钱包弹窗处理覆盖，无需额外代码
-   - 若不会自动切换 → 增加切换步骤：打开 Petra 扩展 popup 页 → 点网络选择器 → 选 Shelbynet（届时真机定选择器）
-5. 点头部 0x 地址按钮 → 页面变化 → 等「Upload Files」出现（waitForText，含刷新恢复）
-6. 点 Upload Files → 上传弹窗出现
-7. 选文件：`ctx.uploadFile('input[type="file"]', await ctx.account('文件地址'))`（严格模式：缺列/空值即失败，防拿错文件上传）；弹窗若为拖拽区无 file input，真机确认后换选择器
-8. 点弹窗内 Upload 按钮
-9. 双钱包确认：`loginByWallet()` ×2（第一个 Approve 弹窗关闭后等第二个弹窗再 Approve；Petra 适配器 ensureConnected 自动点 Approve 至弹窗关闭）
+2. 登录态判定：自定义 `detectHeaderState` 做 header 范围选择器竞速（header 0x 地址按钮 vs header Connect Wallet 谁先出现）；不能用 `detectPageState` 的全页 0x 文案判定（首页表格全是 0x 文案）；SPA 渲染延迟下状态不明则刷新重试（最多 10 轮）；已登录（cookie 有效）跳过登录
+3. 未登录：`ensureWalletReady()` → 点 header Connect Wallet → 站内钱包弹窗为 Petra Web（Aptos Labs）自定义弹窗（非 AppKit）：`[role="dialog"]` 出现 → 点弹窗内 Connect（Aptos 标签默认激活 = Petra 入口）→ 本窗口扩展已授权时静默连接（无扩展弹窗，容忍「钱包弹窗未出现」不判失败）→ 等 header 0x 地址出现（登录结果唯一判定）
+4. 【网络核对 · 已核实结论】钱包网络已是 Shelbynet，无需切链步骤（原「网络核对真机验证关卡」已关闭）
+5. 上传入口：`goto` 账号页 `https://explorer.shelby.xyz/shelbynet/account/<petra钱包地址>/blobs`（地址取自数据源「petra钱包地址」列，严格模式；点 header 地址是下拉菜单，无上传入口）→ 等 Upload Files 按钮出现（会话恢复慢真机 30-90s，周期刷新 + 可恢复错误刷新兜底；未恢复则在账号页重新登录后重等）
+6. 点 Upload Files → 上传弹窗出现（SPA 渲染未稳点击可能落空，最多 2 轮补点）
+7. 选文件：上传弹窗 file input 为隐藏元素（class=hidden，setInputFiles 可用，用 DOM 挂载判定不用可见性）→ `ctx.uploadFile('[role="dialog"] input[type="file"]', await ctx.account('文件地址'))`（严格模式：缺列/空值即失败，防拿错文件上传）；选文件后站点立即做 blob 名查重：
+   - 已上传 → 弹窗直接显示 `Error: Blob name already taken` 且 Upload 按钮永不启用、不发起签名 → 短路视为成功（不点 Upload，截图留档）
+   - 未上传 → chunkset 结算后 Upload 按钮才启用
+8. 点弹窗内 Upload → 第一次 Petra prompt.html 签名弹窗出现（可能锁屏：Petra 适配器输密码 + Unlock → Approve，register_multiple_blobs）
+9. 第二次 Petra prompt.html 签名弹窗出现 → 直接 Approve（commit_object）；弹窗未出现容忍（上传途中服务端查重报已上传时站点可能不再发起签名），终态交给 waitSuccess
 10. 等待终态（waitSuccess 循环）：
     - `All files uploaded successfully` 出现 → 新上传成功
     - `Blob name already taken` 出现 → 文件已上传过，视为成功（幂等收敛，同样截图留档）
     - 可恢复错误（Network Error 等）且不在上传中 → 刷新恢复；超时 → 抛错进失败重试
 
-要点：每步失败抛错 → 走 retry（120s 退避 ×2）；网络错误文案沿用 portal-rhuna 的刷新恢复策略；无验证码显式处理点（captcha auto 保留为兜底）。
+要点：每步失败抛错 → 走 retry（120s 退避 ×2）；上传中不刷新防打断在途请求；成功截图等字体加载偶发超时非致命化（只告警）；网络错误文案沿用 portal-rhuna 的刷新恢复策略；无验证码显式处理点（captcha auto 保留为兜底）。
 
 ### 2. `src/tasks/index.ts`
 
