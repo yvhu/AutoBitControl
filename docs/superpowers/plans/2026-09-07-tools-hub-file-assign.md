@@ -1036,7 +1036,7 @@ export const defaultIo: FileAssignIo = {
   renameFile: async (from, to) => {
     renameSync(from, to)
   },
-  writeXlsx,
+  writeXlsx: writeCells,
   readXlsx: readXlsxMeta,
   readDirFiles: async (dir) =>
     readdirSync(dir, { withFileTypes: true })
