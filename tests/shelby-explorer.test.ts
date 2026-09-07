@@ -123,6 +123,30 @@ describe('ShelbyExplorerTask run 流程', () => {
     await expect(task.run(ctx)).rejects.toThrow('登录未完成')
   })
 
+  it('弹窗点击未注册：Connect 按钮仍可见时补点，弹窗出现后继续登录', async () => {
+    const task = new ShelbyExplorerTask()
+    task.walletDialogReclickMs = 0
+    const { ctx, human } = makeCtx(task)
+    let addressVisible = false
+    // 弹窗前两次检查不可见（模拟点击未注册），第三次出现；Connect 按钮始终可见
+    let dialogChecks = 0
+    ctx.visible = vi.fn().mockImplementation(async (sel: string) => {
+      if (sel === '[role="dialog"]') {
+        dialogChecks++
+        return dialogChecks >= 3
+      }
+      if (sel === ADDRESS_SELECTOR) return addressVisible
+      return true
+    })
+    ctx.loginByWallet = vi.fn().mockImplementation(async () => {
+      addressVisible = true
+    })
+    await task.run(ctx)
+    const connectClicks = (human.click as ReturnType<typeof vi.fn>).mock.calls.filter((c) => (c[0] as string).includes('Connect Wallet'))
+    expect(connectClicks.length).toBeGreaterThanOrEqual(2)
+    expect(ctx.loginByWallet).toHaveBeenCalled()
+  })
+
   it('数据源缺「petra钱包地址」列 → 严格模式抛错（不跑上传）', async () => {
     const task = new ShelbyExplorerTask()
     const { ctx } = makeCtx(task)
