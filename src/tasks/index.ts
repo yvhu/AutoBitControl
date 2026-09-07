@@ -9,9 +9,10 @@ import { FaucetExampleTask } from './faucet-example'
 import { MintExampleTask } from './mint-example'
 import { InceptionDachainTask } from './inception-dachain'
 import { PortalRhunaTask } from './portal-rhuna'
+import { ShelbyAptFaucetTask, ShelbyUsdFaucetTask } from './shelby-faucet'
 
 // 全部任务实例（每个任务一个单例，跨 API/队列共享状态）
-const ALL: SiteTask[] = [new ExampleCheckinTask(), new FaucetExampleTask(), new MintExampleTask(), new InceptionDachainTask(), new PortalRhunaTask()]
+const ALL: SiteTask[] = [new ExampleCheckinTask(), new FaucetExampleTask(), new MintExampleTask(), new InceptionDachainTask(), new PortalRhunaTask(), new ShelbyAptFaucetTask(), new ShelbyUsdFaucetTask()]
 
 /** 以 meta.key 为索引构建任务表（key 重复会覆盖——登记时注意唯一性） */
 export function loadTasks(): Map<string, SiteTask> {
