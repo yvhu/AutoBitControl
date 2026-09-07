@@ -1,0 +1,12 @@
+<!doctype html>
+<html>
+<body>
+  <input name="address" type="text" placeholder="Address" />
+  <button>Fund</button>
+  <script>
+    document.querySelector('button').addEventListener('click', () => {
+      fetch('https://faucet.shelbynet.shelby.xyz/fund', { method: 'POST' })
+    })
+  </script>
+</body>
+</html>
