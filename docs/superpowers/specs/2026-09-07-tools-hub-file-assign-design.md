@@ -64,7 +64,7 @@ server → tools → infrastructure
   - `template: { components: { english: { count, case: 'lower'|'upper'|'mixed' }, digits: { count }, special: { count, charset } }, position: { type: 'replace'|'before'|'after'|'after-position'|'after-text', value?: string|number } }`（组件不勾选时对应子对象为 null）
   - 返回 `data: { accountsCount, filesCount, plan: [{ rowNumber, window, oldName, newName, newPath }] }`；校验失败统一走 `fail`（错误码 40001-40004），不设 errors 字段
 - `POST /api/tools/file-assign/apply`
-  - body：`{ sourceDir, column, template, plan }`（plan 为 preview 回传的计划）
+  - body：`{ sourceDir, column, plan }`（plan 为 preview 回传的计划；apply 不重收模板，以计划为准）
   - 返回 `data: { renamedCount, updatedRows, reloadedRows }`
 
 ### 数据流
@@ -87,6 +87,7 @@ apply:   校验回传计划（文件仍在、新名无冲突、账号行数一�
 | 40004 TOOL_TEMPLATE_INVALID | 模板无效（生成串为空、个数超限等） |
 | 40005 TOOL_PLAN_INVALID | apply 回传计划校验失败 |
 | 40904 TOOL_BUSY | 上一次执行进行中 |
+| 50001 TOOL_IO_FAILED | 磁盘 IO 失败（重命名/写回 xlsx，错误信息附已改名清单） |
 
 ## 健壮性与安全
 
@@ -113,8 +114,8 @@ apply:   校验回传计划（文件仍在、新名无冲突、账号行数一�
 
 ### 面板交互（按已确认的 UI 设计稿 v2）
 
-- 表单：源文件夹路径 Input + 「检测文件」按钮（调 preview 校验，展示文件数/账号行数 badge）→ 写入目标列 Select → 名称生成组件（英文 checkbox+个数+大小写下拉、数字 checkbox+位数、特殊字符 checkbox+个数+字符集）→ 插入位置 radio（替换文件名/文件名前/文件名后/指定位置后+位置输入/指定文本后+文本输入）→ 实时示例名
-- 「生成预览」→ 预览表格（窗口 / 旧名 → 新名 / 目标路径）+ 校验错误列表
+- 表单：源文件夹路径 Input + 「生成预览」按钮（调 preview，展示文件数/账号行数 badge 并填充预览表格）→ 写入目标列 Select → 名称生成组件（英文 checkbox+个数+大小写下拉、数字 checkbox+位数、特殊字符 checkbox+个数+字符集）→ 插入位置 radio（替换文件名/文件名前/文件名后/指定位置后+位置输入/指定文本后+文本输入）→ 实时示例名
+- 预览表格（窗口 / 旧名 → 新名 / 目标路径）+ 校验错误提示（校验失败走统一报错）
 - 「执行分配」（预览通过才可点）→ 成功后 success 提示（已重命名 N 个文件、写回 M 行、数据源已重载）
 - 空勾选校验：前端即时提示「至少勾选一个生成组件或选择替换文件名时生成串不能为空」
 
