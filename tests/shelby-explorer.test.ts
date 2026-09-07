@@ -3,9 +3,16 @@
  * 背景：真机选择器尚未核实（见本计划 Task 3），单测锁定流程逻辑与错误语义，
  * 使后续选择器迭代不破坏已验证的行为
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { chromium } from 'patchright'
+import { createServer, type Server } from 'node:http'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import type { AddressInfo } from 'node:net'
 import { ShelbyExplorerTask } from '../src/tasks/shelby-explorer'
 import { TaskContext } from '../src/tasks/base'
+import { Humanizer } from '../src/automation/humanize'
 
 /** 构造注入假依赖的 TaskContext：run 用到的全部 ctx 能力替换为假实现 */
 function makeCtx(task = new ShelbyExplorerTask()) {
@@ -106,4 +113,53 @@ describe('ShelbyExplorerTask 元信息', () => {
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
     expect(t.meta.concurrency).toBe(4)
   })
+})
+
+describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包弹窗存根）', () => {
+  let server: Server
+  let baseUrl: string
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.end(readFileSync(join(__dirname, 'fixtures', 'shelby-explorer.html'), 'utf-8'))
+    })
+    await new Promise<void>((r) => server.listen(0, r))
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((r) => server.close(() => r()))
+  })
+
+  it('run() 完整流程：登录态 → 登录 → 点 0x → 上传 → 双确认 → 成功文案', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      // 真实临时文件（uploadFile 的 setInputFiles 要求文件存在）
+      const uploadFilePath = join(tmpdir(), `shelby-explorer-${Date.now()}.txt`)
+      writeFileSync(uploadFilePath, 'hello shelby')
+      const task = new ShelbyExplorerTask()
+      task.meta.url = baseUrl + '/shelbynet'
+      const ctx = new TaskContext({
+        page,
+        task,
+        human: new Humanizer(page),
+        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+        artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
+        walletPasswords: { petra: 'pw' },
+        accountRow: { 文件地址: uploadFilePath },
+      })
+      // 钱包扩展弹窗无法在测试浏览器模拟：登录/Approve 弹窗全部存根（站点侧状态由 fixture 模拟）
+      ctx.ensureWalletReady = vi.fn().mockResolvedValue(undefined)
+      ctx.loginByWallet = vi.fn().mockResolvedValue(undefined)
+      await task.run(ctx)
+      expect(await page.getByText('All files uploaded successfully').count()).toBeGreaterThan(0)
+      expect(ctx.loginByWallet).toHaveBeenCalledTimes(3)
+    } finally {
+      await browser.close()
+    }
+  }, 90000)
 })

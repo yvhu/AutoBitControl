@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<body>
+  <header>
+    <button id="connect">Connect Wallet</button>
+  </header>
+  <div id="wallet-modal" style="display:none">
+    <button class="petra">Petra</button>
+  </div>
+  <div id="upload-entry" style="display:none">
+    <button id="upload-files">Upload Files</button>
+  </div>
+  <div id="upload-dialog" role="dialog" style="display:none">
+    <input type="file" />
+    <button id="upload">Upload</button>
+    <div id="status"></div>
+  </div>
+  <script>
+    document.getElementById('connect').addEventListener('click', () => {
+      const btn = document.getElementById('connect')
+      if (btn.textContent.startsWith('0x')) {
+        document.getElementById('upload-entry').style.display = 'block'
+        return
+      }
+      document.getElementById('wallet-modal').style.display = 'block'
+    })
+    document.querySelector('.petra').addEventListener('click', () => {
+      document.getElementById('connect').textContent = '0x1234567890abcdef'
+      document.getElementById('wallet-modal').style.display = 'none'
+    })
+    document.getElementById('upload-files').addEventListener('click', () => {
+      document.getElementById('upload-dialog').style.display = 'block'
+    })
+    document.getElementById('upload').addEventListener('click', () => {
+      const status = document.getElementById('status')
+      status.textContent = 'Uploading files…'
+      setTimeout(() => {
+        status.textContent = 'All files uploaded successfully'
+      }, 500)
+    })
+  </script>
+</body>
+</html>
