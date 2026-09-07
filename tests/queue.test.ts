@@ -7,8 +7,9 @@ function makeEnq(
   run: ReturnType<typeof vi.fn>,
   concurrencyOf: (key: string) => number = () => 4,
   staggerMaxSec = 0,
+  maxWindows = Number.POSITIVE_INFINITY,
 ) {
-  return new CoalescingEnqueuer({ runWindowTasks: run } as never, logger, concurrencyOf, staggerMaxSec)
+  return new CoalescingEnqueuer({ runWindowTasks: run } as never, logger, concurrencyOf, staggerMaxSec, maxWindows)
 }
 
 const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, circuitBreakerCount: 0 })
@@ -279,5 +280,112 @@ describe('CoalescingEnqueuer 随机错峰', () => {
     expect(vi.getTimerCount()).toBe(0)
     releases[2]()
     await Promise.resolve()
+  })
+})
+
+describe('CoalescingEnqueuer 全局窗口上限', () => {
+  it('全局额度内立即执行，超额窗口进全局队列，会话结束 FIFO 滚动续跑', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 0, 2)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    enq.enqueue(mk(3, 'bb-3'), 'task-a')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    releases[1]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(3)
+    expect(run.mock.calls[2][0].id).toBe(3)
+    releases[2]()
+    releases[3]()
+    await tick()
+  })
+
+  it('全局排队期间同窗口任务继续合并为一次会话', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 0, 1)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    await tick()
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-b')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+    releases[1]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b' }])
+    releases[2]()
+    await tick()
+  })
+
+  it('全局排队中的窗口判在途，会话结束后解除', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 0, 1)
+    const p1 = mk(1, 'bb-1')
+    const p2 = mk(2, 'bb-2')
+    enq.enqueue(p1, 'task-a')
+    await tick()
+    enq.enqueue(p2, 'task-a')
+    expect(enq.hasTaskInFlight('task-a')).toBe(true)
+    expect(enq.hasTaskInFlight('task-a', 2)).toBe(true)
+    expect(enq.hasTaskInFlight('task-b')).toBe(false)
+    releases[1]()
+    await tick()
+    expect(enq.hasTaskInFlight('task-a')).toBe(true)
+    releases[2]()
+    await tick()
+    expect(enq.hasTaskInFlight('task-a')).toBe(false)
+  })
+
+  it('pendingCount 包含全局排队中的窗口数', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 10, 0, 1)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    await tick()
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    enq.enqueue(mk(3, 'bb-3'), 'task-a')
+    expect(enq.pendingCount()).toBe(2)
+    releases[1]()
+    await tick()
+    expect(enq.pendingCount()).toBe(1)
+    releases[2]()
+    await tick()
+    releases[3]()
+    await tick()
+  })
+
+  it('双闸门取更严者：任务额度 1 严于全局额度 2', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 1, 0, 2)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-a')
+    enq.enqueue(mk(3, 'bb-3'), 'task-a')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+    releases[1]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
+    releases[2]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(3)
+    releases[3]()
+    await tick()
+  })
+
+  it('maxWindows 缺省 Infinity：不设全局限制，任务额度照常', async () => {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const enq = makeEnq(run, () => 4)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a')
+    enq.enqueue(mk(2, 'bb-2'), 'task-b')
+    enq.enqueue(mk(3, 'bb-3'), 'task-c')
+    await tick()
+    expect(run).toHaveBeenCalledTimes(3)
   })
 })

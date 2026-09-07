@@ -1,9 +1,12 @@
 /**
- * 窗口任务队列（engine 层）：任务级并发额度 + 同窗口任务合并
+ * 窗口任务队列（engine 层）：任务级并发额度 + 全局窗口上限 + 同窗口任务合并
  * 依赖方向：依赖基础设施类型，被 server 路由依赖
  * 设计思路：
  * - 每个任务有独立并发额度（meta.concurrency，缺省 DEFAULT_TASK_CONCURRENCY=4）：
  *   active 计数已占窗口数，超额的窗口进 waiting FIFO，会话结束释放额度时滚动续跑
+ * - 全局窗口上限（maxConcurrentWindows，缺省 Infinity）：所有任务共享的同时开窗总数封顶，
+ *   dispatch 开窗前同步检查，超额会话进 globalWaiting FIFO（条目保留在 pending 合并区，
+ *   同窗口后续任务继续合并）；会话结束先释放全局额度滚动续跑，再释放任务额度
  * - 同窗口任务合并保留：pending 合并区 + running/followUp 两套机制（由来见类注释）
  * - 错峰：首次入队随机延迟 staggerMaxSec 内再开窗（批量触发打散起点；0 = 关闭）
  */
@@ -49,6 +52,12 @@ export class CoalescingEnqueuer {
   private running = new Map<number, Set<string>>()
   /** 运行中窗口收到的追加任务（本轮结束后重新入队） */
   private followUp = new Map<number, Entry>()
+  /** 全局窗口闸门：同时开窗总数上限（clamp 到 ≥1；Infinity = 不限制） */
+  private readonly globalMax: number
+  /** 全局闸门已占开窗数 */
+  private globalActive = 0
+  /** 全局额度已满时的窗口会话 FIFO 排队（条目保留在 pending 合并区，续跑时直接 dispatch 不重复错峰） */
+  private globalWaiting: Entry[] = []
   /** 任务级并发额度表（懒创建） */
   private gates = new Map<string, Gate>()
 
@@ -59,7 +68,11 @@ export class CoalescingEnqueuer {
     private taskConcurrencyOf: (taskKey: string) => number,
     /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
     private staggerMaxSec = 0,
-  ) {}
+    /** 全局窗口上限：同时最多开几个窗口会话（机器资源兜底；Infinity = 不限制） */
+    maxConcurrentWindows = Number.POSITIVE_INFINITY,
+  ) {
+    this.globalMax = Math.max(1, maxConcurrentWindows)
+  }
 
   /** 取（或懒创建）任务额度表 */
   private gateFor(taskKey: string): Gate {
@@ -142,8 +155,15 @@ export class CoalescingEnqueuer {
     }
   }
 
-  /** 执行合并完成的窗口会话（delayMs=0 时与 enqueue 同步） */
+  /** 执行合并完成的窗口会话（delayMs=0 时与 enqueue 同步）；全局额度满时进全局 FIFO 排队 */
   private dispatch(entry: Entry): void {
+    // 全局窗口闸门（同步判定，保证会话结束释放额度时的滚动续跑 FIFO 公平）：
+    // 额度已满则进全局等待队列（条目保持 pending 合并区，同窗口后续任务继续合并进同一会话）
+    if (this.globalActive >= this.globalMax) {
+      this.globalWaiting.push(entry)
+      return
+    }
+    this.globalActive++
     void (async () => {
       // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
       await Promise.resolve()
@@ -156,13 +176,18 @@ export class CoalescingEnqueuer {
         this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
       }
       this.running.delete(entry.profile.id)
-      // 本轮期间收到的追加任务重新入队（下一轮会话；先于额度释放，追加任务可立即占额度或排队）
+      // 本轮期间收到的追加任务重新入队（下一轮会话；先于额度释放，追加任务可立即占额度或排队；
+      // 全局满时其 dispatch 走同步闸门自然排到全局队尾，FIFO 公平）
       const fu = this.followUp.get(entry.profile.id)
       if (fu) {
         this.followUp.delete(entry.profile.id)
         for (const t of fu.tasks) this.enqueue(fu.profile, t.taskKey, { immediate: fu.immediate, batchId: t.batchId })
       }
-      // 释放本会话各任务额度并滚动续跑等待队列
+      // 先释放全局额度并滚动续跑全局队列（队首直接 dispatch，不重复错峰：会话结束时机天然错开），
+      // 再释放本会话各任务额度（其滚动续跑的新会话 dispatch 时重新过全局闸门）
+      this.globalActive--
+      const next = this.globalWaiting.shift()
+      if (next) this.dispatch(next)
       for (const t of entry.tasks) this.release(t.taskKey)
     })()
   }
