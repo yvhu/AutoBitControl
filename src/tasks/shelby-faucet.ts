@@ -60,16 +60,21 @@ export async function runClaimLoop(ctx: TaskContext, address: string, maxClaims:
     const input = ctx.page.locator(ADDRESS_SELECTOR).first()
     const current = await input.inputValue().catch(() => '')
     if (current === '') await input.fill(address)
+    let respErr: string | null = null
     const respPromise = ctx.page.waitForResponse((r) => r.url().includes(FUND_URL_PART) && r.request().method() === 'POST', {
       timeout: FUND_WAIT_MS,
+    }).catch((e) => {
+      respErr = (e as Error).message
+      return null
     })
     await ctx.human.click(FUND_BUTTON_SELECTOR)
+    const res = await respPromise
+    if (!res) throw new Error(`第 ${i + 1} 次领取失败（等待 /fund 响应超时）: ${respErr ?? '未知错误'}`)
     let body: FundResponse | null = null
     try {
-      const res = await respPromise
       body = (await res.json().catch(() => null)) as FundResponse | null
     } catch (e) {
-      throw new Error(`第 ${i + 1} 次领取失败（等待 /fund 响应超时）: ${(e as Error).message}`)
+      throw new Error(`第 ${i + 1} 次领取失败（解析 /fund 响应失败）: ${(e as Error).message}`)
     }
     const verdict = judgeFundResponse(body)
     if (verdict === 'success') {

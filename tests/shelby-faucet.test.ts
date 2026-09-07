@@ -122,6 +122,36 @@ describe('runClaimLoop 领取循环', () => {
     await runClaimLoop(ctx, '0x123', 1)
     expect(fillCount).toBe(1)
   })
+
+  it('点击失败时孤儿 waitForResponse 不触发 unhandledRejection', async () => {
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const page = {
+      locator: () => ({
+        first: () => ({ inputValue: vi.fn().mockResolvedValue('0x1'), fill: vi.fn().mockResolvedValue(undefined) }),
+      }),
+      waitForResponse: () => new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 30000ms exceeded')), 50)),
+      waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    }
+    const ctx = new TaskContext({
+      page: page as never,
+      task: { meta: { key: 'shelby-apt-faucet', name: 'Shelby APT 领水', url: '' } },
+      human: { click: vi.fn().mockRejectedValue(new Error('点击失败: 找不到元素 button:has-text("Fund")')) } as never,
+      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      cfg: {} as never,
+      logger: log as never,
+      artifactsDir: '',
+      walletPasswords: {},
+    })
+    const onUnhandled = vi.fn()
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      await expect(runClaimLoop(ctx, '0x1', 5)).rejects.toThrow('点击失败')
+      await new Promise((r) => setTimeout(r, 200))
+      expect(onUnhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
 })
 
 describe('Shelby 领水任务集成（真实浏览器 + 本地 fixture + 路由拦截）', () => {
