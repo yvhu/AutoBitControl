@@ -183,19 +183,22 @@ describe('CoalescingEnqueuer 全局窗口上限', () => {
     await tick()
   })
 
-  it('双闸门取更严者：全局额度 2 限制任务额度 10', async () => {
+  it('双闸门取更严者：任务额度 1 严于全局额度 2', async () => {
     const releases: Record<number, () => void> = {}
     const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 2)
+    const enq = makeEnq(run, () => 1, 0, 2)
     enq.enqueue(mk(1, 'bb-1'), 'task-a')
     enq.enqueue(mk(2, 'bb-2'), 'task-a')
     enq.enqueue(mk(3, 'bb-3'), 'task-a')
     await tick()
-    expect(run).toHaveBeenCalledTimes(2)
+    expect(run).toHaveBeenCalledTimes(1)
     releases[1]()
     await tick()
-    expect(run).toHaveBeenCalledTimes(3)
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls[1][0].id).toBe(2)
     releases[2]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(3)
     releases[3]()
     await tick()
   })
