@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { InceptionDachainTask } from '../src/tasks/inception-dachain'
 import { TaskContext } from '../src/tasks/base'
 
@@ -58,6 +58,7 @@ type TaskHelpers = {
   raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<'limit' | 'modal' | 'insufficient' | null>
   raceReveal(ctx: TaskContext, timeoutMs: number): Promise<'revealed' | 'insufficient' | 'limit' | null>
   dailyOpens(ctx: TaskContext): Promise<{ opened: number; total: number } | null>
+  revealInModal(ctx: TaskContext): Promise<'revealed' | 'insufficient' | 'limit' | null>
 }
 const helpers = new InceptionDachainTask() as unknown as TaskHelpers
 
@@ -112,5 +113,46 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
   it('dailyOpens：计数器未渲染/改版 → null（走文案竞速兜底）', async () => {
     const ctx = makeCtx(makeFakePage({}, { bodyText: 'SYS://DASHBOARD.MAIN | 21,804 | QE' }))
     expect(await helpers.dailyOpens(ctx)).toBeNull()
+  })
+
+  it('revealInModal：总预算 120s（45s 无结果补点后剩余预算拉满 75s）', async () => {
+    vi.useFakeTimers()
+    try {
+      const timeouts: number[] = []
+      const page = {
+        getByText: () => ({
+          first: () => ({
+            waitFor: ({ timeout }: { timeout: number }) => new Promise<void>((_, reject) => {
+              timeouts.push(timeout)
+              setTimeout(() => reject(new Error(`等待文案超时`)), timeout)
+            }),
+          }),
+        }),
+        locator: () => ({
+          first: () => ({ count: async () => 1, isVisible: async () => true }),
+        }),
+      }
+      const click = vi.fn().mockResolvedValue(undefined)
+      const ctx = new TaskContext({
+        page: page as never,
+        task: new InceptionDachainTask(),
+        human: { click } as never,
+        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        cfg: {} as never,
+        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+        artifactsDir: '',
+        walletPasswords: {},
+      })
+      const p = helpers.revealInModal(ctx)
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(click).toHaveBeenCalledTimes(2) // Open for 首次点击 + 45s 无结果补点
+      await vi.advanceTimersByTimeAsync(75_000)
+      expect(await p).toBeNull()
+      // 每轮竞速 4 个文案各一次 waitFor：首轮 45s，末轮剩余预算 75s
+      expect(timeouts.filter((t) => t === 45_000).length).toBe(4)
+      expect(timeouts.filter((t) => t === 75_000).length).toBe(4)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

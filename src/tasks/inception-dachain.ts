@@ -38,7 +38,7 @@ const CRATE_PAGE_ATTEMPTS = 2 // 目录点击补点次数（SPA 路由未生效�
 const CRATE_LOOP_MAX = 8 // 开箱循环上限（5 箱 + 上限提示判定余量）
 const OPEN_FREE_RACE_MS = 6000 // 点 Open Free 后竞速（上限 toast 约 4s）
 const OPEN_FREE_ATTEMPTS = 3 // 竞速漏检重点次数
-const REVEAL_TOTAL_MS = 90000 // 开箱结果总预算（视频很卡）
+const REVEAL_TOTAL_MS = 120000 // 开箱结果总预算（视频很卡；真机实测 90s 仍有 3~4% 超时，放宽到 120s）
 const REVEAL_RECLICK_AT_MS = 45000 // 无结果且按钮仍在时补点（预算不缩短）
 const MODAL_GONE_MS = 10000 // Close 后等弹窗消失（未关则遮挡下一轮点击）
 

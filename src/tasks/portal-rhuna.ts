@@ -10,7 +10,7 @@
  *   → 点 Claim → Processing your quest...（约 15s）→ Quest completed successfully! 即成功
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'
-import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
+import { CDP_TRANSIENT_PATTERN, DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 
 // —— 站点文案（真机核实）——
 // 登录成功标志（头部 Hello, 0x...!）
@@ -225,6 +225,23 @@ export class PortalRhunaTask extends SiteTask {
   }
 
   /**
+   * 点击验证方框（瞬时可恢复语义）：
+   * 'clicked' 点击成功 / 'absent' 方框未出现 / 'rejected' 点击被浏览器持续拒绝
+   * （iframe 重渲染瞬时态，重试耗尽）——瞬时错误不向上抛打断领取流程，
+   * 由调用方进入冷却期后重点；非瞬时错误直接上抛
+   */
+  private async tryClickTurnstile(ctx: TaskContext): Promise<'clicked' | 'absent' | 'rejected'> {
+    try {
+      return (await ctx.clickTurnstileBox()) ? 'clicked' : 'absent'
+    } catch (e) {
+      const msg = (e as Error).message
+      if (!CDP_TRANSIENT_PATTERN.test(msg)) throw e
+      ctx.log.warn({ step: 'turnstile', window: ctx.profile.name, err: msg }, '验证方框点击持续被浏览器拒绝（iframe 重渲染），进入冷却期后重试')
+      return 'rejected'
+    }
+  }
+
+  /**
    * Claim 后等待完成循环（单轮内）：
    * - 成功文案出现 → true
    * - Processing your quest... 显示中 → 耐心等（领取请求在途，真机实测负载高时接口
@@ -241,10 +258,12 @@ export class PortalRhunaTask extends SiteTask {
     let lastCheckLog = 0
     while (Date.now() < end) {
       if (await ctx.textPresent(SUCCESS_TEXT)) return true
-      // 人机验证方框出现（补点后重新渲染）：立即拟人点击（每 15s 最多点一次）
-      if (Date.now() - lastCheckClick > 15000 && (await ctx.clickTurnstileBox())) {
-        lastCheckClick = Date.now()
-        continue
+      // 人机验证方框出现（补点后重新渲染）：立即拟人点击（每 15s 最多点一次）；
+      // 点击被浏览器持续拒绝（iframe 重渲染瞬时态）不打断流程，进入冷却期后重点
+      if (Date.now() - lastCheckClick > 15000) {
+        const result = await this.tryClickTurnstile(ctx)
+        if (result === 'clicked' || result === 'rejected') lastCheckClick = Date.now()
+        if (result === 'clicked') continue
       }
       // 方框已点击但验证未通过（方框仍存在）：低频追踪日志（每 30s 一条，定位点击被拒/验证卡住的窗口）
       if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await ctx.turnstileVisible())) {
