@@ -500,7 +500,7 @@ describe('readXlsxMeta', () => {
     expect(meta.columns).toEqual(['窗口名称', '窗口', '邮箱', '图片地址', '文件地址'])
     expect(meta.rows).toHaveLength(3)
     expect(meta.rows[0]).toEqual({ rowNumber: 2, window: '01' })
-    expect(meta.rows[2]).toEqual({ rowNumber: 4, window: '03' })
+    expect(meta.rows[2]).toEqual({ rowNumber: 5, window: '03' })
   })
 
   it('无窗口名称/窗口列时窗口标识兜底行号', async () => {
@@ -521,7 +521,7 @@ describe('writeCells', () => {
     await makeXlsx(p3)
     await writeCells(p3, '文件地址', [
       { rowNumber: 2, value: 'C:\\dir\\new1.png' },
-      { rowNumber: 4, value: 'C:\\dir\\new3.png' },
+      { rowNumber: 5, value: 'C:\\dir\\new3.png' },
     ])
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.readFile(p3)
@@ -529,7 +529,7 @@ describe('writeCells', () => {
     expect(ws.getRow(2).getCell(5).text).toBe('C:\\dir\\new1.png')
     expect(ws.getRow(2).getCell(1).text).toBe('01')
     expect(ws.getRow(3).getCell(5).text).toBe('C:\\dir\\old2.png')
-    expect(ws.getRow(4).getCell(5).text).toBe('C:\\dir\\new3.png')
+    expect(ws.getRow(5).getCell(5).text).toBe('C:\\dir\\new3.png')
   })
 
   it('列不存在抛错', async () => {
