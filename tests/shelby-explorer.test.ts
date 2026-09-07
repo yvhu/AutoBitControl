@@ -1,7 +1,8 @@
 /**
  * ShelbyExplorerTask 单测：登录分支 / 账号页上传流程 / 数据源严格模式（注入假 ctx，不连真浏览器）
  * 背景：真机核实（2026-09-07）后选择器/流程已锁定（站内 Petra Web 弹窗静默连接、header 选择器
- * 判定登录态、账号页 Upload Files 入口、隐藏 file input、双签名），单测锁定流程逻辑与错误语义
+ * 判定登录态、账号页 Upload Files 入口、隐藏 file input、双签名、选文件后已上传短路：
+ * 站点查重报 Blob name already taken 且 Upload 按钮永不启用 → 不点 Upload 直接成功）
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'patchright'
@@ -49,7 +50,8 @@ function makeCtx(task = new ShelbyExplorerTask()) {
   ctx.loginByWallet = vi.fn().mockResolvedValue(undefined)
   ctx.uploadFile = vi.fn().mockResolvedValue(undefined)
   ctx.account = vi.fn().mockImplementation(async (key: string) => (key === 'petra钱包地址' ? '0xabc' : 'C:\\files\\a.png'))
-  ctx.textPresent = vi.fn().mockResolvedValue(true)
+  // 默认未上传语义：无已上传提示（新上传流程），其余文案都认
+  ctx.textPresent = vi.fn((t: string) => Promise.resolve(t !== ALREADY_DONE_TEXT))
   ctx.recoverErrorText = vi.fn().mockResolvedValue('')
   ctx.screenshot = vi.fn().mockResolvedValue('/tmp/s.png')
   // 默认已登录语义：除 Connect Wallet 外全部可见（header 地址 / Upload Files）
@@ -176,23 +178,32 @@ describe('ShelbyExplorerTask run 流程', () => {
     expect(ctx.page.reload).toHaveBeenCalled()
   })
 
-  it('已上传过：Blob name already taken 出现 → 视为成功不抛错', async () => {
+  it('已上传过：Blob name already taken 出现 → 短路视为成功（不点 Upload 不双签名）', async () => {
     const task = new ShelbyExplorerTask()
     const { ctx, log } = makeCtx(task)
     ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === ALREADY_DONE_TEXT))
     await task.run(ctx)
     expect(ctx.screenshot).toHaveBeenCalled()
     expect(log.info.mock.calls.some((c) => (c[1] as string).includes('已上传过'))).toBe(true)
+    // 已上传短路：站点不启用 Upload 按钮也不发起签名 → 不点 Upload、不调钱包签名
+    expect(ctx.loginByWallet).not.toHaveBeenCalled()
+    const uploadClicks = (ctx.human.click as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === '[role="dialog"] button:has-text("Upload")')
+    expect(uploadClicks.length).toBe(0)
   })
 
-  it('已上传且弹窗不出现：双签名被容忍，仍按已上传成功收尾', async () => {
+  it('已上传短路在 Upload 按钮禁用态同样成立（不依赖按钮启用）', async () => {
     const task = new ShelbyExplorerTask()
+    task.uploadEnabledWaitMs = 10
     const { ctx, log } = makeCtx(task)
-    ctx.loginByWallet = vi.fn().mockRejectedValue(new Error('钱包弹窗未出现'))
+    // 真机已上传行为：Upload 按钮始终禁用 + 弹窗内出现已上传错误文案
+    ctx.page.locator = vi.fn().mockReturnValue({
+      first: () => ({ isDisabled: vi.fn().mockResolvedValue(true) }),
+      count: vi.fn().mockResolvedValue(1),
+    })
     ctx.textPresent = vi.fn((t: string) => Promise.resolve(t === ALREADY_DONE_TEXT))
     await task.run(ctx)
-    expect(ctx.loginByWallet).toHaveBeenCalledTimes(2)
     expect(ctx.screenshot).toHaveBeenCalled()
+    expect(ctx.loginByWallet).not.toHaveBeenCalled()
     expect(log.info.mock.calls.some((c) => (c[1] as string).includes('已上传过'))).toBe(true)
   })
 
@@ -298,6 +309,8 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
       ctx.loginByWallet = vi.fn().mockResolvedValue(undefined)
       await task.run(ctx)
       expect(await page.getByText('Blob name already taken').count()).toBeGreaterThan(0)
+      // 已上传短路（真机核实）：选文件后直接视为成功——不点 Upload、不双签名（仅登录 1 次）
+      expect(ctx.loginByWallet).toHaveBeenCalledTimes(1)
     } finally {
       await browser.close()
     }

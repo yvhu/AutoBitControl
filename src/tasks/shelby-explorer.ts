@@ -11,7 +11,9 @@
  *   的 Upload Files 按钮（点 header 地址是下拉菜单，无上传入口）
  *   上传弹窗：隐藏 input[type="file"]（class=hidden，setInputFiles 可用）+ 拖拽区；
  *   选文件后显示 1 chunkset + 费用明细，Upload 按钮才启用
- *   点 Upload 后两次 Petra prompt.html 签名弹窗先后出现：第一次可能锁屏
+ *   选文件后站点立即做 blob 名查重（真机核实 2026-09-07）：已上传的文件弹窗内直接显示
+ *   Error: Blob name already taken 且 Upload 按钮永不启用、也不发起签名 → 短路视为成功（不点 Upload）
+ *   未上传过才启用 Upload：点后两次 Petra prompt.html 签名弹窗先后出现：第一次可能锁屏
  *   （输密码 + Unlock → Approve，register_multiple_blobs），第二次直接 Approve（commit_object）；
  *   钱包网络已是 Shelbynet，无需切链步骤
  *   成功判定：弹窗出现 All files uploaded successfully（Uploaded 1 file to the Shelby network.）
@@ -55,7 +57,7 @@ const STATE_ROUND_WAIT_MS = 15000
 const LOGIN_WAIT_MS = 120000
 /** 账号页登录态恢复等待预算（会话恢复真机 30-90s，放宽到 120s） */
 const UPLOAD_ENTRY_WAIT_MS = 120000
-/** 选文件后等 Upload 按钮启用预算（chunkset 结算渲染，真机几秒） */
+/** 选文件后等 Upload 按钮启用 / 已上传提示出现预算（真机实测几秒；测试覆盖缩短） */
 const UPLOAD_ENABLED_WAIT_MS = 30000
 /** 周期刷新间隔（登录态/会话恢复卡住时刷新兜底） */
 const REFRESH_EVERY_MS = 30000
@@ -70,7 +72,7 @@ export class ShelbyExplorerTask extends SiteTask {
   /** 账号页登录态恢复等待预算毫秒（测试覆盖缩短；真机 30-90s） */
   uploadEntryWaitMs = UPLOAD_ENTRY_WAIT_MS
 
-  /** 选文件后 Upload 按钮启用等待预算毫秒（测试覆盖缩短） */
+  /** 选文件后终态分叉等待预算毫秒（测试覆盖缩短） */
   uploadEnabledWaitMs = UPLOAD_ENABLED_WAIT_MS
 
   /** 上传弹窗 file input 挂载等待预算毫秒（测试覆盖缩短） */
@@ -84,7 +86,7 @@ export class ShelbyExplorerTask extends SiteTask {
     name: 'shelbynet 领水和任务',
     url: 'https://explorer.shelby.xyz/shelbynet',
     sourceUrl: 'https://cryptorank.io/zh/drophunting/shelby-activity1120',
-    note: '真机核实（2026-09-07）：站内钱包弹窗为 Petra Web（Aptos Labs）自定义弹窗非 AppKit，点弹窗内 Connect（Aptos 标签默认=Petra 入口）后静默连接登录（扩展已授权无钱包弹窗），登录结果以 header 0x 地址按钮为准（首页表格全是 0x 文案，不能用全页文本判定）；登录态不跨浏览器会话，每次开窗重新登录；上传入口在账号页 /shelbynet/account/<petra钱包地址>/blobs 的 Upload Files 按钮（点 header 地址是下拉菜单）；上传弹窗 file input 为隐藏元素（setInputFiles 可用），选文件后 Upload 按钮才启用；点 Upload 后两次 prompt.html 签名弹窗先后出现（第一次可能锁屏输密码+Unlock→Approve，第二次直接 Approve），钱包网络已是 Shelbynet 无需切链；成功判定 All files uploaded successfully；文件一次性（blob name 唯一）：重复上传报 Blob name already taken 视为成功；上传文件取自数据源「文件地址」列、账号页地址取自「petra钱包地址」列（严格模式，缺列/空值即失败）；上传中不刷新防打断在途请求；成功截图等字体加载偶发超时已非致命化',
+    note: '真机核实（2026-09-07）：站内钱包弹窗为 Petra Web（Aptos Labs）自定义弹窗非 AppKit，点弹窗内 Connect（Aptos 标签默认=Petra 入口）后静默连接登录（扩展已授权无钱包弹窗），登录结果以 header 0x 地址按钮为准（首页表格全是 0x 文案，不能用全页文本判定）；登录态不跨浏览器会话，每次开窗重新登录；上传入口在账号页 /shelbynet/account/<petra钱包地址>/blobs 的 Upload Files 按钮（点 header 地址是下拉菜单）；上传弹窗 file input 为隐藏元素（setInputFiles 可用）；选文件后站点立即做 blob 名查重（真机核实 2026-09-07）：已上传 → 弹窗内直接显示 Error: Blob name already taken 且 Upload 按钮永不启用、无签名弹窗 → 短路视为成功（不点 Upload）；未上传 → chunkset 结算渲染后 Upload 按钮才启用，点后两次 prompt.html 签名弹窗先后出现（第一次可能锁屏输密码+Unlock→Approve，第二次直接 Approve），钱包网络已是 Shelbynet 无需切链；成功判定 All files uploaded successfully；文件一次性（blob name 唯一）：重复上传报 Blob name already taken 视为成功；上传文件取自数据源「文件地址」列、账号页地址取自「petra钱包地址」列（严格模式，缺列/空值即失败）；上传中不刷新防打断在途请求；成功截图等字体加载偶发超时已非致命化',
     category: 'checkin',
     lastUpdated: '2026-09-07',
     enabled: true,
@@ -155,7 +157,7 @@ export class ShelbyExplorerTask extends SiteTask {
     }
   }
 
-  /** 上传流程：账号页 → Upload Files → 选文件 → Upload → 双签名 → 等成功文案 */
+  /** 上传流程：账号页 → Upload Files → 选文件 → （已上传短路视为成功 | Upload → 双签名）→ 等成功文案 */
   private async upload(ctx: TaskContext): Promise<void> {
     const address = await ctx.account('petra钱包地址')
     const accountUrl = `${this.accountBaseUrl}/shelbynet/account/${address}/blobs`
@@ -182,14 +184,20 @@ export class ShelbyExplorerTask extends SiteTask {
       throw new Error('上传弹窗未出现 file input（弹窗结构异常或点击落空）')
     }
     await ctx.uploadFile(FILE_INPUT_SELECTOR, await ctx.account('文件地址'))
-    // 选文件后等 Upload 按钮启用（chunkset 结算渲染后启用，真机实测几秒）
-    if (!(await this.waitUploadEnabled(ctx))) {
-      throw new Error('选文件后 Upload 按钮未启用（文件过大或上传弹窗状态异常）')
+    // 选文件后终态分叉（真机核实 2026-09-07）：站点立即做 blob 名查重——
+    // 已上传：弹窗内直接显示 Error: Blob name already taken 且 Upload 按钮永不启用
+    // （不发起签名）→ 无需点击，直接视为成功幂等收敛；
+    // 未上传：chunkset 结算渲染后 Upload 按钮启用 → 走上传 + 双签名流程
+    const settle = await this.waitSettle(ctx)
+    if (settle === 'alreadyDone') {
+      ctx.log.info({ step: 'upload', window: ctx.profile.name }, '文件已上传过（Blob name already taken），视为成功')
+      await this.safeScreenshot(ctx)
+      return
     }
     await ctx.human.click(UPLOAD_BUTTON_SELECTOR)
     // 双钱包签名：register_multiple_blobs → commit_object（真机核实两次 prompt.html 弹窗先后出现；
     // 第一个可能锁屏：Petra 适配器自动输密码 + Unlock 后点 Approve）
-    // 弹窗未出现容忍：文件已上传（Blob name already taken）时站点可能不再发起签名请求，
+    // 弹窗未出现容忍：上传途中服务端查重报已上传时站点可能不再发起签名请求，
     // 弹窗不出现不能提前判失败——终态交给 waitSuccess 裁定（幂等收敛路径可达）
     for (let i = 0; i < 2; i++) {
       try {
@@ -205,7 +213,11 @@ export class ShelbyExplorerTask extends SiteTask {
     } else {
       ctx.log.info({ step: 'upload', window: ctx.profile.name }, '上传完成（All files uploaded successfully）')
     }
-    // 截图等字体加载偶发超时（真机实测）：失败只告警，不判任务失败
+    await this.safeScreenshot(ctx)
+  }
+
+  /** 成功截图：字体加载偶发超时只告警（真机实测），不判任务失败 */
+  private async safeScreenshot(ctx: TaskContext): Promise<void> {
     try {
       await ctx.screenshot('shelby-explorer-success')
     } catch (e) {
@@ -213,15 +225,21 @@ export class ShelbyExplorerTask extends SiteTask {
     }
   }
 
-  /** 等 Upload 按钮启用（选文件后 chunkset 结算渲染，真机几秒；超时 false） */
-  private async waitUploadEnabled(ctx: TaskContext): Promise<boolean> {
+  /**
+   * 选文件后等终态分叉（真机核实 2026-09-07）：
+   * 已上传 → 弹窗内出现 Error: Blob name already taken（Upload 按钮永不启用）→ 'alreadyDone'
+   * 未上传 → chunkset 结算渲染后 Upload 按钮启用 → 'enabled'
+   * 预算内两者都没出现 → 抛错（文件过大或上传弹窗状态异常）
+   */
+  private async waitSettle(ctx: TaskContext): Promise<'alreadyDone' | 'enabled'> {
     const end = Date.now() + this.uploadEnabledWaitMs
     while (Date.now() < end) {
+      if (await ctx.textPresent(ALREADY_DONE_TEXT)) return 'alreadyDone'
       const disabled = await ctx.page.locator(UPLOAD_BUTTON_SELECTOR).first().isDisabled().catch(() => true)
-      if (!disabled) return true
+      if (!disabled) return 'enabled'
       await ctx.page.waitForTimeout(1000)
     }
-    return false
+    throw new Error('选文件后 Upload 按钮未启用且无已上传提示（文件过大或上传弹窗状态异常）')
   }
 
   /** 等元素挂载（DOM 存在即可；hidden 的 file input 不能用可见性判定） */

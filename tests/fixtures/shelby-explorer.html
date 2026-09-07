@@ -30,6 +30,12 @@
       document.getElementById('upload-dialog').style.display = 'block'
     })
     document.querySelector('#upload-dialog input[type="file"]').addEventListener('change', () => {
+      // 真机行为（2026-09-07 核实）：已上传文件在选文件后立即显示查重错误，
+      // Upload 按钮保持禁用（永不启用）；未上传文件才启用 Upload
+      if (sessionStorage.getItem('alreadydone') === '1') {
+        document.getElementById('status').textContent = 'Error: Blob name already taken'
+        return
+      }
       document.getElementById('upload').disabled = false
     })
     document.getElementById('upload').addEventListener('click', () => {
