@@ -12,7 +12,7 @@
     "retryMax": 2,
     "retryBackoffSec": 600,
     "circuitBreakerThreshold": 2,
-    "maxConcurrentWindows": 4,
+    "maxConcurrentWindows": 6,
     "humanize": { "minDelayMs": 800, "maxDelayMs": 3000 }
   },
   "captcha": {
