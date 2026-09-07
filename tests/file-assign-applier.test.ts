@@ -89,6 +89,57 @@ describe('FileAssignService.apply', () => {
     ).rejects.toMatchObject({ code: 40005 })
   })
 
+  it('计划行 oldName 指向账号表文件 → TOOL_PLAN_INVALID（防误改名）', async () => {
+    const { dir, xlsxPath } = await setup()
+    const svc = new FileAssignService()
+    await expect(
+      svc.apply({
+        sourceDir: dir,
+        column: '文件地址',
+        xlsxPath,
+        plan: [row(dir, 2, 'accounts.xlsx', 'zzz.xlsx'), row(dir, 3, 'b.png', 'y.png')],
+      }),
+    ).rejects.toMatchObject({ code: 40005 })
+    expect(existsSync(xlsxPath)).toBe(true)
+  })
+
+  it('计划行号不属于账号行集合 → TOOL_PLAN_INVALID', async () => {
+    const { dir, xlsxPath } = await setup()
+    const svc = new FileAssignService()
+    await expect(
+      svc.apply({
+        sourceDir: dir,
+        column: '文件地址',
+        xlsxPath,
+        plan: [row(dir, 2, 'a.png', 'x.png'), row(dir, 99, 'b.png', 'y.png')],
+      }),
+    ).rejects.toMatchObject({ code: 40005 })
+    expect(existsSync(join(dir, 'a.png'))).toBe(true)
+  })
+
+  it('计划 newPath 目录与当前源文件夹不一致 → TOOL_PLAN_INVALID', async () => {
+    const { dir, xlsxPath } = await setup()
+    const other = mkdtempSync(join(tmpdir(), 'file-assign-other-'))
+    dirs.push(other)
+    const svc = new FileAssignService()
+    const plan = [
+      { ...row(dir, 2, 'a.png', 'x.png'), newPath: join(other, 'x.png') },
+      { ...row(dir, 3, 'b.png', 'y.png'), newPath: join(other, 'y.png') },
+    ]
+    await expect(svc.apply({ sourceDir: dir, column: '文件地址', xlsxPath, plan })).rejects.toMatchObject({ code: 40005 })
+    expect(existsSync(join(dir, 'a.png'))).toBe(true)
+  })
+
+  it('计划行字段类型非法 → TOOL_PLAN_INVALID（防 500）', async () => {
+    const { dir, xlsxPath } = await setup()
+    const svc = new FileAssignService()
+    const plan = [
+      { rowNumber: 2, window: '01', oldName: 123 as unknown as string, newName: 'x.png', newPath: join(dir, 'x.png') },
+      row(dir, 3, 'b.png', 'y.png'),
+    ]
+    await expect(svc.apply({ sourceDir: dir, column: '文件地址', xlsxPath, plan })).rejects.toMatchObject({ code: 40005 })
+  })
+
   it('执行中再次调用 → TOOL_BUSY', async () => {
     const { dir, xlsxPath } = await setup()
     let release!: () => void

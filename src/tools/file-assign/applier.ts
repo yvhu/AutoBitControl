@@ -4,7 +4,7 @@
  * 设计思路：apply 是破坏性操作，先全量校验再动手；写盘失败不回滚改名，错误信息附已改名清单
  */
 import { existsSync, readdirSync, renameSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { ApplyParams, ApplyResult } from './types'
 import { readXlsxMeta, writeCells, type XlsxMeta } from './xlsx'
 import { ToolError, TOOL_ERROR_CODES } from '../errors'
@@ -67,11 +67,26 @@ export class FileAssignService {
     if (meta.rows.length !== params.plan.length) {
       throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, `计划与账号行数不一致（计划 ${params.plan.length} 行，账号 ${meta.rows.length} 行），请重新生成预览`)
     }
+    const accountRowNumbers = new Set(meta.rows.map((r) => r.rowNumber))
+    if (params.plan.some((r) => !accountRowNumbers.has(r.rowNumber))) {
+      throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, '计划行号与账号表行不一致（预览后账号表可能已变动），请重新生成预览')
+    }
+    const dirLower = dir.toLowerCase()
+    const xlsxReal = resolve(params.xlsxPath).toLowerCase()
     const existing = new Set((await this.io.readDirFiles(dir)).map((n) => n.toLowerCase()))
     const newLower = new Set<string>()
     for (const row of params.plan) {
+      if (!Number.isInteger(row.rowNumber) || typeof row.oldName !== 'string' || typeof row.newName !== 'string' || typeof row.newPath !== 'string') {
+        throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, '计划字段格式非法，请重新生成预览')
+      }
       if (!existing.has(row.oldName.toLowerCase())) {
         throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, `文件已不存在: ${row.oldName}（源文件夹有变动，请重新生成预览）`)
+      }
+      if (resolve(join(dir, row.oldName)).toLowerCase() === xlsxReal) {
+        throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, `不允许重命名账号表文件: ${row.oldName}`)
+      }
+      if (resolve(dirname(row.newPath)).toLowerCase() !== dirLower) {
+        throw new ToolError(400, TOOL_ERROR_CODES.TOOL_PLAN_INVALID, `计划路径与源文件夹不一致（预览后可能修改了路径），请重新生成预览: ${row.newPath}`)
       }
       const lower = row.newName.toLowerCase()
       if (existing.has(lower) && lower !== row.oldName.toLowerCase()) {

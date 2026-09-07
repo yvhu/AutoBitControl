@@ -48,6 +48,9 @@ export interface TemplateForm {
   positionValue: string
 }
 
+/** Windows 文件名非法字符（与后端 name-template 同规则） */
+const INVALID_FILENAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
+
 /** 表单 → 模板对象；校验失败返回 error 文案 */
 export function buildTemplate(form: TemplateForm): { template: FileAssignTemplate } | { error: string } {
   const template: FileAssignTemplate = {
@@ -67,6 +70,10 @@ export function buildTemplate(form: TemplateForm): { template: FileAssignTemplat
     template.position.value = text
   }
   if (![template.english, template.digits, template.special].some((c) => c && c.count > 0)) return { error: '至少勾选一个生成组件（英文/数字/特殊字符）' }
+  if (form.special) {
+    if (!form.charset.trim()) return { error: '特殊字符集不能为空' }
+    if (INVALID_FILENAME_CHARS.test(form.charset)) return { error: '特殊字符集含文件名非法字符' }
+  }
   for (const c of [template.english, template.digits, template.special]) {
     if (c && (c.count < 1 || c.count > 20)) return { error: '组件个数需在 1-20 之间' }
   }

@@ -61,7 +61,10 @@ export default function FileAssignPanel() {
             style={{ width: 420 }}
             placeholder="C:\Users\PC\Desktop\空投文件\全部文件"
             value={sourceDir}
-            onChange={(e) => setSourceDir(e.target.value)}
+            onChange={(e) => {
+              setSourceDir(e.target.value)
+              setPlan(null)
+            }}
           />
           <Button type="primary" loading={preview.isPending} onClick={doPreview}>
             生成预览
@@ -78,7 +81,10 @@ export default function FileAssignPanel() {
           <Select
             style={{ width: 160 }}
             value={column}
-            onChange={setColumn}
+            onChange={(v) => {
+              setColumn(v)
+              setPlan(null)
+            }}
             options={[
               { value: '图片地址', label: '图片地址' },
               { value: '文件地址', label: '文件地址' },

@@ -22,6 +22,16 @@ describe('buildTemplate', () => {
     expect('error' in r).toBe(true)
   })
 
+  it('special 勾选但字符集为空 → 报错', () => {
+    const r = buildTemplate({ english: false, englishCount: 4, caseMode: 'lower', digits: false, digitsCount: 3, special: true, specialCount: 2, charset: '  ', position: 'replace', positionValue: '' })
+    expect(r).toEqual({ error: '特殊字符集不能为空' })
+  })
+
+  it('special 字符集含非法文件名字符 → 报错', () => {
+    const r = buildTemplate({ english: false, englishCount: 4, caseMode: 'lower', digits: false, digitsCount: 3, special: true, specialCount: 2, charset: 'ab*c', position: 'replace', positionValue: '' })
+    expect(r).toEqual({ error: '特殊字符集含文件名非法字符' })
+  })
+
   it('合法表单 → 模板对象（positionValue 转数字）', () => {
     const r = buildTemplate({ english: true, englishCount: 2, caseMode: 'mixed', digits: false, digitsCount: 3, special: false, specialCount: 2, charset: '!@', position: 'after-position', positionValue: '3' })
     expect(r).toEqual({

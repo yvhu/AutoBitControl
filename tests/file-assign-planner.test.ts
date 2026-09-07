@@ -63,6 +63,13 @@ describe('preparePreview', () => {
     }
   })
 
+  it('sourceDir 盘符大小写变体时仍排除 accounts.xlsx', async () => {
+    const variant = (dir[0] === dir[0].toUpperCase() ? dir[0].toLowerCase() : dir[0].toUpperCase()) + dir.slice(1)
+    const data = await preparePreview({ sourceDir: variant, column: '文件地址', template, xlsxPath })
+    expect(data.filesCount).toBe(4)
+    expect(data.plan.map((r) => r.oldName)).not.toContain('accounts.xlsx')
+  })
+
   it('源文件夹不存在 → TOOL_DIR_NOT_FOUND', async () => {
     await expect(
       preparePreview({ sourceDir: join(dir, 'nope'), column: '文件地址', template, xlsxPath }),

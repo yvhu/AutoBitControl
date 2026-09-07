@@ -36,6 +36,12 @@ describe('validateTemplate', () => {
     expect(validateTemplate({ ...base, special: { count: 2, charset: '  ' } })).toMatch(/字符集不能为空/)
   })
 
+  it('特殊字符集含文件名非法字符 → 报错', () => {
+    expect(validateTemplate({ ...base, special: { count: 2, charset: 'ab*c' } })).toMatch(/非法字符/)
+    expect(validateTemplate({ ...base, special: { count: 2, charset: 'ab\\c' } })).toMatch(/非法字符/)
+    expect(validateTemplate({ ...base, special: { count: 2, charset: 'a:b' } })).toMatch(/非法字符/)
+  })
+
   it('after-position 无合法位置 → 报错', () => {
     expect(validateTemplate({ ...base, position: { type: 'after-position', value: 0 } })).toMatch(/指定位置/)
     expect(validateTemplate({ ...base, position: { type: 'after-position' } })).toMatch(/指定位置/)

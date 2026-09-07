@@ -20,6 +20,9 @@ export const MAX_COMPONENT_COUNT = 20
 /** 唯一名生成最大尝试次数 */
 const MAX_GEN_ATTEMPTS = 100
 
+/** Windows 文件名非法字符（含控制字符）：用于拦截特殊字符集 */
+const INVALID_FILENAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]/
+
 /** 从字符池随机取 count 个字符 */
 function pick(pool: string, count: number, rand: () => number): string {
   let out = ''
@@ -37,6 +40,7 @@ export function validateTemplate(t: FileAssignTemplate): string | null {
   if (t.special) {
     if (t.special.count < 1 || t.special.count > MAX_COMPONENT_COUNT) return `特殊字符个数需在 1-${MAX_COMPONENT_COUNT} 之间`
     if (!t.special.charset.trim()) return '特殊字符集不能为空'
+    if (INVALID_FILENAME_CHARS.test(t.special.charset)) return '特殊字符集含文件名非法字符（\\ / : * ? " < > | 及控制字符）'
   }
   if (t.position.type === 'after-position' && (typeof t.position.value !== 'number' || !Number.isInteger(t.position.value) || t.position.value < 1)) {
     return '指定位置需为不小于 1 的整数'

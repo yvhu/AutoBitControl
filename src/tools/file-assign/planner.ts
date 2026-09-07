@@ -1,6 +1,6 @@
 /**
  * 分配计划生成（tools 层）：读目录/读账号表 → 校验 → 洗牌 → 生成预览计划
- * 依赖方向：依赖 ./name-template ./xlsx ./errors；被 server 路由调用
+ * 依赖方向：依赖 ./name-template ./xlsx ../errors；被 server 路由调用
  * 设计思路：纯编排（fs 读取在此层，写操作在 applier）；校验失败抛 ToolError 由路由映射统一响应
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -46,7 +46,7 @@ export async function preparePreview(p: PreparePreviewParams): Promise<AssignPla
   const files = readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isFile())
     .map((d) => d.name)
-    .filter((name) => resolve(join(dir, name)) !== resolve(p.xlsxPath))
+    .filter((name) => resolve(join(dir, name)).toLowerCase() !== resolve(p.xlsxPath).toLowerCase())
   if (files.length < meta.rows.length) {
     throw new ToolError(400, TOOL_ERROR_CODES.TOOL_FILES_INSUFFICIENT, `文件不足：需要 ${meta.rows.length} 个，实际 ${files.length} 个`)
   }
