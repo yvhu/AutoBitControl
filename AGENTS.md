@@ -21,6 +21,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 三层配置 + 环境变量覆盖（`src/infrastructure/config.ts` 的 `loadConfig` 是唯一入口）：
 
 - `config/config.json` — 通用参数（已提交）
+  - `execution.maxConcurrentWindows`：全局开窗上限（缺省 4，与任务级 concurrency 双闸门取更严者）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
 - `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
@@ -39,7 +40,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、yescaptcha.ts
 - `automation/`：humanize.ts（拟人操作）、wallet/（types 注册表 + metamask/petra 适配器）
-- `engine/`：queue（任务级并发额度 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}

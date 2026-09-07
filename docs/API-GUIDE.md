@@ -1071,7 +1071,7 @@ randomMicroMove(): Promise<void>
 
 ### 入队语义
 
-面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**；并发触发竞态下同窗口同任务自动去重（pending 合并区与等待队列不重复占额度，不双跑、不泄漏额度）。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
+面板手动触发（任务页「立即触发」、看板行级「执行/重跑」）与失败重试都经 `CoalescingEnqueuer.enqueue(profile, taskKey)` 入队：同一窗口的多个任务合并为一次开窗会话（开窗/连接只做一遍）；窗口正在执行时新的触发进入 follow-up 队列，窗口跑完再补跑，**不会并发开同一个窗口**；并发触发竞态下同窗口同任务自动去重（pending 合并区与等待队列不重复占额度，不双跑、不泄漏额度）。每个任务有独立的并发额度（`meta.concurrency`，缺省 4）：额度满的窗口进入该任务的 waiting 队列，某窗口跑完释放额度后自动滚动续跑，直到所有入队窗口跑完。除此之外还有一道**全局窗口上限**（`execution.maxConcurrentWindows`，缺省 4，`Infinity` 不限制）：所有任务共享的同时开窗总数封顶，超额的窗口会话进全局 FIFO 排队（排队期间同窗口后续任务仍合并进该会话），某会话结束即滚动续跑；与任务级并发双闸门取更严者（任务级管站点风控、全局管机器资源）。task:run 调试脚本是独立进程，直接跑 runManual 不经本队列。
 
 批量触发与失败重试的窗口会话开窗前自带**随机错峰**：每个窗口在 `[0, execution.staggerMaxSec]`（默认 120 秒）内随机取一个延迟才开窗，把各窗口的操作起点打散、避免同时冲击网络/站点；设为 `0` 关闭错峰。看板行级「执行/重跑」与 task:run 调试脚本不等待（立即开窗）。
 
@@ -1127,7 +1127,7 @@ randomMicroMove(): Promise<void>
 | 配置段 | 关键键 | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
-| `execution` | `staggerMaxSec`、`windowTimeoutMs`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
+| `execution` | `staggerMaxSec`、`maxConcurrentWindows`、`windowTimeoutMs`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）**加全局窗口上限**（`maxConcurrentWindows`，缺省 4，双闸门取更严者，机器资源兜底）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
 | `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
 | `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |

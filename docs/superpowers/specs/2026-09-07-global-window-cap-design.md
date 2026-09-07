@@ -46,25 +46,24 @@ maxConcurrentWindows: number
 **新增状态**：
 
 ```ts
-/** 全局窗口闸门：同时开窗总数上限 */
+/** 全局窗口闸门：同时开窗总数上限（clamp 到 ≥1；Infinity = 不限制） */
+private readonly globalMax: number
 private globalActive = 0
-private globalMax: number
-/** 全局额度已满时的窗口会话 FIFO 等待队列（条目已持有任务级额度） */
+/** 全局额度已满时的窗口会话 FIFO 排队（条目保留在 pending 合并区，续跑时直接 dispatch 不重复错峰） */
 private globalWaiting: Entry[] = []
 ```
 
 ### 流程
 
-1. **dispatch(entry)** 开头加全局检查：
-   - `globalActive < globalMax` → `globalActive++`，继续现有开窗流程（pending 删除 → running 登记 → runWindowTasks）
-   - 否则 entry 进 `globalWaiting` 队尾返回（该窗口此时已持有各任务额度，等全局额度释放）
+1. **dispatch(entry)** 开头**同步**检查全局额度（同步判定保证会话结束释放额度时的滚动续跑 FIFO 公平）：
+   - `globalActive < globalMax` → `globalActive++`，继续现有开窗流程
+   - 否则 entry 进 `globalWaiting` 队尾返回（条目**保留在 pending 合并区**：同窗口后续任务继续合并进同一会话）
 2. **会话结束**（runWindowTasks 返回后）顺序调整为：
    - followUp 重入队（现有逻辑不变）
    - **先释放全局额度**：`globalActive--`；若 `globalWaiting` 非空，队首出队直接 `dispatch`（不重复错峰：会话结束时机天然错开，且条目不再走 occupy/额度占坑路径）
    - 再逐个释放任务额度（现有 release 逻辑不变；release 滚动续跑的新会话在 dispatch 时重新走全局检查，满了排 `globalWaiting` 队尾——全局 FIFO 公平）
 3. **enqueue / occupy / release** 现有逻辑全部不动；全局闸门是 dispatch 入口的一道独立检查
-4. **hasTaskInFlight(taskKey, profileId?)**：在途来源增加 `globalWaiting`（无 profileId 时扫全部条目；有 profileId 时查该窗口条目），与 pending/running/followUp/waiting 并列
-5. **pendingCount()**：返回 `pending.size + globalWaiting.length`（口径：「已入队未开窗」的窗口会话数，路由层「实时运行」的队列部分沿用）
+4. **hasTaskInFlight / pendingCount 无需改动**：全局排队条目保留在 pending 合并区，既有的 pending 来源自动覆盖「全局排队判在途」与「已入队未开窗」口径
 
 ### 死锁分析
 
