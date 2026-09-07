@@ -1,4 +1,4 @@
-# Shelby Explorer 上传任务（xyz-shelbynet）实施计划
+﻿# Shelby Explorer 上传任务（xyz-shelbynet）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: `SiteTask`、`TaskContext`、`type TaskMeta`（`src/tasks/base.ts`）；`DEFAULT_RELOAD_TIMEOUT_MS`（`src/infrastructure/constants.ts`）
-- Produces: `export class ShelbyExplorerTask extends SiteTask`，公开字段 `successWaitMs = 180000`（上传成功等待预算毫秒，测试覆盖缩短）；`meta` 契约：key `xyz-shelbynet`、name `shelbynet 领水和任务`、url `https://explorer.shelby.xyz/shelbynet`、sourceUrl `https://cryptorank.io/zh/drophunting/shelby-activity1120`、category `checkin`、lastUpdated `2026-09-07`、enabled `true`、wallet `petra`、timeoutSec `600`、retry `{ max: 2, backoffSec: 120 }`、captcha `{ auto: true }`、concurrency `4`
+- Produces: `export class ShelbyExplorerTask extends SiteTask`，公开字段 `successWaitMs = 180000`（上传成功等待预算毫秒，测试覆盖缩短）；`meta` 契约：key `xyz-shelbynet`、name `shelbynet 上传任务`、url `https://explorer.shelby.xyz/shelbynet`、sourceUrl `https://cryptorank.io/zh/drophunting/shelby-activity1120`、category `checkin`、lastUpdated `2026-09-07`、enabled `true`、wallet `petra`、timeoutSec `600`、retry `{ max: 2, backoffSec: 120 }`、captcha `{ auto: true }`、concurrency `4`
 
 - [ ] **Step 1: 写失败的单测**
 
@@ -135,7 +135,7 @@ describe('ShelbyExplorerTask 元信息', () => {
   it('meta 契约正确', () => {
     const t = new ShelbyExplorerTask()
     expect(t.meta.key).toBe('xyz-shelbynet')
-    expect(t.meta.name).toBe('shelbynet 领水和任务')
+    expect(t.meta.name).toBe('shelbynet 上传任务')
     expect(t.meta.url).toBe('https://explorer.shelby.xyz/shelbynet')
     expect(t.meta.wallet).toBe('petra')
     expect(t.meta.category).toBe('checkin')
@@ -204,7 +204,7 @@ export class ShelbyExplorerTask extends SiteTask {
 
   meta: TaskMeta = {
     key: 'xyz-shelbynet',
-    name: 'shelbynet 领水和任务',
+    name: 'shelbynet 上传任务',
     url: 'https://explorer.shelby.xyz/shelbynet',
     sourceUrl: 'https://cryptorank.io/zh/drophunting/shelby-activity1120',
     note: '可重复任务（每次全流程上传，无已领取短路）；登录 Petra；成功判定 All files uploaded successfully；上传文件取自数据源「文件地址」列（严格模式，缺列/空值即失败）；上传后两次钱包 Approve 弹窗（loginByWallet ×2）；上传中不刷新防打断在途请求；选择器为最佳猜测，待真机核实（站内钱包弹窗结构/网络是否自动切 Shelbynet/上传弹窗 file input/首页 0x 文案干扰）',

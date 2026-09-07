@@ -52,9 +52,9 @@ const RECOVER_ERROR_TEXTS = ['Network Error', 'Turnstile token request timed out
 // —— 时间配置（真机实测校准）——
 /** 登录态竞速首轮等待（SPA 渲染有延迟，真机经验放宽到 20s） */
 const STATE_WAIT_MS = 20000
-/** 登录态竞速刷新轮数与轮等待（状态不明时反复刷新，已登录窗口刷新后走已登录分支） */
-const STATE_ROUNDS = 10
-const STATE_ROUND_WAIT_MS = 15000
+/** 登录态竞速刷新轮数与轮等待（状态不明时反复刷新，已登录窗口刷新后走已登录分支；每轮刷新打日志，静默卡死可定位） */
+const STATE_ROUNDS = 4
+const STATE_ROUND_WAIT_MS = 10000
 /** 登录完成等待预算（header 0x 地址出现，真机 30-60s，放宽到 120s） */
 const LOGIN_WAIT_MS = 120000
 /** 账号页登录态恢复等待预算（会话恢复真机 30-90s，放宽到 120s） */
@@ -91,7 +91,7 @@ export class ShelbyExplorerTask extends SiteTask {
 
   meta: TaskMeta = {
     key: 'xyz-shelbynet',
-    name: 'shelbynet 领水和任务',
+    name: 'shelbynet 上传任务',
     url: 'https://explorer.shelby.xyz/shelbynet',
     sourceUrl: 'https://cryptorank.io/zh/drophunting/shelby-activity1120',
     note: '真机核实（2026-09-07）：站内钱包弹窗为 Petra Web（Aptos Labs）自定义弹窗非 AppKit，点弹窗内 Connect（Aptos 标签默认=Petra 入口）后静默连接登录（扩展已授权无钱包弹窗），登录结果以 header 0x 地址按钮为准（首页表格全是 0x 文案，不能用全页文本判定）；登录态不跨浏览器会话，每次开窗重新登录；上传入口在账号页 /shelbynet/account/<petra钱包地址>/blobs 的 Upload Files 按钮（点 header 地址是下拉菜单）；上传弹窗 file input 为隐藏元素（setInputFiles 可用）；选文件后站点立即做 blob 名查重（真机核实 2026-09-07）：已上传 → 弹窗内直接显示 Error: Blob name already taken 且 Upload 按钮永不启用、无签名弹窗 → 短路视为成功（不点 Upload）；未上传 → chunkset 结算渲染后 Upload 按钮才启用，点后两次 prompt.html 签名弹窗先后出现（第一次可能锁屏输密码+Unlock→Approve，第二次直接 Approve），钱包网络已是 Shelbynet 无需切链；成功判定 All files uploaded successfully；文件一次性（blob name 唯一）：重复上传报 Blob name already taken 视为成功；上传文件取自数据源「文件地址」列、账号页地址取自「petra钱包地址」列（严格模式，缺列/空值即失败）；上传中不刷新防打断在途请求；成功截图等字体加载偶发超时已非致命化',
@@ -99,9 +99,10 @@ export class ShelbyExplorerTask extends SiteTask {
     lastUpdated: '2026-09-07',
     enabled: true,
     wallet: 'petra',
-    // 登录静默连接 + 会话恢复慢（真机 30-90s）+ 上传大文件 + 双签名，放宽单次超时
-    timeoutSec: 900,
-    retry: { max: 2, backoffSec: 120 },
+    // 静默连接 + 会话恢复慢（真机 30-90s）+ 上传大文件 + 双签名；真机最慢完整路径约 4min，
+    // 600s 足够覆盖；卡死窗口（代理/会话坏）占并发槽时间从 15min 压到 10min
+    timeoutSec: 600,
+    retry: { max: 2, backoffSec: 60 },
     captcha: { auto: true },
     concurrency: 4,
   }
@@ -137,6 +138,7 @@ export class ShelbyExplorerTask extends SiteTask {
     }
     let state = await race(STATE_WAIT_MS)
     for (let i = 0; i < STATE_ROUNDS && !state; i++) {
+      ctx.log.info({ step: 'recover', window: ctx.profile.name, round: i + 1 }, '登录态未判定，刷新页面重试')
       await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
       state = await race(STATE_ROUND_WAIT_MS)
     }

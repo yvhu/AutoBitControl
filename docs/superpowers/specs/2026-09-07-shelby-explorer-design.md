@@ -1,11 +1,11 @@
-# Shelby Explorer 上传任务设计（xyz-shelbynet）
+﻿# Shelby Explorer 上传任务设计（xyz-shelbynet）
 
 日期：2026-09-07
 状态：已确认（用户确认后直接实施）
 
 ## 目标
 
-新增任务 `xyz-shelbynet`（面板名「shelbynet 领水和任务」）：在 Shelby Explorer（https://explorer.shelby.xyz/shelbynet）用 Petra 钱包登录后，完成「上传文件」任务。成功判定两条：① 页面出现 `All files uploaded successfully`（新上传成功）；② 页面出现 `Error: Blob name already taken`（该文件已上传过——每窗口的文件 blob name 唯一、只能传一次，重复上传即报此错误，视为「已上传=成功」，幂等收敛）。
+新增任务 `xyz-shelbynet`（面板名「shelbynet 上传任务」）：在 Shelby Explorer（https://explorer.shelby.xyz/shelbynet）用 Petra 钱包登录后，完成「上传文件」任务。成功判定两条：① 页面出现 `All files uploaded successfully`（新上传成功）；② 页面出现 `Error: Blob name already taken`（该文件已上传过——每窗口的文件 blob name 唯一、只能传一次，重复上传即报此错误，视为「已上传=成功」，幂等收敛）。
 
 范围说明：任务名含「领水」，但用户确认本任务只做上传文件；领水已由独立任务 `shelby-faucet` 覆盖（docs.shelby.xyz）。
 
@@ -32,7 +32,7 @@
 
 meta（TaskMeta）：
 
-- key `xyz-shelbynet`、name `shelbynet 领水和任务`、url `https://explorer.shelby.xyz/shelbynet`
+- key `xyz-shelbynet`、name `shelbynet 上传任务`、url `https://explorer.shelby.xyz/shelbynet`
 - sourceUrl `https://cryptorank.io/zh/drophunting/shelby-activity1120`
 - category `checkin`、lastUpdated `2026-09-07`、enabled `true`
 - wallet `petra`、timeoutSec `900`（登录静默连接 + 会话恢复慢（真机 30-90s）+ 上传大文件 + 双签名，放宽单次超时）
