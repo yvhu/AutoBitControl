@@ -1180,7 +1180,8 @@ function makeApp(xlsxPath: string) {
   app.use(express.json())
   const reload = vi.fn().mockResolvedValue(undefined)
   const summary = vi.fn().mockReturnValue({ rows: 2, columns: ['窗口名称', '文件地址'] })
-  app.use(toolsRouter({ xlsxPath, datasource: { reload, summary } }))
+  // 与真实装配一致：路由定义无 /api 前缀，挂载在 /api 下（app.ts 的 api router 同构）
+  app.use('/api', toolsRouter({ xlsxPath, datasource: { reload, summary } }))
   app.use(errorHandler({ error: () => {}, warn: () => {}, info: () => {} } as unknown as Logger))
   return { app, reload, summary }
 }
