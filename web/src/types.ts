@@ -86,3 +86,53 @@ export interface FileAssignApplyResult {
   updatedRows: number
   reloadedRows: number
 }
+
+// ===== 代理网络工具（手补类型：/api/tools/clash/*，与后端 src/tools/clash/types.ts 同构） =====
+
+export interface ClashUrlDelay {
+  url: string
+  delayMs: number
+  reachable: boolean
+}
+
+export interface ClashNodeResult {
+  name: string
+  urls: ClashUrlDelay[]
+  score: number
+  usable: boolean
+}
+
+export interface ClashTestData {
+  group: string
+  currentNode: string | null
+  currentUsable: boolean | null
+  nodes: ClashNodeResult[]
+}
+
+export interface ClashOptimizeResult {
+  chosen: string | null
+  switched: boolean
+  nodes: ClashNodeResult[]
+  switchNote?: string
+}
+
+export interface ClashSubscriptionItem {
+  name: string
+  vehicleType: string
+  updatedAt?: string
+  proxiesCount: number
+}
+
+export interface ClashStatusData {
+  detected: boolean
+  kernel: string | null
+  mixedPort: number | null
+  apiBase: string
+  capability: { listProxies: boolean; delay: boolean; switchNode: boolean; providers: boolean; switchProfile: boolean }
+  group: string
+  currentNode: string | null
+  groups: Array<{ name: string; now?: string }>
+  subscriptions: ClashSubscriptionItem[]
+  auto: { pace: string; lastCheckAt: string | null; allDown: boolean; deferredSwitches: number }
+  anyRunning: boolean
+}

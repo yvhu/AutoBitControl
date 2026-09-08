@@ -3,6 +3,7 @@ import { Alert, Card, Col, Row, Space, Typography } from 'antd'
 import { FileOutlined } from '@ant-design/icons'
 import { useTools } from './hooks'
 import FileAssignPanel from './file-assign'
+import ClashPanel from './clash'
 
 export default function ToolsPage() {
   const tools = useTools()
@@ -48,6 +49,7 @@ export default function ToolsPage() {
         ))}
       </Row>
       {activeKey === 'file-assign' && <FileAssignPanel />}
+      {activeKey === 'clash' && <ClashPanel />}
     </Space>
   )
 }

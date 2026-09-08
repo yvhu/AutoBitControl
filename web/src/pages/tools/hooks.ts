@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { applyFileAssign, fetchTools, previewFileAssign } from '../../api/endpoints'
+import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash, fetchClashProfiles, setClashGroup, switchClashProfile, updateClashSubscription } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
-import type { EnglishCase, FileAssignTemplate, FileAssignRow, PositionType } from '../../types'
+import type { EnglishCase, FileAssignTemplate, FileAssignRow, PositionType, ClashNodeResult } from '../../types'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
@@ -106,4 +106,87 @@ export function sampleName(oldName: string, template: FileAssignTemplate, rand: 
     newStem = idx < 0 ? stem + gen : stem.slice(0, idx + text.length) + gen + stem.slice(idx + text.length)
   }
   return newStem + ext
+}
+
+// ===== 代理网络工具 =====
+
+/** 代理网络状态（15 秒轮询：探测/节奏/订阅实时性） */
+export function useClashStatus() {
+  return useQuery({ queryKey: ['clash-status'], queryFn: fetchClashStatus, refetchInterval: 15000 })
+}
+
+/** 节点测速（只读） */
+export function useClashTest() {
+  const { message } = App.useApp()
+  return useMutation({
+    mutationFn: () => testClash(),
+    onSuccess: (res) => {
+      const usable = res.nodes.filter((n) => n.usable).length
+      message.success(`测速完成：共 ${res.nodes.length} 个节点，${usable} 个可用`)
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 选优并切换 */
+export function useClashOptimize() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => optimizeClash(),
+    onSuccess: (res) => {
+      message.success(res.switched ? `已切换到 ${res.chosen}` : `未切换${res.switchNote ? `（${res.switchNote}）` : ''}`)
+      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 设置目标分组（写回 config.json） */
+export function useClashSetGroup() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (group: string) => setClashGroup(group),
+    onSuccess: () => {
+      message.success('目标分组已更新')
+      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 更新订阅（重拉节点列表） */
+export function useClashUpdateSubscription() {
+  const { message } = App.useApp()
+  return useMutation({
+    mutationFn: (name: string) => updateClashSubscription(name),
+    onSuccess: () => message.success('订阅已更新'),
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 订阅配置文件列表（仅 switchProfile 能力时启用） */
+export function useClashProfiles(enabled: boolean) {
+  return useQuery({ queryKey: ['clash-profiles'], queryFn: fetchClashProfiles, enabled })
+}
+
+/** 切换订阅文件 */
+export function useClashSwitchProfile() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: string) => switchClashProfile(file),
+    onSuccess: () => {
+      message.success('订阅文件已切换')
+      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 节点汇总（纯函数，面板与单测共用）：nodes 需已按得分升序 */
+export function summarizeNodes(nodes: ClashNodeResult[]): { usableCount: number; downCount: number; best: ClashNodeResult | null } {
+  const usable = nodes.filter((n) => n.usable)
+  return { usableCount: usable.length, downCount: nodes.length - usable.length, best: usable[0] ?? null }
 }
