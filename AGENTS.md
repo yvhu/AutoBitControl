@@ -61,6 +61,22 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 后端路由有 @swagger 注解（src/server/openapi.ts 汇总）。`web/src/api/schema.d.ts` 由 `npx openapi-typescript http://127.0.0.1:3000/api/docs/openapi.json -o web/src/api/schema.d.ts` 生成，但项目先例是**手补类型**（多数计划如此执行）；前端发请求只走 `web/src/api/client.ts`/`endpoints.ts`，页面 hooks 放 `pages/<页>/hooks.ts`（hooks 配单测）。
 
+## 文档同步（硬性要求）
+
+**每次修改或新增功能，用户文档必须同步更新**，不是只写内部设计文档：
+
+- `docs/API-GUIDE.md` 是面板「文档」页渲染的**唯一用户手册**，以下改动必须同步它：
+  - 新增/修改 TaskMeta 字段或 TaskContext 方法 → 更新第 2/3 章对应小节
+  - 新增/修改配置段或配置键 → 更新 9.1 配置表（`scheduler`、`clash` 段曾因此漏同步）
+  - 新增/修改后端 API → 更新 9.3 REST 接口总表（@swagger 注解也要同步写）
+  - 新增/修改面板页面或功能 → 更新 9.2 面板使用（页面数量、新页说明）及相应章节
+  - 新增工具（`src/tools/`）→ 更新第 12 章工具中心
+- 真机踩坑经验 → 追加 `docs/TASK-DEVELOPMENT-LESSONS.md`
+- 设计文档仍走 `docs/superpowers/specs/`，计划走 `docs/superpowers/plans/`；但它们是**内部文档**，不能替代上述用户文档
+- 文档改动与代码同批提交，commit 用 `docs:` 前缀（中文描述）
+
+
+
 ## 代码风格
 
 无分号、单引号、2 空格缩进、TS 严格模式；文件头中文注释块说明模块职责与依赖方向；命名用 camelCase，文件 kebab-case；日志用 logger（中文消息，格式 `logger.info({count}, '消息')`）。commit 风格 conventional：`feat:`/`fix:`/`chore:`/`docs:` + 中文描述。

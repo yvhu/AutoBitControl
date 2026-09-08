@@ -1133,14 +1133,18 @@ randomMicroMove(): Promise<void>
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches/captcha_logs 保留天数，超期行启动时清理。 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 10 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 10 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
+| `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
+| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck`、`configPath` | 代理网络工具（详见[第 12 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 目标分组（留空时面板下拉选，选择后自动写回本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时）；`configPath` 配置 mihomo 配置目录后解锁「切换订阅文件」 |
 
 ### 9.2 面板使用
 
-面板基于 antd 构建（`web/`，Vite + React），左侧导航五个页面，顶栏右侧有主题切换 Segmented（浅色/深色/跟随系统，选择写入浏览器 localStorage 即时生效，设置页也有同样的「主题」卡片）。每个页面「在哪 / 能干什么」如下：
+面板基于 antd 构建（`web/`，Vite + React），左侧导航七个页面，顶栏右侧有主题切换 Segmented（浅色/深色/跟随系统，选择写入浏览器 localStorage 即时生效，设置页也有同样的「主题」卡片）。每个页面「在哪 / 能干什么」如下：
 
 - **看板（首页）**：运行批次时间线——顶部 Segmented 选时间范围（今天/近 7 天/全部）＋ 实时运行窗口数与今日打码花费统计；每次触发形成一张批次卡（时间/类型徽章/任务名/完成进度条/各状态计数，点击展开窗口明细表）；单窗口散批与未分批历史收进虚线卡折叠区。明细行含窗口/任务/开始/耗时/状态/错误/截图，行级「执行/重跑」= 单窗口单任务触发。停留在看板页时每 15 秒自动刷新。
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；熔断计数 > 0 时显示「重置熔断」按钮（点击计数归零，按钮随之消失）。
 - **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入本地库 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
+- **定时任务页**：计划列表（名称/频率摘要/下次执行时间/包含的任务），支持新建（四种频率模式，见第 8 章）、编辑、删除、开关与「立即运行」。
+- **工具页**：工具卡片中心（卡片数据来自 `GET /api/tools`，随需扩展），目前两个工具——「文件随机分配」与「代理网络」，点卡片展开对应工具面板，用法见[第 12 章](#12-工具中心)。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
 - **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
@@ -1172,6 +1176,17 @@ randomMicroMove(): Promise<void>
 | POST | `/api/datasource/reload` | 重载数据源 Excel |
 | GET | `/api/screenshots` | 取截图文件 |
 | GET | `/api/docs/guide`、`/api/docs/examples`、`/api/docs/examples/:name` | 本手册 markdown 原文、示例文件清单、单个示例源码 |
+| GET | `/api/tools` | 工具清单（工具中心卡片数据源） |
+| POST | `/api/tools/file-assign/preview` | 文件随机分配预览（校验并生成分配计划，不落盘） |
+| POST | `/api/tools/file-assign/apply` | 文件随机分配执行（按回传计划改名并写回 accounts.xlsx） |
+| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/分组/当前节点/能力集/自动检测状态/任务在途标记） |
+| POST | `/api/tools/clash/test` | 节点测速（只读，不切换） |
+| POST | `/api/tools/clash/optimize` | 测速选优并切换节点 |
+| GET | `/api/tools/clash/subscriptions` | 订阅列表（proxy-provider 模式） |
+| POST | `/api/tools/clash/subscriptions/:name/update` | 更新订阅（重拉节点列表） |
+| GET | `/api/tools/clash/profiles` | 订阅配置文件列表（clash.configPath 目录下 *.yaml） |
+| POST | `/api/tools/clash/profiles/switch` | 切换订阅文件（以指定配置重载） |
+| POST | `/api/tools/clash/group` | 设置目标分组（写回 config.json 的 clash.group） |
 
 完整参数、请求体、响应与业务错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）。
 
@@ -1628,3 +1643,43 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 10 章「配�
 4. **真机试跑**：AI 给你单窗口试跑命令 `BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<key> npm run task:run`（见 README「冒烟测试」），你在真实窗口验证。建议多窗口验证：已登录与未登录窗口各抽一个，覆盖两条登录路径。
 5. **你验收优化**：看面板结果与截图，把不对的地方（点错按钮、文案不一致、选择器失效）告诉 AI，改到跑通为止。
 6. **上线**：面板任务页打开开关，之后手动触发执行（任务页「立即触发」/看板行级「执行」，见[第 7 章](#7-手动触发)）。
+
+---
+
+## 12. 工具中心
+
+工具页是随需扩展的工具集合（卡片数据来自 `GET /api/tools`，在 `src/tools/index.ts` 的 TOOLS 注册表登记）。目前两个工具：文件随机分配、代理网络。
+
+### 文件随机分配
+
+把本机文件夹里的文件按名称模板重命名，随机分配给 `config/accounts.xlsx` 各账号行，并把新路径写回目标列（「图片地址」/「文件地址」）。
+
+- 流程：填源文件夹绝对路径 → 选目标列与名称模板 →「生成预览」（校验目录/列/数量，展示分配计划表）→「执行分配」（改名 + 写回 + 自动重载数据源）
+- 规则：文件数少于账号行数报错不执行；只改被分配到的 N 个文件，其余不动；模板由英文/数字/特殊字符组件组合，插入位置支持替换/前/后/指定位置后/指定文本后
+- **执行是破坏性操作且不回滚**（错误信息会附已改名清单），执行前务必核对预览
+
+### 代理网络（Clash 工具）
+
+背景：全部比特窗口代理都填 Clash 本地混合端口，所以切换 Clash 节点对全部窗口全局生效。本工具探测本机 Clash 客户端（通过 external-controller 管理 API），提供节点测速、综合评分选优、切换节点/订阅，并定时自动检测（网络变差自动换到可用节点）。
+
+**两个端口别搞混：**
+
+- `clash.apiBase`（默认 `http://127.0.0.1:9090`）是 external-controller **管理口**——测速/切节点/拉订阅都走它。需要 Clash 开启「外部控制 / External Controller」（一般在设置页，或配置里写 `external-controller: 127.0.0.1:9090`）。自检：浏览器打开 `http://127.0.0.1:9090/version`，返回 JSON 即已开启。
+- 7890 是**代理流量口**，窗口代理应填 `127.0.0.1:7890`（以面板顶部显示的实测混合口为准）。
+
+**配置**（`config.json` 的 `clash` 段，全带缺省，键说明见 9.1 配置表）。
+
+**面板操作**：顶部状态条显示内核类型/当前节点/检测节奏/全网可用性/任务运行中标记与实测混合口；分组下拉（未配置 group 时从 Clash 实时拉取，选择后自动写回 config.json）；「立即测速」只读测一遍（节点表格展示每 URL 延迟/得分/可用）；「选优并切换」测完直接切到最优节点（任务在途时会弹确认提示，因为换 IP 可能中断签到会话）。
+
+**定时自动检测**：正常节奏 30 分钟测一次；发现当前节点不可用或全网挂时进入快速节奏（2 分钟一次）直到恢复。**任务运行中只测速不切换**，切换延后到空闲窗口。切换失败自动回滚原节点。
+
+**评分规则**：每个节点对每个测试 URL 测延迟，全部不可达才判节点不可用（白名单机场节点只要有一个目标可达就不会被误杀）；得分 = 可达 URL 的加权延迟 + 不可达 URL 惩罚分，得分最低者当选；当选者比当前节点优势不足 `minGainMs` 时不切换（防频繁跳变）。
+
+**订阅**：订阅以 proxy-provider 方式配置时，面板显示订阅列表与「更新订阅」按钮；配置了 `clash.configPath`（mihomo 配置目录）后，还能在多个订阅配置文件（*.yaml）间切换。
+
+**常见问题：**
+
+- 面板提示「未检测到 Clash」→ 检查 Clash 是否开启外部控制、端口与 `apiBase` 是否一致、开了鉴权是否填了 `apiSecret`
+- 测速全部超时 → 机场限制并发或节点本身不可用：调低 `testConcurrency`，或检查订阅是否过期（点「更新订阅」）
+- 分组选择重启后丢失 → 你很可能在 `config.local.json` 里也写了 `clash.group`（它覆盖 config.json 的写回值），删掉其中一处
+- 不想自动切换只想要手动控制 → `autoCheck.enabled` 设为 false（手动入口不受影响）
