@@ -1,9 +1,38 @@
 import { useState } from 'react'
+import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import { Alert, Card, Col, Row, Space, Typography } from 'antd'
-import { FileOutlined } from '@ant-design/icons'
+import { GlobalOutlined, SwapOutlined, ToolOutlined } from '@ant-design/icons'
 import { useTools } from './hooks'
 import FileAssignPanel from './file-assign'
 import ClashPanel from './clash'
+
+/** 工具图标映射（按注册表 key；未登记的回落通用工具图标） */
+const TOOL_ICONS: Record<string, ReactNode> = {
+  'file-assign': <SwapOutlined style={{ fontSize: 24, color: '#1677ff' }} />,
+  clash: <GlobalOutlined style={{ fontSize: 24, color: '#1677ff' }} />,
+}
+
+/** 工具面板组件映射（新增工具：注册表加 key + 此处加一行） */
+const TOOL_PANELS: Record<string, ComponentType> = {
+  'file-assign': FileAssignPanel,
+  clash: ClashPanel,
+}
+
+/** 卡片描述固定两行截断：无论描述长短卡片等高，新工具自动套用 */
+const DESC_STYLE: CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  minHeight: 44,
+}
+
+/** 卡片标题单行截断：长工具名不撑高卡片 */
+const TITLE_STYLE: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
 
 export default function ToolsPage() {
   const tools = useTools()
@@ -23,6 +52,8 @@ export default function ToolsPage() {
     return <Alert type="error" showIcon message="工具列表加载失败" description="请检查后端服务是否运行" />
   }
 
+  const Panel = activeKey ? TOOL_PANELS[activeKey] : undefined
+
   return (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
       <div>
@@ -40,16 +71,15 @@ export default function ToolsPage() {
               style={activeKey === t.key ? { borderColor: '#1677ff' } : undefined}
             >
               <Card.Meta
-                avatar={<FileOutlined style={{ fontSize: 24, color: '#1677ff' }} />}
-                title={t.name}
-                description={t.description}
+                avatar={TOOL_ICONS[t.key] ?? <ToolOutlined style={{ fontSize: 24, color: '#1677ff' }} />}
+                title={<div style={TITLE_STYLE}>{t.name}</div>}
+                description={<div style={DESC_STYLE}>{t.description}</div>}
               />
             </Card>
           </Col>
         ))}
       </Row>
-      {activeKey === 'file-assign' && <FileAssignPanel />}
-      {activeKey === 'clash' && <ClashPanel />}
+      {Panel && <Panel />}
     </Space>
   )
 }
