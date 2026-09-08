@@ -5,6 +5,7 @@
  * 执行器/队列 → Web 服务
  */
 import { loadConfig } from './infrastructure/config'
+import { acquireSingleInstanceLock, singleInstanceLockPath, SingleInstanceError } from './infrastructure/single-instance'
 import { createLogger } from './infrastructure/logger'
 import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
@@ -70,6 +71,24 @@ export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): {
 export async function startApp(): Promise<void> {
   const cfg = loadConfig()
   const logger = createLogger(cfg)
+
+  // 单实例守卫：同一数据库文件同时只允许一个后端实例——
+  // 2026-09-08 事故：旧 npm start 与新 dev 两进程并存，各自调度器重复触发计划、
+  // 同一窗口被两个 CDP 会话同时接管（看板双批次、领水额度被打乱）。
+  // 锁在 AppDb.open 之前获取（快速失败不产生副作用）；异常退出路径无需清理，
+  // 残留锁由下次启动按 PID 存活探测自动接管
+  const lockPath = singleInstanceLockPath(cfg.storage.dbPath)
+  let singleLock!: ReturnType<typeof acquireSingleInstanceLock>
+  try {
+    singleLock = acquireSingleInstanceLock(lockPath)
+  } catch (e) {
+    if (e instanceof SingleInstanceError) {
+      logger.error({ lockPath, holderPid: e.holderPid }, '检测到另一个后端实例正在运行（多实例会导致定时计划重复触发与窗口会话互杀），本实例退出；若确认旧实例已退出仍报此错，请删除该锁文件后重试')
+      process.exit(1)
+    }
+    throw e
+  }
+  logger.info({ lockPath }, '已取得单实例锁')
 
   // 快速失败策略：未捕获异常直接退出（挂着的半死进程比重启更危险）；
   // 例外：CDP 会话级瞬时错误（窗口中途关闭/崩溃时 patchright 内部协议错误，如
@@ -263,6 +282,7 @@ export async function startApp(): Promise<void> {
   const finish = () => {
     if (finishing) return
     finishing = true
+    singleLock.release()
     try {
       db.close()
     } catch {
