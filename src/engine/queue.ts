@@ -217,6 +217,11 @@ export class CoalescingEnqueuer {
     return this.pending.size
   }
 
+  /** 是否有任何窗口会话正在运行（代理切换的在途守卫：任务运行中换 IP 会破坏签到会话） */
+  anyRunning(): boolean {
+    return this.running.size > 0
+  }
+
   /**
    * 某任务是否在途：pending/running/followUp/waiting 任一命中；
    * 指定 profileId 时只看该窗口（看板行级判定用）

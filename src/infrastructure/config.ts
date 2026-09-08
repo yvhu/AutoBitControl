@@ -4,7 +4,7 @@
  * 合并顺序：代码默认值 → config/config.json → config/config.local.json → 环境变量覆盖
  * 设计思路：deepMerge 递归合并使本地配置只需写差异项；存储路径最后统一解析为项目根的绝对路径
  */
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as loadDotenv } from 'dotenv'
@@ -84,6 +84,44 @@ export interface SchedulerConfig {
   timezone: string
 }
 
+/** Clash 定时自动检测配置 */
+export interface ClashAutoCheckConfig {
+  /** 是否开启定时自动检测（节奏状态机开关） */
+  enabled: boolean
+  /** 正常态检测间隔（分钟；0 = 关闭定时） */
+  normalIntervalMin: number
+  /** 快速态检测间隔（分钟）：当前节点不可用/全网挂时缩短节奏 */
+  fastIntervalMin: number
+}
+
+/** Clash 代理网络工具配置（tools/clash 域使用） */
+export interface ClashConfig {
+  /** 工具总开关 */
+  enabled: boolean
+  /** external-controller 管理 API 地址（默认 9090；区别于 7890 混合代理口） */
+  apiBase: string
+  /** external-controller secret（客户端开启鉴权时必填，走 Authorization Bearer） */
+  apiSecret: string
+  /** 目标分组名：留空时面板从 API 实时拉取分组选择（选择后由 updateConfigFile 写回此处） */
+  group: string
+  /** 测速目标 URL 列表（连通性+延迟判定依据） */
+  testUrls: string[]
+  /** 各测试 URL 的权重（与 testUrls 按下标对应，缺位按 1） */
+  weights: number[]
+  /** 单轮测速最多测的节点数 */
+  maxNodes: number
+  /** 节点间测速并发上限（机场风控考虑） */
+  testConcurrency: number
+  /** 单次测速超时（毫秒） */
+  testTimeoutMs: number
+  /** 最小收益（毫秒）：当选节点比当前节点快不到该值时不切换，避免频繁跳变 */
+  minGainMs: number
+  /** 定时自动检测配置 */
+  autoCheck: ClashAutoCheckConfig
+  /** mihomo 配置目录（含 *.yaml）：留空 = 订阅文件切换能力隐藏 */
+  configPath: string
+}
+
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -94,6 +132,7 @@ export interface AppConfig {
   wallet: WalletConfig
   dataSource: DataSourceConfig
   scheduler: SchedulerConfig
+  clash: ClashConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -160,6 +199,24 @@ const defaults: AppConfig = {
   dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
   // 定时任务固定时区：配置与展示统一按此时区（Asia/Shanghai 无 DST，一般无需改动）
   scheduler: { timezone: 'Asia/Shanghai' },
+  // Clash 代理网络工具：探测/测速/选优/定时检测
+  clash: {
+    enabled: true,
+    // external-controller 管理口（默认 9090）≠ 混合代理口 7890；探测后以 /configs 实测混合口为准
+    apiBase: 'http://127.0.0.1:9090',
+    apiSecret: '',
+    group: '',
+    // 测速目标：gstatic 204 为标准低开销探测（各机场通用）；google 兜底
+    testUrls: ['https://www.gstatic.com/generate_204', 'https://www.google.com'],
+    weights: [2, 1],
+    maxNodes: 20,
+    // 低并发防机场风控
+    testConcurrency: 2,
+    testTimeoutMs: 5000,
+    minGainMs: 100,
+    autoCheck: { enabled: true, normalIntervalMin: 30, fastIntervalMin: 2 },
+    configPath: '',
+  },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */
@@ -245,4 +302,19 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   // 数据源路径同样解析为绝对路径（与存储路径同法）
   if (!isAbsolute(cfg.dataSource.path)) cfg.dataSource.path = resolve(root, cfg.dataSource.path)
   return cfg
+}
+
+/**
+ * 写回配置覆盖项到 config/config.json（面板运行时修改入口，如 clash 分组选择）
+ * 读取现有文件与 patch 深合并后写回（保留原有全部键；JSON 无注释概念，手工注释会丢失，属已知代价）
+ * @param patch 覆盖项（当前仅 clash.group）
+ * @param opts.rootDir 项目根目录，缺省为 src 上两级（与 loadConfig 同口径）
+ * @throws 读写失败向上抛（由调用方路由映射为统一响应）
+ */
+export function updateConfigFile(patch: { group?: string }, opts: LoadConfigOptions = {}): void {
+  const root = opts.rootDir ?? DEFAULT_ROOT
+  const path = join(root, 'config', 'config.json')
+  const current = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>) : {}
+  const merged = deepMerge(current, { clash: { ...patch } })
+  writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`)
 }
