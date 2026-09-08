@@ -54,30 +54,6 @@ describe('ClashAdapter', () => {
     expect(calls[0]).toEqual({ method: 'PUT', path: '/proxies/GLOBAL', body: { name: 'HK-02' } })
   })
 
-  it('providers 解析订阅列表', async () => {
-    const { request } = fakeRequest([
-      { method: 'GET', path: '/providers/proxies', respond: () => ({ providers: { sub1: { vehicleType: 'HTTP', updatedAt: '2026-09-01', proxies: [{}, {}] } } }) },
-    ])
-    const a = new ClashAdapter('http://x', '', 5000, request)
-    expect(await a.providers()).toEqual([{ name: 'sub1', vehicleType: 'HTTP', updatedAt: '2026-09-01', proxiesCount: 2 }])
-  })
-
-  it('providers 过滤 Compatible 分组条目（分组筛选的产物不是订阅）', async () => {
-    const { request } = fakeRequest([
-      {
-        method: 'GET', path: '/providers/proxies',
-        respond: () => ({
-          providers: {
-            AutoSelection: { vehicleType: 'Compatible', type: 'Proxy', proxies: [{}] },
-            sub1: { vehicleType: 'HTTP', updatedAt: '2026-09-01', proxies: [{}, {}] },
-          },
-        }),
-      },
-    ])
-    const a = new ClashAdapter('http://x', '', 5000, request)
-    expect(await a.providers()).toEqual([{ name: 'sub1', vehicleType: 'HTTP', updatedAt: '2026-09-01', proxiesCount: 2 }])
-  })
-
   it('mixedPort 兼容 mixed-port/mixedPort/port 三种字段', async () => {
     const { request } = fakeRequest([
       { method: 'GET', path: '/configs', respond: () => ({ 'mixed-port': 7890 }) },

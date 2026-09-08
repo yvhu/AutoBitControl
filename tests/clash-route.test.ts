@@ -11,11 +11,10 @@ const statusData = {
   kernel: 'mihomo',
   mixedPort: 7890,
   apiBase: 'http://127.0.0.1:9090',
-  capability: { listProxies: true, delay: true, switchNode: true, providers: false, switchProfile: false },
+  delaySupported: true,
   group: 'GLOBAL',
   currentNode: 'HK-01',
   groups: [{ name: 'GLOBAL', now: 'HK-01' }],
-  subscriptions: [],
 }
 
 const testData = { group: 'GLOBAL', currentNode: 'HK-01', currentUsable: true, nodes: [] }
@@ -29,11 +28,7 @@ function makeApp() {
       status: vi.fn().mockResolvedValue(statusData),
       test: vi.fn().mockResolvedValue(testData),
       optimize: vi.fn().mockResolvedValue(optimizeData),
-      subscriptions: vi.fn().mockResolvedValue([]),
-      updateSubscription: vi.fn().mockResolvedValue(undefined),
       setGroup: vi.fn(),
-      profileFiles: vi.fn().mockReturnValue(['a.yaml', 'b.yaml']),
-      switchProfile: vi.fn().mockResolvedValue(undefined),
     },
     auto: { status: () => ({ pace: 'normal' as const, lastCheckAt: null, allDown: false, deferredSwitches: 0 }) },
     saveGroup: vi.fn().mockResolvedValue(undefined),
@@ -90,23 +85,6 @@ describe('POST /api/tools/clash/optimize', () => {
   })
 })
 
-describe('GET /api/tools/clash/subscriptions', () => {
-  it('返回订阅列表', async () => {
-    const { app } = makeApp()
-    const res = await request(app).get('/api/tools/clash/subscriptions')
-    expect(res.body.data.subscriptions).toEqual([])
-  })
-})
-
-describe('POST /api/tools/clash/subscriptions/:name/update', () => {
-  it('触发订阅更新', async () => {
-    const { app, clash } = makeApp()
-    const res = await request(app).post('/api/tools/clash/subscriptions/sub1/update').send({})
-    expect(res.body.code).toBe(0)
-    expect(clash.service.updateSubscription).toHaveBeenCalledWith('sub1')
-  })
-})
-
 describe('POST /api/tools/clash/group', () => {
   it('写回配置并更新运行时分组', async () => {
     const { app, clash } = makeApp()
@@ -128,22 +106,5 @@ describe('POST /api/tools/clash/group', () => {
     const res = await request(app).post('/api/tools/clash/group').send({ group: '   ' })
     expect(res.status).toBe(400)
     expect(res.body.code).toBe(40000)
-  })
-})
-
-describe('GET /api/tools/clash/profiles', () => {
-  it('返回配置目录下的订阅文件', async () => {
-    const { app } = makeApp()
-    const res = await request(app).get('/api/tools/clash/profiles')
-    expect(res.body.data.files).toEqual(['a.yaml', 'b.yaml'])
-  })
-})
-
-describe('POST /api/tools/clash/profiles/switch', () => {
-  it('切换订阅文件', async () => {
-    const { app, clash } = makeApp()
-    const res = await request(app).post('/api/tools/clash/profiles/switch').send({ file: 'a.yaml' })
-    expect(res.body.code).toBe(0)
-    expect(clash.service.switchProfile).toHaveBeenCalledWith('a.yaml')
   })
 })

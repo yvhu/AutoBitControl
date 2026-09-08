@@ -11,7 +11,7 @@ import { preparePreview } from '../../tools/file-assign/planner'
 import { FileAssignService } from '../../tools/file-assign/applier'
 import { ToolError } from '../../tools/errors'
 import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/types'
-import type { ClashTestResult, ClashSubscription, OptimizeResult, AutoOptimizerStatus, ClashCapability } from '../../tools/clash/types'
+import type { ClashTestResult, OptimizeResult, AutoOptimizerStatus } from '../../tools/clash/types'
 
 /** 进程内单实例：FileAssignService 的执行锁跨请求生效（面板并发点击靠它拦截） */
 const service = new FileAssignService()
@@ -121,11 +121,10 @@ const service = new FileAssignService()
  *                     kernel: { type: string, nullable: true }
  *                     mixedPort: { type: integer, nullable: true }
  *                     apiBase: { type: string }
- *                     capability: { type: object }
+ *                     delaySupported: { type: boolean }
  *                     group: { type: string }
  *                     currentNode: { type: string, nullable: true }
  *                     groups: { type: array, items: { type: object } }
- *                     subscriptions: { type: array, items: { type: object } }
  *                     auto: { type: object }
  *                     anyRunning: { type: boolean }
  */
@@ -188,61 +187,6 @@ const service = new FileAssignService()
 
 /**
  * @swagger
- * /api/tools/clash/subscriptions:
- *   get:
- *     summary: 订阅列表（proxy-provider 模式；非该模式为空数组）
- *     responses:
- *       '200':
- *         description: 订阅列表
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     subscriptions:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           name: { type: string }
- *                           vehicleType: { type: string }
- *                           updatedAt: { type: string }
- *                           proxiesCount: { type: integer }
- */
-
-/**
- * @swagger
- * /api/tools/clash/subscriptions/{name}/update:
- *   post:
- *     summary: 更新订阅（重拉节点列表）
- *     parameters:
- *       - in: path
- *         name: name
- *         required: true
- *         schema: { type: string }
- *     responses:
- *       '200':
- *         description: 更新完成
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     name: { type: string }
- */
-
-/**
- * @swagger
  * /api/tools/clash/group:
  *   post:
  *     summary: 设置目标分组（写回 config.json 的 clash.group）
@@ -262,48 +206,6 @@ const service = new FileAssignService()
  *                     group: { type: string }
  */
 
-/**
- * @swagger
- * /api/tools/clash/profiles:
- *   get:
- *     summary: 订阅配置文件列表（clash.configPath 目录下 *.yaml）
- *     responses:
- *       '200':
- *         description: 文件列表
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     files: { type: array, items: { type: string } }
- */
-
-/**
- * @swagger
- * /api/tools/clash/profiles/switch:
- *   post:
- *     summary: 切换订阅文件（PUT /configs 以指定配置重载）
- *     responses:
- *       '200':
- *         description: 切换完成
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     file: { type: string }
- */
-
 /** clash 工具的路由依赖面（结构化类型，测试传普通对象替身） */
 export interface ClashRouteDeps {
   service: {
@@ -312,19 +214,14 @@ export interface ClashRouteDeps {
       kernel: string | null
       mixedPort: number | null
       apiBase: string
-      capability: Partial<ClashCapability>
+      delaySupported: boolean
       group: string
       currentNode: string | null
       groups: Array<{ name: string; now?: string }>
-      subscriptions: ClashSubscription[]
     }>
     test(): Promise<ClashTestResult>
     optimize(prev?: ClashTestResult): Promise<OptimizeResult>
-    subscriptions(): Promise<ClashSubscription[]>
-    updateSubscription(name: string): Promise<void>
     setGroup(group: string): void
-    profileFiles(): string[]
-    switchProfile(file: string): Promise<void>
   }
   auto: { status(): AutoOptimizerStatus }
   saveGroup(group: string): Promise<void>
@@ -423,23 +320,6 @@ export function toolsRouter(deps: {
     }
   }))
 
-  router.get('/tools/clash/subscriptions', asyncHandler(async (req, res) => {
-    try {
-      ok(res, { subscriptions: await deps.clash.service.subscriptions() })
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
-  router.post('/tools/clash/subscriptions/:name/update', asyncHandler(async (req, res) => {
-    try {
-      await deps.clash.service.updateSubscription(String(req.params.name ?? ''))
-      ok(res, { name: req.params.name })
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
   router.post('/tools/clash/group', asyncHandler(async (req, res) => {
     const body = req.body as { group?: unknown }
     if (typeof body?.group !== 'string' || body.group.trim() === '') {
@@ -450,24 +330,6 @@ export function toolsRouter(deps: {
       await deps.clash.saveGroup(body.group)
       deps.clash.service.setGroup(body.group)
       ok(res, { group: body.group })
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
-  router.get('/tools/clash/profiles', (req, res) => {
-    ok(res, { files: deps.clash.service.profileFiles() })
-  })
-
-  router.post('/tools/clash/profiles/switch', asyncHandler(async (req, res) => {
-    const body = req.body as { file?: unknown }
-    if (typeof body?.file !== 'string' || body.file === '') {
-      fail(res, 400, ERROR_CODES.INVALID_ARGUMENT, '参数格式错误（file 不能为空）')
-      return
-    }
-    try {
-      await deps.clash.service.switchProfile(body.file)
-      ok(res, { file: body.file })
     } catch (e) {
       clashGuard(res, e)
     }

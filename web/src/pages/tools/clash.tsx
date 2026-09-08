@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Alert, Button, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
-import { summarizeNodes, useClashOptimize, useClashProfiles, useClashSetGroup, useClashStatus, useClashSwitchProfile, useClashTest, useClashUpdateSubscription } from './hooks'
+import { summarizeNodes, useClashOptimize, useClashSetGroup, useClashStatus, useClashTest } from './hooks'
 import type { ClashNodeResult, ClashUrlDelay } from '../../types'
 
 const columns = [
@@ -22,11 +22,7 @@ export default function ClashPanel() {
   const test = useClashTest()
   const optimize = useClashOptimize()
   const setGroup = useClashSetGroup()
-  const updateSub = useClashUpdateSubscription()
-  const profiles = useClashProfiles(status.data?.capability.switchProfile === true)
-  const switchProfile = useClashSwitchProfile()
   const [nodes, setNodes] = useState<ClashNodeResult[] | null>(null)
-  const [profile, setProfile] = useState<string>()
 
   if (status.isPending) {
     return <Alert type="info" showIcon message="正在探测本机 Clash 客户端..." />
@@ -107,39 +103,6 @@ export default function ClashPanel() {
         </Typography.Text>
       )}
       {nodes && <Table rowKey="name" size="small" columns={columns} dataSource={nodes} pagination={false} />}
-
-      {data.capability.providers && (
-        <Space direction="vertical" size={8} style={{ display: 'flex' }}>
-          <Typography.Text strong>订阅</Typography.Text>
-          {data.subscriptions.map((s) => (
-            <Space key={s.name}>
-              <span>{s.name}（{s.vehicleType}，{s.proxiesCount} 节点）</span>
-              <Button size="small" loading={updateSub.isPending} onClick={() => updateSub.mutate(s.name)}>
-                更新订阅
-              </Button>
-            </Space>
-          ))}
-        </Space>
-      )}
-
-      {data.capability.switchProfile && (
-        <Space>
-          <Select
-            value={profile}
-            placeholder="选择订阅配置文件"
-            style={{ width: 260 }}
-            options={(profiles.data?.files ?? []).map((f) => ({ value: f, label: f }))}
-            onChange={setProfile}
-          />
-          <Button
-            disabled={!profile}
-            loading={switchProfile.isPending}
-            onClick={() => profile && switchProfile.mutate(profile)}
-          >
-            切换订阅文件
-          </Button>
-        </Space>
-      )}
     </Space>
   )
 }

@@ -4,15 +4,13 @@
  * 设计思路：单例 + 进程内 busy 锁（自动检测与手动触发互斥）；切换失败自动回滚；
  * 全 IO 经注入（adapter/logger/getCfg），测试不连真 Clash
  */
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import type { ClashAdapter } from './adapter'
 import { detectClash } from './client-detector'
 import { ToolError, TOOL_ERROR_CODES } from '../errors'
 import type { ClashConfig } from '../../infrastructure/config'
 import type { Logger } from '../../infrastructure/logger'
 import type {
-  ClashCapability, ClashDetectResult, ClashGroup, ClashSubscription,
+  ClashDetectResult, ClashGroup,
   ClashTestResult, NodeTestResult, OptimizeResult, UrlDelay,
 } from './types'
 
@@ -177,62 +175,16 @@ export class ClashService {
     }
   }
 
-  /** 订阅列表（provider 模式；接口异常返回空数组容错） */
-  async subscriptions(): Promise<ClashSubscription[]> {
-    try {
-      return await this.deps.adapter.providers()
-    } catch {
-      return []
-    }
-  }
-
-  /** 更新订阅（重拉节点列表） */
-  async updateSubscription(name: string): Promise<void> {
-    try {
-      await this.deps.adapter.updateProvider(name)
-    } catch (e) {
-      throw new ToolError(500, TOOL_ERROR_CODES.CLASH_API_FAILED, `更新订阅失败: ${(e as Error).message}`)
-    }
-  }
-
-  /** 订阅配置文件列表（clash.configPath 目录下 *.yaml/*.yml；未配置或读目录失败返回空） */
-  profileFiles(): string[] {
-    const dir = this.deps.getCfg().configPath
-    if (!dir) return []
-    try {
-      return readdirSync(dir).filter((n) => PROFILE_FILE_RE.test(n)).sort()
-    } catch {
-      return []
-    }
-  }
-
-  /** 切换订阅文件（PUT /configs 以指定配置重载；文件名必须在配置目录内防穿越） */
-  async switchProfile(file: string): Promise<void> {
-    const dir = this.deps.getCfg().configPath
-    if (!dir) {
-      throw new ToolError(400, TOOL_ERROR_CODES.CLASH_PROFILE_NOT_CONFIGURED, '未配置 clash.configPath，订阅文件切换不可用')
-    }
-    if (!PROFILE_FILE_RE.test(file) || !this.profileFiles().includes(file)) {
-      throw new ToolError(400, TOOL_ERROR_CODES.CLASH_PROFILE_NOT_CONFIGURED, `配置文件不在配置目录中: ${file}`)
-    }
-    try {
-      await this.deps.adapter.reloadConfig(join(dir, file))
-    } catch (e) {
-      throw new ToolError(500, TOOL_ERROR_CODES.CLASH_API_FAILED, `切换订阅文件失败: ${(e as Error).message}`)
-    }
-  }
-
-  /** 面板状态汇总（探测 + 分组 + 当前节点 + 能力集 + 订阅） */
+  /** 面板状态汇总（探测 + 分组 + 当前节点 + delay 能力） */
   async status(): Promise<{
     detected: boolean
     kernel: ClashDetectResult['kernel']
     mixedPort: number | null
     apiBase: string
-    capability: ClashCapability
+    delaySupported: boolean
     group: string
     currentNode: string | null
     groups: Array<{ name: string; now?: string }>
-    subscriptions: ClashSubscription[]
   }> {
     const detect = await this.detect()
     const cfg = this.deps.getCfg()
@@ -248,23 +200,15 @@ export class ClashService {
         groups = []
       }
     }
-    const subs = detect.detected ? await this.subscriptions() : []
     return {
       detected: detect.detected,
       kernel: detect.kernel,
       mixedPort: detect.mixedPort,
       apiBase: this.deps.adapter.apiBase,
-      capability: {
-        listProxies: detect.detected,
-        delay: detect.detected && this.deps.adapter.delaySupported,
-        switchNode: detect.detected,
-        providers: subs.length > 0,
-        switchProfile: cfg.configPath !== '',
-      },
+      delaySupported: detect.detected && this.deps.adapter.delaySupported,
       group: groupName,
       currentNode,
       groups: groups.map((g) => ({ name: g.name, now: g.now })),
-      subscriptions: subs,
     }
   }
 }

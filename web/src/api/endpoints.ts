@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, ClashStatusData, ClashTestData, ClashOptimizeResult, ClashSubscriptionItem } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, ClashStatusData, ClashTestData, ClashOptimizeResult } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -35,8 +35,4 @@ export const applyFileAssign = (body: { sourceDir: string; column: string; plan:
 export const fetchClashStatus = () => get<ClashStatusData>('/api/tools/clash/status')
 export const testClash = () => post<ClashTestData>('/api/tools/clash/test', {})
 export const optimizeClash = () => post<ClashOptimizeResult>('/api/tools/clash/optimize', {})
-export const fetchClashSubscriptions = () => get<{ subscriptions: ClashSubscriptionItem[] }>('/api/tools/clash/subscriptions')
-export const updateClashSubscription = (name: string) => post<{ name: string }>(`/api/tools/clash/subscriptions/${encodeURIComponent(name)}/update`, {})
 export const setClashGroup = (group: string) => post<{ group: string }>('/api/tools/clash/group', { group })
-export const fetchClashProfiles = () => get<{ files: string[] }>('/api/tools/clash/profiles')
-export const switchClashProfile = (file: string) => post<{ file: string }>('/api/tools/clash/profiles/switch', { file })

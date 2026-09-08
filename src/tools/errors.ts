@@ -15,22 +15,16 @@ export const TOOL_ERROR_CODES = {
   TOOL_TEMPLATE_INVALID: 40004,
   /** 400：执行阶段回传计划校验失败（文件变动/行数不一致等） */
   TOOL_PLAN_INVALID: 40005,
-  /** 400：未检测到运行中的 Clash 客户端 */
-  CLASH_NOT_FOUND: 40006,
   /** 400：external-controller 鉴权失败（secret 错误） */
   CLASH_AUTH_FAILED: 40007,
   /** 400：目标分组不存在 */
   CLASH_GROUP_NOT_FOUND: 40008,
-  /** 400：订阅文件切换能力未配置或文件不在配置目录 */
-  CLASH_PROFILE_NOT_CONFIGURED: 40009,
   /** 409：上一次执行进行中 */
   TOOL_BUSY: 40904,
   /** 500：磁盘 IO 失败（重命名/写回 xlsx） */
   TOOL_IO_FAILED: 50001,
   /** 500：Clash API 调用失败（非探测类） */
   CLASH_API_FAILED: 50002,
-  /** 500：测速全网不可用 */
-  CLASH_ALL_DOWN: 50003,
   /** 500：切换节点失败（已自动回滚） */
   CLASH_SWITCH_FAILED: 50004,
 } as const

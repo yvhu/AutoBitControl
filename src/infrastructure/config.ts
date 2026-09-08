@@ -118,8 +118,6 @@ export interface ClashConfig {
   minGainMs: number
   /** 定时自动检测配置 */
   autoCheck: ClashAutoCheckConfig
-  /** mihomo 配置目录（含 *.yaml）：留空 = 订阅文件切换能力隐藏 */
-  configPath: string
 }
 
 /** 全应用配置聚合 */
@@ -215,7 +213,6 @@ const defaults: AppConfig = {
     testTimeoutMs: 5000,
     minGainMs: 100,
     autoCheck: { enabled: true, normalIntervalMin: 30, fastIntervalMin: 2 },
-    configPath: '',
   },
 }
 

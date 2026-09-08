@@ -8,17 +8,13 @@ import type { FileAssignTemplate } from '../../types'
 vi.mock('../../api/endpoints', () => ({
   applyFileAssign: vi.fn().mockResolvedValue({ renamedCount: 2, updatedRows: 2, reloadedRows: 2 }),
   fetchClashStatus: vi.fn().mockResolvedValue({
-    detected: true, kernel: 'mihomo', mixedPort: 7890, apiBase: 'http://127.0.0.1:9090',
-    capability: { listProxies: true, delay: true, switchNode: true, providers: false, switchProfile: false },
-    group: 'GLOBAL', currentNode: 'HK-01', groups: [{ name: 'GLOBAL', now: 'HK-01' }], subscriptions: [],
+    detected: true, kernel: 'mihomo', mixedPort: 7890, apiBase: 'http://127.0.0.1:9090', delaySupported: true,
+    group: 'GLOBAL', currentNode: 'HK-01', groups: [{ name: 'GLOBAL', now: 'HK-01' }],
     auto: { pace: 'normal', lastCheckAt: null, allDown: false, deferredSwitches: 0 }, anyRunning: false,
   }),
   testClash: vi.fn().mockResolvedValue({ group: 'GLOBAL', currentNode: 'HK-01', currentUsable: true, nodes: [] }),
   optimizeClash: vi.fn().mockResolvedValue({ chosen: 'HK-02', switched: true, nodes: [] }),
   setClashGroup: vi.fn().mockResolvedValue({ group: 'GLOBAL' }),
-  updateClashSubscription: vi.fn().mockResolvedValue(null),
-  fetchClashProfiles: vi.fn().mockResolvedValue({ files: ['a.yaml'] }),
-  switchClashProfile: vi.fn().mockResolvedValue({ file: 'a.yaml' }),
 }))
 
 const fixed = () => 0

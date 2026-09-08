@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash, fetchClashProfiles, setClashGroup, switchClashProfile, updateClashSubscription } from '../../api/endpoints'
+import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash, setClashGroup } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
 import type { EnglishCase, FileAssignTemplate, FileAssignRow, PositionType, ClashNodeResult } from '../../types'
 
@@ -150,35 +150,6 @@ export function useClashSetGroup() {
     mutationFn: (group: string) => setClashGroup(group),
     onSuccess: () => {
       message.success('目标分组已更新')
-      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
-    },
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-/** 更新订阅（重拉节点列表） */
-export function useClashUpdateSubscription() {
-  const { message } = App.useApp()
-  return useMutation({
-    mutationFn: (name: string) => updateClashSubscription(name),
-    onSuccess: () => message.success('订阅已更新'),
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-/** 订阅配置文件列表（仅 switchProfile 能力时启用） */
-export function useClashProfiles(enabled: boolean) {
-  return useQuery({ queryKey: ['clash-profiles'], queryFn: fetchClashProfiles, enabled })
-}
-
-/** 切换订阅文件 */
-export function useClashSwitchProfile() {
-  const { message } = App.useApp()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (file: string) => switchClashProfile(file),
-    onSuccess: () => {
-      message.success('订阅文件已切换')
       queryClient.invalidateQueries({ queryKey: ['clash-status'] })
     },
     onError: (e) => message.error(errMsg(e)),

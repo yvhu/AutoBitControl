@@ -1,24 +1,10 @@
 /**
- * clash 域类型（tools 层）：探测/节点/测速/订阅/状态数据结构
+ * clash 域类型（tools 层）：探测/节点/测速/状态数据结构
  * 依赖方向：无依赖，被 clash 内各模块与 server 路由引用
  */
 
 /** 客户端内核类型：/version 的 meta 字段为 true 记 mihomo 系，否则 generic */
 export type ClashKernel = 'mihomo' | 'generic'
-
-/** 能力集（按探测结果与配置裁剪，面板据此显隐按钮） */
-export interface ClashCapability {
-  /** 列分组/节点 */
-  listProxies: boolean
-  /** 节点延迟测试（内核不支持 delay 接口时为 false） */
-  delay: boolean
-  /** 切换节点 */
-  switchNode: boolean
-  /** 订阅以 proxy-provider 配置（更新订阅按钮可见性） */
-  providers: boolean
-  /** 订阅文件切换（configPath 配置后可用） */
-  switchProfile: boolean
-}
 
 /** 探测结果 */
 export interface ClashDetectResult {
@@ -35,14 +21,6 @@ export interface ClashGroup {
   now?: string
   /** 组内全部节点 */
   all?: string[]
-}
-
-/** 订阅（GET /providers/proxies 条目） */
-export interface ClashSubscription {
-  name: string
-  vehicleType: string
-  updatedAt?: string
-  proxiesCount: number
 }
 
 /** 单 URL 测速结果 */

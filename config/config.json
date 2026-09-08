@@ -3,7 +3,11 @@
     "apiBase": "http://127.0.0.1:54345",
     "openTimeoutMs": 30000,
     "maxRetries": 3,
-    "retryBackoffMs": [5000, 30000, 120000]
+    "retryBackoffMs": [
+      5000,
+      30000,
+      120000
+    ]
   },
   "execution": {
     "staggerMaxSec": 120,
@@ -13,7 +17,10 @@
     "retryBackoffSec": 600,
     "circuitBreakerThreshold": 2,
     "maxConcurrentWindows": 6,
-    "humanize": { "minDelayMs": 800, "maxDelayMs": 3000 }
+    "humanize": {
+      "minDelayMs": 800,
+      "maxDelayMs": 3000
+    }
   },
   "captcha": {
     "apiBase": "https://api.yescaptcha.com",
@@ -29,24 +36,42 @@
       "image": "ImageToTextTask"
     }
   },
-  "scheduler": { "timezone": "Asia/Shanghai" },
+  "scheduler": {
+    "timezone": "Asia/Shanghai"
+  },
   "clash": {
     "enabled": true,
     "apiBase": "http://127.0.0.1:9090",
     "apiSecret": "",
-    "group": "",
-    "testUrls": ["https://www.gstatic.com/generate_204", "https://www.google.com"],
-    "weights": [2, 1],
+    "group": "AutoSelection",
+    "testUrls": [
+      "https://www.gstatic.com/generate_204",
+      "https://www.google.com"
+    ],
+    "weights": [
+      2,
+      1
+    ],
     "maxNodes": 20,
     "testConcurrency": 2,
     "testTimeoutMs": 5000,
     "minGainMs": 100,
-    "autoCheck": { "enabled": true, "normalIntervalMin": 30, "fastIntervalMin": 2 },
-    "configPath": ""
+    "autoCheck": {
+      "enabled": true,
+      "normalIntervalMin": 30,
+      "fastIntervalMin": 2
+    }
   },
-  "web": { "host": "127.0.0.1", "port": 3000 },
-  "wallet": { "passwords": {} },
-  "dataSource": { "path": "config/accounts.xlsx" },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 3000
+  },
+  "wallet": {
+    "passwords": {}
+  },
+  "dataSource": {
+    "path": "config/accounts.xlsx"
+  },
   "storage": {
     "dbPath": "data/app.db",
     "screenshotDir": "data/screenshots",

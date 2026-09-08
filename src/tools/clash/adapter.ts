@@ -5,7 +5,7 @@
  * delay 接口 404 时置 delaySupported=false 供上层降级决策
  */
 import { httpJson, HttpError } from '../../infrastructure/http'
-import type { ClashGroup, ClashSubscription } from './types'
+import type { ClashGroup } from './types'
 
 /** 可注入请求面：默认实现走 httpJson + baseUrl/secret/timeout；测试替换模拟平台响应 */
 export interface ClashRequest {
@@ -91,31 +91,7 @@ export class ClashAdapter {
     await this.request({ method: 'PUT', path: `/proxies/${encodeURIComponent(group)}`, body: { name } })
   }
 
-  /** GET /providers/proxies：订阅列表（仅 vehicleType=HTTP 的远程订阅；Compatible 条目是分组筛选的产物，不是订阅，须过滤） */
-  async providers(): Promise<ClashSubscription[]> {
-    const d = (await this.request({ method: 'GET', path: '/providers/proxies' })) as Record<string, unknown>
-    const map = (d.providers ?? {}) as Record<string, Record<string, unknown>>
-    return Object.entries(map)
-      .filter(([, p]) => p.vehicleType === 'HTTP')
-      .map(([name, p]) => ({
-        name,
-        vehicleType: String(p.vehicleType),
-        updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
-        proxiesCount: Array.isArray(p.proxies) ? p.proxies.length : 0,
-      }))
-  }
-
-  /** PUT /providers/proxies/{name}：重拉订阅（更新节点列表） */
-  async updateProvider(name: string): Promise<void> {
-    await this.request({ method: 'PUT', path: `/providers/proxies/${encodeURIComponent(name)}` })
-  }
-
-  /** PUT /configs：以指定配置文件重载（订阅文件切换） */
-  async reloadConfig(path: string): Promise<void> {
-    await this.request({ method: 'PUT', path: '/configs', body: { path } })
-  }
-
-  /** delay 接口当前可用性（供能力集展示） */
+  /** delay 接口当前可用性（面板状态展示；404 后置 false） */
   get delaySupported(): boolean {
     return this.delaySupportedFlag
   }

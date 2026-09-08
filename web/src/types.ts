@@ -116,23 +116,15 @@ export interface ClashOptimizeResult {
   switchNote?: string
 }
 
-export interface ClashSubscriptionItem {
-  name: string
-  vehicleType: string
-  updatedAt?: string
-  proxiesCount: number
-}
-
 export interface ClashStatusData {
   detected: boolean
   kernel: string | null
   mixedPort: number | null
   apiBase: string
-  capability: { listProxies: boolean; delay: boolean; switchNode: boolean; providers: boolean; switchProfile: boolean }
+  delaySupported: boolean
   group: string
   currentNode: string | null
   groups: Array<{ name: string; now?: string }>
-  subscriptions: ClashSubscriptionItem[]
   auto: { pace: 'normal' | 'fast'; lastCheckAt: string | null; allDown: boolean; deferredSwitches: number }
   anyRunning: boolean
 }

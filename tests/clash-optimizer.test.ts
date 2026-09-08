@@ -17,7 +17,6 @@ function makeCfg(over: Partial<ClashConfig> = {}): ClashConfig {
     testTimeoutMs: 5000,
     minGainMs: 100,
     autoCheck: { enabled: true, normalIntervalMin: 30, fastIntervalMin: 2 },
-    configPath: '',
     ...over,
   }
 }
@@ -39,8 +38,6 @@ function makeAdapter(delayMap: Record<string, Array<{ reachable: boolean; delayM
       if (opts.switchError) throw opts.switchError
     }),
     groups: vi.fn(async () => opts.groups ?? [{ name: 'GLOBAL', now: 'HK-01', all: ['HK-01', 'HK-02'] }]),
-    providers: vi.fn(async () => []),
-    updateProvider: vi.fn(async () => undefined),
   }
   return { adapter, switchCalls }
 }
@@ -155,21 +152,5 @@ describe('ClashService.optimize', () => {
     expect(r.switched).toBe(true)
     expect(switchCalls).toEqual([['GLOBAL', 'HK-02']])
     expect(adapter.delay).not.toHaveBeenCalled()
-  })
-})
-
-describe('ClashService.subscriptions/updateSubscription', () => {
-  it('providers 接口异常 → 空数组容错', async () => {
-    const { adapter } = makeAdapter({})
-    adapter.providers = vi.fn(async () => { throw new Error('boom') })
-    const svc = makeService(adapter as never, makeCfg())
-    expect(await svc.subscriptions()).toEqual([])
-  })
-
-  it('更新订阅失败 → CLASH_API_FAILED', async () => {
-    const { adapter } = makeAdapter({})
-    adapter.updateProvider = vi.fn(async () => { throw new Error('boom') })
-    const svc = makeService(adapter as never, makeCfg())
-    await expect(svc.updateSubscription('sub1')).rejects.toMatchObject({ status: 500, code: 50002 })
   })
 })

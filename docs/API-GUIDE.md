@@ -1134,7 +1134,7 @@ randomMicroMove(): Promise<void>
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches/captcha_logs 保留天数，超期行启动时清理。 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 10 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 10 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 | `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
-| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck`、`configPath` | 代理网络工具（详见[第 12 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 目标分组（留空时面板下拉选，选择后自动写回本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时）；`configPath` 配置 mihomo 配置目录后解锁「切换订阅文件」 |
+| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck` | 代理网络工具（详见[第 12 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 目标分组（留空时面板下拉选，选择后自动写回本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时） |
 
 ### 9.2 面板使用
 
@@ -1179,13 +1179,9 @@ randomMicroMove(): Promise<void>
 | GET | `/api/tools` | 工具清单（工具中心卡片数据源） |
 | POST | `/api/tools/file-assign/preview` | 文件随机分配预览（校验并生成分配计划，不落盘） |
 | POST | `/api/tools/file-assign/apply` | 文件随机分配执行（按回传计划改名并写回 accounts.xlsx） |
-| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/分组/当前节点/能力集/自动检测状态/任务在途标记） |
+| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/分组/当前节点/delay 能力/自动检测状态/任务在途标记） |
 | POST | `/api/tools/clash/test` | 节点测速（只读，不切换） |
 | POST | `/api/tools/clash/optimize` | 测速选优并切换节点 |
-| GET | `/api/tools/clash/subscriptions` | 订阅列表（proxy-provider 模式） |
-| POST | `/api/tools/clash/subscriptions/:name/update` | 更新订阅（重拉节点列表） |
-| GET | `/api/tools/clash/profiles` | 订阅配置文件列表（clash.configPath 目录下 *.yaml） |
-| POST | `/api/tools/clash/profiles/switch` | 切换订阅文件（以指定配置重载） |
 | POST | `/api/tools/clash/group` | 设置目标分组（写回 config.json 的 clash.group） |
 
 完整参数、请求体、响应与业务错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）。
@@ -1660,11 +1656,11 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 10 章「配�
 
 ### 代理网络（Clash 工具）
 
-背景：全部比特窗口代理都填 Clash 本地混合端口，所以切换 Clash 节点对全部窗口全局生效。本工具探测本机 Clash 客户端（通过 external-controller 管理 API），提供节点测速、综合评分选优、切换节点/订阅，并定时自动检测（网络变差自动换到可用节点）。
+背景：全部比特窗口代理都填 Clash 本地混合端口，所以切换 Clash 节点对全部窗口全局生效。本工具探测本机 Clash 客户端（通过 external-controller 管理 API），提供节点测速、综合评分选优、切换节点，并定时自动检测（网络变差自动换到可用节点）。
 
 **两个端口别搞混：**
 
-- `clash.apiBase`（默认 `http://127.0.0.1:9090`）是 external-controller **管理口**——测速/切节点/拉订阅都走它。需要 Clash 开启「外部控制 / External Controller」（一般在设置页，或配置里写 `external-controller: 127.0.0.1:9090`）。自检：浏览器打开 `http://127.0.0.1:9090/version`，返回 JSON 即已开启。
+- `clash.apiBase`（默认 `http://127.0.0.1:9090`）是 external-controller **管理口**——测速/切节点都走它。需要 Clash 开启「外部控制 / External Controller」（一般在设置页，或配置里写 `external-controller: 127.0.0.1:9090`）。自检：浏览器打开 `http://127.0.0.1:9090/version`，返回 JSON 即已开启。
 - 7890 是**代理流量口**，窗口代理应填 `127.0.0.1:7890`（以面板顶部显示的实测混合口为准）。
 
 **配置**（`config.json` 的 `clash` 段，全带缺省，键说明见 9.1 配置表）。
@@ -1675,7 +1671,7 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 10 章「配�
 
 **评分规则**：每个节点对每个测试 URL 测延迟，全部不可达才判节点不可用（白名单机场节点只要有一个目标可达就不会被误杀）；得分 = 可达 URL 的加权延迟 + 不可达 URL 惩罚分，得分最低者当选；当选者比当前节点优势不足 `minGainMs` 时不切换（防频繁跳变）。
 
-**订阅**：仅当机场订阅在配置里以 proxy-provider（`type: http`）方式配置时，面板才显示订阅列表与「更新订阅」按钮（后端按 `vehicleType: HTTP` 过滤——mihomo 会把带筛选器的**分组**以 `Compatible` 类型列进 providers，那不是订阅，不会显示）。若订阅由客户端自己管理（如 mihomo-party 的订阅列表），面板不显示订阅区，去客户端里更新即可。配置了 `clash.configPath`（mihomo 配置目录）后，还能在多个订阅配置文件（*.yaml）间切换。
+**订阅相关**：本工具不做订阅管理（订阅新增/更新/切换都归 Clash 客户端自己——mihomo-party、Verge Rev 都有订阅列表界面）。如果整份订阅全挂，面板会红标「全网不可用」并保持快速重检，此时去客户端切换/更新订阅即可；订阅恢复后面板自动回到正常节奏。
 
 ### 在不同 Clash 客户端开启外部控制
 
@@ -1706,6 +1702,6 @@ Get-NetTCPConnection -State Listen | Where-Object { $pids -contains $_.OwningPro
 **常见问题：**
 
 - 面板提示「未检测到 Clash」→ 检查 Clash 是否开启外部控制、端口与 `apiBase` 是否一致、开了鉴权是否填了 `apiSecret`
-- 测速全部超时 → 机场限制并发或节点本身不可用：调低 `testConcurrency`，或检查订阅是否过期（点「更新订阅」）
+- 测速全部超时 → 机场限制并发或节点本身不可用：调低 `testConcurrency`；若持续全网挂，去 Clash 客户端检查/切换订阅
 - 分组选择重启后丢失 → 你很可能在 `config.local.json` 里也写了 `clash.group`（它覆盖 config.json 的写回值），删掉其中一处
 - 不想自动切换只想要手动控制 → `autoCheck.enabled` 设为 false（手动入口不受影响）
