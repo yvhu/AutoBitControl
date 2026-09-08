@@ -91,16 +91,18 @@ export class ClashAdapter {
     await this.request({ method: 'PUT', path: `/proxies/${encodeURIComponent(group)}`, body: { name } })
   }
 
-  /** GET /providers/proxies：订阅列表（订阅未以 proxy-provider 配置时为空数组） */
+  /** GET /providers/proxies：订阅列表（仅 vehicleType=HTTP 的远程订阅；Compatible 条目是分组筛选的产物，不是订阅，须过滤） */
   async providers(): Promise<ClashSubscription[]> {
     const d = (await this.request({ method: 'GET', path: '/providers/proxies' })) as Record<string, unknown>
     const map = (d.providers ?? {}) as Record<string, Record<string, unknown>>
-    return Object.entries(map).map(([name, p]) => ({
-      name,
-      vehicleType: String(p.vehicleType ?? ''),
-      updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
-      proxiesCount: Array.isArray(p.proxies) ? p.proxies.length : 0,
-    }))
+    return Object.entries(map)
+      .filter(([, p]) => p.vehicleType === 'HTTP')
+      .map(([name, p]) => ({
+        name,
+        vehicleType: String(p.vehicleType),
+        updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
+        proxiesCount: Array.isArray(p.proxies) ? p.proxies.length : 0,
+      }))
   }
 
   /** PUT /providers/proxies/{name}：重拉订阅（更新节点列表） */
