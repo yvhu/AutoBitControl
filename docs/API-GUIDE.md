@@ -1677,6 +1677,32 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 10 章「配�
 
 **订阅**：订阅以 proxy-provider 方式配置时，面板显示订阅列表与「更新订阅」按钮；配置了 `clash.configPath`（mihomo 配置目录）后，还能在多个订阅配置文件（*.yaml）间切换。
 
+### 在不同 Clash 客户端开启外部控制
+
+**通用原理**：让内核实际加载的配置里含 `external-controller: 127.0.0.1:9090`，然后重启内核即可。本项目只在这台 Windows 机器上运行，只需管本机当前安装的客户端（换客户端后照下表重新配置一次即可）。
+
+| 客户端 | 开启方法 |
+| --- | --- |
+| Clash Party（mihomo-party） | 无界面开关，改 `%APPDATA%\mihomo-party\mihomo.yaml` 第 1 行的 `external-controller`；**升级/重装后可能被重置，症状就是面板又提示「未检测到 Clash」** |
+| Clash Verge Rev | 设置页找「Clash 设置」里的外部控制（External Controller）开关；找不到就改其数据目录（`%APPDATA%\io.github.clash-verge-rev.clash-verge-rev`）下的内核配置文件 |
+| Clash for Windows | Profiles 选中当前配置的 yaml，顶部加这行后重启内核（多数订阅模板自带这行） |
+| mihomo 裸核 | 直接改它的 config.yaml |
+
+**换客户端后的固定流程（3 步）**：
+
+1. 保证配置里那行生效，浏览器自检 `http://127.0.0.1:9090/version` 返回 JSON
+2. 端口不是 9090 → 改本项目的 `clash.apiBase`；客户端开了鉴权 → 把 secret 填进 `clash.apiSecret`
+3. 重启本项目（`npm run dev`），面板工具页显示「内核 mihomo」+ 实测混合口即成功
+
+**找不到配置文件在哪？** 用 PowerShell 反查内核进程监听的端口（除 7890/7891/7892 之外多出的监听端口，如 9090/9097 就是管理口候选）：
+
+```powershell
+$pids = @(Get-Process | Where-Object { $_.ProcessName -match 'clash|verge|party|mihomo' } | Select-Object -ExpandProperty Id)
+Get-NetTCPConnection -State Listen | Where-Object { $pids -contains $_.OwningProcess } | Select-Object LocalPort, OwningProcess
+```
+
+依次打开 `http://127.0.0.1:端口/version`，返回 JSON 的那个就是管理口。
+
 **常见问题：**
 
 - 面板提示「未检测到 Clash」→ 检查 Clash 是否开启外部控制、端口与 `apiBase` 是否一致、开了鉴权是否填了 `apiSecret`
