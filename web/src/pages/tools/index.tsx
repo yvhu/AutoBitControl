@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ComponentType, CSSProperties, ReactNode } from 'react'
-import { Alert, Card, Col, Row, Space, Typography } from 'antd'
+import { Alert, Card, Col, Row, Space, Tooltip, Typography } from 'antd'
 import { GlobalOutlined, SwapOutlined, ToolOutlined } from '@ant-design/icons'
 import { useTools } from './hooks'
 import FileAssignPanel from './file-assign'
@@ -73,7 +73,11 @@ export default function ToolsPage() {
               <Card.Meta
                 avatar={TOOL_ICONS[t.key] ?? <ToolOutlined style={{ fontSize: 24, color: '#1677ff' }} />}
                 title={<div style={TITLE_STYLE}>{t.name}</div>}
-                description={<div style={DESC_STYLE}>{t.description}</div>}
+                description={
+                  <Tooltip title={t.description} mouseEnterDelay={0.4}>
+                    <div style={DESC_STYLE}>{t.description}</div>
+                  </Tooltip>
+                }
               />
             </Card>
           </Col>
