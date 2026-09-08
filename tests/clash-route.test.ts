@@ -122,6 +122,13 @@ describe('POST /api/tools/clash/group', () => {
     expect(res.status).toBe(400)
     expect(res.body.code).toBe(40000)
   })
+
+  it('group 传空白串 → 400/40000', async () => {
+    const { app } = makeApp()
+    const res = await request(app).post('/api/tools/clash/group').send({ group: '   ' })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+  })
 })
 
 describe('GET /api/tools/clash/profiles', () => {

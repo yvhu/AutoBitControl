@@ -56,7 +56,8 @@ export class AutoOptimizer {
       void this.tick().finally(() => {
         if (this.stopped) return
         const min = this.pace === 'fast' ? this.deps.intervals.fastMin : this.deps.intervals.normalMin
-        this.scheduleNext(min * 60 * 1000)
+        // 下限保护 1 分钟：fastMin=0 时快速态不得形成 setTimeout(0) 热循环
+        this.scheduleNext(Math.max(1, min) * 60 * 1000)
       })
     }, delayMs)
   }
@@ -69,7 +70,8 @@ export class AutoOptimizer {
       }
       const result = await this.deps.service.test()
       this.lastCheckAt = new Date().toISOString()
-      this.allDown = result.nodes.every((n) => !n.usable)
+      // 空节点列表（如分组无节点）不算全网挂
+      this.allDown = result.nodes.length > 0 && result.nodes.every((n) => !n.usable)
       // 需切换判定：全网挂或当前选中节点不可用（当前节点不在测速范围按未知，不触发）
       const shouldSwitch = this.allDown || result.currentUsable === false
       const inFlight = this.deps.anyRunning()
@@ -87,7 +89,8 @@ export class AutoOptimizer {
       } else if (shouldSwitch) {
         // 在途守卫：只测速不切换，切换延后到空闲窗口
         this.deferredSwitches++
-        if (this.deferredSwitches >= DEFERRED_ALERT_AT) {
+        // 仅刚达到阈值时告警一次，避免后续每轮刷屏
+        if (this.deferredSwitches === DEFERRED_ALERT_AT) {
           this.deps.logger.warn({ count: this.deferredSwitches }, 'Clash 需切换但任务在途，已连续延后 3 次')
         }
       } else {

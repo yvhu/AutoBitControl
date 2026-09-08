@@ -131,6 +131,7 @@ optimize():
 
 - 端口说明：`apiBase` 是 external-controller 管理口（默认 9090）；7890 是代理混合口（流量口），由 /configs 实测读取用于展示，不硬编码
 - `group` 留空：面板首次使用时从 API 实时拉取分组下拉选择（不猜配置）；`configPath` 留空：订阅文件切换能力隐藏
+- 开关语义：`enabled` 是工具开关（当前控制定时自动检测，面板手动入口不受限）；`autoCheck.enabled` 是定时自动检测开关；`fastIntervalMin` 最小生效值为 1 分钟（0 不触发快速态热循环）
 
 ## 错误码（src/server/http/errors.ts 与 src/tools/errors.ts 同步追加）
 

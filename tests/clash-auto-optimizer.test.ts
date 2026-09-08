@@ -5,9 +5,9 @@ import type { ClashService } from '../src/tools/clash/optimizer'
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
 
 /** fake service：按场景预设 test/optimize 行为 */
-function makeService(testImpl: () => Promise<unknown>, optimizeImpl: () => Promise<unknown>) {
+function makeService(testImpl: () => Promise<unknown>, optimizeImpl: () => Promise<unknown>, busy = false) {
   return {
-    isBusy: false,
+    isBusy: busy,
     test: vi.fn(testImpl),
     optimize: vi.fn(optimizeImpl),
   } as unknown as ClashService
@@ -32,6 +32,28 @@ describe('AutoOptimizer', () => {
     const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 0, fastMin: 2 } })
     a.start()
     expect(svc.test).not.toHaveBeenCalled()
+  })
+
+  it('start 幂等：重复 start 只跑一轮', async () => {
+    const svc = makeService(allOk, switched)
+    const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 30, fastMin: 2 } })
+    a.start()
+    a.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(svc.test).toHaveBeenCalledTimes(1)
+    // 只存在一条调度链：30 分钟后仍是累计 2 次而非 3 次
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+    expect(svc.test).toHaveBeenCalledTimes(2)
+    a.stop()
+  })
+
+  it('isBusy 时跳过本轮（不调 test）', async () => {
+    const svc = makeService(allOk, switched, true)
+    const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 30, fastMin: 2 } })
+    a.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(svc.test).not.toHaveBeenCalled()
+    a.stop()
   })
 
   it('全部可用 → 只测速不切换，正常节奏', async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { ClashAdapter } from '../src/tools/clash/adapter'
 import { HttpError } from '../src/infrastructure/http'
 
@@ -68,5 +68,16 @@ describe('ClashAdapter', () => {
     ])
     const a = new ClashAdapter('http://x', '', 5000, request)
     expect(await a.mixedPort()).toBe(7890)
+  })
+
+  it('mixedPort 兼容 mixedPort/port 字段名', async () => {
+    const camel = new ClashAdapter('http://x', '', 5000, fakeRequest([
+      { method: 'GET', path: '/configs', respond: () => ({ mixedPort: 7891 }) },
+    ]).request)
+    expect(await camel.mixedPort()).toBe(7891)
+    const port = new ClashAdapter('http://x', '', 5000, fakeRequest([
+      { method: 'GET', path: '/configs', respond: () => ({ port: 7892 }) },
+    ]).request)
+    expect(await port.mixedPort()).toBe(7892)
   })
 })

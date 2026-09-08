@@ -74,7 +74,11 @@ export default function ClashPanel() {
           placeholder="选择目标分组"
           style={{ width: 260 }}
           options={data.groups.map((g) => ({ value: g.name, label: g.now ? `${g.name}（当前 ${g.now}）` : g.name }))}
-          onChange={(v) => setGroup.mutate(v)}
+          onChange={(v) => {
+            setGroup.mutate(v)
+            // 切分组后旧测速结果已不适用，清空避免误导
+            setNodes(null)
+          }}
         />
         <Button
           icon={<ReloadOutlined />}

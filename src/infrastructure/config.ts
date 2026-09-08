@@ -96,7 +96,7 @@ export interface ClashAutoCheckConfig {
 
 /** Clash 代理网络工具配置（tools/clash 域使用） */
 export interface ClashConfig {
-  /** 工具总开关 */
+  /** 工具开关（当前控制定时自动检测；手动入口不受限） */
   enabled: boolean
   /** external-controller 管理 API 地址（默认 9090；区别于 7890 混合代理口） */
   apiBase: string
@@ -114,7 +114,7 @@ export interface ClashConfig {
   testConcurrency: number
   /** 单次测速超时（毫秒） */
   testTimeoutMs: number
-  /** 最小收益（毫秒）：当选节点比当前节点快不到该值时不切换，避免频繁跳变 */
+  /** 最小收益（加权分）：当选节点加权得分比当前节点低不到该值时不切换，避免频繁跳变 */
   minGainMs: number
   /** 定时自动检测配置 */
   autoCheck: ClashAutoCheckConfig
@@ -307,6 +307,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
 /**
  * 写回配置覆盖项到 config/config.json（面板运行时修改入口，如 clash 分组选择）
  * 读取现有文件与 patch 深合并后写回（保留原有全部键；JSON 无注释概念，手工注释会丢失，属已知代价）
+ * 注意：config.local.json 中的同键会覆盖写回值（local 在 config.json 之后加载）
  * @param patch 覆盖项（当前仅 clash.group）
  * @param opts.rootDir 项目根目录，缺省为 src 上两级（与 loadConfig 同口径）
  * @throws 读写失败向上抛（由调用方路由映射为统一响应）

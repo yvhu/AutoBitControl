@@ -133,6 +133,6 @@ export interface ClashStatusData {
   currentNode: string | null
   groups: Array<{ name: string; now?: string }>
   subscriptions: ClashSubscriptionItem[]
-  auto: { pace: string; lastCheckAt: string | null; allDown: boolean; deferredSwitches: number }
+  auto: { pace: 'normal' | 'fast'; lastCheckAt: string | null; allDown: boolean; deferredSwitches: number }
   anyRunning: boolean
 }

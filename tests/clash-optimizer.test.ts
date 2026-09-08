@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ClashService, scoreNode } from '../src/tools/clash/optimizer'
 import type { ClashConfig } from '../src/infrastructure/config'
 
