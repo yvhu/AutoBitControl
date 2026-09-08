@@ -14,4 +14,9 @@ export const TOOLS: ToolMeta[] = [
     name: '文件随机分配',
     description: '按名称模板重命名指定文件夹内的文件，随机分配给 accounts.xlsx 各账号行并写回目标列',
   },
+  {
+    key: 'clash',
+    name: '代理网络',
+    description: '探测本机 Clash 客户端，测速选优、自动切换节点，保持网络可用',
+  },
 ]

@@ -52,6 +52,13 @@ export interface ServerDeps {
   captchaBalance: () => Promise<{ points: number } | null>
   /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
+  /** 代理网络工具（tools/clash）：服务/自动检测/分组写回/在途判定 */
+  clash: {
+    service: import('../tools/clash/optimizer').ClashService
+    auto: import('../tools/clash/auto-optimizer').AutoOptimizer
+    saveGroup(group: string): Promise<void>
+    anyRunning(): boolean
+  }
 }
 
 /**
@@ -73,7 +80,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(docsRouter())
   // 公开设置：非敏感配置 + 版本号 + 数据源状态（面板展示，避免前端硬编码）
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
-  api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource }))
+  api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, clash: deps.clash }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   app.use('/api', api)
 

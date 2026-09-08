@@ -17,7 +17,17 @@ function makeApp(xlsxPath: string) {
   app.use(express.json())
   const reload = vi.fn().mockResolvedValue(undefined)
   const summary = vi.fn().mockReturnValue({ rows: 2, columns: ['窗口名称', '文件地址'] })
-  app.use('/api', toolsRouter({ xlsxPath, datasource: { reload, summary } }))
+  const clash = {
+    service: {
+      status: vi.fn().mockResolvedValue({ detected: false, kernel: null, mixedPort: null, apiBase: '', capability: {}, group: '', currentNode: null, groups: [], subscriptions: [] }),
+      test: vi.fn(), optimize: vi.fn(), subscriptions: vi.fn().mockResolvedValue([]),
+      updateSubscription: vi.fn(), setGroup: vi.fn(), profileFiles: vi.fn().mockReturnValue([]), switchProfile: vi.fn(),
+    },
+    auto: { status: () => ({ pace: 'normal' as const, lastCheckAt: null, allDown: false, deferredSwitches: 0 }) },
+    saveGroup: vi.fn().mockResolvedValue(undefined),
+    anyRunning: () => false,
+  }
+  app.use('/api', toolsRouter({ xlsxPath, datasource: { reload, summary }, clash }))
   app.use(errorHandler({ error: () => {}, warn: () => {}, info: () => {} } as unknown as Logger))
   return { app, reload, summary }
 }
