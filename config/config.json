@@ -41,7 +41,7 @@
   },
   "clash": {
     "enabled": true,
-    "apiBase": "http://127.0.0.1:9090",
+    "apiBase": "http://127.0.0.1:7097",
     "apiSecret": "",
     "group": "AutoSelection",
     "testUrls": [
