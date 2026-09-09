@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
-import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
+import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, toStandardBase64, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
 import { CaptchaFailure } from '../src/integrations/yescaptcha'
 
 /** 真机核实（2026-09-09）：页面常驻 v3 sitekey；挑战时动态插入 v2 sitekey */
@@ -60,6 +60,25 @@ describe('mapQuestionId 提示语映射', () => {
   it('未覆盖提示语返回 null', () => {
     expect(mapQuestionId('不存在的物体xyz')).toBeNull()
     expect(mapQuestionId('')).toBeNull()
+  })
+})
+
+describe('toStandardBase64 中心裁剪', () => {
+  it('非正方形输入中心裁剪：左右 10px 红/蓝色条被裁掉，输出正方形且四角为绿色（旧实现直接拉伸会残留色条）', async () => {
+    const img = new Jimp(400, 380, 0x00ff00ff)
+    for (let x = 0; x < 400; x++) {
+      for (let y = 0; y < 380; y++) {
+        if (x < 10) img.setPixelColor(0xff0000ff, x, y)
+        else if (x >= 390) img.setPixelColor(0x0000ffff, x, y)
+      }
+    }
+    const b64 = await toStandardBase64(await img.getBufferAsync(Jimp.MIME_PNG), 300)
+    const out = await Jimp.read(Buffer.from(b64, 'base64'))
+    expect(out.getWidth()).toBe(300)
+    expect(out.getHeight()).toBe(300)
+    for (const [x, y] of [[0, 0], [299, 0], [0, 299], [299, 299]]) {
+      expect(out.getPixelColor(x, y)).toBe(0x00ff00ff)
+    }
   })
 })
 
@@ -317,18 +336,26 @@ describe('solveRecaptchaGrid 求解循环', () => {
     // 多轮运行观察取值方差：固定等待则所有取值相同 → 断言失败；随机化则几乎必然出现不同取值
     const tileWaits: number[] = []
     const verifyWaits: number[] = []
+    const preShotWaits: number[] = []
     const allWaits: number[] = []
     for (let i = 0; i < 12; i++) {
       await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：挑战 frame 轮询 500ms → 截图前稳定 800ms → 格子 0 → 格子 2 → 验证按钮
-      expect(waits).toHaveLength(5)
+      // 每轮顺序：挑战 frame 轮询 500ms → 截图前动画稳定 1500-2500ms → shotGrid 内部稳定 800ms → 格子 0 → 格子 2 → 验证按钮
+      expect(waits).toHaveLength(6)
       expect(waits[0]).toBe(500)
-      expect(waits[1]).toBe(800)
-      tileWaits.push(...waits.slice(2, 4))
-      verifyWaits.push(waits[4])
+      expect(waits[1]).toBeGreaterThanOrEqual(1500)
+      expect(waits[1]).toBeLessThanOrEqual(2500)
+      expect(waits[2]).toBe(800)
+      preShotWaits.push(waits[1])
+      tileWaits.push(...waits.slice(3, 5))
+      verifyWaits.push(waits[5])
+    }
+    for (const w of preShotWaits) {
+      expect(w).toBeGreaterThanOrEqual(1500)
+      expect(w).toBeLessThanOrEqual(2500)
     }
     for (const w of tileWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
@@ -338,6 +365,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
       expect(w).toBeGreaterThanOrEqual(2500)
       expect(w).toBeLessThanOrEqual(3500)
     }
+    expect(new Set(preShotWaits).size).toBeGreaterThan(1)
     expect(new Set(tileWaits).size).toBeGreaterThan(1)
     expect(new Set(verifyWaits).size).toBeGreaterThan(1)
   }, 30000)
@@ -376,12 +404,14 @@ describe('solveRecaptchaGrid 求解循环', () => {
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：500ms 轮询 → 截图前稳定 800ms → 格子 0 三次（初次 + 确认 + 重试）→ 格子 2 一次 → 验证按钮
-      expect(waits).toHaveLength(7)
+      // 每轮顺序：500ms 轮询 → 截图前动画稳定 1500-2500ms → shotGrid 内部 800ms → 格子 0 三次（初次 + 确认 + 重试）→ 格子 2 一次 → 验证按钮
+      expect(waits).toHaveLength(8)
       expect(waits[0]).toBe(500)
-      expect(waits[1]).toBe(800)
-      tileWaits.push(...waits.slice(2, 6))
-      verifyWaits.push(waits[6])
+      expect(waits[1]).toBeGreaterThanOrEqual(1500)
+      expect(waits[1]).toBeLessThanOrEqual(2500)
+      expect(waits[2]).toBe(800)
+      tileWaits.push(...waits.slice(3, 7))
+      verifyWaits.push(waits[7])
     }
     for (const w of tileWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
@@ -537,7 +567,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(logger.warn).toHaveBeenCalledWith('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
   }, 30000)
 
-  it('网格图走容器元素截图：截图前先等 800ms 动画稳定，解出图 300x300', async () => {
+  it('网格图走容器元素截图：截图前先等 1500-2500ms 动画稳定 + shotGrid 内部 800ms，解出图 300x300', async () => {
     const gridBuf = await makePngBuffer(300)
     const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
@@ -546,9 +576,12 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const img = await Jimp.read(Buffer.from(imageArg, 'base64'))
     expect(img.getWidth()).toBe(300)
     expect(img.getHeight()).toBe(300)
-    // 截图前存在 800ms 稳定等待（动画未稳定时截图内容错乱，删除会失败）
+    // 截图前存在 1500-2500ms 动画稳定等待与 shotGrid 内部 800ms 稳定等待（动画未稳定时截图内容错乱，删除会失败）
     const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
-    expect(waits).toContain(800)
+    expect(waits[0]).toBe(500)
+    expect(waits[1]).toBeGreaterThanOrEqual(1500)
+    expect(waits[1]).toBeLessThanOrEqual(2500)
+    expect(waits[2]).toBe(800)
   }, 30000)
 
   it('小图 img 元素截图失败 → 跳过二次识别（该格只点 1 次、分类仅网格 1 次）', async () => {

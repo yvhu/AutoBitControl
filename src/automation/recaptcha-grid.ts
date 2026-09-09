@@ -8,13 +8,18 @@
  * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
  * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
- * 方案已废弃），截图前先等 800ms 动画稳定；挑战 frame 内点击一律走拟人坐标点击
+ * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
+ * 截图中心裁剪正方形后等比缩放（杜绝容器非正方形时直接 resize 拉伸变形，真机分类空数组/
+ * ERROR_GARBAGE_SAMPLE 高发与此相关），raw/std 双图落盘 data/screenshots/grid-debug 供真机诊断；
+ * 挑战 frame 内点击一律走拟人坐标点击
  * （humanClickInFrame：frame 内元素中心 + frame 元素页面偏移 → human.clickAt 贝塞尔轨迹 CDP 派发；
  * 窗口 92 高频「点击可能未注册」——Google 忽略瞬移式程序化点击），拿不到坐标回退 locator 直点
  * 依赖方向：依赖 integrations/yescaptcha 类型，被 engine/task-context 包装调用
  */
 import type { Page, Frame } from 'patchright'
 import Jimp from 'jimp'
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type { CaptchaService, GridResult } from '../integrations/yescaptcha'
 import type { Logger } from '../infrastructure/logger'
 import type { Humanizer } from './humanize'
@@ -105,11 +110,23 @@ export function findChallengeFrame(page: Page, excludeSiteKey?: string): Frame |
   }) ?? null
 }
 
-/** PNG buffer 缩放至标准尺寸并转 Base64（无 data: 前缀） */
-async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
+/** PNG buffer 中心裁剪为正方形后等比缩放（容器非正方形时直接 resize 会拉伸变形；返回缩放后的图像对象） */
+async function toStandardImage(buf: Buffer, size: number): Promise<Jimp> {
   const img = await Jimp.read(buf)
-  await img.resize(size, size)
-  return (await img.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
+  const w = img.getWidth()
+  const h = img.getHeight()
+  const side = Math.min(w, h)
+  if (w !== side || h !== side) {
+    img.crop(Math.floor((w - side) / 2), Math.floor((h - side) / 2), side, side)
+  }
+  if (side !== size) await img.resize(size, size)
+  return img
+}
+
+/** PNG buffer 中心裁剪为正方形后等比缩放到标准尺寸并转 Base64（无 data: 前缀；杜绝容器非正方形时的拉伸变形） */
+export async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
+  const img = await toStandardImage(buf, size)
+  return (await img.getBufferAsync(Jimp.MIME_PNG)).toString('base64')
 }
 
 /** 取 frame 内元素中心在页面坐标系的位置（frame 内坐标 + frame 元素页面偏移） */
@@ -196,7 +213,20 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     tiles = ch.locator(TILE_SELECTOR)
     const tileCount = await tiles.count()
     // 网格图一律走容器元素截图（fetch 每格原图拼接方案已废弃：拿到的内容与视觉图不符，真机窗口 89）
-    const b64 = await toStandardBase64(await shotGrid(), tileCount === 16 ? 450 : 300)
+    // 截图前等待 1.5-2.5s 随机：等网格渐入动画稳定（真机空数组/ERROR_GARBAGE_SAMPLE 与动画未稳定截图相关）
+    await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+    const shot = await shotGrid()
+    // 诊断落盘：raw 为截图原样、std 为发给分类服务的图（对比看变形；写盘失败静默不影响任务）
+    const debugDir = join(process.cwd(), 'data', 'screenshots', 'grid-debug')
+    try {
+      mkdirSync(debugDir, { recursive: true })
+      writeFileSync(join(debugDir, `grid-raw-${Date.now()}.png`), shot)
+    } catch { /* 诊断写盘失败静默 */ }
+    const std = await (await toStandardImage(shot, tileCount === 16 ? 450 : 300)).getBufferAsync(Jimp.MIME_PNG)
+    try {
+      writeFileSync(join(debugDir, `grid-std-${Date.now()}.png`), std)
+    } catch { /* 诊断写盘失败静默 */ }
+    const b64 = std.toString('base64')
     try {
       result = await deps.captcha.solveGrid(b64, qid, passOpts)
     } catch (e) {
