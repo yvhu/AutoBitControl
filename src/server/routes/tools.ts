@@ -8,13 +8,10 @@ import { ok, fail, asyncHandler } from '../http/response'
 import { ERROR_CODES } from '../http/errors'
 import { TOOLS } from '../../tools'
 import { preparePreview } from '../../tools/file-assign/planner'
-import { FileAssignService } from '../../tools/file-assign/applier'
+import type { FileAssignService } from '../../tools/file-assign/applier'
 import { ToolError } from '../../tools/errors'
 import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/types'
 import type { ClashTestResult, OptimizeResult, AutoOptimizerStatus } from '../../tools/clash/types'
-
-/** 进程内单实例：FileAssignService 的执行锁跨请求生效（面板并发点击靠它拦截） */
-const service = new FileAssignService()
 
 /**
  * @swagger
@@ -232,6 +229,8 @@ export function toolsRouter(deps: {
   xlsxPath: string
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void> }
   clash: ClashRouteDeps
+  /** 文件随机分配服务（app.ts 单例注入：面板手动分配与计划自动分配共用 busy 锁） */
+  fileAssignService: FileAssignService
 }): Router {
   const router = Router()
 
@@ -269,7 +268,7 @@ export function toolsRouter(deps: {
       return
     }
     try {
-      const result = await service.apply({
+      const result = await deps.fileAssignService.apply({
         sourceDir: body.sourceDir,
         column: body.column,
         plan: body.plan as AssignRow[],

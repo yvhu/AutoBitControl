@@ -25,6 +25,8 @@ import { createApp } from './server/app'
 import { ClashAdapter } from './tools/clash/adapter'
 import { ClashService } from './tools/clash/optimizer'
 import { AutoOptimizer } from './tools/clash/auto-optimizer'
+import { FileAssignService } from './tools/file-assign/applier'
+import { buildFileAssignRunner } from './tools/file-assign/runner'
 import { updateConfigFile } from './infrastructure/config'
 
 /**
@@ -144,6 +146,9 @@ export async function startApp(): Promise<void> {
   await datasource.load(cfg.dataSource.path)
   if (!datasource.available) logger.warn({ path: cfg.dataSource.path, err: datasource.error }, '数据源不可用（未配置/文件不存在/解析失败），任务将以 faker 兜底')
 
+  // 文件随机分配服务：单实例共享（面板手动分配与计划自动分配共用 busy 锁，防并发改同一文件夹）
+  const fileAssignService = new FileAssignService()
+
   const tasks = loadTasks()
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
@@ -207,7 +212,18 @@ export async function startApp(): Promise<void> {
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
   // （建 schedule 批次 + 全部启用窗口入队，不带 immediate 沿用全局错峰）
-  const scheduler = new Scheduler({ db, enqueuer, tasks, logger, timezone: cfg.scheduler.timezone })
+  const scheduler = new Scheduler({
+    db, enqueuer, tasks, logger, timezone: cfg.scheduler.timezone,
+    // 计划级「上传前自动分配」：preview（校验+计划）→ apply（改名+写回）→ 重载数据源
+    // （窗口开窗时 accountResolver 才能读到新路径；任一步失败由 Scheduler 捕获并跳过依赖文件的任务）
+    fileAssign: {
+      run: buildFileAssignRunner({
+        xlsxPath: cfg.dataSource.path,
+        apply: (params) => fileAssignService.apply(params),
+        reload: () => datasource.load(cfg.dataSource.path),
+      }),
+    },
+  })
   scheduler.start()
 
   // 代理网络工具（tools/clash）：适配器 → 服务 → 定时自动检测；
@@ -246,6 +262,7 @@ export async function startApp(): Promise<void> {
         return null
       }
     },
+    fileAssignService,
     clash: {
       service: clashService,
       auto: clashAuto,

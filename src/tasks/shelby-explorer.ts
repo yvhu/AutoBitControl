@@ -105,6 +105,8 @@ export class ShelbyExplorerTask extends SiteTask {
     retry: { max: 2, backoffSec: 60 },
     captcha: { auto: true },
     concurrency: 4,
+    // 依赖数据源「文件地址」列：计划触发时先自动文件随机分配（Scheduler.fire 据此执行）
+    requiresFileAssign: true,
   }
 
   async run(ctx: TaskContext): Promise<void> {

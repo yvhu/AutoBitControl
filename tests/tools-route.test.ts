@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import ExcelJS from 'exceljs'
 import { toolsRouter } from '../src/server/routes/tools'
+import { FileAssignService } from '../src/tools/file-assign/applier'
 import { errorHandler } from '../src/server/http/error'
 import type { Logger } from '../src/infrastructure/logger'
 
@@ -26,7 +27,7 @@ function makeApp(xlsxPath: string) {
     saveGroup: vi.fn().mockResolvedValue(undefined),
     anyRunning: () => false,
   }
-  app.use('/api', toolsRouter({ xlsxPath, datasource: { reload, summary }, clash }))
+  app.use('/api', toolsRouter({ xlsxPath, datasource: { reload, summary }, clash, fileAssignService: new FileAssignService() }))
   app.use(errorHandler({ error: () => {}, warn: () => {}, info: () => {} } as unknown as Logger))
   return { app, reload, summary }
 }

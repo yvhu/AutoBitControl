@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import express from 'express'
 import request from 'supertest'
 import { toolsRouter } from '../src/server/routes/tools'
+import { FileAssignService } from '../src/tools/file-assign/applier'
 import { errorHandler } from '../src/server/http/error'
 import { ToolError } from '../src/tools/errors'
 import type { Logger } from '../src/infrastructure/logger'
@@ -35,7 +36,7 @@ function makeApp() {
     anyRunning: () => false,
   }
   const datasource = { reload: vi.fn().mockResolvedValue(undefined), summary: vi.fn().mockReturnValue({ rows: 0, columns: [] }) }
-  app.use('/api', toolsRouter({ xlsxPath: 'x', datasource, clash }))
+  app.use('/api', toolsRouter({ xlsxPath: 'x', datasource, clash, fileAssignService: new FileAssignService() }))
   app.use(errorHandler({ error: () => {}, warn: () => {}, info: () => {} } as unknown as Logger))
   return { app, clash }
 }
