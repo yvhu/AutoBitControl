@@ -417,11 +417,17 @@ export class TaskContext {
     return false
   }
 
-  /** Turnstile 模块日志包装：注入窗口名（模块消息为通用措辞）；断言绕过 log4js 重载签名检查 */
+  /** Turnstile/九宫格模块日志包装：注入窗口名（模块消息为通用措辞）；兼容单参字符串与对象+消息两种调用形态 */
   private turnstileLogger(): Pick<Logger, 'info' | 'warn'> {
     return {
-      info: (meta: Record<string, unknown>, msg: string) => this.log.info({ ...meta, window: this.deps.profile.name }, msg),
-      warn: (meta: Record<string, unknown>, msg: string) => this.log.warn({ ...meta, window: this.deps.profile.name }, msg),
+      info: (...args: unknown[]) => {
+        if (typeof args[0] === 'string') return this.log.info(args[0] as string)
+        return this.log.info({ ...(args[0] as Record<string, unknown>), window: this.deps.profile.name }, args[1] as string)
+      },
+      warn: (...args: unknown[]) => {
+        if (typeof args[0] === 'string') return this.log.warn(args[0] as string)
+        return this.log.warn({ ...(args[0] as Record<string, unknown>), window: this.deps.profile.name }, args[1] as string)
+      },
     } as Pick<Logger, 'info' | 'warn'>
   }
 

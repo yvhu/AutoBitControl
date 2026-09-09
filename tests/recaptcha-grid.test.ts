@@ -1,11 +1,13 @@
 /**
  * 九宫格模拟点击模块单测：提示语映射纯函数 + 注入假 frame 的求解循环分支
  * 假 frame 用最小 locator 模拟器（按选择器分派行为），网格/小图截图用 jimp 生成真实 PNG
- * 真机语义（2026-09-09）：点击格子后 Google 刷新该格小图，需按 img src 变化做小图二次识别确认
+ * 真机语义（2026-09-09）：点击格子后 Google 刷新该格小图，需按 img src 变化做小图二次识别确认；
+ * 分类空数组/抛错时点官方刷新按钮换一批图重试（换图后提示语可能变化，必须重读）
  */
 import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
-import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR } from '../src/automation/recaptcha-grid'
+import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
+import { CaptchaFailure } from '../src/integrations/yescaptcha'
 
 /** 真机核实（2026-09-09）：页面常驻 v3 sitekey；挑战时动态插入 v2 sitekey */
 const V3 = '6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2'
@@ -149,11 +151,15 @@ describe('solveRecaptchaGrid 求解循环', () => {
       if (clickImpl) tileClicks[i] = vi.fn().mockImplementation(async () => { clickImpl() })
       tileNth[i] = { click: tileClicks[i], attrs: { class: 'rc-imageselect-tile selected' }, ...extra }
     }
+    // 刷新换图按钮与验证按钮独立 click mock（供「换图重试」「不点 verify」断言）
+    const reloadClick = vi.fn().mockResolvedValue(undefined)
+    const verifyClick = vi.fn().mockImplementation(async () => { checked = 'true' })
     const challenge = makeFrame({
       [PROMPT_SELECTOR]: { text: o.prompt, textContentImpl: o.promptImpl },
       [TILE_SELECTOR]: { count: o.tileCount, attrs: { class: 'rc-imageselect-tile selected' }, nthBehaviors: tileNth },
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf, screenshotImpl: o.gridScreenshotImpl },
-      [VERIFY_SELECTOR]: { click: vi.fn().mockImplementation(async () => { checked = 'true' }) },
+      [VERIFY_SELECTOR]: { click: verifyClick },
+      [RELOAD_SELECTOR]: { click: reloadClick },
     })
     // frames() 调用计数：驱动 anchor 延迟附着（第 N 次调用起才返回 anchor frame）
     let framesCalls = 0
@@ -170,7 +176,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     }
     const captcha = { solveGrid: vi.fn().mockResolvedValue(o.gridResult) }
     const logger = { info: vi.fn(), warn: vi.fn() }
-    return { page, captcha, logger, anchorFrames, challenge, tileClicks, getFramesCalls: () => framesCalls }
+    return { page, captcha, logger, anchorFrames, challenge, tileClicks, reloadClick, verifyClick, getFramesCalls: () => framesCalls }
   }
 
   it('无锚点 frame → none', async () => {
@@ -393,23 +399,80 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(logger.warn).not.toHaveBeenCalledWith(expect.objectContaining({ idx: 0 }), '九宫格小图刷新后仍含目标，再次点击确认')
   }, 30000)
 
-  it('分类返回空数组 → 1 秒后重新截图重试分类一次，第二次返回对象后流程继续', async () => {
+  it('分类返回空数组 → 点刷新换图重试一次，第二次返回对象后流程继续（提示语必须重读）', async () => {
     const gridBuf = await makePngBuffer(300)
-    const { page, captcha, logger, tileClicks } = makeDeps({ gridScreenshotBuf: gridBuf })
+    let reads = 0
+    // 换图后 Google 可能换提示语：首次读「停车计时器」，刷新后读「红绿灯」——第二次分类必须用新 qid
+    const { page, captcha, logger, tileClicks, reloadClick } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      promptImpl: async () => { reads++; return reads >= 2 ? '红绿灯' : '停车计时器' },
+    })
     let solveCall = 0
     ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       solveCall++
       return solveCall === 1 ? { type: 'multi', objects: [] } : { type: 'multi', objects: [0, 2] }
     })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
-    // 空数组触发重试：分类调用 2 次，第二次结果驱动点选
+    // 空数组触发刷新换图：刷新按钮点 1 次、分类调用 2 次，第二次结果驱动点选
+    expect(reloadClick).toHaveBeenCalledTimes(1)
     expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
     expect(tileClicks[0]).toHaveBeenCalledTimes(1)
     expect(tileClicks[2]).toHaveBeenCalledTimes(1)
-    // 重试间隔 1s（重新截图网格）
+    // 换图后提示语重读：第二次分类的 qid 是「红绿灯」映射（提示语没重读会在此失败）
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[1][1]).toBe('/m/015qff')
+    expect(reads).toBeGreaterThanOrEqual(2)
+    // 刷新后等新图渲染 2000-3000ms 随机
     const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
-    expect(waits).toContain(1000)
-    expect(logger.warn).toHaveBeenCalledWith('九宫格分类返回空数组，1 秒后重新截图重试分类')
+    expect(waits.some((w) => w >= 2000 && w <= 3000)).toBe(true)
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ reload: 1 }), '九宫格分类返回空数组，点刷新换图重试')
+  }, 30000)
+
+  it('分类抛错（ERROR_GARBAGE_SAMPLE）→ 点刷新换图重试成功', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, reloadClick } = makeDeps({ gridScreenshotBuf: gridBuf })
+    let solveCall = 0
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      solveCall++
+      if (solveCall === 1) throw new CaptchaFailure('yescaptcha 九宫格分类失败: ERROR_GARBAGE_SAMPLE')
+      return { type: 'multi', objects: [0, 2] }
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    // 抛错触发刷新换图：刷新按钮点 1 次，第二次分类成功走完流程
+    expect(reloadClick).toHaveBeenCalledTimes(1)
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reload: 1, err: expect.stringContaining('ERROR_GARBAGE_SAMPLE') }),
+      '九宫格分类失败，点刷新换图重试',
+    )
+  }, 30000)
+
+  it('分类恒空数组 → 刷新换图 RELOAD_MAX 次后放弃本轮（不点 verify），主循环轮数耗尽 failed', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, reloadClick, verifyClick } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [] },
+    })
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { maxRounds: 1 },
+    )).resolves.toBe('failed')
+    // 每轮最多换图 RELOAD_MAX 次：分类共 RELOAD_MAX+1 次，随后放弃本轮不点 verify
+    expect(reloadClick).toHaveBeenCalledTimes(RELOAD_MAX)
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(RELOAD_MAX + 1)
+    expect(verifyClick).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith('九宫格分类刷新换图后仍为空数组，本轮放弃（不点验证，等主循环下一轮）')
+  }, 30000)
+
+  it('分类恒抛错 → 刷新换图 RELOAD_MAX 次后抛错（任务失败）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, reloadClick, verifyClick } = makeDeps({ gridScreenshotBuf: gridBuf })
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockRejectedValue(new CaptchaFailure('yescaptcha 九宫格分类失败: ERROR_GARBAGE_SAMPLE'))
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: { info: vi.fn(), warn: vi.fn() } as never, human: {} as never },
+      { maxRounds: 1 },
+    )).rejects.toThrow()
+    expect(reloadClick).toHaveBeenCalledTimes(RELOAD_MAX)
+    expect(verifyClick).not.toHaveBeenCalled()
   }, 30000)
 
   it('网格截图首次失败（元素动画中超时）→ 1 秒后重试成功继续求解', async () => {

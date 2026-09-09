@@ -11,7 +11,7 @@
  */
 import type { Page, Frame } from 'patchright'
 import Jimp from 'jimp'
-import type { CaptchaService } from '../integrations/yescaptcha'
+import type { CaptchaService, GridResult } from '../integrations/yescaptcha'
 import type { Logger } from '../infrastructure/logger'
 import type { Humanizer } from './humanize'
 
@@ -28,6 +28,10 @@ export const PROMPT_SELECTOR = '.rc-imageselect-desc-wrapper strong'
 export const TILE_SELECTOR = '#rc-imageselect-target table td'
 /** 验证按钮 */
 export const VERIFY_SELECTOR = '#recaptcha-verify-button'
+/** 刷新换图按钮（官方入口：点一次换一批新图，换图后提示语可能变化） */
+export const RELOAD_SELECTOR = '#recaptcha-reload-button'
+/** 每轮最多刷新换图次数（超出后空数组放弃本轮 / 抛错直接失败） */
+export const RELOAD_MAX = 2
 /** 网格容器（截图用） */
 export const GRID_SELECTOR = '#rc-imageselect-target'
 /** 最大求解轮数 */
@@ -104,22 +108,21 @@ async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
   return (await img.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
 }
 
-/** 单轮：读提示语 → 截图网格 → 分类（空数组重试一次）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证；opts 透传给 solveGrid 做成本记账 */
+/** 点刷新换图并等新一批图渲染（点击失败静默：部分主题下按钮瞬时不可点时由后续重试/下一轮兜底） */
+async function reloadImages(deps: { page: Page }, ch: Frame): Promise<void> {
+  await ch.locator(RELOAD_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
+  // 2000-3000ms 随机：等 Google 换出并渲染新一批图（固定间隔同会话连续刷新有风控）
+  await deps.page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
+}
+
+/**
+ * 单轮：读提示语 → 截图网格 → 分类（可重试块：空数组/抛错时点刷新换图，每轮最多 RELOAD_MAX 次，
+ * 换图后提示语可能变化必须重读）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证
+ * 刷新重试后仍空数组：记 warn 返回（不点 verify，主循环查 aria-checked 未通过则下一轮）
+ * 刷新重试后仍抛错：抛错（任务失败）；opts 透传给 solveGrid 做成本记账
+ */
 async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
-  // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS
-  let prompt = ''
-  const promptDeadline = Date.now() + PROMPT_WAIT_TIMEOUT_MS
-  while (Date.now() < promptDeadline && !prompt) {
-    prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
-    if (!prompt) await deps.page.waitForTimeout(PROMPT_POLL_MS)
-  }
-  if (!prompt) throw new Error('九宫格提示文字未找到')
-  const qid = mapQuestionId(prompt)
-  if (!qid) throw new Error(`未覆盖的九宫格提示语: ${prompt}`)
-  deps.logger.info({ prompt, qid }, '九宫格识别目标')
-  const tiles = ch.locator(TILE_SELECTOR)
-  const tileCount = await tiles.count()
-  const size = tileCount === 16 ? 450 : 300
+  const passOpts = { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) }
   // 网格截图 10s 超时，失败 1 秒后重试一次，仍失败抛错（真机窗口 93 曾 30s 超时——元素动画中不稳定）
   const shotGrid = async (): Promise<Buffer> => {
     let shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
@@ -131,19 +134,48 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     if (!shot) throw new Error('九宫格网格截图重试后仍失败')
     return shot
   }
-  const b64 = await toStandardBase64(await shotGrid(), size)
-  const passOpts = { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) }
-  let result = await deps.captcha.solveGrid(b64, qid, passOpts)
-  if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
-  // 分类空数组重试一次（重新截图再识别）；仍为空才点 verify 让 Google 换题
-  if (result.objects.length === 0) {
-    deps.logger.warn('九宫格分类返回空数组，1 秒后重新截图重试分类')
-    await deps.page.waitForTimeout(1000)
-    const retryB64 = await toStandardBase64(await shotGrid(), size)
-    result = await deps.captcha.solveGrid(retryB64, qid, passOpts)
+  let result: GridResult | null = null
+  let qid = ''
+  let tiles = ch.locator(TILE_SELECTOR)
+  // 分类可重试块：空数组/抛错（如 ERROR_GARBAGE_SAMPLE 图片质量差）→ 点刷新换图重试
+  for (let reload = 0; ; reload++) {
+    // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS；
+    // 换图后 Google 可能换提示语，因此每次重试都重读（不沿用上一轮提示语）
+    let prompt = ''
+    const promptDeadline = Date.now() + PROMPT_WAIT_TIMEOUT_MS
+    while (Date.now() < promptDeadline && !prompt) {
+      prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
+      if (!prompt) await deps.page.waitForTimeout(PROMPT_POLL_MS)
+    }
+    if (!prompt) throw new Error('九宫格提示文字未找到')
+    qid = mapQuestionId(prompt) ?? ''
+    if (!qid) throw new Error(`未覆盖的九宫格提示语: ${prompt}`)
+    deps.logger.info({ prompt, qid }, '九宫格识别目标')
+    tiles = ch.locator(TILE_SELECTOR)
+    const tileCount = await tiles.count()
+    const size = tileCount === 16 ? 450 : 300
+    const b64 = await toStandardBase64(await shotGrid(), size)
+    try {
+      result = await deps.captcha.solveGrid(b64, qid, passOpts)
+    } catch (e) {
+      if (reload >= RELOAD_MAX) throw e
+      deps.logger.warn({ err: (e as Error).message, reload: reload + 1 }, '九宫格分类失败，点刷新换图重试')
+      await reloadImages(deps, ch)
+      continue
+    }
     if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
-    if (result.objects.length === 0) deps.logger.warn('九宫格分类重试仍为空数组，直接验证等待 Google 换题')
+    if (result.objects.length === 0) {
+      if (reload >= RELOAD_MAX) {
+        deps.logger.warn('九宫格分类刷新换图后仍为空数组，本轮放弃（不点验证，等主循环下一轮）')
+        return
+      }
+      deps.logger.warn({ reload: reload + 1 }, '九宫格分类返回空数组，点刷新换图重试')
+      await reloadImages(deps, ch)
+      continue
+    }
+    break
   }
+  if (!result) throw new Error('九宫格分类无结果')
   deps.logger.info({ objects: result.objects, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
     let before = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
