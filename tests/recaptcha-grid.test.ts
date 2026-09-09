@@ -73,7 +73,7 @@ async function makePngBuffer(size: number): Promise<Buffer> {
 }
 
 describe('solveRecaptchaGrid 求解循环', () => {
-  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null; anchors?: Array<{ url: string }>; promptImpl?: () => Promise<string | null> } = {}) {
+  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null; anchors?: Array<{ url: string }>; promptImpl?: () => Promise<string | null>; tileBehaviors?: Record<number, ElemBehavior> } = {}) {
     const o = { anchorChecked: 'false', anchorPresent: true, challengePresent: true, prompt: '停车计时器', tileCount: 9, gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: null, ...overrides }
     // 锚点 aria-checked 为动态状态：点验证按钮后置 true（模拟真机「验证后变绿」）
     let checked = o.anchorChecked
@@ -99,7 +99,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
       [TILE_SELECTOR]: {
         count: o.tileCount,
         attrs: { class: 'rc-imageselect-tile' },
-        nthBehaviors: Object.fromEntries(tileClicks.map((click, i) => [i, { click, attrs: { class: 'rc-imageselect-tile' } }])),
+        nthBehaviors: Object.fromEntries(tileClicks.map((click, i) => [i, { click, attrs: { class: 'rc-imageselect-tile' }, ...(o.tileBehaviors?.[i] ?? {}) }])),
       },
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf },
       [VERIFY_SELECTOR]: { click: vi.fn().mockImplementation(async () => { checked = 'true' }) },
@@ -145,6 +145,10 @@ describe('solveRecaptchaGrid 求解循环', () => {
     }
     const totalClicks = tileClicks.reduce((n, m) => n + m.mock.calls.length, 0)
     expect(totalClicks).toBe(2)
+    // 日志带 objects 数组（排障用）：完整对象深比较
+    expect(logger.info).toHaveBeenCalledWith({ objects: [0, 2], round: 'multi' }, '九宫格识别完成，开始点选')
+    // 不传 confidence（平台默认返回 top3，满足 Google 每轮至少点 3 格）
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).not.toHaveProperty('confidence')
   }, 30000)
 
   it('成本记账透传：opts 的 profileId/taskKey/onLog 传给 solveGrid', async () => {
@@ -157,6 +161,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     )).resolves.toBe('solved')
     const optsArg = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]
     expect(optsArg).toMatchObject({ profileId: 7, taskKey: 'checkin:faucet', onLog })
+    expect(optsArg).not.toHaveProperty('confidence')
   }, 30000)
 
   it('多 anchor 并存：siteKeyExclude 排除常驻 v3 锚点，点选 v2 锚点（v3 排在前）', async () => {
@@ -187,6 +192,80 @@ describe('solveRecaptchaGrid 求解循环', () => {
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
     expect(reads).toBeGreaterThanOrEqual(2)
     expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('点击节奏随机化：点格子后等待在 1500-2500ms 内且多次运行取值不同、点验证后在 2500-3500ms 内且取值不同（固定 2s/3s 会失败）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf, gridResult: { type: 'multi', objects: [0, 2] } })
+    // 多轮运行观察取值方差：固定等待则所有取值相同 → 断言失败；随机化则几乎必然出现不同取值
+    const tileWaits: number[] = []
+    const verifyWaits: number[] = []
+    const allWaits: number[] = []
+    for (let i = 0; i < 12; i++) {
+      await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+      const start = allWaits.length
+      allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
+      const waits = allWaits.slice(start)
+      // 每轮顺序：挑战 frame 轮询 500ms → 格子 0 → 格子 2 → 验证按钮
+      expect(waits).toHaveLength(4)
+      expect(waits[0]).toBe(500)
+      tileWaits.push(...waits.slice(1, 3))
+      verifyWaits.push(waits[3])
+    }
+    for (const w of tileWaits) {
+      expect(w).toBeGreaterThanOrEqual(1500)
+      expect(w).toBeLessThanOrEqual(2500)
+    }
+    for (const w of verifyWaits) {
+      expect(w).toBeGreaterThanOrEqual(2500)
+      expect(w).toBeLessThanOrEqual(3500)
+    }
+    expect(new Set(tileWaits).size).toBeGreaterThan(1)
+    expect(new Set(verifyWaits).size).toBeGreaterThan(1)
+  }, 30000)
+
+  it('单格二次识别命中后再点：二次识别等待与再点后等待同样在 1500-2500ms 内随机取值', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const tileBuf = await makePngBuffer(100)
+    const { page, captcha, logger, tileClicks } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      tileBehaviors: { 0: { screenshotBuf: tileBuf } },
+    })
+    // 每轮 3 次分类：网格 multi → 格子 0 二次识别 single ×2（格子 2 截图失败不分类）
+    let solveCall = 0
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      solveCall++
+      return solveCall % 3 === 1 ? { type: 'multi', objects: [0, 2] } : { type: 'single', hasObject: true }
+    })
+    // 单次运行断言点击行为与等待区间；多轮运行观察随机方差（固定 2000ms 时所有取值相同 → 失败）
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    // 格子 0：初次 1 点 + 二次识别命中再点 2 次；格子 2：只点 1 次（小图截图失败不重试）
+    expect(tileClicks[0]).toHaveBeenCalledTimes(3)
+    expect(tileClicks[2]).toHaveBeenCalledTimes(1)
+    const tileWaits: number[] = []
+    const verifyWaits: number[] = []
+    const allWaits: number[] = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    for (let i = 0; i < 8; i++) {
+      await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+      const start = allWaits.length
+      allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
+      const waits = allWaits.slice(start)
+      // 每轮顺序：500ms 轮询 → 格子 0 三次（初次 + 二次识别命中再点 ×2）→ 格子 2 一次 → 验证按钮
+      expect(waits).toHaveLength(6)
+      expect(waits[0]).toBe(500)
+      tileWaits.push(...waits.slice(1, 5))
+      verifyWaits.push(waits[5])
+    }
+    for (const w of tileWaits) {
+      expect(w).toBeGreaterThanOrEqual(1500)
+      expect(w).toBeLessThanOrEqual(2500)
+    }
+    for (const w of verifyWaits) {
+      expect(w).toBeGreaterThanOrEqual(2500)
+      expect(w).toBeLessThanOrEqual(3500)
+    }
+    expect(new Set(tileWaits).size).toBeGreaterThan(1)
+    expect(new Set(verifyWaits).size).toBeGreaterThan(1)
   }, 30000)
 })
 

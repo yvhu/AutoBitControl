@@ -116,12 +116,12 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   const size = tileCount === 16 ? 450 : 300
   const shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png' })
   const b64 = await toStandardBase64(shot, size)
-  const result = await deps.captcha.solveGrid(b64, qid, { confidence: 0.5, profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
+  const result = await deps.captcha.solveGrid(b64, qid, { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
   if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
-  deps.logger.info({ count: result.objects.length, round: 'multi' }, '九宫格识别完成，开始点选')
+  deps.logger.info({ objects: result.objects, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
     await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-    await deps.page.waitForTimeout(2000)
+    await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     // 点击后格子可能刷新新小图（class 无 selected 即刷新）：小图二次识别决定是否再点
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
       const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
@@ -132,14 +132,14 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
       const single = await deps.captcha.solveGrid(singleB64, qid, { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
       if (single.type === 'single' && single.hasObject) {
         await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-        await deps.page.waitForTimeout(2000)
+        await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
         continue
       }
       break
     }
   }
   await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
-  await deps.page.waitForTimeout(3000)
+  await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
 }
 
 /**
