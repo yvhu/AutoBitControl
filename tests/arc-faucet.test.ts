@@ -60,6 +60,8 @@ interface FakeState {
   usdcRadioCount?: number
   /** v2 挑战是否已渲染（detectV2Challenge 经 ctx.js → page.evaluate 假实现读取；缺省 false） */
   v2Challenge?: boolean
+  /** 提交按钮 isEnabled 读取钩子（证明 ensureSubmitEnabled 被调） */
+  onSubmitEnabledCheck?: () => void
 }
 
 /** 构造注入假依赖的 TaskContext：locator 按选择器路由到假元素，未注册选择器 count=0 */
@@ -111,7 +113,10 @@ function makeCtx(state: FakeState) {
       count: async () => 1,
       textContent: async () => 'Send 20 USDC',
       isChecked: async () => false,
-      isEnabled: async () => state.submitEnabled,
+      isEnabled: async () => {
+        state.onSubmitEnabledCheck?.()
+        return state.submitEnabled
+      },
       fill: vi.fn(),
     },
   }
@@ -135,7 +140,7 @@ function makeCtx(state: FakeState) {
     walletPasswords: {},
     accountRow: { metamask钱包地址: '0xabc' },
   })
-  return { ctx, clicks, log, addressFill }
+  return { ctx, clicks, log, addressFill, page }
 }
 
 const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, v2Challenge: false, addressValue: '0xabc' })
@@ -333,6 +338,35 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
     }
     expect(fills).toBeGreaterThanOrEqual(2)
     expect(addressFill).toHaveBeenCalledTimes(2)
+    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
+  })
+})
+
+describe('ArcFaucetTask run 地址快速自愈', () => {
+  it('fill 后输入框值被清空 → 2s 检测立即重填一次 → ensureSubmitEnabled 被调 → 成功（fill 共 2 次）', async () => {
+    const state = { ...baseState(), addressValue: '', texts: { [SUCCESS_TEXT]: true } }
+    const { ctx, clicks, addressFill, page } = makeCtx(state)
+    // 首次 fill 模拟 React hydration 重渲染清空：值不保留；快速自愈重填第二次才生效
+    let fills = 0
+    addressFill.mockImplementation(async (v: string) => {
+      fills++
+      if (fills === 1) return
+      state.addressValue = v
+    })
+    // 提交按钮 isEnabled 读取计数：ensureSubmitEnabled 内部轮询读取它
+    let submitEnabledChecks = 0
+    state.onSubmitEnabledCheck = () => { submitEnabledChecks++ }
+    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
+    ctx.goto = vi.fn().mockResolvedValue(undefined)
+    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
+    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
+    await new ArcFaucetTask().run(ctx)
+    expect(fills).toBe(2)
+    expect(addressFill).toHaveBeenCalledTimes(2)
+    // 快速自愈循环以 2s 间隔检测（fake waitForTimeout 即时 resolve，不耗真实时间）
+    expect(page.waitForTimeout).toHaveBeenCalledWith(2000)
+    expect(submitEnabledChecks).toBeGreaterThanOrEqual(1)
     expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
     expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })

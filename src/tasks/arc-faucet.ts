@@ -131,19 +131,20 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   await ctx.assertVisible(ADDRESS_SELECTOR, 20000)
   // 钱包地址按窗口从数据源读取（严格模式：缺行/缺列/空值即任务失败——数据没备齐不该硬跑）
   const address = await ctx.account('metamask钱包地址')
-  await ctx.page.locator(ADDRESS_SELECTOR).first().fill(address)
+  const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
+  await addressInput.fill(address)
   await ensureNetwork(ctx)
   await ensureUsdc(ctx)
-  // 地址 fill 后站点 React 可能未就绪（input 事件无人监听，按钮不启用）——重填自愈（真机批量验证规律性出现）
-  const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
+  // React hydration 后重渲染会清掉程序化填充（真机首跑必现）——2s 快速检测重填，最多 3 次
   for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await ensureSubmitEnabled(ctx)
-      break
-    } catch {
-      if (((await addressInput.inputValue().catch(() => '')) ?? '') === '') await addressInput.fill(address)
+    await ctx.page.waitForTimeout(2000)
+    if (((await addressInput.inputValue().catch(() => '')) ?? '') === '') {
+      await addressInput.fill(address)
+      continue
     }
+    break
   }
+  await ensureSubmitEnabled(ctx)
   // 提交：v3 常驻不打码（浏览器自行生成 token）；被拒后站点动态注入 v2 挑战（anchor + 九宫格 bframe）
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {
