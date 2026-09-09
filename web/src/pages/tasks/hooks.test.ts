@@ -59,6 +59,12 @@ describe('groupTasks', () => {
     expect(groups[1].tasks.map((x) => x.key)).toEqual(['b'])
   })
 
+  it('未分组任务出现在中间时也保证垫底', () => {
+    const groups = groupTasks([t('a', { key: 'g1', name: '组1' }), t('b', null), t('c', { key: 'g2', name: '组2' })])
+    expect(groups.map((g) => g.key)).toEqual(['g1', 'g2', ''])
+    expect(groups[2].tasks.map((x) => x.key)).toEqual(['b'])
+  })
+
   it('全部未分组返回单一伪分组', () => {
     const groups = groupTasks([t('a', null), t('b', null)])
     expect(groups).toHaveLength(1)

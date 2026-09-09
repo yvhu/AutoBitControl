@@ -160,7 +160,7 @@ export default function TasksPage() {
 
   const groups = groupTasks(tasks.data)
   const flat = groups.length === 1 && groups[0].key === ''
-  const allOpen = groups.length > 0 && openKeys.length >= groups.length
+  const allOpen = groups.length > 0 && groups.every((g) => openKeys.includes(g.key))
 
   return (
     <Space direction="vertical" size={8} style={{ display: 'flex' }}>

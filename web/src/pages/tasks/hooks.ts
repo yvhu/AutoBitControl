@@ -54,7 +54,8 @@ export function groupTasks(tasks: TaskMetaView[]): TaskGroup[] {
     }
     groups[index.get(key)!].tasks.push(t)
   }
-  return groups
+  const ungrouped = groups.find((g) => g.key === '')
+  return ungrouped ? [...groups.filter((g) => g.key !== ''), ungrouped] : groups
 }
 
 /** 分组图标配色：已知分组固定色（与面板 mockup 一致），未知分组按出现顺序回退 */
