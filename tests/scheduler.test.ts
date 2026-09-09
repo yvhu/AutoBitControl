@@ -309,6 +309,28 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'plain', '计划#1 每日签到')
   })
 
+  it('分配以非 Error 值拒绝 → 依赖文件任务仍被跳过（判定不依赖 message 真值）', async () => {
+    const deps = makeUploadDeps()
+    deps.fileAssign.run.mockRejectedValue('文件不足')
+    const result = await new Scheduler(deps).runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
+
+  it('配置了 fileAssign 但执行器未装配 → 依赖文件任务跳过并告警', async () => {
+    const deps = makeDeps({
+      tasks: new Map([
+        ['upload', { meta: { key: 'upload', name: '上传', url: '', requiresFileAssign: true } }],
+        ['plain', { meta: { key: 'plain', name: '普通', url: '' } }],
+      ]),
+      fileAssign: undefined,
+    })
+    const result = await new Scheduler(deps).runNow(makeSchedule({ config: JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG }), taskKeys: '["upload","plain"]' }))
+    expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
+    expect(result.taskKeys).toEqual(['plain'])
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
+
   it('无 fileAssign 段 → 不执行分配', async () => {
     const deps = makeUploadDeps()
     await new Scheduler(deps).runNow(scheduleWith('{"times":["09:00"]}'))

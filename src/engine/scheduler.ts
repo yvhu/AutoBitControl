@@ -132,18 +132,25 @@ export class Scheduler {
       passing.push(key)
     }
     // 上传前自动文件随机分配：计划配置了 fileAssign 且通过守卫的任务中有依赖文件的任务时执行一次；
-    // 失败 → 依赖文件的任务全部 skipped(file-assign-failed)，其余任务不受影响（不上传旧文件防重复）
+    // 失败（含执行器未装配）→ 依赖文件的任务全部 skipped(file-assign-failed)，其余任务不受影响（不上传旧文件防重复）
     const fa = cfg.fileAssign
-    const needsAssign = !!fa && !!this.deps.fileAssign && passing.some((k) => this.deps.tasks.get(k)?.meta.requiresFileAssign)
-    let assignFailed: string | null = null
+    const hasFileTask = passing.some((k) => this.deps.tasks.get(k)?.meta.requiresFileAssign)
+    const needsAssign = !!fa && !!this.deps.fileAssign && hasFileTask
+    let assignFailed = false
+    let assignErr = ''
     if (needsAssign) {
       try {
         await this.deps.fileAssign!.run(fa!)
         this.deps.logger.info({ schedule: schedule.name }, '上传前自动文件随机分配完成')
       } catch (e) {
-        assignFailed = (e as Error).message
-        this.deps.logger.warn({ schedule: schedule.name, err: assignFailed }, '自动文件随机分配失败，跳过依赖文件的任务')
+        assignFailed = true
+        assignErr = e instanceof Error ? e.message : String(e)
+        this.deps.logger.warn({ schedule: schedule.name, err: assignErr }, '自动文件随机分配失败，跳过依赖文件的任务')
       }
+    } else if (fa && !this.deps.fileAssign && hasFileTask) {
+      assignFailed = true
+      assignErr = '分配执行器未装配'
+      this.deps.logger.warn({ schedule: schedule.name }, '计划配置了 fileAssign 但分配执行器未装配，跳过依赖文件的任务')
     }
     // 第二遍：建批次入队
     for (const key of passing) {
