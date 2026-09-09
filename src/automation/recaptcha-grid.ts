@@ -8,12 +8,18 @@
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
  * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
  * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）；
- * 每格点击后必须等刷新动画完成再判 src 变化、全部格子点完后等全体动画收尾再点验证
- * （真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）；
+ * 每格点击后立即启动 3s 变化监测（300ms 轮询读 src，与点击前不同即刷新发生——
+ * 捕捉「src 短暂变化后恢复」的瞬时刷新，旧实现点后等稳定再对比会漏掉），
+ * 监测到刷新 → 等该格 img 稳定后小图二次识别命中再点确认；未监测到 → 跳过确认、不重试点击；
+ * 全部格子点完后等全体动画收尾再点验证（真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）；
+ * 点 verify 前轮询等验证按钮可见（count>0 且 isVisible，约 8s/500ms，勿用 waitFor 30s 默认超时）：
+ * 按钮一直不可见 = 选择未完成（点击未注册）→ 补点本轮 class 不含 selected 的格子后再等（约 5s），
+ * 仍不可见则放弃本轮（主循环下一轮处理）；按钮可见后点 verify（拟人坐标点击 + locator 兜底）；
  * 点 verify 后轮询错误提示（最多 5s/500ms）：select-more 系列（选择不完整，Google 未刷题可补选）→
  * 重截图网格用 confidence 0.3 放宽阈值分类补选未点过的格子后重验（每轮最多 2 次，成本经 onLog 记账）；
  * incorrect（选错已刷题）→ 返回主循环下一轮；src 未变且无 selected 时不重试点击、只记 warn
- * （真机 2026-09-09：Google 刷新响应慢时重试点击会取消已选中格；点击真未注册由 select-more 补选兜底）
+ * （真机 2026-09-09：Google 刷新响应慢时重试点击会取消已选中格；点击真未注册由验证按钮补点/select-more 补选兜底）；
+ * 每轮结束输出 grid-round-state 状态快照日志（识别目标/点选格/错误提示/换图次数，数据收集用）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
  * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
  * 截图中心裁剪正方形后等比缩放（杜绝容器非正方形时直接 resize 拉伸变形，真机分类空数组/
@@ -54,6 +60,16 @@ export const GRID_SELECTOR = '#rc-imageselect-target'
 export const MAX_ROUNDS = 5
 /** 单格小图二次识别最大次数 */
 export const SINGLE_RECHECK_MAX = 2
+/** 点 verify 前轮询等验证按钮可见次数（500ms 间隔，首查立即 ≈ 8s 窗口） */
+export const VERIFY_VISIBLE_POLLS = 16
+/** 补点后再次等验证按钮可见次数（500ms 间隔，首查立即 ≈ 5s 窗口） */
+export const VERIFY_VISIBLE_RETRY_POLLS = 10
+/** 等验证按钮可见轮询间隔（毫秒） */
+const VERIFY_VISIBLE_POLL_INTERVAL_MS = 500
+/** 点击格子后变化监测轮询次数（300ms 间隔，首查立即 ≈ 3s 窗口） */
+export const TILE_REFRESH_WATCH_POLLS = 10
+/** 变化监测轮询间隔（毫秒） */
+const TILE_REFRESH_WATCH_INTERVAL_MS = 300
 /** 提示语渲染等待上限（毫秒；bframe 网格 DOM 可能晚于 frame 注入渲染） */
 export const PROMPT_WAIT_TIMEOUT_MS = 10000
 /** 提示语轮询间隔（毫秒） */
@@ -242,6 +258,33 @@ async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, time
   }
 }
 
+/**
+ * 点击后变化监测：最多 polls 次、每 300ms 读该格 img src，与点击前不同即返回 true（刷新发生）
+ * （捕捉「src 短暂变化后恢复」的瞬时刷新：点后直接等稳定再对比会漏掉）
+ * img 元素缺失时无可变内容，直接返回 false（与 waitTileStable 同语义，不空转 3s）
+ */
+async function watchTileRefresh(deps: { page: Page }, ch: Frame, idx: number, before: string): Promise<boolean> {
+  if ((await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().count().catch(() => 0)) === 0) return false
+  for (let i = 0; i < TILE_REFRESH_WATCH_POLLS; i++) {
+    const cur = await readTileSrc(ch, idx)
+    if (cur !== before) return true
+    if (i < TILE_REFRESH_WATCH_POLLS - 1) await deps.page.waitForTimeout(TILE_REFRESH_WATCH_INTERVAL_MS)
+  }
+  return false
+}
+
+/** 轮询等验证按钮可见（count>0 且 isVisible；用 count/isVisible 而非 waitFor visible 的 30s 默认超时）：最多 polls 次、500ms 间隔，不可见返回 false */
+async function waitVerifyVisible(deps: { page: Page }, ch: Frame, polls: number): Promise<boolean> {
+  for (let i = 0; i < polls; i++) {
+    const btn = ch.locator(VERIFY_SELECTOR).first()
+    if ((await btn.count().catch(() => 0)) > 0) {
+      if (await btn.isVisible().catch(() => false)) return true
+    }
+    if (i < polls - 1) await deps.page.waitForTimeout(VERIFY_VISIBLE_POLL_INTERVAL_MS)
+  }
+  return false
+}
+
 /** grid-debug 诊断目录防膨胀：文件数超过上限则清空目录（fs 操作 try/catch 静默，清理失败不影响任务） */
 function pruneDebugDir(debugDir: string, maxFiles: number): void {
   try {
@@ -253,11 +296,14 @@ function pruneDebugDir(debugDir: string, maxFiles: number): void {
 
 /**
  * 单轮：读提示语 → 截图网格 → 分类（可重试块：空数组/抛错时点刷新换图，每轮最多 RELOAD_MAX 次，
- * 换图后提示语可能变化必须重读）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证 → 错误提示检测
- * （select-more 选择不完整：放宽阈值 confidence 0.3 补选未点格子后重验，最多 SUPPLEMENT_MAX 次；
+ * 换图后提示语可能变化必须重读）→ 点格子（3s 变化监测捕捉瞬时刷新 → 小图二次识别确认）→
+ * 等验证按钮可见后点验证 → 错误提示检测
+ * （按钮 8s 不可见 → 补点本轮未选中格后再等 5s，仍不可见放弃本轮；
+ * select-more 选择不完整：放宽阈值 confidence 0.3 补选未点格子后重验，最多 SUPPLEMENT_MAX 次；
  * incorrect 选错：Google 已刷题，返回主循环下一轮）
  * 刷新重试后仍空数组：记 warn 返回（不点 verify，主循环查 aria-checked 未通过则下一轮）
  * 刷新重试后仍抛错：抛错（任务失败）；opts.onLog 透传给 solveGrid 做成本记账（含补选分类）
+ * 每轮结束输出 grid-round-state 状态快照日志（数据收集）
  */
 async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
   const passOpts = { onLog: opts.onLog ?? (() => {}) }
@@ -292,56 +338,83 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     return std.toString('base64')
   }
   /**
-   * 单格点选流程：拟人点击 → 等该格 img 稳定 → 小图刷新二次识别确认
-   * （src 未变且无 selected 只记 warn 不重试：重试点击会取消已选中格；主点选与补选共用）
+   * 单格点选流程：拟人点击 → 3s 变化监测（300ms 轮询读 src，捕捉瞬时刷新）→ 等该格 img 稳定 →
+   * 监测到刷新走小图二次识别确认；未监测到（src 未变且无 selected）只记 warn 不重试
+   * （重试点击会取消已选中格；点击真未注册由验证按钮补点/select-more 补选兜底；主点选与补选共用）
    */
   const clickTile = async (idx: number): Promise<void> => {
-    let before = await readTileSrc(ch, idx)
+    const before = await readTileSrc(ch, idx)
     // 拟人坐标点击优先（Google 忽略瞬移式程序化点击）；framePoint 拿不到坐标回退 locator 直点
     if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
       await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
     }
-    // 点击后轮询等该格 img 稳定（Google 刷新小图有动画；未稳定就判 src 变化会误入确认/误判已注册，真机 2026-09-09）
+    // 点击后立即启动变化监测：3s 窗口内 src 与点击前不同即标记刷新发生（捕捉「短暂变化后恢复」的瞬时刷新）
+    const refreshed = await watchTileRefresh(deps, ch, idx, before)
+    // 读到变化后仍要等稳定再截图小图（避免截到动画中）；img 缺失时稳定等待直接返回
     await waitTileStable(deps, ch, idx)
-    // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
-    // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 不重试点击（重试会取消已选中格）
+    if (!refreshed) {
+      // src 未变且无 selected：Google 刷新响应慢时重试点击会取消已选中格（真机 2026-09-09 观察），
+      // 只记 warn 收集数据；点击真未注册时由验证按钮补点/select-more 补选兜底
+      const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
+      if (cls.includes('selected')) return
+      deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
+      return
+    }
+    deps.logger.info({ idx }, '九宫格该格检测到刷新，走小图二次识别确认')
+    // 小图二次识别确认（2022 DEMO 的 class selected 语义已失效）：截图分类命中再点确认；
+    // 确认点击后 src 再变化才重新分类（最多 SINGLE_RECHECK_MAX 次），未再变化则按 class 收尾
+    let lastSrc = before
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
       const after = await readTileSrc(ch, idx)
-      if (before !== after) {
-        // 小图二次识别用该格 img 元素截图（fetch 原图方案已废弃：拿到的内容与视觉图不符）
-        const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
-        let singleB64: string | null = null
-        if (singleShot) singleB64 = await toStandardBase64(singleShot, 100)
-        if (!singleB64) break
-        const single = await deps.captcha.solveGrid(singleB64, qid, passOpts)
-        if (single.type === 'single' && single.hasObject) {
-          deps.logger.warn({ idx, recheck: k + 1 }, '九宫格小图刷新后仍含目标，再次点击确认')
-          if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
-            await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-          }
-          await waitTileStable(deps, ch, idx)
-          before = after
-          continue
-        }
+      if (k > 0 && after === lastSrc) {
+        const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
+        if (cls.includes('selected')) break
+        deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
         break
       }
-      const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
-      if (cls.includes('selected')) break
-      // src 未变且无 selected：Google 刷新响应慢时重试点击会取消已选中格（真机 2026-09-09 观察），
-      // 只记 warn 收集数据；点击真未注册时由 select-more 补选兜底
-      deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
+      // 小图二次识别用该格 img 元素截图（fetch 原图方案已废弃：拿到的内容与视觉图不符）
+      const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+      let singleB64: string | null = null
+      if (singleShot) singleB64 = await toStandardBase64(singleShot, 100)
+      if (!singleB64) break
+      const single = await deps.captcha.solveGrid(singleB64, qid, passOpts)
+      if (single.type === 'single' && single.hasObject) {
+        deps.logger.warn({ idx, recheck: k + 1 }, '九宫格小图刷新后仍含目标，再次点击确认')
+        if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
+          await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+        }
+        await waitTileStable(deps, ch, idx)
+        lastSrc = after
+        continue
+      }
       break
     }
   }
   let result: GridResult | null = null
   let qid = ''
+  let prompt = ''
+  /** 本轮 verify 后检测到的错误提示类型（readErrorHint 结果；未点 verify 的放弃路径为 null） */
+  let lastHint: GridErrorHint = null
+  /** 本轮换图重试次数（分类空数组/抛错时点刷新换图计数） */
+  let reloadCount = 0
+  /** 每轮结束状态快照（数据收集）：识别目标/点选格/错误提示/换图次数 */
+  const logRoundState = (): void => {
+    deps.logger.info({
+      step: 'grid-round-state',
+      prompt,
+      qid,
+      objects: result !== null && result.type === 'multi' ? result.objects : [],
+      hint: lastHint,
+      reloads: reloadCount,
+    }, '九宫格轮次状态')
+  }
   // tiles 每次分类重试都重建（换图后 DOM 全换），声明不放初值（循环内首行即赋值）
   let tiles: ReturnType<Frame['locator']>
   // 分类可重试块：空数组/抛错（如 ERROR_GARBAGE_SAMPLE 图片质量差）→ 点刷新换图重试
   for (let reload = 0; ; reload++) {
     // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS；
     // 换图后 Google 可能换提示语，因此每次重试都重读（不沿用上一轮提示语）
-    let prompt = ''
+    prompt = ''
     const promptDeadline = Date.now() + PROMPT_WAIT_TIMEOUT_MS
     while (Date.now() < promptDeadline && !prompt) {
       prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
@@ -369,13 +442,16 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
     if (result.objects.length === 0) {
       if (reload >= RELOAD_MAX) {
+        reloadCount = reload
         deps.logger.warn('九宫格分类刷新换图后仍为空数组，本轮放弃（不点验证，等主循环下一轮）')
+        logRoundState()
         return
       }
       deps.logger.warn({ reload: reload + 1 }, '九宫格分类返回空数组，点刷新换图重试')
       await reloadImages(deps, ch)
       continue
     }
+    reloadCount = reload
     break
   }
   if (!result) throw new Error('九宫格分类无结果')
@@ -413,24 +489,46 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   const clicked = new Set<number>(result.objects)
   // 3-5s 随机：等全部格子动画收尾后再点验证（真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）
   await deps.page.waitForTimeout(3000 + Math.floor(Math.random() * 2000))
+  // 验证循环：点 verify 前轮询等按钮可见（约 8s/500ms；一直不可见 = 选择未完成（点击未注册）→
+  // 补点本轮 class 不含 selected 的格子后再等约 5s，仍不可见则放弃本轮）；
   // 点 verify 后轮询错误提示：select-more（选择不完整，未刷题可补选）→ 放宽阈值补选后重验（最多 SUPPLEMENT_MAX 次）；
   // incorrect（选错已刷题）→ 返回主循环下一轮；无提示照常返回
   for (let supplement = 0; ; ) {
+    if (!(await waitVerifyVisible(deps, ch, VERIFY_VISIBLE_POLLS))) {
+      // 按钮 8s 不可见：本轮 objects 中 class 不含 selected 的格子重新执行点选（拟人点击 + 稳定等待 + 确认流程）
+      deps.logger.warn('九宫格验证按钮未出现，补点本轮未选中格')
+      for (const idx of clicked) {
+        const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
+        if (cls.includes('selected')) continue
+        deps.logger.warn({ idx }, '九宫格补点未选中格')
+        await clickTile(idx)
+      }
+      // 补点后再次等按钮（最多约 5s），仍不可见则放弃本轮（返回由主循环下一轮处理）
+      if (!(await waitVerifyVisible(deps, ch, VERIFY_VISIBLE_RETRY_POLLS))) {
+        deps.logger.warn('九宫格补点后验证按钮仍不可见，放弃本轮')
+        logRoundState()
+        return
+      }
+    }
     if (!(await humanClickInFrame(deps, ch, VERIFY_SELECTOR))) {
       await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
     }
     await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
-    const hint = await pollErrorHint(deps, ch, ERROR_HINT_POLL_TIMEOUT_MS)
-    if (hint === 'select-more' && supplement < SUPPLEMENT_MAX) {
+    lastHint = await pollErrorHint(deps, ch, ERROR_HINT_POLL_TIMEOUT_MS)
+    if (lastHint === 'select-more' && supplement < SUPPLEMENT_MAX) {
       supplement++
       deps.logger.warn({ hint: 'select-more' }, '九宫格选择不完整，放宽阈值补选')
-      if (!(await supplementOnce())) return
+      if (!(await supplementOnce())) {
+        logRoundState()
+        return
+      }
       await deps.page.waitForTimeout(3000 + Math.floor(Math.random() * 2000))
       continue
     }
-    if (hint === 'incorrect') {
+    if (lastHint === 'incorrect') {
       deps.logger.warn({ hint: 'incorrect' }, '九宫格选择错误（Google 已刷题），返回主循环下一轮')
     }
+    logRoundState()
     return
   }
 }

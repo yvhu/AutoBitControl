@@ -14,7 +14,7 @@ vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn() }
 })
-import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, toStandardBase64, readErrorHint, SUPPLEMENT_MAX, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
+import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, toStandardBase64, readErrorHint, SUPPLEMENT_MAX, VERIFY_VISIBLE_POLLS, VERIFY_VISIBLE_RETRY_POLLS, TILE_REFRESH_WATCH_POLLS, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
 import { CaptchaFailure } from '../src/integrations/yescaptcha'
 
 /** 真机核实（2026-09-09）：页面常驻 v3 sitekey；挑战时动态插入 v2 sitekey */
@@ -118,6 +118,12 @@ interface ElemBehavior {
   nthBehaviors?: Record<number, ElemBehavior>
   /** evaluate 返回的固定盒中心（framePoint 拟人点击坐标用；缺省 null → 拟人点击回退 locator 直点） */
   box?: { x: number; y: number } | null
+  /** 动态 count（每次调用执行；供模拟 verify 按钮延迟出现等场景） */
+  countImpl?: () => Promise<number>
+  /** 静态 isVisible（缺省 true：verify 按钮默认立即可见，保持既有用例语义） */
+  isVisible?: boolean
+  /** 动态 isVisible（每次调用执行；供模拟 verify 按钮恒不可见等场景） */
+  isVisibleImpl?: () => Promise<boolean>
 }
 
 function makeFrame(behaviors: Record<string, ElemBehavior>, extra: { frameElement?: () => Promise<unknown> } = {}) {
@@ -127,7 +133,8 @@ function makeFrame(behaviors: Record<string, ElemBehavior>, extra: { frameElemen
       first: () => build(b),
       nth: (i: number) => build(b.nthBehaviors?.[i] ?? b),
       locator: () => build(b),
-      count: vi.fn().mockResolvedValue(b.count ?? 0),
+      count: vi.fn().mockImplementation(async () => b.countImpl ? b.countImpl() : (b.count ?? 0)),
+      isVisible: vi.fn().mockImplementation(async () => b.isVisibleImpl ? b.isVisibleImpl() : (b.isVisible ?? true)),
       getAttribute: vi.fn().mockImplementation(async (name: string) => {
         if (b.srcImpl && name === 'src') return b.srcImpl()
         return b.getAttributeImpl ? b.getAttributeImpl(name) : (b.attrs ?? {})[name] ?? null
@@ -202,6 +209,10 @@ describe('solveRecaptchaGrid 求解循环', () => {
     hintImpl?: () => string | null
     /** verify 点击回调（第 N 次点击触发；模拟点 verify 后错误提示出现/消失） */
     onVerifyClick?: (count: number) => void
+    /** verify 按钮 count 动态实现（缺省恒 1：按钮立即可见，保持既有用例语义） */
+    verifyCountImpl?: () => Promise<number>
+    /** verify 按钮 isVisible 动态实现（缺省恒 true） */
+    verifyIsVisibleImpl?: () => Promise<boolean>
   } = {}) {
     const o = { anchorChecked: 'false', anchorPresent: true, challengePresent: true, prompt: '停车计时器', tileCount: 9, gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: null, ...overrides }
     // 锚点 aria-checked 为动态状态：点验证按钮后置 true（模拟真机「验证后变绿」）
@@ -256,7 +267,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
       [PROMPT_SELECTOR]: { text: o.prompt, textContentImpl: o.promptImpl },
       [TILE_SELECTOR]: { count: o.tileCount, attrs: { class: 'rc-imageselect-tile selected' }, nthBehaviors: tileNth },
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf, screenshotImpl: o.gridScreenshotImpl },
-      [VERIFY_SELECTOR]: { click: verifyClick },
+      [VERIFY_SELECTOR]: { count: 1, click: verifyClick, ...(o.verifyCountImpl ? { countImpl: o.verifyCountImpl } : {}), ...(o.verifyIsVisibleImpl ? { isVisibleImpl: o.verifyIsVisibleImpl } : {}) },
       [RELOAD_SELECTOR]: { click: reloadClick },
       ...hintBehaviors,
     }, { frameElement: o.challengeFrameElementImpl ?? (async () => null) })
@@ -431,7 +442,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
   }, 30000)
 
-  it('点击节奏随机化：截图前 1500-2500ms、点格后 500ms 稳定性轮询、点验证前 3000-5000ms、点验证后 2500-3500ms，随机区间多次运行取值不同', async () => {
+  it('点击节奏随机化：截图前 1500-2500ms、点格后 300ms 变化监测轮询+500ms 稳定性轮询、点验证前 3000-5000ms、点验证后 2500-3500ms，随机区间多次运行取值不同', async () => {
     const gridBuf = await makePngBuffer(300)
     const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf, gridResult: { type: 'multi', objects: [0, 2] } })
     // 多轮运行观察取值方差：固定等待则所有取值相同 → 断言失败；随机化则几乎必然出现不同取值
@@ -445,19 +456,21 @@ describe('solveRecaptchaGrid 求解循环', () => {
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
       // 每轮顺序：挑战 frame 轮询 500ms → 截图前动画稳定 1500-2500ms → shotGrid 内部稳定 800ms
-      // → 格子 0 稳定性轮询 500ms → 格子 2 稳定性轮询 500ms → 验证前全体稳定 3000-5000ms → 验证后 2500-3500ms
-      // → 错误提示轮询 9×500ms（无提示）
-      expect(waits).toHaveLength(7 + ERROR_POLL_WAITS)
+      // → 格子 0 变化监测 300ms×(TILE_REFRESH_WATCH_POLLS-1) + 稳定性轮询 500ms
+      // → 格子 2 同款 → 验证前全体稳定 3000-5000ms → 验证后 2500-3500ms → 错误提示轮询 9×500ms（无提示）
+      expect(waits).toHaveLength(3 + 2 * TILE_REFRESH_WATCH_POLLS + 2 + ERROR_POLL_WAITS)
       expect(waits[0]).toBe(500)
       expect(waits[1]).toBeGreaterThanOrEqual(1500)
       expect(waits[1]).toBeLessThanOrEqual(2500)
       expect(waits[2]).toBe(800)
       preShotWaits.push(waits[1])
-      expect(waits[3]).toBe(500)
-      expect(waits[4]).toBe(500)
-      preVerifyWaits.push(waits[5])
-      verifyWaits.push(waits[6])
-      for (const w of waits.slice(7)) expect(w).toBe(500)
+      for (const base of [3, 3 + TILE_REFRESH_WATCH_POLLS]) {
+        for (let j = 0; j < TILE_REFRESH_WATCH_POLLS - 1; j++) expect(waits[base + j]).toBe(300)
+        expect(waits[base + TILE_REFRESH_WATCH_POLLS - 1]).toBe(500)
+      }
+      preVerifyWaits.push(waits[3 + 2 * TILE_REFRESH_WATCH_POLLS])
+      verifyWaits.push(waits[4 + 2 * TILE_REFRESH_WATCH_POLLS])
+      for (const w of waits.slice(5 + 2 * TILE_REFRESH_WATCH_POLLS)) expect(w).toBe(500)
     }
     for (const w of preShotWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
@@ -513,19 +526,21 @@ describe('solveRecaptchaGrid 求解循环', () => {
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
       // 每轮顺序：挑战 frame 轮询 500ms → 截图前动画稳定 1500-2500ms → shotGrid 内部 800ms
-      // → 格子 0 初次稳定 500ms → 格子 0 确认稳定 500ms → 格子 2 稳定 500ms
-      // → 验证前全体稳定 3000-5000ms → 验证后 2500-3500ms → 错误提示轮询 9×500ms
-      expect(waits).toHaveLength(8 + ERROR_POLL_WAITS)
+      // → 格子 0 初次稳定 500ms（点击后 src 立即变化，变化监测首查命中无等待）→ 格子 0 确认稳定 500ms
+      // → 格子 2 变化监测 300ms×9 + 稳定 500ms → 验证前全体稳定 3000-5000ms
+      // → 验证后 2500-3500ms → 错误提示轮询 9×500ms
+      expect(waits).toHaveLength(3 + 2 + TILE_REFRESH_WATCH_POLLS + 2 + ERROR_POLL_WAITS)
       expect(waits[0]).toBe(500)
       expect(waits[1]).toBeGreaterThanOrEqual(1500)
       expect(waits[1]).toBeLessThanOrEqual(2500)
       expect(waits[2]).toBe(800)
       expect(waits[3]).toBe(500)
       expect(waits[4]).toBe(500)
-      expect(waits[5]).toBe(500)
-      preVerifyWaits.push(waits[6])
-      verifyWaits.push(waits[7])
-      for (const w of waits.slice(8)) expect(w).toBe(500)
+      for (let j = 0; j < TILE_REFRESH_WATCH_POLLS - 1; j++) expect(waits[5 + j]).toBe(300)
+      expect(waits[5 + TILE_REFRESH_WATCH_POLLS - 1]).toBe(500)
+      preVerifyWaits.push(waits[5 + TILE_REFRESH_WATCH_POLLS])
+      verifyWaits.push(waits[6 + TILE_REFRESH_WATCH_POLLS])
+      for (const w of waits.slice(7 + TILE_REFRESH_WATCH_POLLS)) expect(w).toBe(500)
     }
     for (const w of preVerifyWaits) {
       expect(w).toBeGreaterThanOrEqual(3000)
@@ -845,23 +860,151 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(logger.warn).toHaveBeenCalledWith({ idx: 0 }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
   }, 30000)
 
-  it('Google 慢刷新（点击后 src 迟迟才变）不再重试点击：删除 1.5s 注册确认等待，该格只点 1 次', async () => {
+  it('慢刷新（点击后 3s 监测窗口内 src 才变化）同样被监测到：走小图确认流程，该格仍只点 1 次', async () => {
     const gridBuf = await makePngBuffer(300)
+    const tileBuf = await makePngBuffer(100)
     let reads = 0
     const { page, captcha, logger, tileClicks } = makeDeps({
       gridScreenshotBuf: gridBuf,
       gridResult: { type: 'multi', objects: [0] },
-      // src 前 4 次读为 A（点击前后），第 5 次起为 B（模拟 Google 刷新响应慢）
-      tileBehaviors: { 0: { attrs: { class: 'rc-imageselect-tile' }, srcImpl: async () => { reads++; return reads >= 5 ? 'B' : 'A' } } },
+      // src 前 4 次读为 A（点击前后），第 5 次起为 B（模拟 Google 刷新响应慢：点后立即对比会漏掉）
+      tileBehaviors: { 0: { attrs: { class: 'rc-imageselect-tile' }, screenshotBuf: tileBuf, srcImpl: async () => { reads++; return reads >= 5 ? 'B' : 'A' } } },
+    })
+    let solveCall = 0
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      solveCall++
+      return solveCall === 1 ? { type: 'multi', objects: [0] } : { type: 'single', hasObject: false }
     })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
-    // src 未变且无 selected → warn 不重试：不等待 1.5s 再读 src，慢刷新场景同样只点 1 次
+    // 刷新在监测窗口内发生 → 小图二次识别被调用（旧实现点后立即等稳定再对比会漏掉慢刷新 → 分类只 1 次）
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
+    // 不重试点击：该格只点初次 1 次
     expect(tileClicks[0]).toHaveBeenCalledTimes(1)
-    expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
-    expect(logger.warn).toHaveBeenCalledWith({ idx: 0 }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
-    // 1.5s 注册确认等待已删除：等待序列固定为 6 + 错误提示轮询 9 次（旧实现多 1 次固定 1500ms）
+    // 刷新确实被监测到：不再打「未检测到刷新」warn
+    expect(logger.warn).not.toHaveBeenCalledWith({ idx: 0 }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
+    // 等待序列：挑战轮询 500 → 截图前 1500-2500 → 800 → 变化监测 300×3（第 4 次读取才见变化）
+    // → 稳定 500 → 验证前 3000-5000 → 验证后 2500-3500 → 错误提示轮询 9×500
     const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
-    expect(waits).toHaveLength(6 + ERROR_POLL_WAITS)
+    expect(waits).toHaveLength(3 + 3 + 1 + 2 + ERROR_POLL_WAITS)
+    expect(waits[0]).toBe(500)
+    expect(waits[1]).toBeGreaterThanOrEqual(1500)
+    expect(waits[1]).toBeLessThanOrEqual(2500)
+    expect(waits[2]).toBe(800)
+    expect(waits[3]).toBe(300)
+    expect(waits[4]).toBe(300)
+    expect(waits[5]).toBe(300)
+    expect(waits[6]).toBe(500)
+  }, 30000)
+
+  it('等验证按钮可见再点：verify 前 2 次轮询不可见（count 0）、第 3 次可见后才点（点击恰 1 次且时机在可见轮询之后）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const events: string[] = []
+    let polls = 0
+    const { page, captcha, logger, verifyClick } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0] },
+      verifyCountImpl: async () => { polls++; events.push('poll'); return polls >= 3 ? 1 : 0 },
+      onVerifyClick: () => { events.push('verify-click') },
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    // verify 只点 1 次，且发生在 3 次可见轮询之后（按钮不可见时点击 → 事件顺序错误在此失败）
+    expect(verifyClick).toHaveBeenCalledTimes(1)
+    expect(events.filter((e) => e === 'poll').length).toBe(3)
+    expect(events.indexOf('verify-click')).toBeGreaterThan(events.lastIndexOf('poll'))
+    // 等待序列：挑战 500 → 截图前 1500-2500 → 800 → 格子 0 监测 300×9+稳定 500
+    // → 验证前 3000-5000 → 可见轮询 500×2 → 验证后 2500-3500 → 错误提示轮询 9×500
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    const preVerifyIdx = 3 + TILE_REFRESH_WATCH_POLLS
+    expect(waits).toHaveLength(3 + TILE_REFRESH_WATCH_POLLS + 1 + 2 + 1 + ERROR_POLL_WAITS)
+    expect(waits[0]).toBe(500)
+    expect(waits[1]).toBeGreaterThanOrEqual(1500)
+    expect(waits[1]).toBeLessThanOrEqual(2500)
+    expect(waits[2]).toBe(800)
+    for (let j = 0; j < TILE_REFRESH_WATCH_POLLS - 1; j++) expect(waits[3 + j]).toBe(300)
+    expect(waits[3 + TILE_REFRESH_WATCH_POLLS - 1]).toBe(500)
+    expect(waits[preVerifyIdx]).toBeGreaterThanOrEqual(3000)
+    expect(waits[preVerifyIdx]).toBeLessThanOrEqual(5000)
+    expect(waits[preVerifyIdx + 1]).toBe(500)
+    expect(waits[preVerifyIdx + 2]).toBe(500)
+    expect(waits[preVerifyIdx + 3]).toBeGreaterThanOrEqual(2500)
+    expect(waits[preVerifyIdx + 3]).toBeLessThanOrEqual(3500)
+    for (const w of waits.slice(preVerifyIdx + 4)) expect(w).toBe(500)
+  }, 30000)
+
+  it('验证按钮 8s 恒不可见 → 补点本轮未选中格（class 不含 selected）→ 再等 5s 仍不可见 → 放弃本轮不点 verify', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, tileClicks, verifyClick } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0, 2] },
+      verifyIsVisibleImpl: async () => false,
+      // 格 0 class 含 selected（已选中不补点）；格 2 无 selected（补点目标）
+      tileBehaviors: { 2: { attrs: { class: 'rc-imageselect-tile' }, srcImpl: async () => 'A' } },
+    })
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { maxRounds: 1 },
+    )).resolves.toBe('failed')
+    // 补点只点未选中格：格 0 只初次 1 点，格 2 初次 + 补点共 2 点
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+    expect(tileClicks[2]).toHaveBeenCalledTimes(2)
+    // 放弃本轮：不点 verify
+    expect(verifyClick).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith('九宫格验证按钮未出现，补点本轮未选中格')
+    expect(logger.warn).toHaveBeenCalledWith({ idx: 2 }, '九宫格补点未选中格')
+    expect(logger.warn).toHaveBeenCalledWith('九宫格补点后验证按钮仍不可见，放弃本轮')
+    // 等待序列含两段可见轮询：首段 15×500（8s 预算）+ 补点后 9×500（5s 预算）
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    expect(waits.filter((w) => w === 500).length).toBeGreaterThanOrEqual((VERIFY_VISIBLE_POLLS - 1) + (VERIFY_VISIBLE_RETRY_POLLS - 1))
+  }, 30000)
+
+  it('瞬时刷新监测：点击后 src 第 1 次读取变化、随后恢复原值 → 刷新被监测到（走小图确认流程分类被调用），而非跳过', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const tileBuf = await makePngBuffer(100)
+    // src 序列：点击前 A → 点击后第 1 次读取 B（瞬时刷新）→ 之后恢复 A（旧实现点后等稳定再对比会漏掉）
+    const srcSeq = ['A', 'B', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A']
+    let srcReads = 0
+    const { page, captcha, logger, tileClicks } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0] },
+      tileBehaviors: { 0: { attrs: { class: 'rc-imageselect-tile' }, screenshotBuf: tileBuf, srcImpl: async () => srcSeq[Math.min(srcReads++, srcSeq.length - 1)] } },
+    })
+    let solveCall = 0
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      solveCall++
+      return solveCall === 1 ? { type: 'multi', objects: [0] } : { type: 'single', hasObject: false }
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    // 瞬时刷新被监测到 → 小图二次识别发生（分类 2 次；漏检时 src 恢复原值 → 分类只 1 次在此失败）
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
+    expect(logger.info).toHaveBeenCalledWith({ idx: 0 }, '九宫格该格检测到刷新，走小图二次识别确认')
+    // 二次识别 hasObject=false → 不点确认：该格只点 1 次
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('每轮结束输出 grid-round-state 状态快照日志（识别目标/点选格/错误提示/换图次数，数据收集用）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf, gridResult: { type: 'multi', objects: [0, 2] } })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    expect(logger.info).toHaveBeenCalledWith({
+      step: 'grid-round-state',
+      prompt: '停车计时器',
+      qid: '/m/015qbp',
+      objects: [0, 2],
+      hint: null,
+      reloads: 0,
+    }, '九宫格轮次状态')
+  }, 30000)
+
+  it('verify 后出现 incorrect → 轮次快照带 hint incorrect', async () => {
+    const gridBuf = await makePngBuffer(300)
+    let hint = ''
+    const { page, captcha, logger } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      hintImpl: () => hint,
+      onVerifyClick: () => { hint = '请重试' },
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ step: 'grid-round-state', hint: 'incorrect' }), '九宫格轮次状态')
   }, 30000)
 })
 
