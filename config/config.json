@@ -31,6 +31,7 @@
     "taskTypes": {
       "turnstile": "TurnstileTaskProxyless",
       "recaptcha_v2": "NoCaptchaTaskProxyless",
+      "recaptcha_v2_grid": "ReCaptchaV2Classification",
       "recaptcha_v3": "RecaptchaV3TaskProxyless",
       "hcaptcha": "HCaptchaTaskProxyless",
       "image": "ImageToTextTask"

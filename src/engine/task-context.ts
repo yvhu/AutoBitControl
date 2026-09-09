@@ -17,6 +17,7 @@ import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
 import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/turnstile'
+import { solveRecaptchaGrid as runRecaptchaGrid } from '../automation/recaptcha-grid'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
@@ -441,6 +442,24 @@ export class TaskContext {
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
     return runTurnstileAutoClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, budgetMs)
+  }
+
+  /**
+   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 截图网格 → yescaptcha 分类 → 按坐标点选 → 验证，
+   * 多轮循环直至 aria-checked=true（未注入打码服务返回 'none'，语义同 solveCaptcha）
+   * @returns 'none' 无服务/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
+   * @throws 提示语未覆盖映射 / 分类失败（CaptchaFailure）
+   */
+  async solveRecaptchaGrid(opts?: { maxRounds?: number }): Promise<'none' | 'solved' | 'failed'> {
+    if (!this.deps.captcha) return 'none'
+    return runRecaptchaGrid({ page: this.page, captcha: this.deps.captcha, logger: this.turnstileLogger(), human: this.human }, {
+      maxRounds: opts?.maxRounds,
+      profileId: this.deps.profile.id,
+      taskKey: this.deps.task.meta.key,
+      onLog: (kind, ok, costPoints) => {
+        this.deps.onCaptchaLog?.(kind, ok, costPoints)
+      },
+    })
   }
 
   /**

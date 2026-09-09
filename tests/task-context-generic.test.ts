@@ -34,11 +34,12 @@ function makeFakePage(textDelays: Record<string, number>, opts: { count?: number
     }),
     waitForTimeout: vi.fn(async () => {}),
     reload: vi.fn(async () => { reloads++ }),
+    frames: () => [],
   }
 }
 
-function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
-  return new TaskContext({
+function baseDeps(page: ReturnType<typeof makeFakePage>) {
+  return {
     page: page as never,
     task: new FakeTask(),
     human: {} as never,
@@ -47,7 +48,11 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
     artifactsDir: '',
     walletPasswords: {},
-  })
+  }
+}
+
+function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
+  return new TaskContext(baseDeps(page))
 }
 
 describe('TaskContext 通用页面工具', () => {
@@ -111,6 +116,19 @@ describe('TaskContext 通用页面工具', () => {
     await expect(ctx.detectPageState({ loggedInText: '目录栏', landingText: '进入', waitMs: 100, rounds: 2, roundWaitMs: 100 }))
       .rejects.toThrow('目录栏 或 进入')
     expect(page.reload).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('TaskContext 九宫格求解包装', () => {
+  it('solveRecaptchaGrid：未注入 captcha 服务 → none', async () => {
+    const ctx = new TaskContext({ ...baseDeps(makeFakePage({})) })
+    await expect(ctx.solveRecaptchaGrid()).resolves.toBe('none')
+  })
+
+  it('solveRecaptchaGrid：注入 captcha 后委托模块并透传 maxRounds（无锚点 frame → none）', async () => {
+    const deps = { ...baseDeps(makeFakePage({})), captcha: { solveGrid: vi.fn().mockResolvedValue({ type: 'multi', objects: [0] }) } }
+    const ctx = new TaskContext(deps as never)
+    await expect(ctx.solveRecaptchaGrid({ maxRounds: 2 })).resolves.toBe('none')
   })
 })
 
