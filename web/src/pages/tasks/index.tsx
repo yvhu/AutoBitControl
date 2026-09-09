@@ -1,14 +1,17 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Collapse, Empty, Row, Space, Spin, Switch, Tag, Typography } from 'antd'
+import { Button, Card, Col, Empty, Row, Space, Spin, Switch, Tag, Typography, theme } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 import type { TaskMetaView } from '../../types'
 import {
   categoryColor,
   categoryLabel,
+  groupColor,
   groupTasks,
+  toggleKey,
   useSetTaskEnabled,
   useTasks,
   useTriggerTask,
+  type TaskGroup,
 } from './hooks'
 
 const WALLET_ICON: Record<string, string> = { metamask: '🦊', petra: '🐍' }
@@ -108,8 +111,34 @@ function TaskCard({ task }: { task: TaskMetaView }) {
   )
 }
 
+function GroupCard({ group, color, open, onToggle }: { group: TaskGroup; color: string; open: boolean; onToggle: () => void }) {
+  const { token } = theme.useToken()
+  return (
+    <div style={{ background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadiusLG, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', cursor: 'pointer' }} onClick={onToggle}>
+        <span style={{ width: 34, height: 34, borderRadius: 8, background: `linear-gradient(135deg, ${color}, ${color}b3)`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, flexShrink: 0 }}>
+          {group.name.charAt(0)}
+        </span>
+        <Typography.Text strong>{group.name}</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{group.tasks.length} 个任务</Typography.Text>
+        <span style={{ marginLeft: 'auto', color: token.colorTextTertiary, fontSize: 12 }}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && (
+        <Row gutter={[12, 12]} align="stretch" style={{ padding: '0 12px 12px' }}>
+          {group.tasks.map((t) => (
+            <Col key={t.key} xs={24} xl={12}>
+              <TaskCard task={t} />
+            </Col>
+          ))}
+        </Row>
+      )}
+    </div>
+  )
+}
+
 export default function TasksPage() {
   const tasks = useTasks()
+  const [openKeys, setOpenKeys] = useState<string[]>([])
 
   if (tasks.isPending) {
     return (
@@ -131,6 +160,7 @@ export default function TasksPage() {
 
   const groups = groupTasks(tasks.data)
   const flat = groups.length === 1 && groups[0].key === ''
+  const allOpen = groups.length > 0 && openKeys.length >= groups.length
 
   return (
     <Space direction="vertical" size={8} style={{ display: 'flex' }}>
@@ -143,23 +173,18 @@ export default function TasksPage() {
           ))}
         </Row>
       ) : (
-        <Collapse
-          ghost
-          defaultActiveKey={groups.map((g) => g.key)}
-          items={groups.map((g) => ({
-            key: g.key,
-            label: `${g.name} · ${g.tasks.length} 个任务`,
-            children: (
-              <Row gutter={[12, 12]} align="stretch">
-                {g.tasks.map((t) => (
-                  <Col key={t.key} xs={24} xl={12}>
-                    <TaskCard task={t} />
-                  </Col>
-                ))}
-              </Row>
-            ),
-          }))}
-        />
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <Typography.Text>任务分组</Typography.Text>
+            <Space size={8} style={{ marginLeft: 'auto' }}>
+              <Button size="small" disabled={allOpen} onClick={() => setOpenKeys(groups.map((g) => g.key))}>全部展开</Button>
+              <Button size="small" disabled={openKeys.length === 0} onClick={() => setOpenKeys([])}>全部收起</Button>
+            </Space>
+          </div>
+          {groups.map((g, i) => (
+            <GroupCard key={g.key} group={g} color={groupColor(g.key, i)} open={openKeys.includes(g.key)} onToggle={() => setOpenKeys((keys) => toggleKey(keys, g.key))} />
+          ))}
+        </>
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         → 任务定义在代码（src/tasks），开关与触发在此页管理
