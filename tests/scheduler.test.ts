@@ -313,6 +313,7 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     const deps = makeUploadDeps()
     deps.fileAssign.run.mockRejectedValue('文件不足')
     const result = await new Scheduler(deps).runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(result.taskKeys).toEqual([])
     expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
     expect(deps.logger.warn).toHaveBeenCalled()
   })

@@ -149,8 +149,7 @@ export class Scheduler {
       }
     } else if (fa && !this.deps.fileAssign && hasFileTask) {
       assignFailed = true
-      assignErr = '分配执行器未装配'
-      this.deps.logger.warn({ schedule: schedule.name }, '计划配置了 fileAssign 但分配执行器未装配，跳过依赖文件的任务')
+      this.deps.logger.warn({ schedule: schedule.name, err: '分配执行器未装配' }, '计划配置了 fileAssign 但分配执行器未装配，跳过依赖文件的任务')
     }
     // 第二遍：建批次入队
     for (const key of passing) {
