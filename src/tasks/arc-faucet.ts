@@ -139,7 +139,7 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {
     ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，走九宫格模拟点击')
-    const grid = await ctx.solveRecaptchaGrid()
+    const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY })
     if (grid === 'failed') throw new Error('九宫格模拟点击失败（多轮未通过）')
     // widget 完成后站点恢复提交按钮；再提交一次
     await ensureSubmitEnabled(ctx)

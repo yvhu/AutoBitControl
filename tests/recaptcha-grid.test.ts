@@ -4,7 +4,11 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
-import { mapQuestionId, solveRecaptchaGrid, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR } from '../src/automation/recaptcha-grid'
+import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR } from '../src/automation/recaptcha-grid'
+
+/** 真机核实（2026-09-09）：页面常驻 v3 sitekey；挑战时动态插入 v2 sitekey */
+const V3 = '6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2'
+const V2 = '6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve'
 
 describe('mapQuestionId 提示语映射', () => {
   it('中文常见提示语', () => {
@@ -38,6 +42,8 @@ interface ElemBehavior {
   click?: ReturnType<typeof vi.fn>
   screenshotBuf?: Buffer | null
   getAttributeImpl?: (name: string) => Promise<string | null>
+  /** 动态 textContent（每次读取时调用；缺省回落 text 静态值） */
+  textContentImpl?: () => Promise<string | null>
   /** 按索引分派的子行为：nth(i) 返回独立实例（每个索引独立 click mock），未命中回落到当前行为 */
   nthBehaviors?: Record<number, ElemBehavior>
 }
@@ -51,7 +57,7 @@ function makeFrame(behaviors: Record<string, ElemBehavior>) {
       locator: () => build(b),
       count: vi.fn().mockResolvedValue(b.count ?? 0),
       getAttribute: vi.fn().mockImplementation(async (name: string) => b.getAttributeImpl ? b.getAttributeImpl(name) : (b.attrs ?? {})[name] ?? null),
-      textContent: vi.fn().mockResolvedValue(b.text ?? null),
+      textContent: vi.fn().mockImplementation(async () => b.textContentImpl ? b.textContentImpl() : (b.text ?? null)),
       click,
       screenshot: vi.fn().mockResolvedValue(b.screenshotBuf ?? null),
     }
@@ -67,20 +73,29 @@ async function makePngBuffer(size: number): Promise<Buffer> {
 }
 
 describe('solveRecaptchaGrid 求解循环', () => {
-  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null } = {}) {
+  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null; anchors?: Array<{ url: string }>; promptImpl?: () => Promise<string | null> } = {}) {
     const o = { anchorChecked: 'false', anchorPresent: true, challengePresent: true, prompt: '停车计时器', tileCount: 9, gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: null, ...overrides }
     // 锚点 aria-checked 为动态状态：点验证按钮后置 true（模拟真机「验证后变绿」）
     let checked = o.anchorChecked
-    const anchor = makeFrame({
-      [ANCHOR_SELECTOR]: {
-        click: vi.fn().mockResolvedValue(undefined),
-        getAttributeImpl: async (name: string) => (name === 'aria-checked' ? checked : null),
-      },
+    // 每个锚点 frame 独立 click mock（多 anchor 并存时供选择断言）
+    const anchorSpecs = o.anchors ?? [{ url: `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V2}` }]
+    const anchorFrames = anchorSpecs.map((spec) => {
+      const click = vi.fn().mockResolvedValue(undefined)
+      return {
+        url: spec.url,
+        click,
+        locator: makeFrame({
+          [ANCHOR_SELECTOR]: {
+            click,
+            getAttributeImpl: async (name: string) => (name === 'aria-checked' ? checked : null),
+          },
+        }).locator,
+      }
     })
     // 每个格子索引独立 click mock：nth(i) 按索引分派，供点选行为断言使用
     const tileClicks = Array.from({ length: o.tileCount }, () => vi.fn().mockResolvedValue(undefined))
     const challenge = makeFrame({
-      [PROMPT_SELECTOR]: { text: o.prompt },
+      [PROMPT_SELECTOR]: { text: o.prompt, textContentImpl: o.promptImpl },
       [TILE_SELECTOR]: {
         count: o.tileCount,
         attrs: { class: 'rc-imageselect-tile' },
@@ -91,14 +106,14 @@ describe('solveRecaptchaGrid 求解循环', () => {
     })
     const page = {
       frames: () => [
-        ...(o.anchorPresent ? [{ url: () => `https://www.google.com/${ANCHOR_FRAME_PART}?k=6LcCqC8s`, locator: anchor.locator }] : []),
+        ...(o.anchorPresent ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator })) : []),
         ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator }] : []),
       ],
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
     }
     const captcha = { solveGrid: vi.fn().mockResolvedValue(o.gridResult) }
     const logger = { info: vi.fn(), warn: vi.fn() }
-    return { page, captcha, logger, anchor, challenge, tileClicks }
+    return { page, captcha, logger, anchorFrames, challenge, tileClicks }
   }
 
   it('无锚点 frame → none', async () => {
@@ -143,4 +158,64 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const optsArg = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]
     expect(optsArg).toMatchObject({ profileId: 7, taskKey: 'checkin:faucet', onLog })
   }, 30000)
+
+  it('多 anchor 并存：siteKeyExclude 排除常驻 v3 锚点，点选 v2 锚点（v3 排在前）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, anchorFrames } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      anchors: [
+        { url: `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V3}` },
+        { url: `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V2}` },
+      ],
+    })
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { siteKeyExclude: V3 },
+    )).resolves.toBe('solved')
+    expect(anchorFrames[0].click).not.toHaveBeenCalled()
+    expect(anchorFrames[1].click).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('提示语首次读空、稍后渲染完成 → 等待重读后正常求解（不抛「提示文字未找到」）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    let reads = 0
+    const { page, captcha, logger } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      prompt: null,
+      promptImpl: async () => { reads++; return reads >= 2 ? '停车计时器' : '' },
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    expect(reads).toBeGreaterThanOrEqual(2)
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
+  }, 30000)
+})
+
+describe('find 函数 sitekey 排除', () => {
+  function makeFrames(urls: string[]) {
+    return { frames: () => urls.map((url) => ({ url: () => url })) } as never
+  }
+
+  it('findAnchorFrame：跳过 sitekey 与排除值相同的 frame，返回 v2 anchor', () => {
+    const page = makeFrames([
+      `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V3}`,
+      `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V2}`,
+    ])
+    expect(findAnchorFrame(page, V3)?.url()).toContain(`k=${V2}`)
+  })
+
+  it('findAnchorFrame：不传排除值时行为不变（取第一个匹配 frame）', () => {
+    const page = makeFrames([
+      `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V3}`,
+      `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V2}`,
+    ])
+    expect(findAnchorFrame(page)?.url()).toContain(`k=${V3}`)
+  })
+
+  it('findChallengeFrame：跳过 sitekey 与排除值相同的 bframe', () => {
+    const page = makeFrames([
+      `https://www.google.com/${CHALLENGE_FRAME_PART}?k=${V3}`,
+      `https://www.google.com/${CHALLENGE_FRAME_PART}?k=${V2}`,
+    ])
+    expect(findChallengeFrame(page, V3)?.url()).toContain(`k=${V2}`)
+  })
 })

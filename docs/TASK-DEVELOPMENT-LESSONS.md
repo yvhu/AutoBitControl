@@ -50,3 +50,9 @@
 - `retry.backoffSec` 60s 即可（瞬时问题重试快）；瞬时失败重试通常一次就过。
 - `timeoutSec` 给真实最慢路径留 2 倍余量即可，别给 15 分钟——卡死窗口会白白占住并发槽。
 - 卡死类等待（登录态竞速 reload 轮数）收敛到 3-4 轮，每轮打日志。
+
+## 8. reCAPTCHA 九宫格模拟点击（Arc 领水真机，2026-09-09）
+
+1. **多 anchor 错选**：页面常驻 v3 anchor iframe（sitekey A），v2 挑战时动态插入另一个 anchor（sitekey B）。`page.frames()` 取第一个匹配会选到 v3——点它**无任何效果**（复选框不弹挑战，静默失败）。必须按 URL 的 `k=` 参数排除常驻 v3 sitekey（`ctx.solveRecaptchaGrid({ siteKeyExclude })`），bframe 查找同样要排除。
+2. **提示语读取过早**：bframe 注入后网格 DOM 可能尚未渲染，`.rc-imageselect-desc-wrapper strong` 首读为空 → 误抛「九宫格提示文字未找到」。读提示语要轮询重试（10s / 500ms），非空才继续。
+3. **点击未注册要自愈不要吞**：偶发点击未注册时，下一轮循环能自我纠正；anchor 点击失败记 warn 继续流程，别静默 `catch(() => {})` 吞掉排障线索。

@@ -32,6 +32,10 @@ export const GRID_SELECTOR = '#rc-imageselect-target'
 export const MAX_ROUNDS = 5
 /** 单格小图二次识别最大次数 */
 export const SINGLE_RECHECK_MAX = 2
+/** 提示语渲染等待上限（毫秒；bframe 网格 DOM 可能晚于 frame 注入渲染） */
+export const PROMPT_WAIT_TIMEOUT_MS = 10000
+/** 提示语轮询间隔（毫秒） */
+export const PROMPT_POLL_MS = 500
 
 /** 提示语 → 问题 ID 映射（中英双语；官方中文表 + DEMO 英文表合并；未覆盖的提示语任务会失败，按日志扩充） */
 export const QUESTION_ID_MAP: Record<string, string> = {
@@ -62,14 +66,29 @@ export function mapQuestionId(promptText: string): string | null {
   return null
 }
 
-/** 找锚点 frame（兼容 enterprise/api2 两种 URL） */
-export function findAnchorFrame(page: Page): Frame | null {
-  return page.frames().find((f) => f.url().includes('recaptcha/enterprise/anchor') || f.url().includes('recaptcha/api2/anchor')) ?? null
+/** 从 frame URL 提取 reCAPTCHA sitekey（k 参数；无则返回 null） */
+function extractSiteKey(url: string): string | null {
+  const m = url.match(/[?&]k=([^&]+)/)
+  return m ? decodeURIComponent(m[1]) : null
 }
 
-/** 找挑战（九宫格）frame */
-export function findChallengeFrame(page: Page): Frame | null {
-  return page.frames().find((f) => f.url().includes('recaptcha/enterprise/bframe') || f.url().includes('recaptcha/api2/bframe')) ?? null
+/**
+ * 找锚点 frame（兼容 enterprise/api2 两种 URL）
+ * @param excludeSiteKey 跳过的常驻 sitekey（如页面常驻 v3 锚点：k 相同时排除，避免点到无效果的 v3 复选框）
+ */
+export function findAnchorFrame(page: Page, excludeSiteKey?: string): Frame | null {
+  return page.frames().find((f) => {
+    if (!f.url().includes('recaptcha/enterprise/anchor') && !f.url().includes('recaptcha/api2/anchor')) return false
+    return !excludeSiteKey || extractSiteKey(f.url()) !== excludeSiteKey
+  }) ?? null
+}
+
+/** 找挑战（九宫格）frame；excludeSiteKey 语义同 findAnchorFrame（v3 bframe 同 sitekey 时排除） */
+export function findChallengeFrame(page: Page, excludeSiteKey?: string): Frame | null {
+  return page.frames().find((f) => {
+    if (!f.url().includes('recaptcha/enterprise/bframe') && !f.url().includes('recaptcha/api2/bframe')) return false
+    return !excludeSiteKey || extractSiteKey(f.url()) !== excludeSiteKey
+  }) ?? null
 }
 
 /** PNG buffer 缩放至标准尺寸并转 Base64（无 data: 前缀） */
@@ -81,7 +100,13 @@ async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
 
 /** 单轮：读提示语 → 截图网格 → 分类 → 点格子（含小图刷新二次识别）→ 点验证；opts 透传给 solveGrid 做成本记账 */
 async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
-  const prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
+  // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS
+  let prompt = ''
+  const promptDeadline = Date.now() + PROMPT_WAIT_TIMEOUT_MS
+  while (Date.now() < promptDeadline && !prompt) {
+    prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
+    if (!prompt) await deps.page.waitForTimeout(PROMPT_POLL_MS)
+  }
   if (!prompt) throw new Error('九宫格提示文字未找到')
   const qid = mapQuestionId(prompt)
   if (!qid) throw new Error(`未覆盖的九宫格提示语: ${prompt}`)
@@ -121,29 +146,33 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
  * 九宫格模拟点击求解主入口：
  * 点复选框 → 等挑战 → 循环（读提示语 → 分类 → 点选 → 验证 → 查 aria-checked）→ 变绿返回 solved
  * @param opts.maxRounds 最大轮数（缺省 MAX_ROUNDS）
+ * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点/bframe：避免误选 v3 复选框点击无效果）
  * @param opts.profileId/taskKey/onLog 透传给 solveGrid 做成本记账（缺省 null/空实现，向后兼容）
  * @returns 'none' 无锚点 frame；'solved' 通过；'failed' 轮数耗尽（提示语未覆盖等异常直接抛错）
  */
 export async function solveRecaptchaGrid(
   deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer },
-  opts: { maxRounds?: number; profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
+  opts: { maxRounds?: number; siteKeyExclude?: string; profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
 ): Promise<'solved' | 'none' | 'failed'> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS
-  const anchor = findAnchorFrame(deps.page)
+  const anchor = findAnchorFrame(deps.page, opts.siteKeyExclude)
   if (!anchor) return 'none'
-  await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch(() => {})
+  // 点击失败只告警不中断：真机偶发点击未注册时，后续轮次能自我纠正
+  await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch((e) => {
+    deps.logger.warn({ err: (e as Error).message }, '锚点复选框点击失败（继续流程，后续轮次自纠）')
+  })
   // 等挑战 frame 出现；期间锚点直接变绿即一键通过
   let challenge: Frame | null = null
   for (let i = 0; i < 30 && !challenge; i++) {
     await deps.page.waitForTimeout(500)
-    challenge = findChallengeFrame(deps.page)
+    challenge = findChallengeFrame(deps.page, opts.siteKeyExclude)
     if (!challenge) {
       const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
       if (checked === 'true') { deps.logger.info('九宫格一键通过（未出图）'); return 'solved' }
     }
   }
   for (let round = 0; round < maxRounds; round++) {
-    const ch = challenge ?? findChallengeFrame(deps.page)
+    const ch = challenge ?? findChallengeFrame(deps.page, opts.siteKeyExclude)
     if (!ch) {
       const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
       return checked === 'true' ? 'solved' : 'failed'
@@ -152,7 +181,7 @@ export async function solveRecaptchaGrid(
     const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
     if (checked === 'true') return 'solved'
     deps.logger.warn({ round: round + 1 }, '九宫格本轮未通过，继续下一轮')
-    challenge = findChallengeFrame(deps.page)
+    challenge = findChallengeFrame(deps.page, opts.siteKeyExclude)
     await deps.page.waitForTimeout(2000)
   }
   return 'failed'

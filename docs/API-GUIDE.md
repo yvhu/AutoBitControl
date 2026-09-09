@@ -391,7 +391,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ### solveRecaptchaGrid
 
 ```ts
-async solveRecaptchaGrid(opts?: { maxRounds?: number }): Promise<'none' | 'solved' | 'failed'>
+async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'>
 ```
 
 - **是什么**：reCAPTCHA v2 勾选后弹出的**九宫格选图挑战**的模拟点击求解——点复选框 → 截图网格 → yescaptcha 分类 → 按返回坐标拟人点选格子 → 点验证，多轮循环直至 `aria-checked=true`（变绿）。实现位于 `src/automation/recaptcha-grid.ts`（分类走 yescaptcha 的 `ReCaptchaV2Classification` 任务类型，映射见 `config.json` 的 `captcha.taskTypes` 的 `recaptcha_v2_grid` 键）。
@@ -405,7 +405,7 @@ if (r === 'failed') throw new Error('九宫格求解轮数耗尽')
 await ctx.waitForText('领取成功')                        // 验证挑战已过、流程继续
 ```
 
-- **注意什么**：返回值语义——`'none'`：未注入打码服务、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：轮数耗尽仍未通过（默认最多 5 轮，`opts.maxRounds` 可调）。提示语未覆盖映射或分类接口失败直接抛错（任务失败进入重试）。每次分类按 6 点/次记账到打码统计，受 `captcha.maxCostPerTask` 余额上限约束。
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：轮数耗尽仍未通过（默认最多 5 轮，`opts.maxRounds` 可调）。页面同时常驻 v3（隐形打分）与挑战注入 v2（复选框）两套 anchor iframe 时，用 `opts.siteKeyExclude` 传入常驻 v3 的 sitekey（`k=` 参数），模块会跳过 v3 锚点只点 v2（避免点到无效果的复选框）；anchor 点击失败只记 warn 继续流程，后续轮次会自纠。提示语未覆盖映射或分类接口失败直接抛错（任务失败进入重试）。每次分类按 6 点/次记账到打码统计，受 `captcha.maxCostPerTask` 余额上限约束。
 
 ### screenshot
 

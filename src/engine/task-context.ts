@@ -447,13 +447,15 @@ export class TaskContext {
   /**
    * reCAPTCHA 九宫格模拟点击求解：点复选框 → 截图网格 → yescaptcha 分类 → 按坐标点选 → 验证，
    * 多轮循环直至 aria-checked=true（未注入打码服务返回 'none'，语义同 solveCaptcha）
+   * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点，避免误点无效果的复选框）
    * @returns 'none' 无服务/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
    * @throws 提示语未覆盖映射 / 分类失败（CaptchaFailure）
    */
-  async solveRecaptchaGrid(opts?: { maxRounds?: number }): Promise<'none' | 'solved' | 'failed'> {
+  async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
     return runRecaptchaGrid({ page: this.page, captcha: this.deps.captcha, logger: this.turnstileLogger(), human: this.human }, {
       maxRounds: opts?.maxRounds,
+      siteKeyExclude: opts?.siteKeyExclude,
       profileId: this.deps.profile.id,
       taskKey: this.deps.task.meta.key,
       onLog: (kind, ok, costPoints) => {
