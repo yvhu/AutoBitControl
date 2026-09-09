@@ -1,10 +1,12 @@
 /**
  * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 截图网格 → yescaptcha 分类 →
- * 按坐标点选 → 验证 → 查 aria-checked → 未通过则下一轮，直到变绿
+ * 按坐标点选（点击后按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
+ * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿
  * 真机核实（2026-09-09，faucet.circle.com）：挑战为 reCAPTCHA Enterprise
  * （anchor iframe: recaptcha/enterprise/anchor；网格 iframe: recaptcha/enterprise/bframe），
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
- * （yescaptcha 文档页 29786113）为协议来源
+ * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
+ * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）
  * 依赖方向：依赖 integrations/yescaptcha 类型，被 engine/task-context 包装调用
  */
 import type { Page, Frame } from 'patchright'
@@ -44,6 +46,9 @@ export const QUESTION_ID_MAP: Record<string, string> = {
   '红绿灯': '/m/015qff', '自行车': '/m/0199g', '停车计价表': '/m/015qbp', '停车计时器': '/m/015qbp',
   '汽车': '/m/0k4j', '车辆': '/m/0k4j', '桥': '/m/015kr', '船': '/m/019jd', '棕榈树': '/m/0cdl1',
   '山': '/m/09d_r', '山丘': '/m/09d_r', '消防栓': '/m/01pns0', '楼梯': '/m/01lynh',
+  '过街人行道': '/m/014xcs', '人行道': '/m/014xcs', '小轿车': '/m/0k4j', '轿车': '/m/0k4j', '大巴': '/m/01bjv',
+  '摩托': '/m/04_sv', '火车': '/m/07jdr', '卡车': '/m/07r04', '飞机': '/m/0cmf2', '商店': '/m/02y_9m3',
+  '店面': '/m/02y_9m3', '店面门脸': '/m/02y_9m3', '邮箱': '/m/04w5f', '交通信号灯': '/m/015qff',
   'taxis': '/m/0pg52', 'taxi': '/m/0pg52', 'bus': '/m/01bjv', 'buses': '/m/01bjv', 'school bus': '/m/02yvhj',
   'motorcycles': '/m/04_sv', 'motorcycle': '/m/04_sv', 'tractors': '/m/013xlm', 'tractor': '/m/013xlm',
   'chimneys': '/m/01jk_4', 'chimney': '/m/01jk_4', 'crosswalks': '/m/014xcs', 'crosswalk': '/m/014xcs',
@@ -53,6 +58,7 @@ export const QUESTION_ID_MAP: Record<string, string> = {
   'bridges': '/m/015kr', 'bridge': '/m/015kr', 'boats': '/m/019jd', 'boat': '/m/019jd',
   'palm trees': '/m/0cdl1', 'palm tree': '/m/0cdl1', 'mountains or hills': '/m/09d_r', 'mountains': '/m/09d_r',
   'hills': '/m/09d_r', 'fire hydrant': '/m/01pns0', 'fire hydrants': '/m/01pns0', 'stairs': '/m/01lynh',
+  'trucks': '/m/07r04', 'trains': '/m/07jdr', 'airplanes': '/m/0cmf2', 'mailboxes': '/m/04w5f', 'storefronts': '/m/02y_9m3',
 }
 
 /** 提示文字 → 问题 ID（先精确匹配，再子串包含；未覆盖返回 null） */
@@ -98,7 +104,7 @@ async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
   return (await img.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
 }
 
-/** 单轮：读提示语 → 截图网格 → 分类 → 点格子（含小图刷新二次识别）→ 点验证；opts 透传给 solveGrid 做成本记账 */
+/** 单轮：读提示语 → 截图网格 → 分类（空数组重试一次）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证；opts 透传给 solveGrid 做成本记账 */
 async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
   // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS
   let prompt = ''
@@ -114,28 +120,58 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   const tiles = ch.locator(TILE_SELECTOR)
   const tileCount = await tiles.count()
   const size = tileCount === 16 ? 450 : 300
-  const shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png' })
-  const b64 = await toStandardBase64(shot, size)
-  const result = await deps.captcha.solveGrid(b64, qid, { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
+  // 网格截图 10s 超时，失败 1 秒后重试一次，仍失败抛错（真机窗口 93 曾 30s 超时——元素动画中不稳定）
+  const shotGrid = async (): Promise<Buffer> => {
+    let shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+    if (!shot) {
+      deps.logger.warn('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
+      await deps.page.waitForTimeout(1000)
+      shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+    }
+    if (!shot) throw new Error('九宫格网格截图重试后仍失败')
+    return shot
+  }
+  const b64 = await toStandardBase64(await shotGrid(), size)
+  const passOpts = { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) }
+  let result = await deps.captcha.solveGrid(b64, qid, passOpts)
   if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
+  // 分类空数组重试一次（重新截图再识别）；仍为空才点 verify 让 Google 换题
+  if (result.objects.length === 0) {
+    deps.logger.warn('九宫格分类返回空数组，1 秒后重新截图重试分类')
+    await deps.page.waitForTimeout(1000)
+    const retryB64 = await toStandardBase64(await shotGrid(), size)
+    result = await deps.captcha.solveGrid(retryB64, qid, passOpts)
+    if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
+    if (result.objects.length === 0) deps.logger.warn('九宫格分类重试仍为空数组，直接验证等待 Google 换题')
+  }
   deps.logger.info({ objects: result.objects, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
+    let before = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
     await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
     await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
-    // 点击后格子可能刷新新小图（class 无 selected 即刷新）：小图二次识别决定是否再点
+    // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
+    // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 点击可能未注册，重试点击
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
+      const after = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
+      if (before !== after) {
+        const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+        if (!singleShot) break
+        const singleB64 = await toStandardBase64(singleShot, 100)
+        const single = await deps.captcha.solveGrid(singleB64, qid, passOpts)
+        if (single.type === 'single' && single.hasObject) {
+          deps.logger.warn({ idx, recheck: k + 1 }, '九宫格小图刷新后仍含目标，再次点击确认')
+          await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+          await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+          before = after
+          continue
+        }
+        break
+      }
       const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
       if (cls.includes('selected')) break
-      const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png' }).catch(() => null)
-      if (!singleShot) break
-      const singleB64 = await toStandardBase64(singleShot, 100)
-      const single = await deps.captcha.solveGrid(singleB64, qid, { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
-      if (single.type === 'single' && single.hasObject) {
-        await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-        await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
-        continue
-      }
-      break
+      deps.logger.warn({ idx }, '九宫格点击可能未注册（src 未变且无 selected），重试点击')
+      await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+      await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     }
   }
   await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
@@ -187,7 +223,8 @@ export async function solveRecaptchaGrid(
     if (checked === 'true') return 'solved'
     deps.logger.warn({ round: round + 1 }, '九宫格本轮未通过，继续下一轮')
     challenge = findChallengeFrame(deps.page, opts.siteKeyExclude)
-    await deps.page.waitForTimeout(2000)
+    // 轮间随机 2500-4000ms：Google 对同会话连续验证有风控，需要比固定 2s 更自然的间隔
+    await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1500))
   }
   return 'failed'
 }
