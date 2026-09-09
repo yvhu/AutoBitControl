@@ -16,6 +16,10 @@ import {
   ensureNetwork,
   ensureUsdc,
   ensureSubmitEnabled,
+  waitForOutcome,
+  ArcFaucetTask,
+  SUCCESS_TEXT,
+  CAPTCHA_V2_TEXT,
   NETWORK_DISPLAY_SELECTOR,
   NETWORK_BUTTON_SELECTOR,
   NETWORK_OPTION_SELECTOR,
@@ -41,6 +45,11 @@ interface FakeState {
   usdcChecked: boolean
   submitEnabled: boolean
   optionCount: number
+  texts: Record<string, boolean>
+  /** Network 显示值元素数量（缺省 1；0 模拟元素缺失） */
+  displayCount?: number
+  /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
+  usdcRadioCount?: number
 }
 
 /** 构造注入假依赖的 TaskContext：locator 按选择器路由到假元素，未注册选择器 count=0 */
@@ -56,14 +65,14 @@ function makeCtx(state: FakeState) {
   }
   const elems: Record<string, FakeElem> = {
     [NETWORK_DISPLAY_SELECTOR]: {
-      count: async () => 1,
+      count: async () => state.displayCount ?? 1,
       textContent: async () => state.network,
       isChecked: async () => false,
       isEnabled: async () => true,
       fill: vi.fn(),
     },
     [CURRENCY_RADIO_SELECTOR]: {
-      count: async () => 1,
+      count: async () => state.usdcRadioCount ?? 1,
       textContent: async () => null,
       isChecked: async () => state.usdcChecked,
       isEnabled: async () => true,
@@ -89,6 +98,7 @@ function makeCtx(state: FakeState) {
       first: () => elems[sel] ?? blank,
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    getByText: (t: string) => ({ count: async () => (state.texts[t] ? 1 : 0) }),
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -104,7 +114,7 @@ function makeCtx(state: FakeState) {
   return { ctx, clicks, log }
 }
 
-const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1 })
+const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {} })
 
 describe('currentNetwork 当前网络读取', () => {
   it('返回下拉显示值', async () => {
@@ -113,6 +123,11 @@ describe('currentNetwork 当前网络读取', () => {
   })
 
   it('元素缺失 → 空串', async () => {
+    const { ctx } = makeCtx({ ...baseState(), displayCount: 0 })
+    expect(await currentNetwork(ctx)).toBe('')
+  })
+
+  it('显示值为空串 → 空串', async () => {
     const { ctx } = makeCtx({ ...baseState(), network: '' })
     expect(await currentNetwork(ctx)).toBe('')
   })
@@ -126,6 +141,11 @@ describe('isUsdcChecked 币种选中读取', () => {
 
   it('radio 未选中 → false', async () => {
     const { ctx } = makeCtx({ ...baseState(), usdcChecked: false })
+    expect(await isUsdcChecked(ctx)).toBe(false)
+  })
+
+  it('radio 元素缺失 → false', async () => {
+    const { ctx } = makeCtx({ ...baseState(), usdcRadioCount: 0 })
     expect(await isUsdcChecked(ctx)).toBe(false)
   })
 })
@@ -159,7 +179,6 @@ describe('ensureNetwork 网络确保', () => {
     const state = { ...baseState(), network: 'Ethereum Sepolia' }
     const { ctx } = makeCtx(state)
     const promise = ensureNetwork(ctx)
-    state.network = 'Ethereum Sepolia'
     await expect(promise).rejects.toThrow('Network 选择失败')
   })
 })
@@ -199,5 +218,47 @@ describe('ensureSubmitEnabled 提交按钮可用等待', () => {
   it('按钮持续禁用 → 超时抛错', async () => {
     const { ctx } = makeCtx({ ...baseState(), submitEnabled: false })
     await expect(ensureSubmitEnabled(ctx, 200)).rejects.toThrow('未变为可用')
+  })
+})
+
+describe('waitForOutcome 竞速等待', () => {
+  it('成功文案先出现 → success', async () => {
+    const state = { ...baseState(), texts: { [SUCCESS_TEXT]: true } }
+    const { ctx } = makeCtx(state)
+    expect(await waitForOutcome(ctx, 300)).toBe('success')
+  })
+
+  it('v2 挑战文案先出现 → captcha', async () => {
+    const state = { ...baseState(), texts: { [CAPTCHA_V2_TEXT]: true } }
+    const { ctx } = makeCtx(state)
+    expect(await waitForOutcome(ctx, 300)).toBe('captcha')
+  })
+
+  it('两文案都出现 → success 优先', async () => {
+    const state = { ...baseState(), texts: { [SUCCESS_TEXT]: true, [CAPTCHA_V2_TEXT]: true } }
+    const { ctx } = makeCtx(state)
+    expect(await waitForOutcome(ctx, 300)).toBe('success')
+  })
+
+  it('都未出现 → null（超时）', async () => {
+    const { ctx } = makeCtx(baseState())
+    expect(await waitForOutcome(ctx, 300)).toBeNull()
+  })
+})
+
+describe('ArcFaucetTask 元信息', () => {
+  it('meta 契约正确', () => {
+    const t = new ArcFaucetTask()
+    expect(t.meta.key).toBe('faucet-arc')
+    expect(t.meta.name).toBe('Arc 领水')
+    expect(t.meta.url).toBe('https://faucet.circle.com/')
+    expect(t.meta.sourceUrl).toBe('https://faucet.circle.com/')
+    expect(t.meta.category).toBe('faucet')
+    expect(t.meta.enabled).toBe(true)
+    expect(t.meta.wallet).toBeUndefined()
+    expect(t.meta.timeoutSec).toBe(240)
+    expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
+    expect(t.meta.captcha).toEqual({ auto: true })
+    expect(t.meta.concurrency).toBe(3)
   })
 })

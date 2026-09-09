@@ -83,3 +83,75 @@ export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_E
   }
   throw new Error(`提交按钮 ${timeoutMs}ms 内未变为可用（地址校验未通过？）`)
 }
+
+/** 竞速等待：成功文案 / v2 挑战文案谁先出现（都未出现返回 null；textPresent 即时判断轮询）*/
+export async function waitForOutcome(ctx: TaskContext, timeoutMs: number): Promise<'success' | 'captcha' | null> {
+  const end = Date.now() + timeoutMs
+  while (Date.now() < end) {
+    if (await ctx.textPresent(SUCCESS_TEXT)) return 'success'
+    if (await ctx.textPresent(CAPTCHA_V2_TEXT)) return 'captcha'
+    await ctx.page.waitForTimeout(1000)
+  }
+  return null
+}
+
+/** 点提交并竞速等待结果 */
+async function submitAndWait(ctx: TaskContext): Promise<'success' | 'captcha' | null> {
+  await ctx.human.click(SUBMIT_SELECTOR)
+  return waitForOutcome(ctx, SUBMIT_RACE_MS)
+}
+
+/** Arc 领水主流程（模块级函数：任务类委托它，集成测试可直接覆盖）*/
+async function runArcFaucet(ctx: TaskContext): Promise<void> {
+  // 开始前清理：关闭其它标签页（上次会话残留），再从干净状态打开任务网址
+  await ctx.closeOtherTabs()
+  await ctx.goto()
+  await ctx.assertVisible(ADDRESS_SELECTOR, 20000)
+  // 钱包地址按窗口从数据源读取（严格模式：缺行/缺列/空值即任务失败——数据没备齐不该硬跑）
+  const address = await ctx.account('metamask钱包地址')
+  await ctx.page.locator(ADDRESS_SELECTOR).first().fill(address)
+  await ensureNetwork(ctx)
+  await ensureUsdc(ctx)
+  await ensureSubmitEnabled(ctx)
+  // 提交：v3 常驻不打码（浏览器自行生成 token）；被拒后站点动态注入 v2 挑战
+  let outcome = await submitAndWait(ctx)
+  if (outcome === 'captcha') {
+    ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，yescaptcha 打码')
+    await ctx.solveCaptcha()
+    await ensureSubmitEnabled(ctx)
+    outcome = await submitAndWait(ctx)
+    if (outcome === 'captcha') throw new Error('打码后再次提交仍触发 v2 挑战（token 未生效）')
+  }
+  if (outcome !== 'success') throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案（v2 挑战也未出现）`)
+  // 成功截图留档；截图失败只告警，不判任务失败（真机偶发等字体加载超时）
+  try {
+    await ctx.screenshot('arc-faucet-success')
+  } catch (e) {
+    ctx.log.warn({ step: 'faucet', window: ctx.profile.name, err: (e as Error).message }, '成功截图失败（不影响任务结果）')
+  }
+}
+
+/** Arc 领水任务（Circle 测试网水龙头：Arc Testnet 领取 20 testnet USDC）*/
+export class ArcFaucetTask extends SiteTask {
+  meta: TaskMeta = {
+    key: 'faucet-arc',
+    name: 'Arc 领水',
+    url: 'https://faucet.circle.com/',
+    sourceUrl: 'https://faucet.circle.com/',
+    note: '页面核实（2026-09-09 SSR）：表单 input[name="address"] + form button[type="submit"]（文案 Send 20 USDC，地址校验前 disabled）；Network 下拉 button[name="network"] 默认 Arc Testnet（非默认才改，选项按文本匹配）；币种 input[name="currency"][value="USDC"] 默认选中（非默认才点 [data-testid="select-card-USDC"]）；验证码 reCAPTCHA v3 无形（常驻 api.js 不主动打码）+ v2 回退挑战（提交被拒后动态注入，出现 v2 文案才 yescaptcha 打码再提交）；成功文案 "is on its way to your wallet and should appear shortly"；限频每资产×网络 1-2 小时一次（不做判定，用户隔天执行）；不连钱包，地址取自数据源「metamask钱包地址」列',
+    category: 'faucet',
+    lastUpdated: '2026-09-09',
+    enabled: true,
+    // 不连钱包：只填地址，不配置 wallet
+    timeoutSec: 240,
+    // 短退避：领水任务重试成本低，撞限频/网络抖动重试两次收敛
+    retry: { max: 2, backoffSec: 120 },
+    captcha: { auto: true },
+    // 公共水龙头保守并发：多窗口各自 IP，3 路并行避免触发平台风控
+    concurrency: 3,
+  }
+
+  async run(ctx: TaskContext): Promise<void> {
+    await runArcFaucet(ctx)
+  }
+}
