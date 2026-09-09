@@ -136,6 +136,7 @@ export class ArcFaucetTask extends SiteTask {
   meta: TaskMeta = {
     key: 'faucet-arc',
     name: 'Arc 领水',
+    group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
     note: '页面核实（2026-09-09 SSR）：表单 input[name="address"] + form button[type="submit"]（文案 Send 20 USDC，地址校验前 disabled）；Network 下拉 button[name="network"] 默认 Arc Testnet（非默认才改，选项按文本匹配）；币种 input[name="currency"][value="USDC"] 默认选中（非默认才点 [data-testid="select-card-USDC"]）；验证码 reCAPTCHA v3 无形（常驻 api.js 不主动打码）+ v2 回退挑战（提交被拒后动态注入，出现 v2 文案才 yescaptcha 打码再提交）；成功文案 "is on its way to your wallet and should appear shortly"；限频每资产×网络 1-2 小时一次（不做判定，用户隔天执行）；不连钱包，地址取自数据源「metamask钱包地址」列',

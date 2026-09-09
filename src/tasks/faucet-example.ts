@@ -7,6 +7,7 @@ export class FaucetExampleTask extends SiteTask {
   meta: TaskMeta = {
     key: 'faucet-example',
     name: '示例领水',
+    group: { key: 'example', name: '示例' },
     url: '',
     sourceUrl: '',
     note: '示例任务：url 为空且开关默认关闭，调试时打开面板开关或用 task:run；水龙头一般每 24h 限领一次；邮箱优先取数据源「邮箱」列（config/accounts.xlsx，无则 faker 随机）',

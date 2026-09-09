@@ -7,6 +7,7 @@ export class MintExampleTask extends SiteTask {
   meta: TaskMeta = {
     key: 'mint-example',
     name: '示例铸币',
+    group: { key: 'example', name: '示例' },
     url: '',
     sourceUrl: '',
     note: '示例任务：url 为空且开关默认关闭，调试时打开面板开关或用 task:run；多步骤表单站点常见"下一步"按钮无 loading 提示',

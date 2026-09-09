@@ -137,6 +137,7 @@ export class ShelbyFaucetTask extends SiteTask {
   meta: TaskMeta = {
     key: 'shelby-faucet',
     name: 'Shelby 领水',
+    group: { key: 'shelby', name: 'Shelby' },
     url: 'https://docs.shelby.xyz/apis/faucet/aptos',
     sourceUrl: ['https://docs.shelby.xyz/apis/faucet/aptos', 'https://docs.shelby.xyz/apis/faucet/shelbyusd'],
     note: '真机核实（2026-09-07）：两文档页表单一致（input[name="address"] + Fund 按钮）；接口 POST faucet.shelbynet.shelby.xyz/fund（USD 带 ?asset=shelbyusd）；限额每币种 5 次/每窗口 IP 合计 10 次/天（429 UsageLimitExhausted 视为成功提前退出，重跑幂等）；成功响应 txn_hashes 非空；成功 toast 插入会致下一轮点击偶发落空——响应超时自动补点一次；任务截图偶发等字体超时已非致命化；地址 fill 直填（等价粘贴）；网络选择器保持默认 Shelbynet；全程无验证码；不连钱包，地址取自数据源「petra钱包地址」列',

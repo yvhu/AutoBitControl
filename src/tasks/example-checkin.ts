@@ -8,6 +8,7 @@ export class ExampleCheckinTask extends SiteTask {
     key: 'example-checkin',
     // 面板任务页显示名
     name: '示例签到',
+    group: { key: 'example', name: '示例' },
     // 站点入口页 URL（任务从这里开始）
     url: '',
     // 信息来源页：选择器是从哪个页面确认的，站点改版时回这里重查

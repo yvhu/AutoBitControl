@@ -92,6 +92,7 @@ export class ShelbyExplorerTask extends SiteTask {
   meta: TaskMeta = {
     key: 'xyz-shelbynet',
     name: 'shelbynet 上传任务',
+    group: { key: 'shelby', name: 'Shelby' },
     url: 'https://explorer.shelby.xyz/shelbynet',
     sourceUrl: 'https://cryptorank.io/zh/drophunting/shelby-activity1120',
     note: '真机核实（2026-09-07）：站内钱包弹窗为 Petra Web（Aptos Labs）自定义弹窗非 AppKit，点弹窗内 Connect（Aptos 标签默认=Petra 入口）后静默连接登录（扩展已授权无钱包弹窗），登录结果以 header 0x 地址按钮为准（首页表格全是 0x 文案，不能用全页文本判定）；登录态不跨浏览器会话，每次开窗重新登录；上传入口在账号页 /shelbynet/account/<petra钱包地址>/blobs 的 Upload Files 按钮（点 header 地址是下拉菜单）；上传弹窗 file input 为隐藏元素（setInputFiles 可用）；选文件后站点立即做 blob 名查重（真机核实 2026-09-07）：已上传 → 弹窗内直接显示 Error: Blob name already taken 且 Upload 按钮永不启用、无签名弹窗 → 短路视为成功（不点 Upload）；未上传 → chunkset 结算渲染后 Upload 按钮才启用，点后两次 prompt.html 签名弹窗先后出现（第一次可能锁屏输密码+Unlock→Approve，第二次直接 Approve），钱包网络已是 Shelbynet 无需切链；成功判定 All files uploaded successfully；文件一次性（blob name 唯一）：重复上传报 Blob name already taken 视为成功；上传文件取自数据源「文件地址」列、账号页地址取自「petra钱包地址」列（严格模式，缺列/空值即失败）；上传中不刷新防打断在途请求；成功截图等字体加载偶发超时已非致命化',
