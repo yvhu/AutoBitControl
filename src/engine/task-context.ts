@@ -462,8 +462,6 @@ export class TaskContext {
     return runRecaptchaGrid({ page: this.page, captcha: this.deps.captcha, logger: this.turnstileLogger(), human: this.human }, {
       maxRounds: opts?.maxRounds,
       siteKeyExclude: opts?.siteKeyExclude,
-      profileId: this.deps.profile.id,
-      taskKey: this.deps.task.meta.key,
       onLog: (kind, ok, costPoints) => {
         this.deps.onCaptchaLog?.(kind, ok, costPoints)
       },

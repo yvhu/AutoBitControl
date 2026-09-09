@@ -181,7 +181,7 @@ export class YesCaptchaClient {
    */
   classifyGrid(image: string, questionId: string, confidence?: number): Promise<GridResult> {
     const run = async (): Promise<GridResult> => {
-      const taskId = await this.createTask({ type: 'ReCaptchaV2Classification', image, question: questionId, ...(confidence === undefined ? {} : { confidence }) })
+      const taskId = await this.createTask({ type: this.taskTypes.recaptcha_v2_grid ?? 'ReCaptchaV2Classification', image, question: questionId, ...(confidence === undefined ? {} : { confidence }) })
       const deadline = Date.now() + this.cfg.solveTimeoutMs
       while (Date.now() < deadline) {
         const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
@@ -237,9 +237,10 @@ export class CaptchaService {
 
   /**
    * 九宫格分类解题（模拟点击路线的识别步骤）：余额校验 → classifyGrid → 成本记账
+   * @param opts.onLog 成本回调（成功/失败都记 captcha_logs）；confidence 可选置信度阈值
    * 语义同 autoSolve：失败抛 CaptchaFailure（调用方归为 captcha_failed 终态）
    */
-  async solveGrid(image: string, questionId: string, opts: { confidence?: number; profileId: number | null; taskKey: string | null; onLog: (kind: string, ok: boolean, costPoints: number) => void }): Promise<GridResult> {
+  async solveGrid(image: string, questionId: string, opts: { confidence?: number; onLog: (kind: string, ok: boolean, costPoints: number) => void }): Promise<GridResult> {
     try {
       await this.client.ensureBalance(this.cfg.maxCostPerTask)
       const r = await this.client.classifyGrid(image, questionId, opts.confidence)

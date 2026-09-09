@@ -34,6 +34,13 @@ import {
 import { TaskContext } from '../src/tasks/base'
 import { Humanizer } from '../src/automation/humanize'
 
+// challenge 模式集成测试会跑真实 solveOneRound：诊断落盘与目录清理（pruneDebugDir）都 mock 掉，
+// 防止测试把截图写进 data/screenshots/grid-debug，也防止清理逻辑误删真机诊断文件（readFileSync 保留原实现读 fixture）
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn() }
+})
+
 /** 每个选择器的假元素（count 恒 1 的通用形态；需要可变行为的测试直接改 state 或替换字段） */
 interface FakeElem {
   count: () => Promise<number>

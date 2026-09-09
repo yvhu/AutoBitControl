@@ -9,9 +9,10 @@ import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
 
 // mock node:fs 写盘（recaptcha-grid 的诊断落盘只在真机有意义）：防止测试把 fake 截图写进 data/screenshots/grid-debug
+// 目录清理（pruneDebugDir）同样 mock：existsSync 恒 false 使其早退，避免测试清空真机诊断目录
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
-  return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn() }
+  return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn() }
 })
 import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, toStandardBase64, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
 import { CaptchaFailure } from '../src/integrations/yescaptcha'
@@ -153,6 +154,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
     /** 按格子索引覆盖行为；clickImpl 在点击时执行（模拟点击后 img src 变化），不影响 tileClicks 断言 */
     tileBehaviors?: Record<number, ElemBehavior & { clickImpl?: () => void }>
     anchorAppearsOnFrameCall?: number
+    /** 挑战 frame 从第 N 次 frames() 调用起才出现（模拟锚点重点后 bframe 才注入） */
+    challengeAppearsOnFrameCall?: number
     /** 挑战 frame 的 frameElement 实现（缺省返回 null → 拟人点击回退 locator 直点） */
     challengeFrameElementImpl?: () => Promise<{ evaluate: ReturnType<typeof vi.fn> } | null>
     /** 每格 evaluate 返回的固定盒中心（缺省 null → 拟人点击回退 locator 直点） */
@@ -185,7 +188,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
     for (let i = 0; i < o.tileCount; i++) {
       const { clickImpl, ...extra } = o.tileBehaviors?.[i] ?? {}
       if (clickImpl) tileClicks[i] = vi.fn().mockImplementation(async () => { clickImpl() })
-      tileNth[i] = { click: tileClicks[i], attrs: { class: 'rc-imageselect-tile selected' }, box: o.tileBox ?? null, ...extra }
+      // count 缺省 1：真实格子 td 内必有 img（waitTileStable 先查 img 存在才轮询 src 稳定）
+      tileNth[i] = { click: tileClicks[i], attrs: { class: 'rc-imageselect-tile selected' }, box: o.tileBox ?? null, count: 1, ...extra }
     }
     // 刷新换图按钮与验证按钮独立 click mock（供「换图重试」「不点 verify」断言）
     const reloadClick = vi.fn().mockResolvedValue(undefined)
@@ -207,7 +211,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
         framesCalls++
         return [
           ...(o.anchorPresent && framesCalls >= (o.anchorAppearsOnFrameCall ?? 1) ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator, frameElement: a.frameElement })) : []),
-          ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator, frameElement: challenge.frameElement }] : []),
+          ...(o.challengePresent && framesCalls >= (o.challengeAppearsOnFrameCall ?? 1) ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator, frameElement: challenge.frameElement }] : []),
         ]
       },
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
@@ -248,8 +252,10 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const [imageArg, questionArg] = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(questionArg).toBe('/m/015qbp')
     expect(imageArg).toMatch(/^[A-Za-z0-9+/=]+$/)
-    // 成本记账缺省透传为 null（向后兼容）
-    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).toMatchObject({ profileId: null, taskKey: null })
+    // 成本记账回调缺省为空实现（向后兼容）；死参数 profileId/taskKey 不再透传
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).toMatchObject({ onLog: expect.any(Function) })
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).not.toHaveProperty('profileId')
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).not.toHaveProperty('taskKey')
     // 点选行为断言：objects=[0,2] 时索引 0/2 各点一次、其余格子不点（删除点选循环会在此失败）
     expect(tileClicks[0]).toHaveBeenCalledTimes(1)
     expect(tileClicks[2]).toHaveBeenCalledTimes(1)
@@ -293,16 +299,18 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(tileClicks[0]).toHaveBeenCalledTimes(1)
   }, 30000)
 
-  it('成本记账透传：opts 的 profileId/taskKey/onLog 传给 solveGrid', async () => {
+  it('成本记账透传：opts 的 onLog 原样传给 solveGrid（profileId/taskKey 死参数不再透传）', async () => {
     const gridBuf = await makePngBuffer(300)
     const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf })
     const onLog = vi.fn()
     await expect(solveRecaptchaGrid(
       { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
-      { profileId: 7, taskKey: 'checkin:faucet', onLog },
+      { onLog },
     )).resolves.toBe('solved')
     const optsArg = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]
-    expect(optsArg).toMatchObject({ profileId: 7, taskKey: 'checkin:faucet', onLog })
+    expect(optsArg.onLog).toBe(onLog)
+    expect(optsArg).not.toHaveProperty('profileId')
+    expect(optsArg).not.toHaveProperty('taskKey')
     expect(optsArg).not.toHaveProperty('confidence')
   }, 30000)
 
@@ -321,6 +329,34 @@ describe('solveRecaptchaGrid 求解循环', () => {
     )).resolves.toBe('solved')
     expect(anchorFrames[0].click).not.toHaveBeenCalled()
     expect(anchorFrames[1].click).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('挑战 frame 始终未出现且未变绿 → 每轮重点 1 次锚点自纠，轮数耗尽 failed', async () => {
+    const { page, captcha, logger, anchorFrames } = makeDeps({ challengePresent: false })
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { maxRounds: 2 },
+    )).resolves.toBe('failed')
+    // 初始点击 1 次 + 每轮重点 1 次（2 轮）：共 3 次锚点点击；不点验证不进分类
+    expect(anchorFrames[0].click).toHaveBeenCalledTimes(3)
+    expect(captcha.solveGrid).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith({ round: 1 }, '挑战 frame 未出现且未变绿，重点一次锚点自纠')
+    expect(logger.warn).toHaveBeenCalledWith({ round: 2 }, '挑战 frame 未出现且未变绿，重点一次锚点自纠')
+  }, 30000)
+
+  it('锚点重点自纠生效：挑战 frame 延迟出现 → 继续求解成功（不 failed）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    // 初始等待与首轮重查都找不到挑战（前 40 次 frames() 调用无 bframe），重点锚点后出现
+    const { page, captcha, logger, anchorFrames, verifyClick } = makeDeps({ gridScreenshotBuf: gridBuf, challengeAppearsOnFrameCall: 40 })
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { maxRounds: 2 },
+    )).resolves.toBe('solved')
+    // 初始点击 + 1 次重点自纠；重点后挑战出现并完成一轮求解
+    expect(anchorFrames[0].click).toHaveBeenCalledTimes(2)
+    expect(logger.warn).toHaveBeenCalledWith({ round: 1 }, '挑战 frame 未出现且未变绿，重点一次锚点自纠')
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
+    expect(verifyClick).toHaveBeenCalledTimes(1)
   }, 30000)
 
   it('提示语首次读空、稍后渲染完成 → 等待重读后正常求解（不抛「提示文字未找到」）', async () => {
@@ -631,6 +667,22 @@ describe('solveRecaptchaGrid 求解循环', () => {
     // 确认流程只处理一次：小图二次识别恰好 1 次（multi + single 共 2 次分类）、该格只点 1 次（动画未稳定时不提前判定 src 变化）
     expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
     expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('格子 img 元素缺失时不轮询等待稳定（空串恒等假稳定不成立）：点击后直接进入验证前稳定等待', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0] },
+      tileBehaviors: { 0: { count: 0 } },
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    // 序列：挑战轮询 500 → 截图前 1500-2500 → shotGrid 内部 800 → 验证前 3000-5000 → 验证后 2500-3500
+    // （无 img 稳定性 500ms 轮询：img 缺失时若仍轮询 src，空串恒等会立刻假稳定——此断言失败说明修复退化）
+    expect(waits).toHaveLength(5)
+    expect(waits[3]).toBeGreaterThanOrEqual(3000)
+    expect(waits[3]).toBeLessThanOrEqual(5000)
   }, 30000)
 
   it('verify 前有稳定等待：点验证前 waitForTimeout 取 3000-5000ms（全体格子动画收尾），点后保持 2500-3500ms', async () => {

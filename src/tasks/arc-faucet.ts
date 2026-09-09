@@ -150,6 +150,7 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   if (outcome === 'captcha') {
     ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，走九宫格模拟点击')
     const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY })
+    if (grid === 'none') throw new Error('未检测到验证码锚点 frame（打码服务未注入或无 anchor iframe）')
     if (grid === 'failed') throw new Error('九宫格模拟点击失败（多轮未通过）')
     // widget 完成后站点恢复提交按钮；再提交一次
     await ensureSubmitEnabled(ctx)
@@ -172,7 +173,7 @@ export class ArcFaucetTask extends SiteTask {
     group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
-    note: '真机核实（2026-09-09 rev2）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行（yescaptcha 官方：协议接口非 100% 通过），改走 ReCaptchaV2Classification 九宫格模拟点击（点复选框 → 截图网格 → 分类坐标 → 点选 → 验证 → aria-checked 循环，图片点完 100% 通过）；提示语映射覆盖常见 16+ 类（中英），未覆盖提示语任务失败；限频每资产×网络 1-2 小时一次且失败请求也计数（不做判定，用户隔天执行）；不连钱包，地址取自数据源「metamask钱包地址」列',
+    note: '真机核实（2026-09-09 rev2）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行（yescaptcha 官方：协议接口非 100% 通过），改走 ReCaptchaV2Classification 九宫格模拟点击（点复选框 → 截图网格 → 分类坐标 → 点选 → 验证 → aria-checked 循环）；九宫格路线受分类平台 4x4 识别能力与 Google 风控限制，挑战窗口实际靠重试后的新会话 v3 直过（真机批量 15 窗口 8 成功）；提示语映射覆盖常见 16+ 类（中英），未覆盖提示语任务失败；限频每资产×网络 1-2 小时一次且失败请求也计数（不做判定，用户隔天执行）；不连钱包，地址取自数据源「metamask钱包地址」列',
     category: 'faucet',
     lastUpdated: '2026-09-09',
     enabled: true,

@@ -257,6 +257,19 @@ describe('YesCaptchaClient.classifyGrid 九宫格分类', () => {
     expect(r).toEqual({ type: 'multi', objects: [1, 5, 8] })
   })
 
+  it('任务类型走 taskTypes.recaptcha_v2_grid 映射（未配置时才回落 ReCaptchaV2Classification）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (String(url).includes('createTask')) {
+        const body = JSON.parse(String(init.body))
+        expect(body.task.type).toBe('CustomGridTask')
+        return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { objects: [1], type: 'multi' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, { recaptcha_v2_grid: 'CustomGridTask' })
+    await expect(client.classifyGrid('b64', '/m/0k4j')).resolves.toEqual({ type: 'multi', objects: [1] })
+  })
+
   it('single 结果解析 hasObject', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
@@ -299,12 +312,12 @@ describe('CaptchaService.solveGrid 记账', () => {
     const client = { ensureBalance: vi.fn().mockResolvedValue(undefined), classifyGrid: vi.fn().mockResolvedValue({ type: 'multi', objects: [0] }) }
     const onLog = vi.fn()
     const service = new CaptchaService(client as never, { maxCostPerTask: 1500 })
-    const r = await service.solveGrid('b64', '/m/0k4j', { profileId: null, taskKey: null, onLog, confidence: 0.5 })
+    const r = await service.solveGrid('b64', '/m/0k4j', { onLog, confidence: 0.5 })
     expect(r).toEqual({ type: 'multi', objects: [0] })
     expect(client.classifyGrid).toHaveBeenCalledWith('b64', '/m/0k4j', 0.5)
     expect(onLog).toHaveBeenCalledWith('recaptcha_v2_grid', true, 6)
     client.classifyGrid.mockRejectedValueOnce(new CaptchaFailure('余额不足'))
-    await expect(service.solveGrid('b64', '/m/0k4j', { profileId: null, taskKey: null, onLog })).rejects.toThrow(CaptchaFailure)
+    await expect(service.solveGrid('b64', '/m/0k4j', { onLog })).rejects.toThrow(CaptchaFailure)
     expect(onLog).toHaveBeenCalledWith('recaptcha_v2_grid', false, 6)
   })
 })

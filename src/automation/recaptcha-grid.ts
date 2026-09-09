@@ -1,7 +1,8 @@
 /**
  * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 容器元素截图网格 → yescaptcha 分类 →
  * 按坐标点选（点击后轮询等该格 img 稳定（src 连续两次相同）→ 按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
- * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿
+ * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿；
+ * 挑战 frame 未出现且未变绿时每轮重点 1 次锚点自纠（窗口 92 实证首次点击可能未注册）
  * 真机核实（2026-09-09，faucet.circle.com）：挑战为 reCAPTCHA Enterprise
  * （anchor iframe: recaptcha/enterprise/anchor；网格 iframe: recaptcha/enterprise/bframe），
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
@@ -20,7 +21,7 @@
  */
 import type { Page, Frame } from 'patchright'
 import Jimp from 'jimp'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CaptchaService, GridResult } from '../integrations/yescaptcha'
 import type { Logger } from '../infrastructure/logger'
@@ -53,6 +54,8 @@ export const SINGLE_RECHECK_MAX = 2
 export const PROMPT_WAIT_TIMEOUT_MS = 10000
 /** 提示语轮询间隔（毫秒） */
 export const PROMPT_POLL_MS = 500
+/** grid-debug 诊断目录文件数上限：写盘前超过则清空目录（保留诊断能力、防磁盘累积） */
+const GRID_DEBUG_MAX_FILES = 40
 
 /** 提示语 → 问题 ID 映射（中英双语；官方中文表 + DEMO 英文表合并；未覆盖的提示语任务会失败，按日志扩充） */
 export const QUESTION_ID_MAP: Record<string, string> = {
@@ -181,6 +184,8 @@ async function readTileSrc(ch: Frame, idx: number): Promise<string> {
 
 /** 轮询等待格子 img 稳定（src 连续两次相同；最多 timeoutMs）——Google 点击后刷新小图有动画，未稳定时不能继续 */
 async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000): Promise<void> {
+  // img 元素不存在时（该格无小图）直接返回不等待：空串恒等是假稳定，src 轮询无意义
+  if ((await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().count().catch(() => 0)) === 0) return
   const end = Date.now() + timeoutMs
   let prev = await readTileSrc(ch, idx)
   while (Date.now() < end) {
@@ -191,14 +196,23 @@ async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, time
   }
 }
 
+/** grid-debug 诊断目录防膨胀：文件数超过上限则清空目录（fs 操作 try/catch 静默，清理失败不影响任务） */
+function pruneDebugDir(debugDir: string, maxFiles: number): void {
+  try {
+    if (!existsSync(debugDir)) return
+    if (readdirSync(debugDir).length <= maxFiles) return
+    for (const f of readdirSync(debugDir)) unlinkSync(join(debugDir, f))
+  } catch { /* 清理失败静默 */ }
+}
+
 /**
  * 单轮：读提示语 → 截图网格 → 分类（可重试块：空数组/抛错时点刷新换图，每轮最多 RELOAD_MAX 次，
  * 换图后提示语可能变化必须重读）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证
  * 刷新重试后仍空数组：记 warn 返回（不点 verify，主循环查 aria-checked 未通过则下一轮）
- * 刷新重试后仍抛错：抛错（任务失败）；opts 透传给 solveGrid 做成本记账
+ * 刷新重试后仍抛错：抛错（任务失败）；opts.onLog 透传给 solveGrid 做成本记账
  */
-async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
-  const passOpts = { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) }
+async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
+  const passOpts = { onLog: opts.onLog ?? (() => {}) }
   // 网格截图 10s 超时，失败 1 秒后重试一次，仍失败抛错（真机窗口 93 曾 30s 超时——元素动画中不稳定）
   const shotGrid = async (): Promise<Buffer> => {
     // 截图前先等 800ms：等上一动作/动画稳定（真机网格渲染未完成时截图内容错乱）
@@ -214,7 +228,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   }
   let result: GridResult | null = null
   let qid = ''
-  let tiles = ch.locator(TILE_SELECTOR)
+  // tiles 每次分类重试都重建（换图后 DOM 全换），声明不放初值（循环内首行即赋值）
+  let tiles: ReturnType<Frame['locator']>
   // 分类可重试块：空数组/抛错（如 ERROR_GARBAGE_SAMPLE 图片质量差）→ 点刷新换图重试
   for (let reload = 0; ; reload++) {
     // 提示语等待重读：bframe 注入后网格 DOM 可能未渲染完（首读空串），最多等 PROMPT_WAIT_TIMEOUT_MS；
@@ -239,6 +254,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     const debugDir = join(process.cwd(), 'data', 'screenshots', 'grid-debug')
     try {
       mkdirSync(debugDir, { recursive: true })
+      pruneDebugDir(debugDir, GRID_DEBUG_MAX_FILES)
       writeFileSync(join(debugDir, `grid-raw-${Date.now()}.png`), shot)
     } catch { /* 诊断写盘失败静默 */ }
     const std = await (await toStandardImage(shot, tileCount === 16 ? 450 : 300)).getBufferAsync(Jimp.MIME_PNG)
@@ -320,12 +336,12 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
  * 点复选框 → 等挑战 → 循环（读提示语 → 分类 → 点选 → 验证 → 查 aria-checked）→ 变绿返回 solved
  * @param opts.maxRounds 最大轮数（缺省 MAX_ROUNDS）
  * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点/bframe：避免误选 v3 复选框点击无效果）
- * @param opts.profileId/taskKey/onLog 透传给 solveGrid 做成本记账（缺省 null/空实现，向后兼容）
+ * @param opts.onLog 分类成本记账回调，透传给 solveGrid（缺省空实现）
  * @returns 'none' 无锚点 frame；'solved' 通过；'failed' 轮数耗尽（提示语未覆盖等异常直接抛错）
  */
 export async function solveRecaptchaGrid(
   deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer },
-  opts: { maxRounds?: number; siteKeyExclude?: string; profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
+  opts: { maxRounds?: number; siteKeyExclude?: string; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
 ): Promise<'solved' | 'none' | 'failed'> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS
   // iframe 元素已插入 DOM 但 CDP frame 可能未附着（真机窗口 97 实测）——轮询等附着
@@ -353,10 +369,28 @@ export async function solveRecaptchaGrid(
     }
   }
   for (let round = 0; round < maxRounds; round++) {
-    const ch = challenge ?? findChallengeFrame(deps.page, opts.siteKeyExclude)
+    let ch = challenge ?? findChallengeFrame(deps.page, opts.siteKeyExclude)
     if (!ch) {
+      // 挑战 frame 为 null 且 aria-checked≠true：锚点首次点击可能未注册（真机窗口 92 实证）——
+      // 每轮重点 1 次锚点自纠再查（拟人坐标点击优先，locator 直点兜底），仍无挑战则进下一轮
       const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
-      return checked === 'true' ? 'solved' : 'failed'
+      if (checked === 'true') { deps.logger.info('九宫格一键通过（未出图）'); return 'solved' }
+      deps.logger.warn({ round: round + 1 }, '挑战 frame 未出现且未变绿，重点一次锚点自纠')
+      if (!(await humanClickInFrame(deps, anchor, ANCHOR_SELECTOR))) {
+        await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch((e) => {
+          deps.logger.warn({ err: (e as Error).message }, '锚点重点失败（继续轮询挑战 frame）')
+        })
+      }
+      // 重点后轮询等挑战 frame 出现；期间锚点直接变绿即一键通过
+      for (let i = 0; i < 30 && !ch; i++) {
+        await deps.page.waitForTimeout(500)
+        ch = findChallengeFrame(deps.page, opts.siteKeyExclude)
+        if (!ch) {
+          const checkedAfter = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
+          if (checkedAfter === 'true') { deps.logger.info('九宫格一键通过（未出图）'); return 'solved' }
+        }
+      }
+      if (!ch) continue
     }
     await solveOneRound(deps, ch, opts)
     const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
