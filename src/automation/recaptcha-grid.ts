@@ -1,26 +1,31 @@
 /**
  * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 容器元素截图网格 → yescaptcha 分类 →
- * 按坐标点选（点击后轮询等该格 img 稳定（src 连续两次相同）→ 按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
- * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿；
+ * 按坐标点选（点击后等稳定 → 按 td class 分支：dynamic-selected 轮询等刷新完成再点确认 / tileselected 直接完成 /
+ * 无 selected 记 warn 不重试）→ 点验证前全体动态确认检查 → 验证 → 查 aria-checked → 未通过则下一轮，直到变绿；
  * 挑战 frame 未出现且未变绿时每轮重点 1 次锚点自纠（窗口 92 实证首次点击可能未注册）
  * 真机核实（2026-09-09，faucet.circle.com）：挑战为 reCAPTCHA Enterprise
  * （anchor iframe: recaptcha/enterprise/anchor；网格 iframe: recaptcha/enterprise/bframe），
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
- * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
- * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）；
- * 每格点击后立即启动 3s 变化监测（300ms 轮询读 src，与点击前不同即刷新发生——
- * 捕捉「src 短暂变化后恢复」的瞬时刷新，旧实现点后等稳定再对比会漏掉），
- * 监测到刷新 → 等该格 img 稳定后小图二次识别命中再点确认；未监测到 → 跳过确认、不重试点击；
+ * （yescaptcha 文档页 29786113）为协议来源；真机诊断数据确凿：每次拟人点击都生效
+ * （点击后 td class 变选中态），现代 reCAPTCHA 两类格子——点击后 class 含 dynamic-selected
+ * （图片刷新中，刷新完成后必须再点一次确认才算选中，刷新在点击后 1-6 秒发生）与 tileselected
+ * （直接选中完成）；选点判定以 class 为准、不再依赖 img src（基于 src 变化的监测抓不到该刷新），
+ * 缺失 dynamic-selected 确认点击时 Google 认为选择未完成 → 每轮 select-more → 九宫格 0 通过：
+ * 含 dynamic-selected → 轮询等 class 不再含 dynamic（最多 CONFIRM_WAIT_MS/500ms）→ 拟人点击确认 →
+ * 等 1.5-2.5s → 再读 class：含 selected 且不含 dynamic 完成、仍含 dynamic-selected 再确认
+ * （最多 CONFIRM_MAX 轮）、仍 dynamic 记 warn 继续；含 tileselected（不含 dynamic）直接完成；
+ * 无 selected 字样记 warn「点击未注册」不重试点击（重试点击会取消已选中格；
+ * 点击真未注册由验证按钮补点/select-more 补选兜底）；
  * 全部格子点完后等全体动画收尾再点验证（真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）；
+ * 点 verify 前已点格子 class 仍含 dynamic-selected 再等最多 5s（500ms 轮询），仍存在则 warn 照常 verify；
  * 点 verify 前轮询等验证按钮可见（count>0 且 isVisible，约 8s/500ms，勿用 waitFor 30s 默认超时）：
  * 按钮一直不可见 = 选择未完成（点击未注册）→ 补点本轮 class 不含 selected 的格子后再等（约 5s），
  * 仍不可见则放弃本轮（主循环下一轮处理）；按钮可见后点 verify（拟人坐标点击 + locator 兜底）；
  * 点 verify 后轮询错误提示（最多 5s/500ms）：select-more 系列（选择不完整，Google 未刷题可补选）→
  * 重截图网格用 confidence 0.3 放宽阈值分类补选未点过的格子后重验（每轮最多 2 次，成本经 onLog 记账）；
- * incorrect（选错已刷题）→ 返回主循环下一轮；src 未变且无 selected 时不重试点击、只记 warn
- * （真机 2026-09-09：Google 刷新响应慢时重试点击会取消已选中格；点击真未注册由验证按钮补点/select-more 补选兜底）；
+ * incorrect（选错已刷题）→ 返回主循环下一轮；
  * 每轮结束输出 grid-round-state 状态快照日志（识别目标/点选格/错误提示/换图次数，数据收集用）；
- * 每次点格输出 grid-click-diag 点击诊断日志（点前全网格 src 快照 vs 点后约 1s 快照 → hitTiles 实际命中格 +
+ * 每次点格输出 grid-click-diag 点击诊断日志（点前全网格 src 快照 vs 点后稳定期快照 → hitTiles 实际命中格 +
  * 前后 class）：hitTiles 空 = 未命中；含非目标格 = 坐标漂移到邻居；[idx] = 命中正确（真机漂移定位用）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
  * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
@@ -60,18 +65,22 @@ export const RELOAD_MAX = 2
 export const GRID_SELECTOR = '#rc-imageselect-target'
 /** 最大求解轮数 */
 export const MAX_ROUNDS = 5
-/** 单格小图二次识别最大次数 */
-export const SINGLE_RECHECK_MAX = 2
 /** 点 verify 前轮询等验证按钮可见次数（500ms 间隔，首查立即 ≈ 8s 窗口） */
 export const VERIFY_VISIBLE_POLLS = 16
 /** 补点后再次等验证按钮可见次数（500ms 间隔，首查立即 ≈ 5s 窗口） */
 export const VERIFY_VISIBLE_RETRY_POLLS = 10
 /** 等验证按钮可见轮询间隔（毫秒） */
 const VERIFY_VISIBLE_POLL_INTERVAL_MS = 500
-/** 点击格子后变化监测轮询次数（300ms 间隔，首查立即 ≈ 3s 窗口） */
-export const TILE_REFRESH_WATCH_POLLS = 10
-/** 变化监测轮询间隔（毫秒） */
-const TILE_REFRESH_WATCH_INTERVAL_MS = 300
+/** dynamic-selected 确认点击最多轮数（超出后 warn 继续，select-more 兜底） */
+export const CONFIRM_MAX = 2
+/** 单轮确认前等 dynamic-selected 刷新完成的轮询窗口（毫秒，500ms 间隔轮询） */
+export const CONFIRM_WAIT_MS = 8000
+/** dynamic-selected 确认轮询间隔（毫秒） */
+const CONFIRM_POLL_MS = 500
+/** 等 dynamic-selected 刷新完成轮询次数（500ms 间隔、首查立即 ≈ CONFIRM_WAIT_MS 窗口） */
+const CONFIRM_POLLS = Math.ceil(CONFIRM_WAIT_MS / CONFIRM_POLL_MS)
+/** 点 verify 前全体动态确认检查轮询次数（500ms 间隔，首查立即 ≈ 5s 窗口） */
+const PREVERIFY_DYNAMIC_POLLS = 10
 /** 提示语渲染等待上限（毫秒；bframe 网格 DOM 可能晚于 frame 注入渲染） */
 export const PROMPT_WAIT_TIMEOUT_MS = 10000
 /** 提示语轮询间隔（毫秒） */
@@ -241,9 +250,9 @@ async function reloadImages(deps: { page: Page; human: Humanizer }, ch: Frame): 
   await deps.page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
 }
 
-/** 读格子 img src（img 缺失/读失败返回空串）：带 1s 短超时，防止 locator 对不存在的 img 死等默认 30s 超时 */
-async function readTileSrc(ch: Frame, idx: number): Promise<string> {
-  return (await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().getAttribute('src', { timeout: 1000 }).catch(() => null)) ?? ''
+/** 读格子 td class（读失败返回空串）：带 1s 短超时，防止 locator 对不存在的格子死等默认 30s 超时 */
+async function readTileClass(ch: Frame, idx: number): Promise<string> {
+  return (await ch.locator(TILE_SELECTOR).nth(idx).getAttribute('class', { timeout: 1000 }).catch(() => null)) ?? ''
 }
 
 /** 读全部格子 img src 快照（空串表示该格无 img 或读取失败）：点击诊断用，单次 evaluate 轻量读取 */
@@ -254,38 +263,6 @@ async function snapshotTileSrcs(ch: Frame): Promise<string[]> {
       return img ? img.getAttribute('src') ?? '' : ''
     }),
   )
-}
-
-/** 轮询等待格子 img 稳定（src 连续两次相同；最多 timeoutMs）——Google 点击后刷新小图有动画，未稳定时不能继续 */
-async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000, skipFirstWait = false): Promise<void> {
-  // img 元素不存在时（该格无小图）直接返回不等待：空串恒等是假稳定，src 轮询无意义
-  if ((await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().count().catch(() => 0)) === 0) return
-  const end = Date.now() + timeoutMs
-  let prev = await readTileSrc(ch, idx)
-  let first = true
-  while (Date.now() < end) {
-    // skipFirstWait：首个 500ms 等待已由点击诊断的 1s 等待替代（主流程不额外拉长）
-    if (!(first && skipFirstWait)) await deps.page.waitForTimeout(500)
-    first = false
-    const cur = await readTileSrc(ch, idx)
-    if (cur === prev) return
-    prev = cur
-  }
-}
-
-/**
- * 点击后变化监测：最多 polls 次、每 300ms 读该格 img src，与点击前不同即返回 true（刷新发生）
- * （捕捉「src 短暂变化后恢复」的瞬时刷新：点后直接等稳定再对比会漏掉）
- * img 元素缺失时无可变内容，直接返回 false（与 waitTileStable 同语义，不空转 3s）
- */
-async function watchTileRefresh(deps: { page: Page }, ch: Frame, idx: number, before: string): Promise<boolean> {
-  if ((await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().count().catch(() => 0)) === 0) return false
-  for (let i = 0; i < TILE_REFRESH_WATCH_POLLS; i++) {
-    const cur = await readTileSrc(ch, idx)
-    if (cur !== before) return true
-    if (i < TILE_REFRESH_WATCH_POLLS - 1) await deps.page.waitForTimeout(TILE_REFRESH_WATCH_INTERVAL_MS)
-  }
-  return false
 }
 
 /** 轮询等验证按钮可见（count>0 且 isVisible；用 count/isVisible 而非 waitFor visible 的 30s 默认超时）：最多 polls 次、500ms 间隔，不可见返回 false */
@@ -311,8 +288,8 @@ function pruneDebugDir(debugDir: string, maxFiles: number): void {
 
 /**
  * 单轮：读提示语 → 截图网格 → 分类（可重试块：空数组/抛错时点刷新换图，每轮最多 RELOAD_MAX 次，
- * 换图后提示语可能变化必须重读）→ 点格子（3s 变化监测捕捉瞬时刷新 → 小图二次识别确认）→
- * 等验证按钮可见后点验证 → 错误提示检测
+ * 换图后提示语可能变化必须重读）→ 点格子（点击后等稳定 → 按 td class 分支：dynamic-selected 确认流程 /
+ * tileselected 完成 / 无 selected 记 warn）→ 等验证按钮可见后点验证（点前全体动态确认检查）→ 错误提示检测
  * （按钮 8s 不可见 → 补点本轮未选中格后再等 5s，仍不可见放弃本轮；
  * select-more 选择不完整：放宽阈值 confidence 0.3 补选未点格子后重验，最多 SUPPLEMENT_MAX 次；
  * incorrect 选错：Google 已刷题，返回主循环下一轮）
@@ -353,70 +330,64 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     return std.toString('base64')
   }
   /**
-   * 单格点选流程：拟人点击 → 3s 变化监测（300ms 轮询读 src，捕捉瞬时刷新）→ 等该格 img 稳定 →
-   * 监测到刷新走小图二次识别确认；未监测到（src 未变且无 selected）只记 warn 不重试
+   * 单格点选流程：拟人点击 → 等 1.5-2.5s 稳定 → 按 td class 分支（以 class 为准、不再依赖 src）：
+   * dynamic-selected 走确认流程（轮询等刷新完成 → 拟人确认点击 → 等 1.5-2.5s → 再读 class 判定）；
+   * tileselected/其他 selected 直接完成；无 selected 记 warn「点击未注册」不重试
    * （重试点击会取消已选中格；点击真未注册由验证按钮补点/select-more 补选兜底；主点选与补选共用）
    */
   const clickTile = async (idx: number): Promise<void> => {
-    const before = await readTileSrc(ch, idx)
-    // 点击诊断：点前记录全网格 src 快照与该格 class，点后约 1s 再读一次对比出实际命中的格子
+    // 点击诊断：点前记录全网格 src 快照与该格 class，点后稳定期再读一次对比出实际命中的格子
     const gridBefore = await snapshotTileSrcs(ch)
-    const beforeClass = ((await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? '').trim()
+    const beforeClass = await readTileClass(ch, idx)
     // 拟人坐标点击优先（Google 忽略瞬移式程序化点击）；framePoint 拿不到坐标回退 locator 直点
     if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
       await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
     }
-    // 点后 1s 读快照（诊断等待替代 waitTileStable 首个 500ms 等待：主流程净增仅 500ms，不额外拉长时序）
-    await deps.page.waitForTimeout(1000)
+    // 点后等 1.5-2.5s 随机稳定（class 刷新在点击后 1-6 秒发生，读太早必是动态态）
+    await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     const gridAfter = await snapshotTileSrcs(ch)
-    const afterClass = ((await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? '').trim()
+    const afterClass = await readTileClass(ch, idx)
     const hitTiles: number[] = []
     for (let i = 0; i < Math.max(gridBefore.length, gridAfter.length); i++) {
       if ((gridBefore[i] ?? '') !== (gridAfter[i] ?? '')) hitTiles.push(i)
     }
     // 结构化诊断日志（每格一次）：hitTiles 空 = 未命中；含非 idx 格 = 坐标漂移到邻居；[idx] = 命中正确
     deps.logger.info({ step: 'grid-click-diag', idx, hitTiles, beforeClass, afterClass }, '九宫格点击诊断')
-    // 点击后立即启动变化监测：3s 窗口内 src 与点击前不同即标记刷新发生（捕捉「短暂变化后恢复」的瞬时刷新）
-    const refreshed = await watchTileRefresh(deps, ch, idx, before)
-    // 读到变化后仍要等稳定再截图小图（避免截到动画中）；img 缺失时稳定等待直接返回
-    await waitTileStable(deps, ch, idx, 6000, true)
-    if (!refreshed) {
-      // src 未变且无 selected：Google 刷新响应慢时重试点击会取消已选中格（真机 2026-09-09 观察），
-      // 只记 warn 收集数据；点击真未注册时由验证按钮补点/select-more 补选兜底
-      const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
-      if (cls.includes('selected')) return
-      deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
+    // dynamic-selected（图片刷新中）：刷新完成后必须再点一次确认才算选中（缺失确认 → Google 判选择未完成）
+    if (afterClass.includes('dynamic-selected')) {
+      await confirmDynamicTile(idx)
       return
     }
-    deps.logger.info({ idx }, '九宫格该格检测到刷新，走小图二次识别确认')
-    // 小图二次识别确认（2022 DEMO 的 class selected 语义已失效）：截图分类命中再点确认；
-    // 确认点击后 src 再变化才重新分类（最多 SINGLE_RECHECK_MAX 次），未再变化则按 class 收尾
-    let lastSrc = before
-    for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
-      const after = await readTileSrc(ch, idx)
-      if (k > 0 && after === lastSrc) {
-        const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
-        if (cls.includes('selected')) break
-        deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
-        break
+    // tileselected 或其他 selected 变体（不含 dynamic）：已选中完成
+    if (afterClass.includes('selected')) return
+    // 无 selected 字样：点击未注册；重试点击会取消已选中格（真机 2026-09-09 观察），只记 warn 收集数据
+    deps.logger.warn({ idx }, '九宫格该格点击未注册（class 无 selected 字样），不重试点击（select-more 兜底）')
+  }
+  /**
+   * dynamic-selected 确认流程：轮询等 class 不再含 dynamic-selected（最多 CONFIRM_WAIT_MS/500ms）→
+   * 拟人点击该格确认 → 等 1.5-2.5s → 再读 class：含 selected 且不含 dynamic 完成；
+   * 仍含 dynamic-selected 再确认（最多 CONFIRM_MAX 轮）；仍 dynamic 记 warn 继续（select-more 兜底）
+   */
+  const confirmDynamicTile = async (idx: number): Promise<void> => {
+    for (let attempt = 1; attempt <= CONFIRM_MAX; attempt++) {
+      // 轮询等刷新完成：class 不再含 dynamic-selected 即视为新图渲染完毕（首查立即，最多 CONFIRM_POLLS 次）
+      let cls = await readTileClass(ch, idx)
+      for (let i = 0; i < CONFIRM_POLLS && cls.includes('dynamic-selected'); i++) {
+        await deps.page.waitForTimeout(CONFIRM_POLL_MS)
+        cls = await readTileClass(ch, idx)
       }
-      // 小图二次识别用该格 img 元素截图（fetch 原图方案已废弃：拿到的内容与视觉图不符）
-      const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
-      let singleB64: string | null = null
-      if (singleShot) singleB64 = await toStandardBase64(singleShot, 100)
-      if (!singleB64) break
-      const single = await deps.captcha.solveGrid(singleB64, qid, passOpts)
-      if (single.type === 'single' && single.hasObject) {
-        deps.logger.warn({ idx, recheck: k + 1 }, '九宫格小图刷新后仍含目标，再次点击确认')
-        if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
-          await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-        }
-        await waitTileStable(deps, ch, idx)
-        lastSrc = after
-        continue
+      // 拟人确认点击（Google 忽略瞬移式程序化点击），失败回退 locator 直点
+      if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
+        await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
       }
-      break
+      deps.logger.info({ step: 'grid-tile-confirm', idx, confirmed: true }, '九宫格格子动态刷新确认')
+      // 确认后等 1.5-2.5s 再读 class 判定（马上读会撞上下一帧动态态）
+      await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+      cls = await readTileClass(ch, idx)
+      if (cls.includes('selected') && !cls.includes('dynamic-selected')) return
+      // 仍含 dynamic-selected → 下一轮再确认
     }
+    deps.logger.warn({ idx }, '九宫格该格多次确认后仍处动态刷新，继续（select-more 兜底）')
   }
   let result: GridResult | null = null
   let qid = ''
@@ -537,6 +508,21 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
         logRoundState()
         return
       }
+    }
+    // 点 verify 前全体确认检查：已点格子 class 仍含 dynamic-selected 再等最多 5s（500ms 轮询），
+    // 仍存在则 warn 照常 verify（select-more 兜底）
+    {
+      let stillDynamic = false
+      for (let i = 0; i < PREVERIFY_DYNAMIC_POLLS; i++) {
+        stillDynamic = false
+        for (const idx of clicked) {
+          const cls = await readTileClass(ch, idx)
+          if (cls.includes('dynamic-selected')) { stillDynamic = true; break }
+        }
+        if (!stillDynamic) break
+        await deps.page.waitForTimeout(500)
+      }
+      if (stillDynamic) deps.logger.warn('九宫格点验证前仍有格子处于动态刷新，照常验证（select-more 兜底）')
     }
     if (!(await humanClickInFrame(deps, ch, VERIFY_SELECTOR))) {
       await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
