@@ -25,6 +25,7 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "ghost-cursor": "1.4.2",
+    "jimp": "^0.22.12",
     "log4js": "^6.9.1",
     "patchright": "1.62.1",
     "swagger-jsdoc": "^6.3.0",
