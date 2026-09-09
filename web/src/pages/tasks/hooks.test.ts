@@ -37,3 +37,35 @@ describe('triggerButton', () => {
     expect(triggerButton(false)).toEqual({ disabled: false, label: '立即触发' })
   })
 })
+
+import { groupTasks } from './hooks'
+import type { TaskMetaView } from '../../types'
+
+describe('groupTasks', () => {
+  const t = (key: string, group: { key: string; name: string } | null) => ({ key, name: `任务${key}`, group }) as unknown as TaskMetaView
+
+  it('按组内第一个任务的出现顺序分组', () => {
+    const tasks = [t('a', { key: 'g2', name: '组2' }), t('b', { key: 'g1', name: '组1' }), t('c', { key: 'g2', name: '组2' })]
+    const groups = groupTasks(tasks)
+    expect(groups.map((g) => g.key)).toEqual(['g2', 'g1'])
+    expect(groups[0].tasks.map((x) => x.key)).toEqual(['a', 'c'])
+    expect(groups[1].tasks.map((x) => x.key)).toEqual(['b'])
+  })
+
+  it('未分组任务归入末尾伪分组（key 空串、name 未分组）', () => {
+    const groups = groupTasks([t('a', { key: 'g1', name: '组1' }), t('b', null)])
+    expect(groups.map((g) => g.key)).toEqual(['g1', ''])
+    expect(groups[1].name).toBe('未分组')
+    expect(groups[1].tasks.map((x) => x.key)).toEqual(['b'])
+  })
+
+  it('全部未分组返回单一伪分组', () => {
+    const groups = groupTasks([t('a', null), t('b', null)])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].key).toBe('')
+  })
+
+  it('空数组返回空数组', () => {
+    expect(groupTasks([])).toEqual([])
+  })
+})

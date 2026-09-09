@@ -36,6 +36,27 @@ export function categoryLabel(category: TaskMetaView['category']): string {
   return (category && CATEGORY_LABELS[category]) || DEFAULT_CATEGORY_LABEL
 }
 
+export interface TaskGroup {
+  key: string
+  name: string
+  tasks: TaskMetaView[]
+}
+
+/** 按任务数组顺序派生分组：组顺序 = 组内第一个任务的出现顺序；未分组任务归入末尾伪分组（key 空串、name 未分组） */
+export function groupTasks(tasks: TaskMetaView[]): TaskGroup[] {
+  const groups: TaskGroup[] = []
+  const index = new Map<string, number>()
+  for (const t of tasks) {
+    const key = t.group?.key ?? ''
+    if (!index.has(key)) {
+      index.set(key, groups.length)
+      groups.push({ key, name: t.group?.name ?? '未分组', tasks: [] })
+    }
+    groups[index.get(key)!].tasks.push(t)
+  }
+  return groups
+}
+
 export function useTasks() {
   return useQuery({
     queryKey: ['tasks'],
