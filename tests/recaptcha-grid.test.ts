@@ -330,11 +330,11 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
   }, 30000)
 
-  it('点击节奏随机化：点格子后等待在 1500-2500ms 内且多次运行取值不同、点验证后在 2500-3500ms 内且取值不同（固定 2s/3s 会失败）', async () => {
+  it('点击节奏随机化：截图前 1500-2500ms、点格后 500ms 稳定性轮询、点验证前 3000-5000ms、点验证后 2500-3500ms，随机区间多次运行取值不同', async () => {
     const gridBuf = await makePngBuffer(300)
     const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf, gridResult: { type: 'multi', objects: [0, 2] } })
     // 多轮运行观察取值方差：固定等待则所有取值相同 → 断言失败；随机化则几乎必然出现不同取值
-    const tileWaits: number[] = []
+    const preVerifyWaits: number[] = []
     const verifyWaits: number[] = []
     const preShotWaits: number[] = []
     const allWaits: number[] = []
@@ -343,34 +343,37 @@ describe('solveRecaptchaGrid 求解循环', () => {
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：挑战 frame 轮询 500ms → 截图前动画稳定 1500-2500ms → shotGrid 内部稳定 800ms → 格子 0 → 格子 2 → 验证按钮
-      expect(waits).toHaveLength(6)
+      // 每轮顺序：挑战 frame 轮询 500ms → 截图前动画稳定 1500-2500ms → shotGrid 内部稳定 800ms
+      // → 格子 0 稳定性轮询 500ms → 格子 2 稳定性轮询 500ms → 验证前全体稳定 3000-5000ms → 验证后 2500-3500ms
+      expect(waits).toHaveLength(7)
       expect(waits[0]).toBe(500)
       expect(waits[1]).toBeGreaterThanOrEqual(1500)
       expect(waits[1]).toBeLessThanOrEqual(2500)
       expect(waits[2]).toBe(800)
       preShotWaits.push(waits[1])
-      tileWaits.push(...waits.slice(3, 5))
-      verifyWaits.push(waits[5])
+      expect(waits[3]).toBe(500)
+      expect(waits[4]).toBe(500)
+      preVerifyWaits.push(waits[5])
+      verifyWaits.push(waits[6])
     }
     for (const w of preShotWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
       expect(w).toBeLessThanOrEqual(2500)
     }
-    for (const w of tileWaits) {
-      expect(w).toBeGreaterThanOrEqual(1500)
-      expect(w).toBeLessThanOrEqual(2500)
+    for (const w of preVerifyWaits) {
+      expect(w).toBeGreaterThanOrEqual(3000)
+      expect(w).toBeLessThanOrEqual(5000)
     }
     for (const w of verifyWaits) {
       expect(w).toBeGreaterThanOrEqual(2500)
       expect(w).toBeLessThanOrEqual(3500)
     }
     expect(new Set(preShotWaits).size).toBeGreaterThan(1)
-    expect(new Set(tileWaits).size).toBeGreaterThan(1)
+    expect(new Set(preVerifyWaits).size).toBeGreaterThan(1)
     expect(new Set(verifyWaits).size).toBeGreaterThan(1)
   }, 30000)
 
-  it('小图刷新二次识别命中后再点确认：初次点 + 确认点 + src 未变无 selected 重试点，等待均在 1500-2500ms 内随机取值', async () => {
+  it('小图刷新二次识别命中后再点确认：初次点 + 确认点（均 500ms 稳定性轮询）+ src 未变无 selected 重试点（1500-2500ms 随机），验证前 3000-5000ms', async () => {
     const gridBuf = await makePngBuffer(300)
     const tileBuf = await makePngBuffer(100)
     let src = 'A'
@@ -396,7 +399,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(tileClicks[2]).toHaveBeenCalledTimes(1)
     // 分类只发生 2 次：网格 multi 1 次 + 格子 0 小图 single 1 次（确认循环中 src 未变不再重复分类）
     expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
-    const tileWaits: number[] = []
+    const retryWaits: number[] = []
+    const preVerifyWaits: number[] = []
     const verifyWaits: number[] = []
     const allWaits: number[] = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
     for (let i = 0; i < 8; i++) {
@@ -404,24 +408,39 @@ describe('solveRecaptchaGrid 求解循环', () => {
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：500ms 轮询 → 截图前动画稳定 1500-2500ms → shotGrid 内部 800ms → 格子 0 三次（初次 + 确认 + 重试）→ 格子 2 一次 → 验证按钮
-      expect(waits).toHaveLength(8)
+      // 每轮顺序：500ms 轮询 → 截图前动画稳定 1500-2500ms → shotGrid 内部 800ms → 格子 0/2 等待（500ms 稳定性轮询或 1500-2500ms 重试随机）
+      // → 验证前全体稳定 3000-5000ms → 验证后 2500-3500ms
+      // 首轮：格子 0 初次稳定 500 + 确认稳定 500 + 重试随机；后续轮 src 已稳定为 B：格子 0 初次稳定 500 + 两次重试随机——中间段位置随轮次不同，按取值分桶断言
       expect(waits[0]).toBe(500)
       expect(waits[1]).toBeGreaterThanOrEqual(1500)
       expect(waits[1]).toBeLessThanOrEqual(2500)
       expect(waits[2]).toBe(800)
-      tileWaits.push(...waits.slice(3, 7))
-      verifyWaits.push(waits[7])
+      // 首格初次点击后的稳定性轮询固定 500ms
+      expect(waits[3]).toBe(500)
+      for (const w of waits.slice(4, waits.length - 2)) {
+        if (w === 500) continue
+        expect(w).toBeGreaterThanOrEqual(1500)
+        expect(w).toBeLessThanOrEqual(2500)
+        retryWaits.push(w)
+      }
+      preVerifyWaits.push(waits[waits.length - 2])
+      verifyWaits.push(waits[waits.length - 1])
     }
-    for (const w of tileWaits) {
+    expect(retryWaits.length).toBeGreaterThan(0)
+    for (const w of retryWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
       expect(w).toBeLessThanOrEqual(2500)
+    }
+    for (const w of preVerifyWaits) {
+      expect(w).toBeGreaterThanOrEqual(3000)
+      expect(w).toBeLessThanOrEqual(5000)
     }
     for (const w of verifyWaits) {
       expect(w).toBeGreaterThanOrEqual(2500)
       expect(w).toBeLessThanOrEqual(3500)
     }
-    expect(new Set(tileWaits).size).toBeGreaterThan(1)
+    expect(new Set(retryWaits).size).toBeGreaterThan(1)
+    expect(new Set(preVerifyWaits).size).toBeGreaterThan(1)
     expect(new Set(verifyWaits).size).toBeGreaterThan(1)
   }, 30000)
 
@@ -582,6 +601,45 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(waits[1]).toBeGreaterThanOrEqual(1500)
     expect(waits[1]).toBeLessThanOrEqual(2500)
     expect(waits[2]).toBe(800)
+  }, 30000)
+
+  it('img 不稳定时等待稳定：点击后 src 连续两次相同才进入确认流程（不提前点 verify，该格确认流程只处理一次）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const tileBuf = await makePngBuffer(100)
+    // src 读取序列：点击前 A → 点击后 B（刷新动画）→ 动画抖动 C → 稳定 B、B（连续两次相同）
+    const srcSeq = ['A', 'B', 'C', 'B', 'B', 'B', 'B', 'B', 'B']
+    let srcReads = 0
+    const { page, captcha, logger, tileClicks } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0] },
+      tileBehaviors: { 0: { attrs: { class: 'rc-imageselect-tile' }, screenshotBuf: tileBuf, srcImpl: async () => srcSeq[Math.min(srcReads++, srcSeq.length - 1)] } },
+    })
+    let solveCall = 0
+    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      solveCall++
+      return solveCall === 1 ? { type: 'multi', objects: [0] } : { type: 'single', hasObject: false }
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    // src 被多次轮询读取（等稳定期间 ≥6 次读取：点击前 1 + 点击后轮询 3 + 确认流程 1；不轮询直接进确认只会读 2 次）
+    expect(srcReads).toBeGreaterThanOrEqual(6)
+    // 确认流程只处理一次：小图二次识别恰好 1 次（multi + single 共 2 次分类）、该格只点 1 次（动画未稳定时不提前判定 src 变化）
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+  }, 30000)
+
+  it('verify 前有稳定等待：点验证前 waitForTimeout 取 3000-5000ms（全体格子动画收尾），点后保持 2500-3500ms', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, verifyClick } = makeDeps({ gridScreenshotBuf: gridBuf, gridResult: { type: 'multi', objects: [0, 2] } })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    expect(verifyClick).toHaveBeenCalledTimes(1)
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    // 点 verify 前最后一个非稳定轮询等待落在 3000-5000ms（删除全体稳定等待时该区间不存在 → 失败）
+    const preVerifyIdx = waits.length - 2
+    expect(waits[preVerifyIdx]).toBeGreaterThanOrEqual(3000)
+    expect(waits[preVerifyIdx]).toBeLessThanOrEqual(5000)
+    // 点 verify 后保持现有 2500-3500ms 随机等待
+    expect(waits[waits.length - 1]).toBeGreaterThanOrEqual(2500)
+    expect(waits[waits.length - 1]).toBeLessThanOrEqual(3500)
   }, 30000)
 
   it('小图 img 元素截图失败 → 跳过二次识别（该格只点 1 次、分类仅网格 1 次）', async () => {

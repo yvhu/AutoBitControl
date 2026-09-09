@@ -1,12 +1,14 @@
 /**
  * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 容器元素截图网格 → yescaptcha 分类 →
- * 按坐标点选（点击后按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
+ * 按坐标点选（点击后轮询等该格 img 稳定（src 连续两次相同）→ 按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
  * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿
  * 真机核实（2026-09-09，faucet.circle.com）：挑战为 reCAPTCHA Enterprise
  * （anchor iframe: recaptcha/enterprise/anchor；网格 iframe: recaptcha/enterprise/bframe），
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
  * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
- * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）
+ * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）；
+ * 每格点击后必须等刷新动画完成再判 src 变化、全部格子点完后等全体动画收尾再点验证
+ * （真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
  * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
  * 截图中心裁剪正方形后等比缩放（杜绝容器非正方形时直接 resize 拉伸变形，真机分类空数组/
@@ -172,6 +174,20 @@ async function reloadImages(deps: { page: Page; human: Humanizer }, ch: Frame): 
   await deps.page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
 }
 
+/** 轮询等待格子 img 稳定（src 连续两次相同；最多 timeoutMs）——Google 点击后刷新小图有动画，未稳定时不能继续 */
+async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000): Promise<void> {
+  const loc = ch.locator(TILE_SELECTOR).nth(idx)
+  const readSrc = async (): Promise<string> => (await loc.locator('img').first().getAttribute('src').catch(() => null)) ?? ''
+  const end = Date.now() + timeoutMs
+  let prev = await readSrc()
+  while (Date.now() < end) {
+    await deps.page.waitForTimeout(500)
+    const cur = await readSrc()
+    if (cur === prev) return
+    prev = cur
+  }
+}
+
 /**
  * 单轮：读提示语 → 截图网格 → 分类（可重试块：空数组/抛错时点刷新换图，每轮最多 RELOAD_MAX 次，
  * 换图后提示语可能变化必须重读）→ 点格子（img src 变化检测小图刷新二次识别确认）→ 点验证
@@ -255,7 +271,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
       await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
     }
-    await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+    // 点击后轮询等该格 img 稳定（Google 刷新小图有动画；未稳定就判 src 变化会误入确认/误判已注册，真机 2026-09-09）
+    await waitTileStable(deps, ch, idx)
     // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
     // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 点击可能未注册，重试点击
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
@@ -272,7 +289,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
           if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
             await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
           }
-          await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+          await waitTileStable(deps, ch, idx)
           before = after
           continue
         }
@@ -287,6 +304,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
       await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     }
   }
+  // 3-5s 随机：等全部格子动画收尾后再点验证（真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）
+  await deps.page.waitForTimeout(3000 + Math.floor(Math.random() * 2000))
   if (!(await humanClickInFrame(deps, ch, VERIFY_SELECTOR))) {
     await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
   }
