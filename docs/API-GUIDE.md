@@ -191,7 +191,7 @@ meta: TaskMeta = {
 
 `TaskContext` 定义于 `src/engine/task-context.ts`，是 `run(ctx)` 的全部操作入口——**任务里能做的所有事，都在 `ctx` 上**。另有五个只读访问器：`ctx.page`（patchright `Page`，底层页面对象）、`ctx.human`（`Humanizer` 拟人操作器，见[第 6 章](#6-拟人接口humanizer)）、`ctx.log`（`Logger` 日志器，任务内步骤日志，大批量运行排障用）、`ctx.profile`（当前窗口记录，含熔断计数等）、`ctx.accountRow`（当前窗口在数据源中的行，见下文[「accountRow」](#accountrow)）。
 
-下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[ensureWalletReady](#ensurewalletready)、[openAppKitWallet](#openappkitwallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)、[waitForTextRecover](#waitfortextrecover)、[recoverErrorText](#recovererrortext)、[detectPageState](#detectpagestate)、[raceTexts](#racetexts)、[visible](#visible)、[waitGoneOrHidden](#waitgoneorhidden)、[waitForTextWithReloads](#waitfortextwithreloads)、[clickTurnstileBox](#clickturnstilebox--turnstilevisible--autoclickturnstile)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
+下面每个方法按「是什么 / 什么时候用 / 怎么用 / 注意什么」展开。方法速览：[closeOtherTabs](#closeothertabs)、[goto](#goto)、[clickCheckin](#clickcheckin)、[assertVisible](#assertvisible)、[typeInto](#typeinto)、[account](#account)、[accountRow](#accountrow)、[uploadFile](#uploadfile)、[pressKey](#presskey)、[solveCaptcha](#solvecaptcha)、[solveRecaptchaGrid](#solverecaptchagrid)、[screenshot](#screenshot)、[loginByWallet](#loginbywallet)、[ensureWalletReady](#ensurewalletready)、[openAppKitWallet](#openappkitwallet)、[textPresent](#textpresent)、[urlIncludes](#urlincludes)、[waitForText](#waitfortext)、[waitForApi](#waitforapi)、[waitForUrl](#waitforurl)、[js](#js)、[waitForGone](#waitforgone)、[closeModal](#closemodal)、[waitForTextRecover](#waitfortextrecover)、[recoverErrorText](#recovererrortext)、[detectPageState](#detectpagestate)、[raceTexts](#racetexts)、[visible](#visible)、[waitGoneOrHidden](#waitgoneorhidden)、[waitForTextWithReloads](#waitfortextwithreloads)、[clickTurnstileBox](#clickturnstilebox--turnstilevisible--autoclickturnstile)。这些是代码方法（非 HTTP 接口），详情见各自小节；HTTP 接口文档见 📄 API 接口文档（/api-docs）。
 
 ### closeOtherTabs
 
@@ -387,6 +387,25 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
 
 - **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见[第 5 章](#5-验证码)与[第 10 章](#10-常用模式)）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
+
+### solveRecaptchaGrid
+
+```ts
+async solveRecaptchaGrid(opts?: { maxRounds?: number }): Promise<'none' | 'solved' | 'failed'>
+```
+
+- **是什么**：reCAPTCHA v2 勾选后弹出的**九宫格选图挑战**的模拟点击求解——点复选框 → 截图网格 → yescaptcha 分类 → 按返回坐标拟人点选格子 → 点验证，多轮循环直至 `aria-checked=true`（变绿）。实现位于 `src/automation/recaptcha-grid.ts`（分类走 yescaptcha 的 `ReCaptchaV2Classification` 任务类型，映射见 `config.json` 的 `captcha.taskTypes` 的 `recaptcha_v2_grid` 键）。
+- **什么时候用**：站点用 reCAPTCHA v2（`iframe[src*="recaptcha/api2/anchor"]` 或 enterprise 版），点击勾选框后会弹九宫格选图，且打码平台 token 回填方案不适用时。与 `solveCaptcha()` 二选一，不要对同一个挑战两种都调。
+- **怎么用**：
+
+```ts
+await ctx.clickCheckin('#claim-btn')                    // 点击可能弹出 v2 勾选框
+const r = await ctx.solveRecaptchaGrid({ maxRounds: 3 }) // 检测到就模拟点选直至变绿
+if (r === 'failed') throw new Error('九宫格求解轮数耗尽')
+await ctx.waitForText('领取成功')                        // 验证挑战已过、流程继续
+```
+
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：轮数耗尽仍未通过（默认最多 5 轮，`opts.maxRounds` 可调）。提示语未覆盖映射或分类接口失败直接抛错（任务失败进入重试）。每次分类按 6 点/次记账到打码统计，受 `captcha.maxCostPerTask` 余额上限约束。
 
 ### screenshot
 
@@ -1141,7 +1160,7 @@ randomMicroMove(): Promise<void>
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
 | `execution` | `staggerMaxSec`、`maxConcurrentWindows`、`windowTimeoutMs`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）**加全局窗口上限**（`maxConcurrentWindows`，缺省 4，双闸门取更严者，机器资源兜底）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
-| `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射 |
+| `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射，除 5 种自动检测类型外还支持 `recaptcha_v2_grid`（`ReCaptchaV2Classification`，九宫格分类识别，6 点/次，供 `ctx.solveRecaptchaGrid()` 使用；图片需缩放至 300x300/450x450/100x100） |
 | `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches/captcha_logs 保留天数，超期行启动时清理。 |
