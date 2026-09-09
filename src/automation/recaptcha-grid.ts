@@ -79,8 +79,8 @@ async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
   return (await img.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
 }
 
-/** 单轮：读提示语 → 截图网格 → 分类 → 点格子（含小图刷新二次识别）→ 点验证 */
-async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame): Promise<void> {
+/** 单轮：读提示语 → 截图网格 → 分类 → 点格子（含小图刷新二次识别）→ 点验证；opts 透传给 solveGrid 做成本记账 */
+async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer }, ch: Frame, opts: { profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {}): Promise<void> {
   const prompt = ((await ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
   if (!prompt) throw new Error('九宫格提示文字未找到')
   const qid = mapQuestionId(prompt)
@@ -91,7 +91,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   const size = tileCount === 16 ? 450 : 300
   const shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png' })
   const b64 = await toStandardBase64(shot, size)
-  const result = await deps.captcha.solveGrid(b64, qid, { confidence: 0.5, profileId: null, taskKey: null, onLog: () => {} })
+  const result = await deps.captcha.solveGrid(b64, qid, { confidence: 0.5, profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
   if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
   deps.logger.info({ count: result.objects.length, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
@@ -104,7 +104,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
       const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png' }).catch(() => null)
       if (!singleShot) break
       const singleB64 = await toStandardBase64(singleShot, 100)
-      const single = await deps.captcha.solveGrid(singleB64, qid, { profileId: null, taskKey: null, onLog: () => {} })
+      const single = await deps.captcha.solveGrid(singleB64, qid, { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) })
       if (single.type === 'single' && single.hasObject) {
         await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
         await deps.page.waitForTimeout(2000)
@@ -120,11 +120,13 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
 /**
  * 九宫格模拟点击求解主入口：
  * 点复选框 → 等挑战 → 循环（读提示语 → 分类 → 点选 → 验证 → 查 aria-checked）→ 变绿返回 solved
+ * @param opts.maxRounds 最大轮数（缺省 MAX_ROUNDS）
+ * @param opts.profileId/taskKey/onLog 透传给 solveGrid 做成本记账（缺省 null/空实现，向后兼容）
  * @returns 'none' 无锚点 frame；'solved' 通过；'failed' 轮数耗尽（提示语未覆盖等异常直接抛错）
  */
 export async function solveRecaptchaGrid(
   deps: { page: Page; captcha: CaptchaService; logger: Pick<Logger, 'info' | 'warn'>; human: Humanizer },
-  opts: { maxRounds?: number } = {},
+  opts: { maxRounds?: number; profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
 ): Promise<'solved' | 'none' | 'failed'> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS
   const anchor = findAnchorFrame(deps.page)
@@ -146,7 +148,7 @@ export async function solveRecaptchaGrid(
       const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
       return checked === 'true' ? 'solved' : 'failed'
     }
-    await solveOneRound(deps, ch)
+    await solveOneRound(deps, ch, opts)
     const checked = await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)
     if (checked === 'true') return 'solved'
     deps.logger.warn({ round: round + 1 }, '九宫格本轮未通过，继续下一轮')

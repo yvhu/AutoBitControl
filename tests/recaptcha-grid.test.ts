@@ -38,24 +38,25 @@ interface ElemBehavior {
   click?: ReturnType<typeof vi.fn>
   screenshotBuf?: Buffer | null
   getAttributeImpl?: (name: string) => Promise<string | null>
+  /** 按索引分派的子行为：nth(i) 返回独立实例（每个索引独立 click mock），未命中回落到当前行为 */
+  nthBehaviors?: Record<number, ElemBehavior>
 }
 
 function makeFrame(behaviors: Record<string, ElemBehavior>) {
-  const locator = (selector: string) => {
-    const b = behaviors[selector] ?? {}
+  const build = (b: ElemBehavior) => {
     const click = b.click ?? vi.fn().mockResolvedValue(undefined)
-    const fake = {
-      first: () => fake,
-      nth: () => fake,
-      locator: () => fake,
+    return {
+      first: () => build(b),
+      nth: (i: number) => build(b.nthBehaviors?.[i] ?? b),
+      locator: () => build(b),
       count: vi.fn().mockResolvedValue(b.count ?? 0),
       getAttribute: vi.fn().mockImplementation(async (name: string) => b.getAttributeImpl ? b.getAttributeImpl(name) : (b.attrs ?? {})[name] ?? null),
       textContent: vi.fn().mockResolvedValue(b.text ?? null),
-      click: click,
+      click,
       screenshot: vi.fn().mockResolvedValue(b.screenshotBuf ?? null),
     }
-    return fake
   }
+  const locator = (selector: string) => build(behaviors[selector] ?? {})
   return { locator }
 }
 
@@ -76,9 +77,15 @@ describe('solveRecaptchaGrid 求解循环', () => {
         getAttributeImpl: async (name: string) => (name === 'aria-checked' ? checked : null),
       },
     })
+    // 每个格子索引独立 click mock：nth(i) 按索引分派，供点选行为断言使用
+    const tileClicks = Array.from({ length: o.tileCount }, () => vi.fn().mockResolvedValue(undefined))
     const challenge = makeFrame({
       [PROMPT_SELECTOR]: { text: o.prompt },
-      [TILE_SELECTOR]: { count: o.tileCount, attrs: { class: 'rc-imageselect-tile' }, click: vi.fn().mockResolvedValue(undefined) },
+      [TILE_SELECTOR]: {
+        count: o.tileCount,
+        attrs: { class: 'rc-imageselect-tile' },
+        nthBehaviors: Object.fromEntries(tileClicks.map((click, i) => [i, { click, attrs: { class: 'rc-imageselect-tile' } }])),
+      },
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf },
       [VERIFY_SELECTOR]: { click: vi.fn().mockImplementation(async () => { checked = 'true' }) },
     })
@@ -91,7 +98,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     }
     const captcha = { solveGrid: vi.fn().mockResolvedValue(o.gridResult) }
     const logger = { info: vi.fn(), warn: vi.fn() }
-    return { page, captcha, logger, anchor, challenge }
+    return { page, captcha, logger, anchor, challenge, tileClicks }
   }
 
   it('无锚点 frame → none', async () => {
@@ -107,11 +114,33 @@ describe('solveRecaptchaGrid 求解循环', () => {
 
   it('完整一轮：读提示语 → 分类 → 点格子 → 验证 → aria-checked=true → solved', async () => {
     const gridBuf = await makePngBuffer(300)
-    const { page, captcha, logger } = makeDeps({ gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: gridBuf })
+    const { page, captcha, logger, tileClicks } = makeDeps({ gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: gridBuf })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
     expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
     const [imageArg, questionArg] = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(questionArg).toBe('/m/015qbp')
     expect(imageArg).toMatch(/^[A-Za-z0-9+/=]+$/)
+    // 成本记账缺省透传为 null（向后兼容）
+    expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).toMatchObject({ profileId: null, taskKey: null })
+    // 点选行为断言：objects=[0,2] 时索引 0/2 各点一次、其余格子不点（删除点选循环会在此失败）
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+    expect(tileClicks[2]).toHaveBeenCalledTimes(1)
+    for (let i = 0; i < tileClicks.length; i++) {
+      if (i !== 0 && i !== 2) expect(tileClicks[i]).not.toHaveBeenCalled()
+    }
+    const totalClicks = tileClicks.reduce((n, m) => n + m.mock.calls.length, 0)
+    expect(totalClicks).toBe(2)
+  }, 30000)
+
+  it('成本记账透传：opts 的 profileId/taskKey/onLog 传给 solveGrid', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf })
+    const onLog = vi.fn()
+    await expect(solveRecaptchaGrid(
+      { page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never },
+      { profileId: 7, taskKey: 'checkin:faucet', onLog },
+    )).resolves.toBe('solved')
+    const optsArg = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]
+    expect(optsArg).toMatchObject({ profileId: 7, taskKey: 'checkin:faucet', onLog })
   }, 30000)
 })
