@@ -18,6 +18,8 @@ import {
   ensureUsdc,
   ensureSubmitEnabled,
   waitForOutcome,
+  detectV2Challenge,
+  V3_SITEKEY,
   ArcFaucetTask,
   SUCCESS_TEXT,
   CAPTCHA_V2_TEXT,
@@ -51,6 +53,8 @@ interface FakeState {
   displayCount?: number
   /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
   usdcRadioCount?: number
+  /** v2 挑战是否已渲染（detectV2Challenge 经 ctx.js → page.evaluate 假实现读取；缺省 false） */
+  v2Challenge?: boolean
 }
 
 /** 构造注入假依赖的 TaskContext：locator 按选择器路由到假元素，未注册选择器 count=0 */
@@ -100,6 +104,8 @@ function makeCtx(state: FakeState) {
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     getByText: (t: string) => ({ count: async () => (state.texts[t] ? 1 : 0) }),
+    // ctx.js 的 evaluate 假实现：不执行函数体，直接返回 state.v2Challenge 控制检测结果
+    evaluate: () => Promise.resolve(state.v2Challenge ?? false),
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -115,7 +121,7 @@ function makeCtx(state: FakeState) {
   return { ctx, clicks, log }
 }
 
-const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {} })
+const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, v2Challenge: false })
 
 describe('currentNetwork 当前网络读取', () => {
   it('返回下拉显示值', async () => {
@@ -247,6 +253,22 @@ describe('waitForOutcome 竞速等待', () => {
   })
 })
 
+describe('detectV2Challenge 挑战检测', () => {
+  it('无挑战 → false', async () => {
+    const { ctx } = makeCtx({ ...baseState(), v2Challenge: false })
+    expect(await detectV2Challenge(ctx)).toBe(false)
+  })
+
+  it('存在 v2 anchor（k≠v3 sitekey）→ true', async () => {
+    const { ctx } = makeCtx({ ...baseState(), v2Challenge: true })
+    expect(await detectV2Challenge(ctx)).toBe(true)
+  })
+
+  it('常驻 v3 sitekey 契约', () => {
+    expect(V3_SITEKEY).toBe('6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2')
+  })
+})
+
 describe('ArcFaucetTask 元信息', () => {
   it('meta 契约正确', () => {
     const t = new ArcFaucetTask()
@@ -257,7 +279,7 @@ describe('ArcFaucetTask 元信息', () => {
     expect(t.meta.category).toBe('faucet')
     expect(t.meta.enabled).toBe(true)
     expect(t.meta.wallet).toBeUndefined()
-    expect(t.meta.timeoutSec).toBe(240)
+    expect(t.meta.timeoutSec).toBe(420)
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
     expect(t.meta.captcha).toEqual({ auto: true })
     expect(t.meta.concurrency).toBe(3)
@@ -268,9 +290,44 @@ describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
   let server: Server
   let baseUrl: string
 
+  /** anchor iframe fixture：一键通过模式（?onepass=1）点复选框即变绿；挑战模式等 bframe 验证完成发来 grid-solved 才变绿；两种模式都回传 anchor-solved 给父页 */
+  const ANCHOR_HTML = `<!doctype html><html><body><div id="recaptcha-anchor" role="checkbox" aria-checked="false" style="width:28px;height:28px"></div><script>
+const anchor = document.getElementById('recaptcha-anchor')
+const onepass = new URLSearchParams(location.search).get('onepass') === '1'
+const solved = function () { anchor.setAttribute('aria-checked', 'true'); window.parent.postMessage('anchor-solved', '*') }
+anchor.addEventListener('click', function () { if (onepass) solved() })
+window.addEventListener('message', function (e) { if (e.data === 'grid-solved') solved() })
+</script></body></html>`
+
+  /** bframe fixture：九宫格挑战页（提示语「停车计时器」→ /m/015qbp；9 格可点、点格加 selected class；验证按钮通知 anchor 完成） */
+  const BFRAME_HTML = `<!doctype html><html><body>
+<div class="rc-imageselect-desc-wrapper"><strong>停车计时器</strong></div>
+<div id="rc-imageselect-target"><table>
+<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
+<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
+<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
+</table></div>
+<button id="recaptcha-verify-button">验证</button>
+<script>
+document.querySelectorAll('#rc-imageselect-target table td').forEach(function (td) { td.addEventListener('click', function () { td.classList.add('selected') }) })
+document.getElementById('recaptcha-verify-button').addEventListener('click', function () {
+  const anchorFrame = window.parent.document.querySelector('iframe[src*="anchor"]')
+  if (anchorFrame) anchorFrame.contentWindow.postMessage('grid-solved', '*')
+})
+</script></body></html>`
+
   beforeAll(async () => {
     server = createServer((req, res) => {
+      const path = (req.url ?? '/').split('?')[0]
       res.setHeader('content-type', 'text/html; charset=utf-8')
+      if (path === '/recaptcha/enterprise/anchor') {
+        res.end(ANCHOR_HTML)
+        return
+      }
+      if (path === '/recaptcha/enterprise/bframe') {
+        res.end(BFRAME_HTML)
+        return
+      }
       res.end(readFileSync(join(__dirname, 'fixtures', 'arc-faucet.html'), 'utf-8'))
     })
     await new Promise<void>((r) => server.listen(0, r))
@@ -281,8 +338,8 @@ describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
     await new Promise<void>((r) => server.close(() => r()))
   })
 
-  /** 构造真实浏览器页面的 TaskContext；autoSolve 假服务记录调用（验证码不真打） */
-  function makeBrowserCtx(page: Page, task: ArcFaucetTask, autoSolve: ReturnType<typeof vi.fn>) {
+  /** 构造真实浏览器页面的 TaskContext；假打码服务记录调用（九宫格路线：solveGrid；autoSolve 仅保留接口兼容） */
+  function makeBrowserCtx(page: Page, task: ArcFaucetTask, captcha: { solveGrid?: ReturnType<typeof vi.fn>; autoSolve?: ReturnType<typeof vi.fn> } = {}) {
     return new TaskContext({
       page,
       task,
@@ -293,37 +350,59 @@ describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
       artifactsDir: join(tmpdir(), 'arc-faucet-test-artifacts'),
       walletPasswords: {},
       accountRow: { metamask钱包地址: '0x835e' },
-      captcha: { autoSolve: autoSolve } as never,
+      captcha: {
+        autoSolve: captcha.autoSolve ?? vi.fn(),
+        solveGrid: captcha.solveGrid ?? vi.fn().mockResolvedValue({ type: 'multi', objects: [] }),
+      } as never,
     })
   }
 
-  it('plain 模式：无验证码，一次提交成功且不打码', async () => {
+  it('plain 模式：无验证码，一次提交成功且不触发九宫格', async () => {
     const browser = await chromium.launch({ headless: true })
     try {
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=plain'
-      const autoSolve = vi.fn().mockResolvedValue('solved')
-      const ctx = makeBrowserCtx(page, task, autoSolve)
+      const solveGrid = vi.fn()
+      const ctx = makeBrowserCtx(page, task, { solveGrid })
       await task.run(ctx)
       expect(await page.locator('input[name="address"]').inputValue()).toBe('0x835e')
       expect(await page.getByText('on its way').count()).toBe(1)
-      expect(autoSolve).not.toHaveBeenCalled()
+      expect(solveGrid).not.toHaveBeenCalled()
     } finally {
       await browser.close()
     }
   }, 90000)
 
-  it('v2 模式：首次提交触发挑战 → 打码一次 → 再提交成功', async () => {
+  it('v2 模式：首次提交触发挑战 → 一键通过（未出图）→ 再提交成功', async () => {
     const browser = await chromium.launch({ headless: true })
     try {
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=v2'
-      const autoSolve = vi.fn().mockResolvedValue('solved')
-      const ctx = makeBrowserCtx(page, task, autoSolve)
+      const solveGrid = vi.fn()
+      const ctx = makeBrowserCtx(page, task, { solveGrid })
       await task.run(ctx)
-      expect(autoSolve).toHaveBeenCalledTimes(1)
+      expect(solveGrid).not.toHaveBeenCalled()
+      expect(await detectV2Challenge(ctx)).toBe(true)
+      expect(await page.getByText('on its way').count()).toBe(1)
+    } finally {
+      await browser.close()
+    }
+  }, 90000)
+
+  it('challenge 模式：v2 挑战 → 九宫格求解（假分类）→ 按钮恢复 → 再提交成功', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const task = new ArcFaucetTask()
+      task.meta.url = baseUrl + '/?mode=challenge'
+      const solveGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+      const ctx = makeBrowserCtx(page, task, { solveGrid })
+      await task.run(ctx)
+      expect(solveGrid).toHaveBeenCalledTimes(1)
+      expect(solveGrid.mock.calls[0][1]).toBe('/m/015qbp')
+      expect(await detectV2Challenge(ctx)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {
       await browser.close()

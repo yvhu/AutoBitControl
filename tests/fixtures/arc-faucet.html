@@ -16,7 +16,9 @@
     <button type="submit" disabled>Send 20 USDC</button>
   </form>
   <script>
-    // mode=plain：提交即成功；mode=v2：首次提交出现 v2 挑战文案，再次提交成功
+    // mode=plain：提交即成功；mode=v2：首次提交注入 v2 挑战文案 + anchor iframe（一键通过）；
+    // mode=challenge：再注入 bframe 九宫格，验证完成回传 anchor-solved 后恢复提交按钮
+    // 挑战元素延迟 1.2s 注入：保证 waitForOutcome 检测到挑战时 iframe 已完成导航（findAnchorFrame 依赖 frame URL）
     const mode = new URLSearchParams(location.search).get('mode') ?? 'plain'
     const addr = document.querySelector('input[name="address"]')
     const btn = document.querySelector('button[type="submit"]')
@@ -25,13 +27,32 @@
     let submits = 0
     btn.addEventListener('click', () => {
       submits++
-      const box = document.createElement('div')
-      if (mode === 'v2' && submits === 1) {
-        box.textContent = 'We detect unusual traffic from your request. Please verify that you are not a bot and submit again.'
-      } else {
+      if (mode === 'plain' || submits > 1) {
+        const box = document.createElement('div')
         box.textContent = '20 testnet USDC is on its way to your wallet and should appear shortly.'
+        document.body.appendChild(box)
+        return
       }
-      document.body.appendChild(box)
+      btn.disabled = true
+      setTimeout(() => {
+        const box = document.createElement('div')
+        box.textContent = 'We detect unusual traffic from your request. Please verify that you are not a bot and submit again.'
+        document.body.appendChild(box)
+        const anchor = document.createElement('iframe')
+        anchor.src = mode === 'v2'
+          ? '/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve&onepass=1'
+          : '/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve'
+        document.body.appendChild(anchor)
+        if (mode === 'challenge') {
+          const bframe = document.createElement('iframe')
+          bframe.src = '/recaptcha/enterprise/bframe?hl=zh-CN'
+          document.body.appendChild(bframe)
+        }
+      }, 1200)
+    })
+    // 验证完成（anchor 页面回传 anchor-solved）：恢复提交按钮
+    window.addEventListener('message', (e) => {
+      if (e.data === 'anchor-solved') btn.disabled = false
     })
   </script>
 </body>
