@@ -101,7 +101,7 @@ async function submitAndWait(ctx: TaskContext): Promise<'success' | 'captcha' | 
   return waitForOutcome(ctx, SUBMIT_RACE_MS)
 }
 
-/** Arc 领水主流程（模块级函数：任务类委托它，集成测试可直接覆盖）*/
+/** Arc 领水主流程（模块级函数：任务类委托它，集成测试经任务类覆盖）*/
 async function runArcFaucet(ctx: TaskContext): Promise<void> {
   // 开始前清理：关闭其它标签页（上次会话残留），再从干净状态打开任务网址
   await ctx.closeOtherTabs()

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<body>
+  <button name="network" type="button">
+    <div class="field-display-value">Arc Testnet</div>
+  </button>
+  <div role="listbox">
+    <span role="option">Arc Testnet</span>
+    <span role="option">Ethereum Sepolia</span>
+  </div>
+  <input type="radio" name="currency" value="USDC" checked />
+  <input type="radio" name="currency" value="EURC" />
+  <div data-testid="select-card-USDC"></div>
+  <form>
+    <input name="address" type="text" placeholder="Wallet address" />
+    <button type="submit" disabled>Send 20 USDC</button>
+  </form>
+  <script>
+    // mode=plain：提交即成功；mode=v2：首次提交出现 v2 挑战文案，再次提交成功
+    const mode = new URLSearchParams(location.search).get('mode') ?? 'plain'
+    const addr = document.querySelector('input[name="address"]')
+    const btn = document.querySelector('button[type="submit"]')
+    document.querySelector('form').addEventListener('submit', (e) => e.preventDefault())
+    addr.addEventListener('input', () => { btn.disabled = addr.value.trim() === '' })
+    let submits = 0
+    btn.addEventListener('click', () => {
+      submits++
+      const box = document.createElement('div')
+      if (mode === 'v2' && submits === 1) {
+        box.textContent = 'We detect unusual traffic from your request. Please verify that you are not a bot and submit again.'
+      } else {
+        box.textContent = '20 testnet USDC is on its way to your wallet and should appear shortly.'
+      }
+      document.body.appendChild(box)
+    })
+  </script>
+</body>
+</html>

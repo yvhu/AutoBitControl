@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'patchright'
+import type { Page } from 'patchright'
 import { createServer, type Server } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -261,4 +262,71 @@ describe('ArcFaucetTask 元信息', () => {
     expect(t.meta.captcha).toEqual({ auto: true })
     expect(t.meta.concurrency).toBe(3)
   })
+})
+
+describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
+  let server: Server
+  let baseUrl: string
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.end(readFileSync(join(__dirname, 'fixtures', 'arc-faucet.html'), 'utf-8'))
+    })
+    await new Promise<void>((r) => server.listen(0, r))
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((r) => server.close(() => r()))
+  })
+
+  /** 构造真实浏览器页面的 TaskContext；autoSolve 假服务记录调用（验证码不真打） */
+  function makeBrowserCtx(page: Page, task: ArcFaucetTask, autoSolve: ReturnType<typeof vi.fn>) {
+    return new TaskContext({
+      page,
+      task,
+      human: new Humanizer(page),
+      profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+      logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+      artifactsDir: join(tmpdir(), 'arc-faucet-test-artifacts'),
+      walletPasswords: {},
+      accountRow: { metamask钱包地址: '0x835e' },
+      captcha: { autoSolve: autoSolve } as never,
+    })
+  }
+
+  it('plain 模式：无验证码，一次提交成功且不打码', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const task = new ArcFaucetTask()
+      task.meta.url = baseUrl + '/?mode=plain'
+      const autoSolve = vi.fn().mockResolvedValue('solved')
+      const ctx = makeBrowserCtx(page, task, autoSolve)
+      await task.run(ctx)
+      expect(await page.locator('input[name="address"]').inputValue()).toBe('0x835e')
+      expect(await page.getByText('on its way').count()).toBe(1)
+      expect(autoSolve).not.toHaveBeenCalled()
+    } finally {
+      await browser.close()
+    }
+  }, 90000)
+
+  it('v2 模式：首次提交触发挑战 → 打码一次 → 再提交成功', async () => {
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      const task = new ArcFaucetTask()
+      task.meta.url = baseUrl + '/?mode=v2'
+      const autoSolve = vi.fn().mockResolvedValue('solved')
+      const ctx = makeBrowserCtx(page, task, autoSolve)
+      await task.run(ctx)
+      expect(autoSolve).toHaveBeenCalledTimes(1)
+      expect(await page.getByText('on its way').count()).toBe(1)
+    } finally {
+      await browser.close()
+    }
+  }, 90000)
 })
