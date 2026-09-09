@@ -132,6 +132,39 @@ export function buildTaskInfo(tasks: TaskMetaView[]): Record<string, { name: str
 - `npm run typecheck`、`npm test`、`npm run test:web` 全过
 - `npm run dev` 面板人工验收三个页面（无需比特浏览器，任务页/定时页/看板均纯前端数据）
 
+---
+
+## rev2：任务页重设计（2026-09-09，用户在线 mockup 确认方案 A）
+
+rev1 的 ghost Collapse 树被用户否掉（「太丑」），替换为**彩色图标卡片分区**，并新增一键展开/收起。**本 rev 覆盖 rev1 第 4 节任务页部分**（定时页/看板/后端不变）。
+
+### 需求（mockup 方案 A）
+
+- 每个分组一张独立卡片容器（圆角、主题色背景，用 antd token 适配深色模式）
+- 组头：彩色渐变图标块（组名首字，白字）+ 组名（strong）+ 「N 个任务」+ 右侧 ▲/▼ 箭头；整行可点击切换展开/收起
+- 组内 2 列任务卡片网格（TaskCard 本体不变）
+- 顶部工具栏：「任务分组」标签 + 右侧「全部展开」「全部收起」按钮；**默认全部收起**
+- 按钮禁用逻辑：全部已展开 → 「全部展开」禁用；无展开 → 「全部收起」禁用
+- 全部任务都未分组（单一伪分组）时：保持平铺网格、不显示工具栏（与 rev1 回退行为一致）
+- 未分组伪分组同样渲染为一张卡片，垫底
+
+### 分组图标配色
+
+- 已知分组固定色（与 mockup 一致）：shelby `#1677FF`、inception `#52c41a`、portal `#faad14`、arc `#722ed1`、example `#8c8c8c`
+- 未知分组按出现索引轮换回退色：`['#13c2c2', '#eb2f96', '#fa541c', '#2f54eb', '#a0d911', '#7cb305']`
+- 图标块背景：`linear-gradient(135deg, 主色, 主色 + 'b3' 透明度)`，白字首字
+
+### 实现要点
+
+- 移除任务页 Collapse 与 `defaultActiveKey`；新增 `useState<string[]>([])` 承载展开键集合
+- 纯函数放 `tasks/hooks.ts`：`GROUP_COLOR_MAP`、`groupColor(key, index)`、`toggleKey(keys, key)`（配单测）
+- 容器用 div + `theme.useToken()` 取 `colorBgContainer`/`colorBorderSecondary`/`borderRadiusLG`（不硬编码 #fff，深色模式自适应）
+- 工具栏仅非 flat 时渲染
+
+### 文档
+
+- `docs/API-GUIDE.md` 9.2 任务页条目改写为卡片分区描述（默认收起、全部展开/收起按钮）
+
 ## 范围外
 
 - 分组级操作：组头「全部启用/一键触发」按钮（mockup 中曾出现，YAGNI 砍掉；未来需要时在组头加按钮即可，不影响本次结构）
