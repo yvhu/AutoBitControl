@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
 import { fetchBatches, fetchBatchDetail, fetchTasks, triggerTask } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
+import type { TaskMetaView } from '../../types'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
@@ -37,4 +38,13 @@ export function useTriggerTask() {
     },
     onError: (e) => message.error(errMsg(e)),
   })
+}
+
+export type TaskInfoMap = Record<string, { name: string; groupName: string | null }>
+
+/** 任务显示信息映射：key → { name, groupName }；无分组时 groupName 为 null */
+export function buildTaskInfo(tasks: TaskMetaView[]): TaskInfoMap {
+  const map: TaskInfoMap = {}
+  for (const t of tasks) map[t.key] = { name: t.name, groupName: t.group?.name ?? null }
+  return map
 }

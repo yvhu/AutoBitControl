@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
-import { useBatches, useBatchDetail, useTasks, useTriggerTask } from './hooks'
+import { useBatches, useBatchDetail, useTasks, useTriggerTask, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
 import { splitBatches, batchProgress, batchTiming } from './groupBatches'
 
@@ -31,7 +31,17 @@ function runTime(v: string | null): string {
   return v ? (v.includes('T') ? v.slice(11, 23) : v.slice(11)) : '—'
 }
 
-function RunsTable({ runs, loading, taskNames }: { runs: RunRow[]; loading: boolean; taskNames: Record<string, string> }) {
+function TaskName({ info, fallback }: { info: { name: string; groupName: string | null } | undefined; fallback: string }) {
+  if (!info) return <>{fallback}</>
+  return (
+    <span>
+      {info.name}
+      {info.groupName && <span style={{ color: '#999', fontSize: 11, marginLeft: 4 }}>{info.groupName}</span>}
+    </span>
+  )
+}
+
+function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
   const trigger = useTriggerTask()
   return (
     <Table<RunRow>
@@ -44,7 +54,7 @@ function RunsTable({ runs, loading, taskNames }: { runs: RunRow[]; loading: bool
         { title: '窗口', dataIndex: 'profileName', width: 150, render: (n: string, r) => (
           <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
         ) },
-        { title: '任务', dataIndex: 'taskKey', width: 130, render: (k: string) => taskNames[k] ?? k },
+        { title: '任务', dataIndex: 'taskKey', width: 130, render: (k: string) => <TaskName info={taskInfo[k]} fallback={k} /> },
         { title: '开始', dataIndex: 'startedAt', width: 110, render: runTime },
         { title: '耗时', dataIndex: 'durationSec', width: 80, render: (s: number | null) => formatDuration(s) },
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
@@ -60,7 +70,7 @@ function RunsTable({ runs, loading, taskNames }: { runs: RunRow[]; loading: bool
   )
 }
 
-function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNames: Record<string, string>; defaultOpen: boolean }) {
+function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInfo: TaskInfoMap; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const detail = useBatchDetail(open ? batch.id : null)
   const { done, pct } = batchProgress(batch)
@@ -77,7 +87,7 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
         <b>{formatDateTime(batch.createdAt)}</b>
         <Tag color={KIND_TAG[batch.kind].color}>{KIND_TAG[batch.kind].label}</Tag>
-        <span style={{ fontWeight: 600 }}>{taskNames[batch.taskKey] ?? batch.taskKey}</span>
+        <span style={{ fontWeight: 600 }}><TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /></span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
           {timing.finished && timing.durationSec != null
@@ -95,7 +105,7 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
       {open && (
         <div style={{ marginTop: 8 }}>
           {detail.data
-            ? <RunsTable runs={detail.data.runs} loading={false} taskNames={taskNames} />
+            ? <RunsTable runs={detail.data.runs} loading={false} taskInfo={taskInfo} />
             : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={detail.isPending ? '加载中…' : '暂无运行记录'} />}
         </div>
       )}
@@ -103,7 +113,7 @@ function BatchCard({ batch, taskNames, defaultOpen }: { batch: BatchItem; taskNa
   )
 }
 
-function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Record<string, string> }) {
+function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskInfoMap }) {
   const detail = useBatchDetail(batch.id)
   const trigger = useTriggerTask()
   return (
@@ -116,7 +126,7 @@ function SingleBatchRow({ batch, taskNames }: { batch: BatchItem; taskNames: Rec
       locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
       columns={[
         { title: '时间', width: 130, render: () => formatDateTime(batch.createdAt) },
-        { title: '任务', width: 120, render: () => taskNames[batch.taskKey] ?? batch.taskKey },
+        { title: '任务', width: 120, render: () => <TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /> },
         { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
           <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
         ) },
@@ -138,11 +148,7 @@ export default function DashboardPage() {
   const batches = useBatches(range)
   const tasks = useTasks()
 
-  const taskNames = useMemo(() => {
-    const map: Record<string, string> = {}
-    for (const t of tasks.data ?? []) map[t.key] = t.name
-    return map
-  }, [tasks.data])
+  const taskInfo = useMemo(() => buildTaskInfo(tasks.data ?? []), [tasks.data])
 
   const { bulk, single } = useMemo(() => splitBatches(batches.data?.batches ?? []), [batches.data])
   const data = batches.data
@@ -165,7 +171,7 @@ export default function DashboardPage() {
       {bulk.length === 0 && single.length === 0 && unbatched.length === 0 ? (
         <Card size="small"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行批次" /></Card>
       ) : (
-        bulk.map((b, i) => <BatchCard key={b.id} batch={b} taskNames={taskNames} defaultOpen={i === 0 && !!data?.running} />)
+        bulk.map((b, i) => <BatchCard key={b.id} batch={b} taskInfo={taskInfo} defaultOpen={i === 0 && !!data?.running} />)
       )}
 
       {(single.length > 0 || unbatched.length > 0) && (
@@ -177,12 +183,12 @@ export default function DashboardPage() {
               ...(single.length > 0 ? [{
                 key: 'single',
                 label: <span style={{ color: token.colorTextSecondary }}>📦 单窗口散批 ×{single.length}</span>,
-                children: single.map((b) => <SingleBatchRow key={b.id} batch={b} taskNames={taskNames} />),
+                children: single.map((b) => <SingleBatchRow key={b.id} batch={b} taskInfo={taskInfo} />),
               }] : []),
               ...(unbatched.length > 0 ? [{
                 key: 'unbatched',
                 label: <span style={{ color: token.colorTextSecondary }}>🗂 未分批历史 ×{unbatched.length}</span>,
-                children: <RunsTable runs={unbatched} loading={false} taskNames={taskNames} />,
+                children: <RunsTable runs={unbatched} loading={false} taskInfo={taskInfo} />,
               }] : []),
             ]}
           />
