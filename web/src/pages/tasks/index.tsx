@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Row, Space, Spin, Switch, Tag, Typography } from 'antd'
+import { Button, Card, Col, Collapse, Empty, Row, Space, Spin, Switch, Tag, Typography } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 import type { TaskMetaView } from '../../types'
 import {
   categoryColor,
   categoryLabel,
+  groupTasks,
   useSetTaskEnabled,
   useTasks,
   useTriggerTask,
@@ -128,15 +129,38 @@ export default function TasksPage() {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务" />
   }
 
+  const groups = groupTasks(tasks.data)
+  const flat = groups.length === 1 && groups[0].key === ''
+
   return (
     <Space direction="vertical" size={8} style={{ display: 'flex' }}>
-      <Row gutter={[12, 12]} align="stretch">
-        {tasks.data.map((t) => (
-          <Col key={t.key} xs={24} xl={12}>
-            <TaskCard task={t} />
-          </Col>
-        ))}
-      </Row>
+      {flat ? (
+        <Row gutter={[12, 12]} align="stretch">
+          {tasks.data.map((t) => (
+            <Col key={t.key} xs={24} xl={12}>
+              <TaskCard task={t} />
+            </Col>
+          ))}
+        </Row>
+      ) : (
+        <Collapse
+          ghost
+          defaultActiveKey={groups.map((g) => g.key)}
+          items={groups.map((g) => ({
+            key: g.key,
+            label: `${g.name} · ${g.tasks.length} 个任务`,
+            children: (
+              <Row gutter={[12, 12]} align="stretch">
+                {g.tasks.map((t) => (
+                  <Col key={t.key} xs={24} xl={12}>
+                    <TaskCard task={t} />
+                  </Col>
+                ))}
+              </Row>
+            ),
+          }))}
+        />
+      )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         → 任务定义在代码（src/tasks），开关与触发在此页管理
       </Typography.Text>
