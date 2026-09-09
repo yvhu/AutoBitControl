@@ -1,5 +1,5 @@
 /**
- * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 下载每格原图拼接网格 → yescaptcha 分类 →
+ * reCAPTCHA 九宫格模拟点击求解（automation 层）：点复选框 → 容器元素截图网格 → yescaptcha 分类 →
  * 按坐标点选（点击后按 img src 变化检测小图刷新 → 小图二次识别 → 命中再点确认）→
  * 验证 → 查 aria-checked → 未通过则下一轮，直到变绿
  * 真机核实（2026-09-09，faucet.circle.com）：挑战为 reCAPTCHA Enterprise
@@ -7,8 +7,10 @@
  * 兼容普通版（recaptcha/api2/anchor / api2/bframe）；官方 DEMO 流程
  * （yescaptcha 文档页 29786113）为协议来源；点击后 Google 刷新该格小图，
  * 真实人流程是看刷新后新图是否仍为目标 → 再点一次确认（2022 DEMO 的 class selected 语义已失效）
- * 网格图优先走每格原图下载拼接（官方 DEMO 正统方式，避免容器截图拉伸变形与动画截图失真），
- * 原图获取失败退回容器截图兜底
+ * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
+ * 方案已废弃），截图前先等 800ms 动画稳定；挑战 frame 内点击一律走拟人坐标点击
+ * （humanClickInFrame：frame 内元素中心 + frame 元素页面偏移 → human.clickAt 贝塞尔轨迹 CDP 派发；
+ * 窗口 92 高频「点击可能未注册」——Google 忽略瞬移式程序化点击），拿不到坐标回退 locator 直点
  * 依赖方向：依赖 integrations/yescaptcha 类型，被 engine/task-context 包装调用
  */
 import type { Page, Frame } from 'patchright'
@@ -34,7 +36,7 @@ export const VERIFY_SELECTOR = '#recaptcha-verify-button'
 export const RELOAD_SELECTOR = '#recaptcha-reload-button'
 /** 每轮最多刷新换图次数（超出后空数组放弃本轮 / 抛错直接失败） */
 export const RELOAD_MAX = 2
-/** 网格容器（原图获取失败时截图兜底用） */
+/** 网格容器（分类网格图按容器元素截图获取） */
 export const GRID_SELECTOR = '#rc-imageselect-target'
 /** 最大求解轮数 */
 export const MAX_ROUNDS = 5
@@ -110,75 +112,45 @@ async function toStandardBase64(buf: Buffer, size: number): Promise<string> {
   return (await img.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
 }
 
-/** 单格原图标准边长（recaptcha 单格原图即 100x100；读出尺寸不同统一 resize 对齐） */
-const TILE_ORIGINAL_SIZE = 100
-
-/**
- * 下载挑战 frame 内每格原图并 jimp 拼接为标准分类图（官方 DEMO 正统方式）：
- * 3x3 拼 300x300；4x4 拼 400x400 后整体放大到 450x450（等比例放大 12.5%，分类服务要求）
- * evaluate 内对每格 img fetch 其 src 得原始字节（避免元素截图拉伸变形/拍在动画中）
- * @returns ok=false 表示获取失败（全空或数量不足），调用方应退回容器截图兜底
- */
-export async function captureGridImage(ch: Frame, tileCount: number): Promise<{ b64: string; ok: boolean }> {
-  let parts: number[][]
+/** 取 frame 内元素中心在页面坐标系的位置（frame 内坐标 + frame 元素页面偏移） */
+async function framePoint(deps: { page: Page; human: Humanizer }, ch: Frame, frameSelector: string, nth = 0): Promise<{ x: number; y: number } | null> {
+  const inner = await ch.locator(frameSelector).nth(nth).evaluate((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  }).catch(() => null)
+  if (!inner) return null
+  let frameHandle: { evaluate: (fn: (el: HTMLElement) => { x: number; y: number }) => Promise<{ x: number; y: number }> } | null = null
   try {
-    parts = await ch.evaluate(async () => {
-      const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('#rc-imageselect-target table td img'))
-      const out: number[][] = []
-      for (const img of imgs) {
-        try {
-          const r = await fetch(img.src)
-          const buf = await r.arrayBuffer()
-          out.push(Array.from(new Uint8Array(buf)))
-        } catch {
-          out.push([])
-        }
-      }
-      return out
-    })
+    frameHandle = await ch.frameElement()
   } catch {
-    return { b64: '', ok: false }
+    frameHandle = null
   }
-  if (parts.filter((p) => p.length > 0).length < tileCount) return { b64: '', ok: false }
-  const cols = tileCount === 16 ? 4 : 3
-  const canvasSize = tileCount === 16 ? 450 : 300
-  const base = new Jimp(cols * TILE_ORIGINAL_SIZE, cols * TILE_ORIGINAL_SIZE, 0xffffffff)
-  for (let i = 0; i < tileCount; i++) {
-    const tile = await Jimp.read(Buffer.from(parts[i]))
-    if (tile.getWidth() !== TILE_ORIGINAL_SIZE || tile.getHeight() !== TILE_ORIGINAL_SIZE) {
-      await tile.resize(TILE_ORIGINAL_SIZE, TILE_ORIGINAL_SIZE)
-    }
-    base.composite(tile, (i % cols) * TILE_ORIGINAL_SIZE, Math.floor(i / cols) * TILE_ORIGINAL_SIZE)
-  }
-  if (canvasSize !== cols * TILE_ORIGINAL_SIZE) await base.resize(canvasSize, canvasSize)
-  const b64 = (await base.getBase64Async(Jimp.MIME_PNG)).replace(/^data:image\/\w+;base64,/, '')
-  return { b64, ok: true }
+  if (!frameHandle) return null
+  const outer = await frameHandle.evaluate((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect()
+    return { x: r.x, y: r.y }
+  }).catch(() => null)
+  if (!outer) return null
+  return { x: outer.x + inner.x, y: outer.y + inner.y }
 }
 
-/** 下载单格小图原图（evaluate 内 fetch img src）；失败返回 null（调用方退回元素截图） */
-async function fetchTileOriginal(ch: Frame, idx: number): Promise<Buffer | null> {
+/** 拟人点击 frame 内元素（framePoint 拿页面坐标 → human.clickAt 轨迹点击；失败回退 locator 直点） */
+async function humanClickInFrame(deps: { page: Page; human: Humanizer }, ch: Frame, frameSelector: string, nth = 0): Promise<boolean> {
+  const p = await framePoint(deps, ch, frameSelector, nth)
+  if (!p) return false
   try {
-    const parts = await ch.evaluate(async (i: number) => {
-      const img = document.querySelectorAll<HTMLImageElement>('#rc-imageselect-target table td img')[i]
-      if (!img) return [[]]
-      try {
-        const r = await fetch(img.src)
-        const buf = await r.arrayBuffer()
-        return [Array.from(new Uint8Array(buf))]
-      } catch {
-        return [[]]
-      }
-    }, idx)
-    const part = parts?.[0] ?? []
-    return part.length > 0 ? Buffer.from(part) : null
+    await deps.human.clickAt(p.x, p.y)
+    return true
   } catch {
-    return null
+    return false
   }
 }
 
-/** 点刷新换图并等新一批图渲染（点击失败静默：部分主题下按钮瞬时不可点时由后续重试/下一轮兜底） */
-async function reloadImages(deps: { page: Page }, ch: Frame): Promise<void> {
-  await ch.locator(RELOAD_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
+/** 点刷新换图并等新一批图渲染（拟人坐标点击优先，失败回退 locator 直点；点击失败静默：部分主题下按钮瞬时不可点时由后续重试/下一轮兜底） */
+async function reloadImages(deps: { page: Page; human: Humanizer }, ch: Frame): Promise<void> {
+  if (!(await humanClickInFrame(deps, ch, RELOAD_SELECTOR))) {
+    await ch.locator(RELOAD_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
+  }
   // 2000-3000ms 随机：等 Google 换出并渲染新一批图（固定间隔同会话连续刷新有风控）
   await deps.page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
 }
@@ -193,6 +165,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   const passOpts = { profileId: opts.profileId ?? null, taskKey: opts.taskKey ?? null, onLog: opts.onLog ?? (() => {}) }
   // 网格截图 10s 超时，失败 1 秒后重试一次，仍失败抛错（真机窗口 93 曾 30s 超时——元素动画中不稳定）
   const shotGrid = async (): Promise<Buffer> => {
+    // 截图前先等 800ms：等上一动作/动画稳定（真机网格渲染未完成时截图内容错乱）
+    await deps.page.waitForTimeout(800)
     let shot = await ch.locator(GRID_SELECTOR).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
     if (!shot) {
       deps.logger.warn('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
@@ -221,15 +195,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     deps.logger.info({ prompt, qid }, '九宫格识别目标')
     tiles = ch.locator(TILE_SELECTOR)
     const tileCount = await tiles.count()
-    // 网格图优先每格原图下载拼接（官方 DEMO 方式）；获取失败退回容器截图兜底，截图兜底仍失败抛错
-    const grid = await captureGridImage(ch, tileCount)
-    let b64: string
-    if (grid.ok) {
-      b64 = grid.b64
-    } else {
-      deps.logger.warn('九宫格每格原图下载失败，退回容器截图拼接')
-      b64 = await toStandardBase64(await shotGrid(), tileCount === 16 ? 450 : 300)
-    }
+    // 网格图一律走容器元素截图（fetch 每格原图拼接方案已废弃：拿到的内容与视觉图不符，真机窗口 89）
+    const b64 = await toStandardBase64(await shotGrid(), tileCount === 16 ? 450 : 300)
     try {
       result = await deps.captcha.solveGrid(b64, qid, passOpts)
     } catch (e) {
@@ -254,27 +221,27 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   deps.logger.info({ objects: result.objects, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
     let before = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
-    await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+    // 拟人坐标点击优先（Google 忽略瞬移式程序化点击）；framePoint 拿不到坐标回退 locator 直点
+    if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
+      await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+    }
     await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
     // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 点击可能未注册，重试点击
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
       const after = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
       if (before !== after) {
-        // 小图二次识别优先下载该格原图（不再元素截图）；原图获取失败退回元素截图，两者都失败则跳过识别
-        const singleOriginal = await fetchTileOriginal(ch, idx)
+        // 小图二次识别用该格 img 元素截图（fetch 原图方案已废弃：拿到的内容与视觉图不符）
+        const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
         let singleB64: string | null = null
-        if (singleOriginal) {
-          singleB64 = await toStandardBase64(singleOriginal, 100)
-        } else {
-          const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
-          if (singleShot) singleB64 = await toStandardBase64(singleShot, 100)
-        }
+        if (singleShot) singleB64 = await toStandardBase64(singleShot, 100)
         if (!singleB64) break
         const single = await deps.captcha.solveGrid(singleB64, qid, passOpts)
         if (single.type === 'single' && single.hasObject) {
           deps.logger.warn({ idx, recheck: k + 1 }, '九宫格小图刷新后仍含目标，再次点击确认')
-          await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+          if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
+            await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+          }
           await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
           before = after
           continue
@@ -284,11 +251,15 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
       const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
       if (cls.includes('selected')) break
       deps.logger.warn({ idx }, '九宫格点击可能未注册（src 未变且无 selected），重试点击')
-      await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+      if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
+        await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
+      }
       await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     }
   }
-  await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
+  if (!(await humanClickInFrame(deps, ch, VERIFY_SELECTOR))) {
+    await ch.locator(VERIFY_SELECTOR).first().click({ timeout: 5000 }).catch(() => {})
+  }
   await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
 }
 
@@ -313,9 +284,12 @@ export async function solveRecaptchaGrid(
   }
   if (!anchor) return 'none'
   // 点击失败只告警不中断：真机偶发点击未注册时，后续轮次能自我纠正
-  await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch((e) => {
-    deps.logger.warn({ err: (e as Error).message }, '锚点复选框点击失败（继续流程，后续轮次自纠）')
-  })
+  // 锚点也是跨源 frame：拟人坐标点击优先（Google 忽略瞬移式程序化点击），失败回退 locator 直点
+  if (!(await humanClickInFrame(deps, anchor, ANCHOR_SELECTOR))) {
+    await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch((e) => {
+      deps.logger.warn({ err: (e as Error).message }, '锚点复选框点击失败（继续流程，后续轮次自纠）')
+    })
+  }
   // 等挑战 frame 出现；期间锚点直接变绿即一键通过
   let challenge: Frame | null = null
   for (let i = 0; i < 30 && !challenge; i++) {

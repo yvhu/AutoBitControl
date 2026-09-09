@@ -2,11 +2,12 @@
  * 九宫格模拟点击模块单测：提示语映射纯函数 + 注入假 frame 的求解循环分支
  * 假 frame 用最小 locator 模拟器（按选择器分派行为），网格/小图截图用 jimp 生成真实 PNG
  * 真机语义（2026-09-09）：点击格子后 Google 刷新该格小图，需按 img src 变化做小图二次识别确认；
- * 分类空数组/抛错时点官方刷新按钮换一批图重试（换图后提示语可能变化，必须重读）
+ * 分类空数组/抛错时点官方刷新按钮换一批图重试（换图后提示语可能变化，必须重读）；
+ * frame 内点击走拟人坐标点击（framePoint 合成坐标 → human.clickAt），拿不到坐标回退 locator 直点
  */
 import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
-import { mapQuestionId, solveRecaptchaGrid, captureGridImage, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
+import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
 import { CaptchaFailure } from '../src/integrations/yescaptcha'
 
 /** 真机核实（2026-09-09）：页面常驻 v3 sitekey；挑战时动态插入 v2 sitekey */
@@ -78,9 +79,11 @@ interface ElemBehavior {
   textContentImpl?: () => Promise<string | null>
   /** 按索引分派的子行为：nth(i) 返回独立实例（每个索引独立 click mock），未命中回落到当前行为 */
   nthBehaviors?: Record<number, ElemBehavior>
+  /** evaluate 返回的固定盒中心（framePoint 拟人点击坐标用；缺省 null → 拟人点击回退 locator 直点） */
+  box?: { x: number; y: number } | null
 }
 
-function makeFrame(behaviors: Record<string, ElemBehavior>, extra: { evaluate?: ReturnType<typeof vi.fn> } = {}) {
+function makeFrame(behaviors: Record<string, ElemBehavior>, extra: { frameElement?: () => Promise<unknown> } = {}) {
   const build = (b: ElemBehavior) => {
     const click = b.click ?? vi.fn().mockResolvedValue(undefined)
     return {
@@ -95,10 +98,12 @@ function makeFrame(behaviors: Record<string, ElemBehavior>, extra: { evaluate?: 
       textContent: vi.fn().mockImplementation(async () => b.textContentImpl ? b.textContentImpl() : (b.text ?? null)),
       click,
       screenshot: vi.fn().mockImplementation(async () => b.screenshotImpl ? b.screenshotImpl() : (b.screenshotBuf ?? null)),
+      evaluate: vi.fn().mockImplementation(async () => b.box ?? null),
     }
   }
   const locator = (selector: string) => build(behaviors[selector] ?? {})
-  return { locator, ...extra }
+  const frameElement = extra.frameElement ?? (async () => null)
+  return { locator, frameElement }
 }
 
 /** 造一张纯色 PNG（供 jimp 缩放链路） */
@@ -123,8 +128,10 @@ describe('solveRecaptchaGrid 求解循环', () => {
     /** 按格子索引覆盖行为；clickImpl 在点击时执行（模拟点击后 img src 变化），不影响 tileClicks 断言 */
     tileBehaviors?: Record<number, ElemBehavior & { clickImpl?: () => void }>
     anchorAppearsOnFrameCall?: number
-    /** 挑战 frame evaluate 动态实现（缺省返回每格 100x100 PNG 原图；返回空数组模拟原图 fetch 失败走截图兜底） */
-    tileEvalImpl?: (fn: unknown, arg?: unknown) => Promise<unknown>
+    /** 挑战 frame 的 frameElement 实现（缺省返回 null → 拟人点击回退 locator 直点） */
+    challengeFrameElementImpl?: () => Promise<{ evaluate: ReturnType<typeof vi.fn> } | null>
+    /** 每格 evaluate 返回的固定盒中心（缺省 null → 拟人点击回退 locator 直点） */
+    tileBox?: { x: number; y: number } | null
   } = {}) {
     const o = { anchorChecked: 'false', anchorPresent: true, challengePresent: true, prompt: '停车计时器', tileCount: 9, gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: null, ...overrides }
     // 锚点 aria-checked 为动态状态：点验证按钮后置 true（模拟真机「验证后变绿」）
@@ -133,15 +140,17 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const anchorSpecs = o.anchors ?? [{ url: `https://www.google.com/${ANCHOR_FRAME_PART}?k=${V2}` }]
     const anchorFrames = anchorSpecs.map((spec) => {
       const click = vi.fn().mockResolvedValue(undefined)
+      const mk = makeFrame({
+        [ANCHOR_SELECTOR]: {
+          click,
+          getAttributeImpl: async (name: string) => (name === 'aria-checked' ? checked : null),
+        },
+      })
       return {
         url: spec.url,
         click,
-        locator: makeFrame({
-          [ANCHOR_SELECTOR]: {
-            click,
-            getAttributeImpl: async (name: string) => (name === 'aria-checked' ? checked : null),
-          },
-        }).locator,
+        locator: mk.locator,
+        frameElement: mk.frameElement,
       }
     })
     // 每个格子索引独立 click mock：nth(i) 按索引分派，供点选行为断言使用
@@ -151,27 +160,20 @@ describe('solveRecaptchaGrid 求解循环', () => {
     for (let i = 0; i < o.tileCount; i++) {
       const { clickImpl, ...extra } = o.tileBehaviors?.[i] ?? {}
       if (clickImpl) tileClicks[i] = vi.fn().mockImplementation(async () => { clickImpl() })
-      tileNth[i] = { click: tileClicks[i], attrs: { class: 'rc-imageselect-tile selected' }, ...extra }
+      tileNth[i] = { click: tileClicks[i], attrs: { class: 'rc-imageselect-tile selected' }, box: o.tileBox ?? null, ...extra }
     }
     // 刷新换图按钮与验证按钮独立 click mock（供「换图重试」「不点 verify」断言）
     const reloadClick = vi.fn().mockResolvedValue(undefined)
     const verifyClick = vi.fn().mockImplementation(async () => { checked = 'true' })
-    // 挑战 frame 的 evaluate（每格原图 fetch 假实现）：缺省返回每格 100x100 PNG 原图数组；
-    // arg 为格索引时返回单格原图（小图二次识别的原图 fetch 路径）
-    const tileEval = vi.fn().mockImplementation(async (fn: unknown, arg?: unknown) => {
-      if (o.tileEvalImpl) return o.tileEvalImpl(fn, arg)
-      const bufs = await Promise.all(Array.from({ length: o.tileCount }, () => makePngBuffer(100)))
-      const asArr = bufs.map((b) => Array.from(new Uint8Array(b)))
-      if (typeof arg === 'number') return [asArr[arg] ?? []]
-      return asArr
-    })
     const challenge = makeFrame({
       [PROMPT_SELECTOR]: { text: o.prompt, textContentImpl: o.promptImpl },
       [TILE_SELECTOR]: { count: o.tileCount, attrs: { class: 'rc-imageselect-tile selected' }, nthBehaviors: tileNth },
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf, screenshotImpl: o.gridScreenshotImpl },
       [VERIFY_SELECTOR]: { click: verifyClick },
       [RELOAD_SELECTOR]: { click: reloadClick },
-    }, { evaluate: tileEval })
+    }, { frameElement: o.challengeFrameElementImpl ?? (async () => null) })
+    // 拟人点击 mock（缺省成功；framePoint 拿不到坐标时不会被调用）
+    const human = { clickAt: vi.fn().mockResolvedValue(undefined) }
     // frames() 调用计数：驱动 anchor 延迟附着（第 N 次调用起才返回 anchor frame）
     let framesCalls = 0
     const page = {
@@ -179,15 +181,15 @@ describe('solveRecaptchaGrid 求解循环', () => {
         // anchor 从第 N 次 frames() 调用起才出现（模拟 iframe 已入 DOM 但 CDP frame 未附着）
         framesCalls++
         return [
-          ...(o.anchorPresent && framesCalls >= (o.anchorAppearsOnFrameCall ?? 1) ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator })) : []),
-          ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator, evaluate: tileEval }] : []),
+          ...(o.anchorPresent && framesCalls >= (o.anchorAppearsOnFrameCall ?? 1) ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator, frameElement: a.frameElement })) : []),
+          ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator, frameElement: challenge.frameElement }] : []),
         ]
       },
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
     }
     const captcha = { solveGrid: vi.fn().mockResolvedValue(o.gridResult) }
     const logger = { info: vi.fn(), warn: vi.fn() }
-    return { page, captcha, logger, anchorFrames, challenge, tileClicks, reloadClick, verifyClick, tileEval, getFramesCalls: () => framesCalls }
+    return { page, captcha, logger, human, anchorFrames, challenge, tileClicks, reloadClick, verifyClick, getFramesCalls: () => framesCalls }
   }
 
   it('无锚点 frame → none', async () => {
@@ -235,6 +237,35 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(logger.info).toHaveBeenCalledWith({ objects: [0, 2], round: 'multi' }, '九宫格识别完成，开始点选')
     // 不传 confidence（平台默认返回 top3，满足 Google 每轮至少点 3 格）
     expect((captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0][2]).not.toHaveProperty('confidence')
+  }, 30000)
+
+  it('点格子走拟人坐标点击：坐标为 frame 内中心 + frame 元素页面偏移合成值，locator 直点不被调', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, human, tileClicks } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0, 2] },
+      tileBox: { x: 10, y: 20 },
+      challengeFrameElementImpl: async () => ({ evaluate: vi.fn().mockResolvedValue({ x: 100, y: 50 }) }),
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: human as never })).resolves.toBe('solved')
+    // 坐标 = 格中心（10,20）+ frame 页面偏移（100,50）；objects=[0,2] 各点一次
+    expect(human.clickAt).toHaveBeenCalledTimes(2)
+    expect(human.clickAt).toHaveBeenCalledWith(110, 70)
+    expect(tileClicks[0]).not.toHaveBeenCalled()
+    expect(tileClicks[2]).not.toHaveBeenCalled()
+  }, 30000)
+
+  it('framePoint 拿不到坐标（frameElement 为空）→ 回退 locator 直点，拟人点击不被调', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, human, tileClicks } = makeDeps({
+      gridScreenshotBuf: gridBuf,
+      gridResult: { type: 'multi', objects: [0] },
+      tileBox: { x: 10, y: 20 },
+      challengeFrameElementImpl: async () => null,
+    })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: human as never })).resolves.toBe('solved')
+    expect(human.clickAt).not.toHaveBeenCalled()
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
   }, 30000)
 
   it('成本记账透传：opts 的 profileId/taskKey/onLog 传给 solveGrid', async () => {
@@ -292,11 +323,12 @@ describe('solveRecaptchaGrid 求解循环', () => {
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：挑战 frame 轮询 500ms → 格子 0 → 格子 2 → 验证按钮
-      expect(waits).toHaveLength(4)
+      // 每轮顺序：挑战 frame 轮询 500ms → 截图前稳定 800ms → 格子 0 → 格子 2 → 验证按钮
+      expect(waits).toHaveLength(5)
       expect(waits[0]).toBe(500)
-      tileWaits.push(...waits.slice(1, 3))
-      verifyWaits.push(waits[3])
+      expect(waits[1]).toBe(800)
+      tileWaits.push(...waits.slice(2, 4))
+      verifyWaits.push(waits[4])
     }
     for (const w of tileWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
@@ -344,11 +376,12 @@ describe('solveRecaptchaGrid 求解循环', () => {
       const start = allWaits.length
       allWaits.push(...(page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.slice(start).map((c: unknown[]) => c[0] as number))
       const waits = allWaits.slice(start)
-      // 每轮顺序：500ms 轮询 → 格子 0 三次（初次 + 确认 + 重试）→ 格子 2 一次 → 验证按钮
-      expect(waits).toHaveLength(6)
+      // 每轮顺序：500ms 轮询 → 截图前稳定 800ms → 格子 0 三次（初次 + 确认 + 重试）→ 格子 2 一次 → 验证按钮
+      expect(waits).toHaveLength(7)
       expect(waits[0]).toBe(500)
-      tileWaits.push(...waits.slice(1, 5))
-      verifyWaits.push(waits[5])
+      expect(waits[1]).toBe(800)
+      tileWaits.push(...waits.slice(2, 6))
+      verifyWaits.push(waits[6])
     }
     for (const w of tileWaits) {
       expect(w).toBeGreaterThanOrEqual(1500)
@@ -486,12 +519,11 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(verifyClick).not.toHaveBeenCalled()
   }, 30000)
 
-  it('每格原图下载失败 → 容器截图兜底：首次截图失败（元素动画中超时）→ 1 秒后重试成功继续求解', async () => {
+  it('网格截图首次失败（元素动画中超时）→ 1 秒后重试成功继续求解', async () => {
     const gridBuf = await makePngBuffer(300)
     let shots = 0
     const { page, captcha, logger } = makeDeps({
       gridResult: { type: 'multi', objects: [0] },
-      tileEvalImpl: async () => Array.from({ length: 9 }, () => []),
       gridScreenshotImpl: async () => {
         shots++
         if (shots === 1) throw new Error('timeout 30000ms exceeded')
@@ -502,96 +534,36 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(shots).toBe(2)
     const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
     expect(waits).toContain(1000)
-    expect(logger.warn).toHaveBeenCalledWith('九宫格每格原图下载失败，退回容器截图拼接')
     expect(logger.warn).toHaveBeenCalledWith('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
   }, 30000)
 
-  it('网格图走每格原图拼接：容器截图缺省不可用仍能求解，解出图 300x300', async () => {
-    // gridScreenshotBuf 缺省 null（容器截图不可用）：走 evaluate 原图 fetch + jimp 拼接仍求解成功
-    const { page, captcha, logger } = makeDeps({})
+  it('网格图走容器元素截图：截图前先等 800ms 动画稳定，解出图 300x300', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger } = makeDeps({ gridScreenshotBuf: gridBuf })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
     expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
     const [imageArg] = (captcha.solveGrid as ReturnType<typeof vi.fn>).mock.calls[0]
     const img = await Jimp.read(Buffer.from(imageArg, 'base64'))
     expect(img.getWidth()).toBe(300)
     expect(img.getHeight()).toBe(300)
+    // 截图前存在 800ms 稳定等待（动画未稳定时截图内容错乱，删除会失败）
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    expect(waits).toContain(800)
   }, 30000)
 
-  it('小图原图下载失败 → 退回元素截图二次识别（hasObject=true → 再点确认）', async () => {
+  it('小图 img 元素截图失败 → 跳过二次识别（该格只点 1 次、分类仅网格 1 次）', async () => {
     const gridBuf = await makePngBuffer(300)
-    const tileBuf = await makePngBuffer(100)
     let src = 'A'
     const { page, captcha, logger, tileClicks } = makeDeps({
       gridScreenshotBuf: gridBuf,
       gridResult: { type: 'multi', objects: [0] },
-      // 网格原图 fetch 成功；小图 fetch（带格索引参数）失败返回空 → 小图走元素截图兜底
-      tileEvalImpl: async (fn: unknown, arg?: unknown) => {
-        if (typeof arg === 'number') return [[]]
-        const bufs = await Promise.all(Array.from({ length: 9 }, () => makePngBuffer(100)))
-        return bufs.map((b) => Array.from(new Uint8Array(b)))
-      },
-      tileBehaviors: { 0: { screenshotBuf: tileBuf, srcImpl: async () => src, clickImpl: () => { src = 'B' } } },
-    })
-    let solveCall = 0
-    ;(captcha.solveGrid as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      solveCall++
-      return solveCall === 1 ? { type: 'multi', objects: [0] } : { type: 'single', hasObject: true }
+      tileBehaviors: { 0: { screenshotBuf: null, srcImpl: async () => src, clickImpl: () => { src = 'B' } } },
     })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
-    // 小图识别走元素截图仍完成二次识别确认：初次点击 + 确认点击共 2 点
-    expect(tileClicks[0]).toHaveBeenCalledTimes(2)
-    expect(captcha.solveGrid).toHaveBeenCalledTimes(2)
+    // 小图 img 截图拿不到图 → 不做二次识别确认：该格只点 1 次
+    expect(tileClicks[0]).toHaveBeenCalledTimes(1)
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
   }, 30000)
-})
-
-describe('captureGridImage 每格原图拼接', () => {
-  it('3x3：9 个 100x100 原图拼接为 300x300 Base64（ok=true，无 data: 前缀）', async () => {
-    const png = await makePngBuffer(100)
-    const parts = Array.from({ length: 9 }, () => Array.from(new Uint8Array(png)))
-    const frame = { evaluate: vi.fn().mockResolvedValue(parts) }
-    const { b64, ok } = await captureGridImage(frame as never, 9)
-    expect(ok).toBe(true)
-    expect(b64).not.toContain('data:')
-    const img = await Jimp.read(Buffer.from(b64, 'base64'))
-    expect(img.getWidth()).toBe(300)
-    expect(img.getHeight()).toBe(300)
-  })
-
-  it('4x4：16 格拼接 400x400 后整体放大为 450x450', async () => {
-    const png = await makePngBuffer(100)
-    const parts = Array.from({ length: 16 }, () => Array.from(new Uint8Array(png)))
-    const frame = { evaluate: vi.fn().mockResolvedValue(parts) }
-    const { b64, ok } = await captureGridImage(frame as never, 16)
-    expect(ok).toBe(true)
-    const img = await Jimp.read(Buffer.from(b64, 'base64'))
-    expect(img.getWidth()).toBe(450)
-    expect(img.getHeight()).toBe(450)
-  })
-
-  it('原图非 100x100（96x96）→ 每格统一 resize 后拼接仍为 300x300', async () => {
-    const png = await makePngBuffer(96)
-    const parts = Array.from({ length: 9 }, () => Array.from(new Uint8Array(png)))
-    const frame = { evaluate: vi.fn().mockResolvedValue(parts) }
-    const { b64, ok } = await captureGridImage(frame as never, 9)
-    expect(ok).toBe(true)
-    const img = await Jimp.read(Buffer.from(b64, 'base64'))
-    expect(img.getWidth()).toBe(300)
-    expect(img.getHeight()).toBe(300)
-  })
-
-  it('fetch 全失败（全空数组）→ ok=false（调用方退回容器截图）', async () => {
-    const frame = { evaluate: vi.fn().mockResolvedValue(Array.from({ length: 9 }, () => [])) }
-    const { ok } = await captureGridImage(frame as never, 9)
-    expect(ok).toBe(false)
-  })
-
-  it('部分格子为空（有效数量不足）→ ok=false', async () => {
-    const png = await makePngBuffer(100)
-    const parts = [Array.from(new Uint8Array(png)), ...Array.from({ length: 8 }, () => [] as number[])]
-    const frame = { evaluate: vi.fn().mockResolvedValue(parts) }
-    const { ok } = await captureGridImage(frame as never, 9)
-    expect(ok).toBe(false)
-  })
 })
 
 describe('find 函数 sitekey 排除', () => {
