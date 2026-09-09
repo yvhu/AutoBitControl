@@ -7,6 +7,12 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import Jimp from 'jimp'
+
+// mock node:fs 写盘（recaptcha-grid 的诊断落盘只在真机有意义）：防止测试把 fake 截图写进 data/screenshots/grid-debug
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn() }
+})
 import { mapQuestionId, solveRecaptchaGrid, findAnchorFrame, findChallengeFrame, toStandardBase64, ANCHOR_FRAME_PART, CHALLENGE_FRAME_PART, ANCHOR_SELECTOR, PROMPT_SELECTOR, TILE_SELECTOR, VERIFY_SELECTOR, GRID_SELECTOR, RELOAD_SELECTOR, RELOAD_MAX } from '../src/automation/recaptcha-grid'
 import { CaptchaFailure } from '../src/integrations/yescaptcha'
 
