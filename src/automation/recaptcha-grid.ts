@@ -12,8 +12,8 @@
  * （真机观察：图片还在变化时点 verify，Google 判选择未完成刷题）；
  * 点 verify 后轮询错误提示（最多 5s/500ms）：select-more 系列（选择不完整，Google 未刷题可补选）→
  * 重截图网格用 confidence 0.3 放宽阈值分类补选未点过的格子后重验（每轮最多 2 次，成本经 onLog 记账）；
- * incorrect（选错已刷题）→ 返回主循环下一轮；点击注册判定前额外等 1.5s 再读一次 src
- * （真机 2026-09-09：Google 刷新响应慢时立即重试点击会取消已选中格）
+ * incorrect（选错已刷题）→ 返回主循环下一轮；src 未变且无 selected 时不重试点击、只记 warn
+ * （真机 2026-09-09：Google 刷新响应慢时重试点击会取消已选中格；点击真未注册由 select-more 补选兜底）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
  * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
  * 截图中心裁剪正方形后等比缩放（杜绝容器非正方形时直接 resize 拉伸变形，真机分类空数组/
@@ -64,8 +64,6 @@ const ERROR_HINT_POLL_TIMEOUT_MS = 5000
 const ERROR_HINT_POLL_INTERVAL_MS = 500
 /** 单轮最多补选次数（选择不完整时放宽阈值补选；仍不完整则交主循环下一轮） */
 export const SUPPLEMENT_MAX = 2
-/** 点击注册判定前额外等待（毫秒）：Google 刷新响应慢时立即重试点击会取消已选中格 */
-const CLICK_REGISTER_CONFIRM_MS = 1500
 /** grid-debug 诊断目录文件数上限：写盘前超过则清空目录（保留诊断能力、防磁盘累积） */
 const GRID_DEBUG_MAX_FILES = 40
 
@@ -294,8 +292,8 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     return std.toString('base64')
   }
   /**
-   * 单格点选流程：拟人点击 → 等该格 img 稳定 → 小图刷新二次识别确认 / 点击注册检测重试
-   * （主点选与补选共用；补选对未点过的格子执行同款流程）
+   * 单格点选流程：拟人点击 → 等该格 img 稳定 → 小图刷新二次识别确认
+   * （src 未变且无 selected 只记 warn 不重试：重试点击会取消已选中格；主点选与补选共用）
    */
   const clickTile = async (idx: number): Promise<void> => {
     let before = await readTileSrc(ch, idx)
@@ -306,7 +304,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     // 点击后轮询等该格 img 稳定（Google 刷新小图有动画；未稳定就判 src 变化会误入确认/误判已注册，真机 2026-09-09）
     await waitTileStable(deps, ch, idx)
     // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
-    // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 点击可能未注册，重试点击
+    // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 不重试点击（重试会取消已选中格）
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
       const after = await readTileSrc(ch, idx)
       if (before !== after) {
@@ -329,15 +327,10 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
       }
       const cls = (await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? ''
       if (cls.includes('selected')) break
-      // 判定未注册前额外等 1.5s 再读一次 src 确认仍未变才重试点击：
-      // Google 刷新响应慢时立即重试点击会取消已选中格（真机 2026-09-09 误判风险）
-      await deps.page.waitForTimeout(CLICK_REGISTER_CONFIRM_MS)
-      if ((await readTileSrc(ch, idx)) !== before) break
-      deps.logger.warn({ idx }, '九宫格点击可能未注册（src 未变且无 selected），重试点击')
-      if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
-        await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
-      }
-      await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+      // src 未变且无 selected：Google 刷新响应慢时重试点击会取消已选中格（真机 2026-09-09 观察），
+      // 只记 warn 收集数据；点击真未注册时由 select-more 补选兜底
+      deps.logger.warn({ idx }, '九宫格该格未检测到刷新（可能响应慢），不再重试点击防取消已选')
+      break
     }
   }
   let result: GridResult | null = null
