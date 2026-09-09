@@ -155,7 +155,12 @@ export async function solveRecaptchaGrid(
   opts: { maxRounds?: number; siteKeyExclude?: string; profileId?: number | null; taskKey?: string | null; onLog?: (kind: string, ok: boolean, costPoints: number) => void } = {},
 ): Promise<'solved' | 'none' | 'failed'> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS
-  const anchor = findAnchorFrame(deps.page, opts.siteKeyExclude)
+  // iframe 元素已插入 DOM 但 CDP frame 可能未附着（真机窗口 97 实测）——轮询等附着
+  let anchor = findAnchorFrame(deps.page, opts.siteKeyExclude)
+  for (let i = 0; i < 30 && !anchor; i++) {
+    await deps.page.waitForTimeout(500)
+    anchor = findAnchorFrame(deps.page, opts.siteKeyExclude)
+  }
   if (!anchor) return 'none'
   // 点击失败只告警不中断：真机偶发点击未注册时，后续轮次能自我纠正
   await anchor.locator(ANCHOR_SELECTOR).first().click({ timeout: 10000 }).catch((e) => {

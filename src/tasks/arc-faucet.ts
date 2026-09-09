@@ -134,7 +134,16 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   await ctx.page.locator(ADDRESS_SELECTOR).first().fill(address)
   await ensureNetwork(ctx)
   await ensureUsdc(ctx)
-  await ensureSubmitEnabled(ctx)
+  // 地址 fill 后站点 React 可能未就绪（input 事件无人监听，按钮不启用）——重填自愈（真机批量验证规律性出现）
+  const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await ensureSubmitEnabled(ctx)
+      break
+    } catch {
+      if (((await addressInput.inputValue().catch(() => '')) ?? '') === '') await addressInput.fill(address)
+    }
+  }
   // 提交：v3 常驻不打码（浏览器自行生成 token）；被拒后站点动态注入 v2 挑战（anchor + 九宫格 bframe）
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {

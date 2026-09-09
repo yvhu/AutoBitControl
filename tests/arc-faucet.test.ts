@@ -29,6 +29,7 @@ import {
   CURRENCY_RADIO_SELECTOR,
   CURRENCY_CARD_SELECTOR,
   SUBMIT_SELECTOR,
+  ADDRESS_SELECTOR,
 } from '../src/tasks/arc-faucet'
 import { TaskContext } from '../src/tasks/base'
 import { Humanizer } from '../src/automation/humanize'
@@ -40,6 +41,8 @@ interface FakeElem {
   isChecked: () => Promise<boolean>
   isEnabled: () => Promise<boolean>
   fill: ReturnType<typeof vi.fn>
+  /** 输入框当前值（仅地址输入框实现；缺省无此能力） */
+  inputValue?: () => Promise<string>
 }
 
 /** 可变状态：测试中改值即可驱动助手函数分支 */
@@ -49,6 +52,8 @@ interface FakeState {
   submitEnabled: boolean
   optionCount: number
   texts: Record<string, boolean>
+  /** 地址输入框当前值（自愈循环重填判定读它） */
+  addressValue: string
   /** Network 显示值元素数量（缺省 1；0 模拟元素缺失） */
   displayCount?: number
   /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
@@ -68,7 +73,19 @@ function makeCtx(state: FakeState) {
     isEnabled: async () => false,
     fill: vi.fn(),
   }
+  /** 地址输入框 fill mock（暴露给测试覆写行为：模拟 React 未就绪首填不生效等） */
+  const addressFill = vi.fn().mockImplementation(async (v: string) => {
+    state.addressValue = v
+  })
   const elems: Record<string, FakeElem> = {
+    [ADDRESS_SELECTOR]: {
+      count: async () => 1,
+      textContent: async () => null,
+      isChecked: async () => false,
+      isEnabled: async () => true,
+      fill: addressFill,
+      inputValue: async () => state.addressValue,
+    },
     [NETWORK_DISPLAY_SELECTOR]: {
       count: async () => state.displayCount ?? 1,
       textContent: async () => state.network,
@@ -118,10 +135,10 @@ function makeCtx(state: FakeState) {
     walletPasswords: {},
     accountRow: { metamask钱包地址: '0xabc' },
   })
-  return { ctx, clicks, log }
+  return { ctx, clicks, log, addressFill }
 }
 
-const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, v2Challenge: false })
+const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, v2Challenge: false, addressValue: '0xabc' })
 
 describe('currentNetwork 当前网络读取', () => {
   it('返回下拉显示值', async () => {
@@ -283,6 +300,41 @@ describe('ArcFaucetTask 元信息', () => {
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
     expect(t.meta.captcha).toEqual({ auto: true })
     expect(t.meta.concurrency).toBe(3)
+  })
+})
+
+describe('ArcFaucetTask run 地址重填自愈', () => {
+  it('首跑提交按钮未启用且输入框为空 → 重填后按钮启用 → 成功（fill ≥ 2 次）', async () => {
+    const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
+    const { ctx, clicks, addressFill } = makeCtx(state)
+    // 首次 fill 模拟站点 React 未就绪：input 事件无人监听 → 值不保留、按钮不启用；之后 fill 正常生效
+    let fills = 0
+    addressFill.mockImplementation(async (v: string) => {
+      fills++
+      if (fills === 1) return
+      state.addressValue = v
+      state.submitEnabled = true
+    })
+    // run 全流程所需引擎能力假实现（开页/断言/截图与站点自愈逻辑无关）
+    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
+    ctx.goto = vi.fn().mockResolvedValue(undefined)
+    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
+    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
+    // 假时钟：ensureSubmitEnabled 每轮 15s 预算瞬间走完（真实时钟会让首轮超时等足 15s）
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      now += 600
+      return now
+    })
+    try {
+      await new ArcFaucetTask().run(ctx)
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(fills).toBeGreaterThanOrEqual(2)
+    expect(addressFill).toHaveBeenCalledTimes(2)
+    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })
 })
 

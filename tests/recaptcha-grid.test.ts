@@ -73,7 +73,7 @@ async function makePngBuffer(size: number): Promise<Buffer> {
 }
 
 describe('solveRecaptchaGrid 求解循环', () => {
-  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null; anchors?: Array<{ url: string }>; promptImpl?: () => Promise<string | null>; tileBehaviors?: Record<number, ElemBehavior> } = {}) {
+  function makeDeps(overrides: { anchorChecked?: string; anchorPresent?: boolean; challengePresent?: boolean; prompt?: string | null; tileCount?: number; gridResult?: unknown; gridScreenshotBuf?: Buffer | null; anchors?: Array<{ url: string }>; promptImpl?: () => Promise<string | null>; tileBehaviors?: Record<number, ElemBehavior>; anchorAppearsOnFrameCall?: number } = {}) {
     const o = { anchorChecked: 'false', anchorPresent: true, challengePresent: true, prompt: '停车计时器', tileCount: 9, gridResult: { type: 'multi', objects: [0, 2] }, gridScreenshotBuf: null, ...overrides }
     // 锚点 aria-checked 为动态状态：点验证按钮后置 true（模拟真机「验证后变绿」）
     let checked = o.anchorChecked
@@ -104,22 +104,40 @@ describe('solveRecaptchaGrid 求解循环', () => {
       [GRID_SELECTOR]: { screenshotBuf: o.gridScreenshotBuf },
       [VERIFY_SELECTOR]: { click: vi.fn().mockImplementation(async () => { checked = 'true' }) },
     })
+    // frames() 调用计数：驱动 anchor 延迟附着（第 N 次调用起才返回 anchor frame）
+    let framesCalls = 0
     const page = {
-      frames: () => [
-        ...(o.anchorPresent ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator })) : []),
-        ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator }] : []),
-      ],
+      frames: () => {
+        // anchor 从第 N 次 frames() 调用起才出现（模拟 iframe 已入 DOM 但 CDP frame 未附着）
+        framesCalls++
+        return [
+          ...(o.anchorPresent && framesCalls >= (o.anchorAppearsOnFrameCall ?? 1) ? anchorFrames.map((a) => ({ url: () => a.url, locator: a.locator })) : []),
+          ...(o.challengePresent ? [{ url: () => `https://www.google.com/${CHALLENGE_FRAME_PART}?hl=zh-CN`, locator: challenge.locator }] : []),
+        ]
+      },
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
     }
     const captcha = { solveGrid: vi.fn().mockResolvedValue(o.gridResult) }
     const logger = { info: vi.fn(), warn: vi.fn() }
-    return { page, captcha, logger, anchorFrames, challenge, tileClicks }
+    return { page, captcha, logger, anchorFrames, challenge, tileClicks, getFramesCalls: () => framesCalls }
   }
 
   it('无锚点 frame → none', async () => {
     const { page, captcha, logger } = makeDeps({ anchorPresent: false, challengePresent: false })
     await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('none')
   })
+
+  it('anchor frame 延迟附着：前两次 frames() 无 anchor → 轮询等附着后正常求解（不返回 none）', async () => {
+    const gridBuf = await makePngBuffer(300)
+    const { page, captcha, logger, getFramesCalls } = makeDeps({ gridScreenshotBuf: gridBuf, anchorAppearsOnFrameCall: 3 })
+    await expect(solveRecaptchaGrid({ page: page as never, captcha: captcha as never, logger: logger as never, human: {} as never })).resolves.toBe('solved')
+    expect(captcha.solveGrid).toHaveBeenCalledTimes(1)
+    // 确实发生了轮询重查（首查无 anchor，随后 500ms 间隔重查两次才附着）
+    expect(getFramesCalls()).toBeGreaterThanOrEqual(3)
+    const waits = (page.waitForTimeout as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as number)
+    expect(waits[0]).toBe(500)
+    expect(waits[1]).toBe(500)
+  }, 30000)
 
   it('点复选框后 aria-checked=true（一键通过）→ solved，不进网格', async () => {
     const { page, captcha, logger } = makeDeps({ anchorChecked: 'true', challengePresent: false })
