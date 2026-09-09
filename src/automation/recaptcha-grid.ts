@@ -19,7 +19,9 @@
  * 重截图网格用 confidence 0.3 放宽阈值分类补选未点过的格子后重验（每轮最多 2 次，成本经 onLog 记账）；
  * incorrect（选错已刷题）→ 返回主循环下一轮；src 未变且无 selected 时不重试点击、只记 warn
  * （真机 2026-09-09：Google 刷新响应慢时重试点击会取消已选中格；点击真未注册由验证按钮补点/select-more 补选兜底）；
- * 每轮结束输出 grid-round-state 状态快照日志（识别目标/点选格/错误提示/换图次数，数据收集用）
+ * 每轮结束输出 grid-round-state 状态快照日志（识别目标/点选格/错误提示/换图次数，数据收集用）；
+ * 每次点格输出 grid-click-diag 点击诊断日志（点前全网格 src 快照 vs 点后约 1s 快照 → hitTiles 实际命中格 +
+ * 前后 class）：hitTiles 空 = 未命中；含非目标格 = 坐标漂移到邻居；[idx] = 命中正确（真机漂移定位用）
  * 网格图一律走容器元素截图（2026-09-09 真机窗口 89：fetch 每格原图拼接拿到的内容与该格视觉图不符，
  * 方案已废弃），截图前先等 1.5-2.5s 随机动画稳定（shotGrid 内部另有 800ms 兜底）；
  * 截图中心裁剪正方形后等比缩放（杜绝容器非正方形时直接 resize 拉伸变形，真机分类空数组/
@@ -244,14 +246,27 @@ async function readTileSrc(ch: Frame, idx: number): Promise<string> {
   return (await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().getAttribute('src', { timeout: 1000 }).catch(() => null)) ?? ''
 }
 
+/** 读全部格子 img src 快照（空串表示该格无 img 或读取失败）：点击诊断用，单次 evaluate 轻量读取 */
+async function snapshotTileSrcs(ch: Frame): Promise<string[]> {
+  return ch.evaluate(() =>
+    Array.from(document.querySelectorAll('#rc-imageselect-target table td')).map((td) => {
+      const img = td.querySelector('img')
+      return img ? img.getAttribute('src') ?? '' : ''
+    }),
+  )
+}
+
 /** 轮询等待格子 img 稳定（src 连续两次相同；最多 timeoutMs）——Google 点击后刷新小图有动画，未稳定时不能继续 */
-async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000): Promise<void> {
+async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000, skipFirstWait = false): Promise<void> {
   // img 元素不存在时（该格无小图）直接返回不等待：空串恒等是假稳定，src 轮询无意义
   if ((await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().count().catch(() => 0)) === 0) return
   const end = Date.now() + timeoutMs
   let prev = await readTileSrc(ch, idx)
+  let first = true
   while (Date.now() < end) {
-    await deps.page.waitForTimeout(500)
+    // skipFirstWait：首个 500ms 等待已由点击诊断的 1s 等待替代（主流程不额外拉长）
+    if (!(first && skipFirstWait)) await deps.page.waitForTimeout(500)
+    first = false
     const cur = await readTileSrc(ch, idx)
     if (cur === prev) return
     prev = cur
@@ -344,14 +359,27 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
    */
   const clickTile = async (idx: number): Promise<void> => {
     const before = await readTileSrc(ch, idx)
+    // 点击诊断：点前记录全网格 src 快照与该格 class，点后约 1s 再读一次对比出实际命中的格子
+    const gridBefore = await snapshotTileSrcs(ch)
+    const beforeClass = ((await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? '').trim()
     // 拟人坐标点击优先（Google 忽略瞬移式程序化点击）；framePoint 拿不到坐标回退 locator 直点
     if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
       await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
     }
+    // 点后 1s 读快照（诊断等待替代 waitTileStable 首个 500ms 等待：主流程净增仅 500ms，不额外拉长时序）
+    await deps.page.waitForTimeout(1000)
+    const gridAfter = await snapshotTileSrcs(ch)
+    const afterClass = ((await tiles.nth(idx).getAttribute('class').catch(() => '')) ?? '').trim()
+    const hitTiles: number[] = []
+    for (let i = 0; i < Math.max(gridBefore.length, gridAfter.length); i++) {
+      if ((gridBefore[i] ?? '') !== (gridAfter[i] ?? '')) hitTiles.push(i)
+    }
+    // 结构化诊断日志（每格一次）：hitTiles 空 = 未命中；含非 idx 格 = 坐标漂移到邻居；[idx] = 命中正确
+    deps.logger.info({ step: 'grid-click-diag', idx, hitTiles, beforeClass, afterClass }, '九宫格点击诊断')
     // 点击后立即启动变化监测：3s 窗口内 src 与点击前不同即标记刷新发生（捕捉「短暂变化后恢复」的瞬时刷新）
     const refreshed = await watchTileRefresh(deps, ch, idx, before)
     // 读到变化后仍要等稳定再截图小图（避免截到动画中）；img 缺失时稳定等待直接返回
-    await waitTileStable(deps, ch, idx)
+    await waitTileStable(deps, ch, idx, 6000, true)
     if (!refreshed) {
       // src 未变且无 selected：Google 刷新响应慢时重试点击会取消已选中格（真机 2026-09-09 观察），
       // 只记 warn 收集数据；点击真未注册时由验证按钮补点/select-more 补选兜底
