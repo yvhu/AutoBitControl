@@ -6,8 +6,8 @@
 import type { Page } from 'patchright'
 import { httpJson } from '../infrastructure/http'
 
-/** 支持的验证码类型（recaptcha_v3 无可见 iframe，靠 api.js 脚本的 render 参数检测） */
-export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
+/** 支持的验证码类型（recaptcha_v3 无可见 iframe，靠 api.js 脚本的 render 参数检测；recaptcha_v2_grid 为九宫格图片分类） */
+export type CaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image' | 'recaptcha_v2_grid'
 
 /** 检测结果：类型 + sitekey（可能为 null，某些站点用动态注入的 sitekey） */
 export interface CaptchaDetected {
@@ -28,6 +28,7 @@ export const ESTIMATED_COST_POINTS: Record<CaptchaKind, number> = {
   recaptcha_v3: 20,
   hcaptcha: 30,
   image: 4,
+  recaptcha_v2_grid: 6,
 }
 
 // iframe 型验证码的识别选择器（按出现频率排序：Turnstile 最常用）
@@ -81,9 +82,12 @@ interface YesCaptchaResp {
   errorCode?: string
   taskId?: string
   status?: string
-  solution?: { token?: string; gRecaptchaResponse?: string; text?: string }
+  solution?: { token?: string; gRecaptchaResponse?: string; text?: string; objects?: number[]; hasObject?: boolean; type?: string }
   balance?: number
 }
+
+/** 九宫格分类结果：multi = 需要点击的格子序号（3x3 为 0-8，4x4 为 0-15）；single = 小图是否含目标 */
+export type GridResult = { type: 'multi'; objects: number[] } | { type: 'single'; hasObject: boolean }
 
 /**
  * yescaptcha 解题客户端
@@ -165,6 +169,40 @@ export class YesCaptchaClient {
     this.chain = result.catch(() => {})
     return result
   }
+
+  /**
+   * 九宫格图片分类：提交网格截图（已缩放到标准尺寸的 Base64，无 data: 前缀）与问题 ID，
+   * 平台返回需要点击的格子序号（multi）或单图是否命中（single）
+   * @param image 网格截图 Base64（无 data: 前缀）
+   * @param questionId 问题 ID（如 '/m/015qbp'）
+   * @param confidence 置信度阈值（0-1，可选，不传走平台默认）
+   * @returns 分类结果
+   * @throws CaptchaFailure 创建失败 / 查询失败 / 超时（solveTimeoutMs）
+   */
+  classifyGrid(image: string, questionId: string, confidence?: number): Promise<GridResult> {
+    const run = async (): Promise<GridResult> => {
+      const taskId = await this.createTask({ type: 'ReCaptchaV2Classification', image, question: questionId, ...(confidence === undefined ? {} : { confidence }) })
+      const deadline = Date.now() + this.cfg.solveTimeoutMs
+      while (Date.now() < deadline) {
+        const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
+        if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询结果失败: ${resp.errorCode ?? resp.errorId}`)
+        if (resp.status === 'ready') {
+          const s = resp.solution ?? {}
+          if (s.type === 'multi' && Array.isArray(s.objects)) return { type: 'multi', objects: s.objects }
+          if (s.type === 'single' && typeof s.hasObject === 'boolean') return { type: 'single', hasObject: s.hasObject }
+          if (Array.isArray(s.objects)) return { type: 'multi', objects: s.objects }
+          if (typeof s.hasObject === 'boolean') return { type: 'single', hasObject: s.hasObject }
+          throw new CaptchaFailure('yescaptcha 分类结果格式异常')
+        }
+        await new Promise(r => setTimeout(r, this.cfg.pollIntervalMs))
+      }
+      throw new CaptchaFailure(`yescaptcha 分类超时: taskId=${taskId}`)
+    }
+    // 串行排队：与 solveCaptcha 共享同一条链（平台每账号 1 并发限制）
+    const result = this.chain.then(run, run)
+    this.chain = result.catch(() => {})
+    return result
+  }
 }
 
 /**
@@ -194,6 +232,22 @@ export class CaptchaService {
     } catch (e) {
       opts.onLog(detected.kind, false, ESTIMATED_COST_POINTS[detected.kind] ?? 0)
       throw new CaptchaFailure(`验证码处理失败: ${(e as Error).message}`)
+    }
+  }
+
+  /**
+   * 九宫格分类解题（模拟点击路线的识别步骤）：余额校验 → classifyGrid → 成本记账
+   * 语义同 autoSolve：失败抛 CaptchaFailure（调用方归为 captcha_failed 终态）
+   */
+  async solveGrid(image: string, questionId: string, opts: { confidence?: number; profileId: number | null; taskKey: string | null; onLog: (kind: string, ok: boolean, costPoints: number) => void }): Promise<GridResult> {
+    try {
+      await this.client.ensureBalance(this.cfg.maxCostPerTask)
+      const r = await this.client.classifyGrid(image, questionId, opts.confidence)
+      opts.onLog('recaptcha_v2_grid', true, ESTIMATED_COST_POINTS.recaptcha_v2_grid ?? 0)
+      return r
+    } catch (e) {
+      opts.onLog('recaptcha_v2_grid', false, ESTIMATED_COST_POINTS.recaptcha_v2_grid ?? 0)
+      throw new CaptchaFailure(`九宫格分类失败: ${(e as Error).message}`)
     }
   }
 

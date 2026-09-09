@@ -238,3 +238,73 @@ describe('CaptchaService.applyToken', () => {
     expect(onLog).toHaveBeenCalledWith('turnstile', false, expect.any(Number))
   })
 })
+
+describe('YesCaptchaClient.classifyGrid 九宫格分类', () => {
+  it('创建分类任务并轮询到 multi 结果（objects 数组）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (String(url).includes('createTask')) {
+        const body = JSON.parse(String(init.body))
+        expect(body.task.type).toBe('ReCaptchaV2Classification')
+        expect(body.task.image).toBe('b64-img')
+        expect(body.task.question).toBe('/m/015qbp')
+        expect(body.task.confidence).toBe(0.5)
+        return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { objects: [1, 5, 8], type: 'multi' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, {})
+    const r = await client.classifyGrid('b64-img', '/m/015qbp', 0.5)
+    expect(r).toEqual({ type: 'multi', objects: [1, 5, 8] })
+  })
+
+  it('single 结果解析 hasObject', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { hasObject: true, type: 'single' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, {})
+    await expect(client.classifyGrid('b64', '/m/0k4j')).resolves.toEqual({ type: 'single', hasObject: true })
+  })
+
+  it('错误码快速失败', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
+      return new Response(JSON.stringify({ errorId: 1, errorCode: 'ERROR_ILLEGAL_IMAGE' }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient({ ...cfg, solveTimeoutMs: 1000 }, {})
+    await expect(client.classifyGrid('b64', '/m/0k4j')).rejects.toThrow(/ERROR_ILLEGAL_IMAGE/)
+  })
+
+  it('挂串行链（并发只有 1 个在飞）', async () => {
+    let inFlight = 0
+    let peak = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        await new Promise(r => setTimeout(r, 50))
+        inFlight--
+        return new Response(JSON.stringify({ errorId: 0, taskId: 'g-1' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: { hasObject: false, type: 'single' } }), { status: 200 })
+    }))
+    const client = new YesCaptchaClient(cfg, {})
+    await Promise.all([client.classifyGrid('a', '/m/0k4j'), client.classifyGrid('b', '/m/0k4j')])
+    expect(peak).toBe(1)
+  })
+})
+
+describe('CaptchaService.solveGrid 记账', () => {
+  it('成功记 recaptcha_v2_grid 成本；失败抛 CaptchaFailure 记失败', async () => {
+    const client = { ensureBalance: vi.fn().mockResolvedValue(undefined), classifyGrid: vi.fn().mockResolvedValue({ type: 'multi', objects: [0] }) }
+    const onLog = vi.fn()
+    const service = new CaptchaService(client as never, { maxCostPerTask: 1500 })
+    const r = await service.solveGrid('b64', '/m/0k4j', { profileId: null, taskKey: null, onLog, confidence: 0.5 })
+    expect(r).toEqual({ type: 'multi', objects: [0] })
+    expect(client.classifyGrid).toHaveBeenCalledWith('b64', '/m/0k4j', 0.5)
+    expect(onLog).toHaveBeenCalledWith('recaptcha_v2_grid', true, 6)
+    client.classifyGrid.mockRejectedValueOnce(new CaptchaFailure('余额不足'))
+    await expect(service.solveGrid('b64', '/m/0k4j', { profileId: null, taskKey: null, onLog })).rejects.toThrow(CaptchaFailure)
+    expect(onLog).toHaveBeenCalledWith('recaptcha_v2_grid', false, 6)
+  })
+})
