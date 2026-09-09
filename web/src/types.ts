@@ -41,6 +41,14 @@ export type ScheduleConfigInput = {
   times?: string[]
   weekdays?: number[]
   days?: number[]
+  fileAssign?: FileAssignConfigInput
+}
+
+/** 计划级自动文件分配配置（与后端 FileAssignConfig 同构） */
+export interface FileAssignConfigInput {
+  sourceDir: string
+  column: string
+  template: FileAssignTemplate
 }
 
 export type SettingsBase = EnvelopeData<'/api/settings'>

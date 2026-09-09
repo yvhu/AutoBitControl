@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
 import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, runSchedule } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
-import type { ScheduleItem, ScheduleConfigInput } from '../../types'
+import type { Dayjs } from 'dayjs'
+import type { ScheduleItem, ScheduleConfigInput, FileAssignTemplate } from '../../types'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
@@ -38,6 +39,40 @@ export const WEEKDAY_OPTIONS = [
 
 /** 几号选项（1–31） */
 export const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1} 号`, value: i + 1 }))
+
+/** 弹窗表单值（times 为 dayjs 列表，提交时转 'HH:mm' 字符串；everyHours 可 null 与视图类型对齐） */
+export interface FormValues {
+  name: string
+  mode: ScheduleMode
+  everyHours?: number | null
+  weekdays?: number[]
+  days?: number[]
+  times?: Dayjs[]
+  taskKeys: string[]
+  fileAssignEnabled?: boolean
+  fileAssignSourceDir?: string
+  fileAssignColumn?: string
+}
+
+/** 表单值 → 创建/更新请求体；开启自动分配时 config 携带 fileAssign（模板经 buildTemplate 校验后传入） */
+export function buildPayload(values: FormValues, template: FileAssignTemplate | null): { name: string; mode: ScheduleMode; config: ScheduleConfigInput; taskKeys: string[] } {
+  const base = { name: values.name, taskKeys: values.taskKeys, mode: values.mode }
+  const config: ScheduleConfigInput = values.mode === 'interval'
+    ? { everyHours: values.everyHours ?? 6 }
+    : {
+        times: (values.times ?? []).map((t) => t.format('HH:mm')).sort(),
+        ...(values.mode === 'weekly' ? { weekdays: values.weekdays ?? [] } : {}),
+        ...(values.mode === 'monthly' ? { days: values.days ?? [] } : {}),
+      }
+  if (values.fileAssignEnabled && template) {
+    config.fileAssign = {
+      sourceDir: values.fileAssignSourceDir ?? '',
+      column: values.fileAssignColumn ?? '文件地址',
+      template,
+    }
+  }
+  return { ...base, config }
+}
 
 export function useSchedules() {
   return useQuery({

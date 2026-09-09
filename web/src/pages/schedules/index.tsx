@@ -1,44 +1,27 @@
 /**
- * 定时任务页：Card+Table 列表 + 新建/编辑弹窗（模式 → 动态参数 → 选任务）
+ * 定时任务页：Card+Table 列表 + 新建/编辑弹窗（模式 → 动态参数 → 选任务 → 上传前自动分配）
  * 依赖方向：页面 → 本目录 hooks → api/endpoints；任务多选数据源复用 tasks/hooks 的 useTasks
  * 弹窗内 times 用 dayjs 列表承载，提交时 buildPayload 转 'HH:mm' 字符串（interval 模式只取 everyHours）
  */
 import { useState } from 'react'
 import {
-  Button, Card, Empty, Form, Input, InputNumber, Modal, Popconfirm,
+  App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm,
   Segmented, Select, Space, Switch, Table, Tag, TimePicker, Typography,
 } from 'antd'
 import { ClockCircleOutlined, PlusOutlined } from '@ant-design/icons'
-import dayjs, { type Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import {
-  MODE_OPTIONS, WEEKDAY_OPTIONS, DAY_OPTIONS, modeLabel,
+  MODE_OPTIONS, WEEKDAY_OPTIONS, DAY_OPTIONS, modeLabel, buildPayload,
   useSchedules, useCreateSchedule, useUpdateSchedule, useDeleteSchedule, useRunSchedule,
-  type ScheduleMode,
+  type FormValues,
 } from './hooks'
 import { useTasks } from '../tasks/hooks'
-import type { ScheduleItem, ScheduleConfigInput } from '../../types'
-
-/** 弹窗表单值（times 为 dayjs 列表，提交时转 'HH:mm' 字符串；everyHours 可 null 与视图类型对齐） */
-interface FormValues {
-  name: string
-  mode: ScheduleMode
-  everyHours?: number | null
-  weekdays?: number[]
-  days?: number[]
-  times?: Dayjs[]
-  taskKeys: string[]
-}
-
-function buildPayload(values: FormValues): { name: string; mode: ScheduleMode; config: ScheduleConfigInput; taskKeys: string[] } {
-  const base = { name: values.name, taskKeys: values.taskKeys, mode: values.mode }
-  if (values.mode === 'interval') return { ...base, config: { everyHours: values.everyHours ?? 6 } }
-  const times = (values.times ?? []).map((t) => t.format('HH:mm')).sort()
-  if (values.mode === 'daily') return { ...base, config: { times } }
-  if (values.mode === 'weekly') return { ...base, config: { weekdays: values.weekdays ?? [], times } }
-  return { ...base, config: { days: values.days ?? [], times } }
-}
+import { NameTemplateEditor } from '../../components/name-template-editor'
+import { buildTemplate, DEFAULT_TEMPLATE_FORM, templateToForm, type TemplateForm } from '../../components/name-template'
+import type { ScheduleItem, FileAssignTemplate } from '../../types'
 
 export default function SchedulesPage() {
+  const { message } = App.useApp()
   const { data: schedules, isLoading } = useSchedules()
   const { data: tasks } = useTasks()
   const create = useCreateSchedule()
@@ -49,14 +32,17 @@ export default function SchedulesPage() {
   const [form] = Form.useForm<FormValues>()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<ScheduleItem | null>(null)
+  const [templateForm, setTemplateForm] = useState<TemplateForm>({ ...DEFAULT_TEMPLATE_FORM })
   const mode = Form.useWatch('mode', form) ?? 'daily'
+  const fileAssignEnabled = Form.useWatch('fileAssignEnabled', form) ?? false
 
   const taskOptions = (tasks ?? []).map((t) => ({ label: t.name, value: t.key }))
 
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ mode: 'daily', times: [dayjs('09:00', 'HH:mm')], taskKeys: [] })
+    form.setFieldsValue({ mode: 'daily', times: [dayjs('09:00', 'HH:mm')], taskKeys: [], fileAssignEnabled: false, fileAssignColumn: '文件地址' })
+    setTemplateForm({ ...DEFAULT_TEMPLATE_FORM })
     setOpen(true)
   }
 
@@ -71,13 +57,29 @@ export default function SchedulesPage() {
       days: s.config.days ?? [],
       times: (s.config.times ?? []).map((t) => dayjs(t, 'HH:mm')),
       taskKeys: s.taskKeys,
+      fileAssignEnabled: !!s.config.fileAssign,
+      fileAssignSourceDir: s.config.fileAssign?.sourceDir ?? '',
+      fileAssignColumn: s.config.fileAssign?.column ?? '文件地址',
     })
+    setTemplateForm(templateToForm(s.config.fileAssign?.template as unknown as FileAssignTemplate | null | undefined))
     setOpen(true)
   }
 
   const submit = async () => {
     const values = await form.validateFields()
-    const payload = buildPayload(values)
+    const built = buildTemplate(templateForm)
+    const template = 'error' in built ? null : built.template
+    if (values.fileAssignEnabled) {
+      if (!template) {
+        message.warning((built as { error: string }).error)
+        return
+      }
+      if (!values.fileAssignSourceDir?.trim()) {
+        message.warning('已开启自动分配，请填写源文件夹路径')
+        return
+      }
+    }
+    const payload = buildPayload(values, template)
     if (editing) {
       update.mutate({ id: editing.id, body: payload }, { onSuccess: () => setOpen(false) })
     } else {
@@ -96,6 +98,11 @@ export default function SchedulesPage() {
     {
       title: '关联任务', dataIndex: 'taskNames', render: (names: Array<string | null>) => (
         <Space size={4} wrap>{names.map((n, i) => (n ? <Tag key={i}>{n}</Tag> : <Tag key={i} color="red">未知任务</Tag>))}</Space>
+      ),
+    },
+    {
+      title: '自动分配', width: 90, render: (_: unknown, s: ScheduleItem) => (
+        s.config.fileAssign ? <Tag color="green">开启</Tag> : <Typography.Text type="secondary">—</Typography.Text>
       ),
     },
     {
@@ -144,7 +151,7 @@ export default function SchedulesPage() {
         cancelText="取消"
         destroyOnHidden
       >
-        <Form form={form} layout="vertical" initialValues={{ mode: 'daily', everyHours: 6, times: [dayjs('09:00', 'HH:mm')], taskKeys: [] }}>
+        <Form form={form} layout="vertical" initialValues={{ mode: 'daily', everyHours: 6, times: [dayjs('09:00', 'HH:mm')], taskKeys: [], fileAssignEnabled: false }}>
           <Form.Item name="name" label="计划名称" rules={[{ required: true, message: '请填写计划名称' }]}>
             <Input placeholder="例如：每日签到集合" maxLength={30} />
           </Form.Item>
@@ -195,6 +202,24 @@ export default function SchedulesPage() {
           <Form.Item name="taskKeys" label="选择任务（到点后依次触发）" rules={[{ required: true, message: '至少选择一个任务' }]}>
             <Select mode="multiple" options={taskOptions} placeholder="多选任务" optionFilterProp="label" />
           </Form.Item>
+
+          <Divider style={{ margin: '4px 0 12px' }} />
+          <Form.Item name="fileAssignEnabled" label="上传前自动文件随机分配" valuePropName="checked" extra="到点或「立即运行」时先自动分配文件再上传；分配失败则跳过依赖文件的任务">
+            <Switch checkedChildren="开" unCheckedChildren="关" />
+          </Form.Item>
+          {fileAssignEnabled && (
+            <>
+              <Form.Item name="fileAssignSourceDir" label="源文件夹路径" rules={[{ required: true, message: '请填写源文件夹路径' }]}>
+                <Input placeholder="C:\Users\PC\Desktop\空投文件\全部文件" />
+              </Form.Item>
+              <Form.Item name="fileAssignColumn" label="写入目标列">
+                <Select style={{ width: 160 }} options={[{ value: '文件地址', label: '文件地址' }, { value: '图片地址', label: '图片地址' }]} />
+              </Form.Item>
+              <Form.Item label="名称模板">
+                <NameTemplateEditor value={templateForm} onChange={setTemplateForm} />
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
     </Card>
