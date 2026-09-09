@@ -231,6 +231,28 @@ describe('server API（RESTful + envelope）', () => {
       expect(deps.db.createSchedule).not.toHaveBeenCalled()
     })
 
+    it('POST /api/schedules fileAssign 形状非法 400，合法保存成功', async () => {
+      const deps = makeDeps()
+      deps.db.createSchedule.mockResolvedValue(row)
+      const tpl = { english: { count: 2, caseMode: 'lower' }, digits: null, special: null, position: { type: 'before' } }
+      const badCases = [
+        { name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: {} }, taskKeys: ['t1'] },
+        { name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: '', column: '文件地址', template: tpl } }, taskKeys: ['t1'] },
+        { name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '', template: tpl } }, taskKeys: ['t1'] },
+        { name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: { english: null, digits: null, special: null, position: { type: 'before' } } } }, taskKeys: ['t1'] },
+      ]
+      for (const body of badCases) {
+        const res = await request(createApp(deps as never)).post('/api/schedules').send(body)
+        expect(res.status).toBe(400)
+        expect(res.body.code).toBe(40000)
+      }
+      const ok = await request(createApp(deps as never))
+        .post('/api/schedules')
+        .send({ name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: tpl } }, taskKeys: ['t1'] })
+      expect(ok.status).toBe(200)
+      expect(ok.body.code).toBe(0)
+    })
+
     it('PATCH /api/schedules/:id 部分更新；不存在 404（40406）', async () => {
       const deps = makeDeps()
       deps.db.getSchedule.mockResolvedValue(row)

@@ -11,6 +11,8 @@ import type { AppDb, ScheduleRow } from '../../infrastructure/db'
 import type { SiteTask } from '../../tasks/base'
 import { ruleText, nextRunText, validateScheduleConfig, type ScheduleConfig, type ScheduleMode } from '../../engine/schedule'
 import type { RunNowResult } from '../../engine/scheduler'
+import { validateTemplate } from '../../tools/file-assign/name-template'
+import type { FileAssignConfig } from '../../tools/file-assign/types'
 
 const MODES: ScheduleMode[] = ['interval', 'daily', 'weekly', 'monthly']
 
@@ -31,6 +33,17 @@ function toView(deps: { tasks: Map<string, SiteTask>; timezone: string }, s: Sch
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
   }
+}
+
+/** 校验 config.fileAssign 形状（存在时）；非法返回中文文案，合法返回 null（触发时的完整校验由 preparePreview 负责） */
+function validateFileAssign(fa: unknown): string | null {
+  if (typeof fa !== 'object' || fa === null) return 'fileAssign 须为对象'
+  const f = fa as Record<string, unknown>
+  if (typeof f.sourceDir !== 'string' || !f.sourceDir.trim()) return 'fileAssign.sourceDir 须为非空字符串'
+  if (typeof f.column !== 'string' || !f.column.trim()) return 'fileAssign.column 须为非空字符串'
+  const err = validateTemplate(f.template as FileAssignConfig['template'])
+  if (err) return `fileAssign.template 校验失败：${err}`
+  return null
 }
 
 /** 校验请求体并解析出写入参数；非法抛 400 */
@@ -67,6 +80,11 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
   if (!finalMode) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'mode 必填')
   const err = validateScheduleConfig(finalMode, finalConfig ?? {})
   if (err) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, err)
+  // 自动分配配置形状校验（存在时）
+  if (finalConfig?.fileAssign !== undefined) {
+    const faErr = validateFileAssign(finalConfig.fileAssign)
+    if (faErr) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, faErr)
+  }
   // 任务 key 必须已注册（与手动触发同守卫，不引用幽灵任务）
   if (out.taskKeys !== undefined) {
     for (const k of out.taskKeys) {
@@ -107,6 +125,19 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                           times: { type: array, nullable: true, items: { type: string } }
  *                           weekdays: { type: array, nullable: true, items: { type: integer } }
  *                           days: { type: array, nullable: true, items: { type: integer } }
+ *                           fileAssign:
+ *                             type: object
+ *                             nullable: true
+ *                             properties:
+ *                               sourceDir: { type: string }
+ *                               column: { type: string }
+ *                               template:
+ *                                 type: object
+ *                                 properties:
+ *                                   english: { type: object, nullable: true }
+ *                                   digits: { type: object, nullable: true }
+ *                                   special: { type: object, nullable: true }
+ *                                   position: { type: object }
  *                       taskKeys: { type: array, items: { type: string } }
  *                       taskNames:
  *                         type: array
@@ -139,6 +170,19 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                   times: { type: array, nullable: true, items: { type: string } }
  *                   weekdays: { type: array, nullable: true, items: { type: integer } }
  *                   days: { type: array, nullable: true, items: { type: integer } }
+ *                   fileAssign:
+ *                     type: object
+ *                     nullable: true
+ *                     properties:
+ *                       sourceDir: { type: string }
+ *                       column: { type: string }
+ *                       template:
+ *                         type: object
+ *                         properties:
+ *                           english: { type: object, nullable: true }
+ *                           digits: { type: object, nullable: true }
+ *                           special: { type: object, nullable: true }
+ *                           position: { type: object }
  *               taskKeys: { type: array, items: { type: string } }
  *             required: [name, mode, taskKeys]
  *     responses:
@@ -165,6 +209,19 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                         times: { type: array, nullable: true, items: { type: string } }
  *                         weekdays: { type: array, nullable: true, items: { type: integer } }
  *                         days: { type: array, nullable: true, items: { type: integer } }
+ *                         fileAssign:
+ *                           type: object
+ *                           nullable: true
+ *                           properties:
+ *                             sourceDir: { type: string }
+ *                             column: { type: string }
+ *                             template:
+ *                               type: object
+ *                               properties:
+ *                                 english: { type: object, nullable: true }
+ *                                 digits: { type: object, nullable: true }
+ *                                 special: { type: object, nullable: true }
+ *                                 position: { type: object }
  *                     taskKeys: { type: array, items: { type: string } }
  *                     taskNames: { type: array, items: { type: string, nullable: true } }
  *                     ruleText: { type: string }
@@ -204,6 +261,19 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                   times: { type: array, nullable: true, items: { type: string } }
  *                   weekdays: { type: array, nullable: true, items: { type: integer } }
  *                   days: { type: array, nullable: true, items: { type: integer } }
+ *                   fileAssign:
+ *                     type: object
+ *                     nullable: true
+ *                     properties:
+ *                       sourceDir: { type: string }
+ *                       column: { type: string }
+ *                       template:
+ *                         type: object
+ *                         properties:
+ *                           english: { type: object, nullable: true }
+ *                           digits: { type: object, nullable: true }
+ *                           special: { type: object, nullable: true }
+ *                           position: { type: object }
  *               taskKeys: { type: array, items: { type: string } }
  *     responses:
  *       '200':
@@ -229,6 +299,19 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                         times: { type: array, nullable: true, items: { type: string } }
  *                         weekdays: { type: array, nullable: true, items: { type: integer } }
  *                         days: { type: array, nullable: true, items: { type: integer } }
+ *                         fileAssign:
+ *                           type: object
+ *                           nullable: true
+ *                           properties:
+ *                             sourceDir: { type: string }
+ *                             column: { type: string }
+ *                             template:
+ *                               type: object
+ *                               properties:
+ *                                 english: { type: object, nullable: true }
+ *                                 digits: { type: object, nullable: true }
+ *                                 special: { type: object, nullable: true }
+ *                                 position: { type: object }
  *                     taskKeys: { type: array, items: { type: string } }
  *                     taskNames: { type: array, items: { type: string, nullable: true } }
  *                     ruleText: { type: string }
@@ -298,7 +381,7 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                         type: object
  *                         properties:
  *                           taskKey: { type: string }
- *                           reason: { type: string, enum: [unknown-task, task-disabled, in-flight] }
+ *                           reason: { type: string, enum: [unknown-task, task-disabled, in-flight, file-assign-failed] }
  *       '404':
  *         description: 计划不存在（业务码 40406）
  *       '409':

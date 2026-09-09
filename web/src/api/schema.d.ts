@@ -42,6 +42,27 @@ export interface paths {
                                     times?: string[] | null;
                                     weekdays?: number[] | null;
                                     days?: number[] | null;
+                                    fileAssign?: {
+                                        sourceDir?: string;
+                                        column?: string;
+                                        template?: {
+                                            english?: {
+                                                count?: number;
+                                                caseMode?: "lower" | "upper" | "mixed";
+                                            } | null;
+                                            digits?: {
+                                                count?: number;
+                                            } | null;
+                                            special?: {
+                                                count?: number;
+                                                charset?: string;
+                                            } | null;
+                                            position?: {
+                                                type?: string;
+                                                value?: string | number;
+                                            };
+                                        };
+                                    } | null;
                                 };
                                 taskKeys?: string[];
                                 /** @description 与 taskKeys 对齐的任务显示名，未知 key 为 null */
@@ -77,6 +98,27 @@ export interface paths {
                             times?: string[] | null;
                             weekdays?: number[] | null;
                             days?: number[] | null;
+                            fileAssign?: {
+                                sourceDir?: string;
+                                column?: string;
+                                template?: {
+                                    english?: {
+                                        count?: number;
+                                        caseMode?: "lower" | "upper" | "mixed";
+                                    } | null;
+                                    digits?: {
+                                        count?: number;
+                                    } | null;
+                                    special?: {
+                                        count?: number;
+                                        charset?: string;
+                                    } | null;
+                                    position?: {
+                                        type?: string;
+                                        value?: string | number;
+                                    };
+                                };
+                            } | null;
                         };
                         taskKeys?: string[];
                     };
@@ -102,6 +144,27 @@ export interface paths {
                                     times?: string[] | null;
                                     weekdays?: number[] | null;
                                     days?: number[] | null;
+                                    fileAssign?: {
+                                        sourceDir?: string;
+                                        column?: string;
+                                        template?: {
+                                            english?: {
+                                                count?: number;
+                                                caseMode?: "lower" | "upper" | "mixed";
+                                            } | null;
+                                            digits?: {
+                                                count?: number;
+                                            } | null;
+                                            special?: {
+                                                count?: number;
+                                                charset?: string;
+                                            } | null;
+                                            position?: {
+                                                type?: string;
+                                                value?: string | number;
+                                            };
+                                        };
+                                    } | null;
                                 };
                                 taskKeys?: string[];
                                 taskNames?: (string | null)[];
@@ -198,6 +261,27 @@ export interface paths {
                             times?: string[] | null;
                             weekdays?: number[] | null;
                             days?: number[] | null;
+                            fileAssign?: {
+                                sourceDir?: string;
+                                column?: string;
+                                template?: {
+                                    english?: {
+                                        count?: number;
+                                        caseMode?: "lower" | "upper" | "mixed";
+                                    } | null;
+                                    digits?: {
+                                        count?: number;
+                                    } | null;
+                                    special?: {
+                                        count?: number;
+                                        charset?: string;
+                                    } | null;
+                                    position?: {
+                                        type?: string;
+                                        value?: string | number;
+                                    };
+                                };
+                            } | null;
                         };
                         taskKeys?: string[];
                     };
@@ -223,6 +307,27 @@ export interface paths {
                                     times?: string[] | null;
                                     weekdays?: number[] | null;
                                     days?: number[] | null;
+                                    fileAssign?: {
+                                        sourceDir?: string;
+                                        column?: string;
+                                        template?: {
+                                            english?: {
+                                                count?: number;
+                                                caseMode?: "lower" | "upper" | "mixed";
+                                            } | null;
+                                            digits?: {
+                                                count?: number;
+                                            } | null;
+                                            special?: {
+                                                count?: number;
+                                                charset?: string;
+                                            } | null;
+                                            position?: {
+                                                type?: string;
+                                                value?: string | number;
+                                            };
+                                        };
+                                    } | null;
                                 };
                                 taskKeys?: string[];
                                 taskNames?: (string | null)[];
@@ -293,7 +398,7 @@ export interface paths {
                                 taskKeys?: string[];
                                 skipped?: {
                                     taskKey?: string;
-                                    reason?: "unknown-task" | "task-disabled" | "in-flight";
+                                    reason?: "unknown-task" | "task-disabled" | "in-flight" | "file-assign-failed";
                                 }[];
                             };
                         };
