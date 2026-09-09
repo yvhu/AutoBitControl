@@ -6,6 +6,7 @@
  * 四种模式：interval 每 N 小时（午夜对齐、排除 00:00）/ daily 每日多时间点 /
  * weekly 每周几+时间点 / monthly 每月几号+时间点（小月无该日自然跳过）
  */
+import type { FileAssignConfig } from '../tools/file-assign/types'
 
 /** 频率模式 */
 export type ScheduleMode = 'interval' | 'daily' | 'weekly' | 'monthly'
@@ -20,6 +21,8 @@ export interface ScheduleConfig {
   weekdays?: number[]
   /** monthly：每月几号集合（1–31） */
   days?: number[]
+  /** 上传前自动文件随机分配（可选）：fire 在开窗前执行一次分配，失败跳过依赖文件的任务 */
+  fileAssign?: FileAssignConfig
 }
 
 /** 配置时区的墙上时钟 */

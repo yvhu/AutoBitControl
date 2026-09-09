@@ -10,6 +10,7 @@
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 import type { TaskMeta } from './task'
+import type { FileAssignConfig } from '../tools/file-assign/types'
 import { wallClockIn, isDueMinute, type ScheduleConfig, type ScheduleMode } from './schedule'
 
 /** 一次触发的任务级结果（面板「立即运行」与日志共用） */
@@ -17,7 +18,7 @@ export interface RunNowResult {
   /** 实际入队的任务 key */
   taskKeys: string[]
   /** 被跳过任务的明细 */
-  skipped: Array<{ taskKey: string; reason: 'unknown-task' | 'task-disabled' | 'in-flight' }>
+  skipped: Array<{ taskKey: string; reason: 'unknown-task' | 'task-disabled' | 'in-flight' | 'file-assign-failed' }>
 }
 
 export interface SchedulerDeps {
@@ -35,6 +36,10 @@ export interface SchedulerDeps {
   /** 任务注册表最小视图（engine 不得 import tasks 层，SiteTask 结构兼容） */
   tasks: Map<string, { meta: TaskMeta }>
   logger: Logger
+  /** 上传前自动分配执行器（app.ts 注入 preview+apply+数据源重载；engine 不依赖 tools 运行时） */
+  fileAssign?: {
+    run(config: FileAssignConfig): Promise<void>
+  }
   /** 固定时区（配置 scheduler.timezone） */
   timezone: string
   /** tick 间隔（毫秒，默认 15000） */
@@ -96,7 +101,7 @@ export class Scheduler {
     return this.fire(schedule)
   }
 
-  /** 触发计划内全部任务（任务级守卫逐个判定，不互相影响） */
+  /** 触发计划内全部任务：第一遍守卫收集通过者 → 需要时执行一次自动分配 → 第二遍建批次入队 */
   private async fire(schedule: ScheduleRow): Promise<RunNowResult> {
     const result: RunNowResult = { taskKeys: [], skipped: [] }
     let keys: unknown
@@ -110,6 +115,10 @@ export class Scheduler {
       this.deps.logger.warn({ id: schedule.id, name: schedule.name }, '计划任务列表形状非法（须为字符串数组），跳过整个计划')
       return result
     }
+    const cfg = parseConfig(schedule, this.deps.logger)
+    if (!cfg) return result
+    // 第一遍：任务级守卫，收集将通过的任务（分配只在有任务真正要跑时执行，避免在途/停用时白改名）
+    const passing: string[] = []
     for (const key of keys as string[]) {
       const skip = async (reason: RunNowResult['skipped'][number]['reason']) => {
         this.deps.logger.warn({ schedule: schedule.name, task: key, reason }, '定时触发跳过任务')
@@ -120,6 +129,29 @@ export class Scheduler {
       // 面板运行时开关（task_states 覆盖 meta.enabled）与手动触发守卫同语义
       if (!(await this.deps.db.getTaskEnabled(key, t.meta.enabled ?? true))) { await skip('task-disabled'); continue }
       if ((await this.deps.db.countInFlightRuns(key, todayLocal())) > 0 || this.deps.enqueuer.hasTaskInFlight(key)) { await skip('in-flight'); continue }
+      passing.push(key)
+    }
+    // 上传前自动文件随机分配：计划配置了 fileAssign 且通过守卫的任务中有依赖文件的任务时执行一次；
+    // 失败 → 依赖文件的任务全部 skipped(file-assign-failed)，其余任务不受影响（不上传旧文件防重复）
+    const fa = cfg.fileAssign
+    const needsAssign = !!fa && !!this.deps.fileAssign && passing.some((k) => this.deps.tasks.get(k)?.meta.requiresFileAssign)
+    let assignFailed: string | null = null
+    if (needsAssign) {
+      try {
+        await this.deps.fileAssign!.run(fa!)
+        this.deps.logger.info({ schedule: schedule.name }, '上传前自动文件随机分配完成')
+      } catch (e) {
+        assignFailed = (e as Error).message
+        this.deps.logger.warn({ schedule: schedule.name, err: assignFailed }, '自动文件随机分配失败，跳过依赖文件的任务')
+      }
+    }
+    // 第二遍：建批次入队
+    for (const key of passing) {
+      if (assignFailed && this.deps.tasks.get(key)?.meta.requiresFileAssign) {
+        this.deps.logger.warn({ schedule: schedule.name, task: key, reason: 'file-assign-failed' }, '定时触发跳过任务')
+        result.skipped.push({ taskKey: key, reason: 'file-assign-failed' })
+        continue
+      }
       const batch = await this.deps.db.createBatch('schedule', key, `计划#${schedule.id} ${schedule.name}`)
       for (const p of await this.deps.db.listProfiles(true)) {
         this.deps.enqueuer.enqueue(p, key, { batchId: batch.id })

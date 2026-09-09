@@ -136,6 +136,7 @@ interface MockDeps extends SchedulerDeps {
     listProfiles: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
+  fileAssign: { run: Mock }
 }
 
 function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
@@ -148,6 +149,7 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }]),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
+    fileAssign: { run: vi.fn().mockResolvedValue(undefined) },
     tasks: new Map([['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }]]),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     timezone: TZ2,
@@ -271,5 +273,59 @@ describe('Scheduler', () => {
     await new Scheduler(deps).tick()
     expect(deps.db.createBatch).not.toHaveBeenCalled()
     expect(deps.logger.warn).toHaveBeenCalled()
+  })
+})
+
+describe('Scheduler 上传前自动文件随机分配', () => {
+  const FA_TEMPLATE = { english: { count: 2, caseMode: 'lower' as const }, digits: null, special: null, position: { type: 'before' as const } }
+  const FA_CFG = { sourceDir: 'C:\\files', column: '文件地址', template: FA_TEMPLATE }
+  const makeUploadDeps = () => makeDeps({
+    tasks: new Map([
+      ['upload', { meta: { key: 'upload', name: '上传', url: '', requiresFileAssign: true } }],
+      ['plain', { meta: { key: 'plain', name: '普通', url: '' } }],
+    ]),
+  })
+  const scheduleWith = (config: string, taskKeys = '["upload"]') => makeSchedule({ config, taskKeys })
+
+  it('计划带 fileAssign 且依赖文件任务通过守卫 → 先分配再入队（分配只调一次且先于建批次）', async () => {
+    const deps = makeUploadDeps()
+    const s = new Scheduler(deps)
+    const result = await s.runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(deps.fileAssign.run).toHaveBeenCalledTimes(1)
+    expect(deps.fileAssign.run).toHaveBeenCalledWith(FA_CFG)
+    expect(result.taskKeys).toEqual(['upload'])
+    expect(deps.fileAssign.run.mock.invocationCallOrder[0]).toBeLessThan(deps.db.createBatch.mock.invocationCallOrder[0])
+    expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'upload', '计划#1 每日签到')
+  })
+
+  it('分配失败 → 依赖文件任务 skipped(file-assign-failed)，其它任务照常入队', async () => {
+    const deps = makeUploadDeps()
+    deps.fileAssign.run.mockRejectedValue(new Error('文件不足'))
+    const s = new Scheduler(deps)
+    const result = await s.runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG }), '["upload","plain"]'))
+    expect(result.taskKeys).toEqual(['plain'])
+    expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
+    expect(deps.logger.warn).toHaveBeenCalled()
+    expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'plain', '计划#1 每日签到')
+  })
+
+  it('无 fileAssign 段 → 不执行分配', async () => {
+    const deps = makeUploadDeps()
+    await new Scheduler(deps).runNow(scheduleWith('{"times":["09:00"]}'))
+    expect(deps.fileAssign.run).not.toHaveBeenCalled()
+  })
+
+  it('计划内无依赖文件任务 → 不执行分配（避免浪费改名）', async () => {
+    const deps = makeUploadDeps()
+    await new Scheduler(deps).runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG }), '["plain"]'))
+    expect(deps.fileAssign.run).not.toHaveBeenCalled()
+  })
+
+  it('依赖文件任务在途 → 不执行分配', async () => {
+    const deps = makeUploadDeps()
+    deps.db.countInFlightRuns.mockResolvedValue(1)
+    const result = await new Scheduler(deps).runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(deps.fileAssign.run).not.toHaveBeenCalled()
+    expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'in-flight' }])
   })
 })

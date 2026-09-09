@@ -65,3 +65,10 @@ export interface ApplyResult {
   renamedCount: number
   updatedRows: number
 }
+
+/** 定时计划「上传前自动分配」配置（存 schedules.config.fileAssign，与预览参数同构） */
+export interface FileAssignConfig {
+  sourceDir: string
+  column: string
+  template: FileAssignTemplate
+}

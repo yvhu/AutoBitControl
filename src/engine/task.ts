@@ -34,6 +34,8 @@ export interface TaskMeta {
   captcha?: { auto?: boolean; maxCost?: number }
   /** 任务级并发：同一时间最多几个窗口并行跑该任务；缺省 DEFAULT_TASK_CONCURRENCY（4）；批量触发时滚动分批跑完 */
   concurrency?: number
+  /** 声明任务依赖「上传前自动文件随机分配」：计划配置 fileAssign 时 fire 先执行一次分配，失败则本任务跳过 */
+  requiresFileAssign?: boolean
 }
 
 /** 任务引用（runner 内部持有的最小视图） */
