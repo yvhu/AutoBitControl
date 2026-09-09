@@ -42,3 +42,30 @@ describe('buildPayload', () => {
     expect(p.config.fileAssign?.template).toEqual(tpl)
   })
 })
+
+import { buildTaskOptions } from './hooks'
+import type { TaskMetaView } from '../../types'
+
+describe('buildTaskOptions', () => {
+  const t = (key: string, group: { key: string; name: string } | null) => ({ key, name: `任务${key}`, group }) as unknown as TaskMetaView
+
+  it('有分组时返回 optgroup 结构且未分组垫底', () => {
+    const opts = buildTaskOptions([t('a', { key: 'g1', name: '组1' }), t('b', null)])
+    expect(opts).toEqual([
+      { label: '组1', options: [{ label: '任务a', value: 'a' }] },
+      { label: '未分组', options: [{ label: '任务b', value: 'b' }] },
+    ])
+  })
+
+  it('全部未分组时返回平铺数组', () => {
+    const opts = buildTaskOptions([t('a', null), t('b', null)])
+    expect(opts).toEqual([
+      { label: '任务a', value: 'a' },
+      { label: '任务b', value: 'b' },
+    ])
+  })
+
+  it('空数组返回空数组', () => {
+    expect(buildTaskOptions([])).toEqual([])
+  })
+})

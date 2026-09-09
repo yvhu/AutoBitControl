@@ -8,6 +8,8 @@ import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, runSche
 import { HttpError } from '../../api/client'
 import type { Dayjs } from 'dayjs'
 import type { ScheduleItem, ScheduleConfigInput, FileAssignTemplate } from '../../types'
+import type { TaskMetaView } from '../../types'
+import { groupTasks } from '../tasks/hooks'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
@@ -134,4 +136,20 @@ export function useRunSchedule() {
     },
     onError: (e) => message.error(errMsg(e)),
   })
+}
+
+export type TaskSelectOption =
+  | { label: string; value: string }
+  | { label: string; options: Array<{ label: string; value: string }> }
+
+/** 任务多选选项：有分组时按 optgroup 归类（未分组垫底），全部未分组时返回平铺数组（维持现状行为） */
+export function buildTaskOptions(tasks: TaskMetaView[]): TaskSelectOption[] {
+  const groups = groupTasks(tasks)
+  if (groups.length === 1 && groups[0].key === '') {
+    return groups[0].tasks.map((t) => ({ label: t.name, value: t.key }))
+  }
+  return groups.map((g) => ({
+    label: g.name,
+    options: g.tasks.map((t) => ({ label: t.name, value: t.key })),
+  }))
 }

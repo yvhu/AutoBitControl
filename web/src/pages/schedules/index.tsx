@@ -11,7 +11,7 @@ import {
 import { ClockCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
-  MODE_OPTIONS, WEEKDAY_OPTIONS, DAY_OPTIONS, modeLabel, buildPayload,
+  MODE_OPTIONS, WEEKDAY_OPTIONS, DAY_OPTIONS, modeLabel, buildPayload, buildTaskOptions,
   useSchedules, useCreateSchedule, useUpdateSchedule, useDeleteSchedule, useRunSchedule,
   type FormValues,
 } from './hooks'
@@ -36,7 +36,7 @@ export default function SchedulesPage() {
   const mode = Form.useWatch('mode', form) ?? 'daily'
   const fileAssignEnabled = Form.useWatch('fileAssignEnabled', form) ?? false
 
-  const taskOptions = (tasks ?? []).map((t) => ({ label: t.name, value: t.key }))
+  const taskOptions = buildTaskOptions(tasks ?? [])
 
   const openCreate = () => {
     setEditing(null)
