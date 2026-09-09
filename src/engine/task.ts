@@ -20,6 +20,8 @@ export interface TaskMeta {
   /** 备注：站点的坑与特殊逻辑，面板任务页直接可见 */
   note?: string
   category?: 'checkin' | 'faucet' | 'mint' | 'other'
+  /** 空投分组：同一空投的多个任务（领水/签到/部署…）写相同的 key+name，面板按组折叠展示；key 全局唯一 */
+  group?: { key: string; name: string }
   lastUpdated?: string
   deprecated?: boolean
   /** 任务开关（纯代码开关）：false 时手动触发接口 409；面板开关可运行时覆盖 */

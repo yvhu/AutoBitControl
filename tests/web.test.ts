@@ -34,7 +34,7 @@ interface MockDeps {
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
   scheduler: { runNow: Mock }
-  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number } }>
+  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number; group?: { key: string; name: string } } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
@@ -314,6 +314,21 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     const t2 = res.body.data.find((t: { key: string }) => t.key === 't2')
     expect(t2.concurrency).toBe(2)
+  })
+
+  it('GET /api/tasks meta 显式写 group 时透传该值', async () => {
+    const deps = makeDeps()
+    deps.tasks.set('t2', { meta: { key: 't2', name: '任务2', url: '', wallet: 'petra', group: { key: 'g1', name: '组1' } } })
+    const res = await request(createApp(deps as never)).get('/api/tasks')
+    expect(res.body.code).toBe(0)
+    const t2 = res.body.data.find((t: { key: string }) => t.key === 't2')
+    expect(t2.group).toEqual({ key: 'g1', name: '组1' })
+  })
+
+  it('GET /api/tasks meta 未写 group 时返回 null', async () => {
+    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data[0].group).toBeNull()
   })
 
   it('POST /api/tasks/:key/trigger 创建批次并入队（带 batchId）', async () => {

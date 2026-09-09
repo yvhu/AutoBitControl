@@ -39,6 +39,13 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                       sourceUrl: { type: string, nullable: true, description: '信息来源页（string 或 string[]，多个页面分别核实不同步骤）' }
  *                       note: { type: string, nullable: true }
  *                       category: { type: string, nullable: true }
+ *                       group:
+ *                         type: object
+ *                         nullable: true
+ *                         description: 空投分组（同一空投的任务写相同 key+name）
+ *                         properties:
+ *                           key: { type: string }
+ *                           name: { type: string }
  *                       lastUpdated: { type: string, nullable: true }
  *                       deprecated: { type: boolean }
  *                       enabled: { type: boolean }
@@ -154,6 +161,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         sourceUrl: m.sourceUrl ?? null,
         note: m.note ?? null,
         category: m.category ?? null,
+        group: m.group ?? null,
         lastUpdated: m.lastUpdated ?? null,
         deprecated: m.deprecated ?? false,
         enabled: await deps.db.getTaskEnabled(m.key, m.enabled ?? true),

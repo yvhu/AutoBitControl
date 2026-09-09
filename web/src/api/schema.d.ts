@@ -490,6 +490,12 @@ export interface paths {
                                     maxCost?: number;
                                 } | null;
                                 concurrency?: number;
+                                group?: {
+                                    /** @description 分组 key（全局唯一） */
+                                    key?: string;
+                                    /** @description 分组显示名 */
+                                    name?: string;
+                                } | null;
                             }[];
                         };
                     };
