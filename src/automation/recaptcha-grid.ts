@@ -174,15 +174,18 @@ async function reloadImages(deps: { page: Page; human: Humanizer }, ch: Frame): 
   await deps.page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
 }
 
+/** 读格子 img src（img 缺失/读失败返回空串）：带 1s 短超时，防止 locator 对不存在的 img 死等默认 30s 超时 */
+async function readTileSrc(ch: Frame, idx: number): Promise<string> {
+  return (await ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().getAttribute('src', { timeout: 1000 }).catch(() => null)) ?? ''
+}
+
 /** 轮询等待格子 img 稳定（src 连续两次相同；最多 timeoutMs）——Google 点击后刷新小图有动画，未稳定时不能继续 */
 async function waitTileStable(deps: { page: Page }, ch: Frame, idx: number, timeoutMs = 6000): Promise<void> {
-  const loc = ch.locator(TILE_SELECTOR).nth(idx)
-  const readSrc = async (): Promise<string> => (await loc.locator('img').first().getAttribute('src').catch(() => null)) ?? ''
   const end = Date.now() + timeoutMs
-  let prev = await readSrc()
+  let prev = await readTileSrc(ch, idx)
   while (Date.now() < end) {
     await deps.page.waitForTimeout(500)
-    const cur = await readSrc()
+    const cur = await readTileSrc(ch, idx)
     if (cur === prev) return
     prev = cur
   }
@@ -266,7 +269,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
   if (!result) throw new Error('九宫格分类无结果')
   deps.logger.info({ objects: result.objects, round: 'multi' }, '九宫格识别完成，开始点选')
   for (const idx of result.objects) {
-    let before = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
+    let before = await readTileSrc(ch, idx)
     // 拟人坐标点击优先（Google 忽略瞬移式程序化点击）；framePoint 拿不到坐标回退 locator 直点
     if (!(await humanClickInFrame(deps, ch, TILE_SELECTOR, idx))) {
       await tiles.nth(idx).click({ timeout: 5000 }).catch(() => {})
@@ -276,7 +279,7 @@ async function solveOneRound(deps: { page: Page; captcha: CaptchaService; logger
     // 点击后 Google 刷新该格小图（2022 DEMO 的 class selected 语义已变）：
     // src 变化 → 小图二次识别，命中再点确认；src 未变且无 selected → 点击可能未注册，重试点击
     for (let k = 0; k < SINGLE_RECHECK_MAX; k++) {
-      const after = (await tiles.nth(idx).locator('img').first().getAttribute('src').catch(() => null)) ?? ''
+      const after = await readTileSrc(ch, idx)
       if (before !== after) {
         // 小图二次识别用该格 img 元素截图（fetch 原图方案已废弃：拿到的内容与视觉图不符）
         const singleShot = await tiles.nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
