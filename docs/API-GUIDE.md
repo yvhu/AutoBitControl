@@ -163,6 +163,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
 | `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见[第 5 章](#5-验证码)）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
 | `concurrency` | `number?` | `4` | 任务级并发：同一时间最多几个窗口并行跑该任务；批量触发时按此额度滚动分批跑完所有启用窗口；缺省 4（`DEFAULT_TASK_CONCURRENCY`，定义于 `src/engine/task.ts`）。portal-rhuna 为 2，其余任务为 4 |
+| `requiresFileAssign` | `boolean?` | `undefined` | 声明任务依赖「上传前自动文件随机分配」：计划 `config` 配置了 `fileAssign` 且该任务通过守卫时，触发会先自动执行一次分配；分配失败则该任务本次跳过（`file-assign-failed`）。shelbynet 上传任务（`xyz-shelbynet`）为 `true` |
 
 示例（省略了部分可选字段，完整字段见上表；摘自 [example-checkin.ts（打开源码视图）](src://example-checkin.ts)）：
 
@@ -1107,7 +1108,7 @@ randomMicroMove(): Promise<void>
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/schedules` | 计划列表（含 `ruleText` 摘要、`nextRun` 下次执行、`taskNames`） |
-| POST | `/api/schedules` | 新建：`{ name, mode, config, taskKeys }`；校验失败 400 |
+| POST | `/api/schedules` | 新建：`{ name, mode, config, taskKeys }`；`config` 可带 `fileAssign` 自动分配配置；校验失败 400 |
 | PATCH | `/api/schedules/:id` | 改名称/开关/配置/任务列表（可部分）；不存在 404（40406） |
 | DELETE | `/api/schedules/:id` | 删除；不存在 404（40406） |
 | POST | `/api/schedules/:id/run` | 「立即运行一次」：跳过时间判断直接触发（守卫保留）；停用 409（40903） |
@@ -1115,6 +1116,17 @@ randomMicroMove(): Promise<void>
 ### 面板使用
 
 定时任务页：新建计划 → 先选频率模式 → 按模式填参数（间隔小时数 / 时间点 / 星期 / 几号）→ 多选任务 → 保存。列表行内可开关计划、立即运行（验证配置用）、编辑、删除。看板批次列表中定时触发的批次带「定时」徽标。
+
+### 上传前自动文件随机分配
+
+计划 `config` 可带可选 `fileAssign` 段：`{ sourceDir, column, template }`（与工具中心「文件随机分配」参数同构）。配置后每次触发（到点或「立即运行」）都在开窗前自动执行一次分配：重命名源文件夹内文件并按名称模板生成唯一新名 → 写回 `accounts.xlsx` 的 `column` 列 → 重载数据源 → 再入队开窗。
+
+- **只在确实有任务要跑时分配**：依赖文件的任务（`meta.requiresFileAssign: true`，如 shelbynet 上传任务）通过守卫才执行，避免在途/停用时白白改名
+- **分配失败即不上传**：目录缺失/文件不足/模板非法 → 依赖文件的任务本次跳过（日志记 `file-assign-failed`），计划内其它任务照常触发；绝不让上一轮旧文件名混进上传
+- 计划内无 `requiresFileAssign` 任务时，即使配置了 `fileAssign` 也不会执行分配
+- 手动路径（任务页「立即触发」、看板行级执行、task:run 脚本）不经过计划，不受自动分配保护
+
+面板「定时任务」弹窗勾选「上传前自动文件随机分配」并填写源文件夹/目标列/名称模板即生成该配置。
 
 ## 9. 配置与面板
 
@@ -1143,7 +1155,7 @@ randomMicroMove(): Promise<void>
 - **看板（首页）**：运行批次时间线——顶部 Segmented 选时间范围（今天/近 7 天/全部）＋ 实时运行窗口数与今日打码花费统计；每次触发形成一张批次卡（时间/类型徽章/任务名/完成进度条/各状态计数，点击展开窗口明细表）；单窗口散批与未分批历史收进虚线卡折叠区。明细行含窗口/任务/开始/耗时/状态/错误/截图，行级「执行/重跑」= 单窗口单任务触发。停留在看板页时每 15 秒自动刷新。
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；熔断计数 > 0 时显示「重置熔断」按钮（点击计数归零，按钮随之消失）。
 - **任务页**：任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试/验证码摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入本地库 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
-- **定时任务页**：计划列表（名称/频率摘要/下次执行时间/包含的任务），支持新建（四种频率模式，见第 8 章）、编辑、删除、开关与「立即运行」。
+- **定时任务页**：计划列表（名称/频率摘要/下次执行时间/包含的任务/自动分配标记），支持新建（四种频率模式，见第 8 章）、编辑、删除、开关与「立即运行」；新建/编辑弹窗可选开启「上传前自动文件随机分配」（到点先分配再上传，分配失败跳过上传任务，见第 8 章）。
 - **工具页**：工具卡片中心（卡片数据来自 `GET /api/tools`，随需扩展），目前两个工具——「文件随机分配」与「代理网络」，点卡片展开对应工具面板，用法见[第 12 章](#12-工具中心)。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
 - **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/熔断阈值/版本）；yescaptcha 卡（「查询余额」按钮展示剩余点数）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
@@ -1160,10 +1172,10 @@ randomMicroMove(): Promise<void>
 | PATCH | `/api/tasks/:key` | 任务开关（写本地库，立即生效） |
 | POST | `/api/tasks/:key/trigger` | 手动触发任务（可选只跑单窗口） |
 | GET | `/api/schedules` | 定时计划列表（面板视图：规则摘要/下次执行/任务名等） |
-| POST | `/api/schedules` | 新建定时计划（name/mode/config/taskKeys） |
+| POST | `/api/schedules` | 新建定时计划（name/mode/config/taskKeys；config 可带 fileAssign 自动分配） |
 | PATCH | `/api/schedules/:id` | 更新定时计划（字段可部分传） |
 | DELETE | `/api/schedules/:id` | 删除定时计划 |
-| POST | `/api/schedules/:id/run` | 立即运行定时计划（在途/停用任务跳过） |
+| POST | `/api/schedules/:id/run` | 立即运行定时计划（在途/停用任务跳过；分配失败跳过依赖文件任务） |
 | GET | `/api/profiles` | 窗口列表（含启用状态、熔断计数与打开状态） |
 | PATCH | `/api/profiles/:id` | 窗口开关 |
 | POST | `/api/profiles/:id/open` | 打开窗口（登记 open_windows，任务会话复用该窗口） |
