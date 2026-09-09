@@ -57,6 +57,27 @@ export function groupTasks(tasks: TaskMetaView[]): TaskGroup[] {
   return groups
 }
 
+/** 分组图标配色：已知分组固定色（与面板 mockup 一致），未知分组按出现顺序回退 */
+export const GROUP_COLOR_MAP: Record<string, string> = {
+  shelby: '#1677FF',
+  inception: '#52c41a',
+  portal: '#faad14',
+  arc: '#722ed1',
+  example: '#8c8c8c',
+}
+
+const FALLBACK_GROUP_COLORS = ['#13c2c2', '#eb2f96', '#fa541c', '#2f54eb', '#a0d911', '#7cb305']
+
+/** 分组图标底色：已知分组取固定色，未知分组按索引取模轮换回退色 */
+export function groupColor(key: string, index: number): string {
+  return GROUP_COLOR_MAP[key] ?? FALLBACK_GROUP_COLORS[index % FALLBACK_GROUP_COLORS.length]
+}
+
+/** 展开键集合切换：存在则移除，不存在则追加（其余顺序不变） */
+export function toggleKey(keys: string[], key: string): string[] {
+  return keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]
+}
+
 export function useTasks() {
   return useQuery({
     queryKey: ['tasks'],

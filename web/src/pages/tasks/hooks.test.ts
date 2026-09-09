@@ -69,3 +69,39 @@ describe('groupTasks', () => {
     expect(groupTasks([])).toEqual([])
   })
 })
+
+import { GROUP_COLOR_MAP, groupColor, toggleKey } from './hooks'
+
+describe('groupColor', () => {
+  it('已知分组取固定色', () => {
+    expect(groupColor('shelby', 0)).toBe('#1677FF')
+    expect(groupColor('inception', 0)).toBe('#52c41a')
+    expect(groupColor('portal', 0)).toBe('#faad14')
+    expect(groupColor('arc', 0)).toBe('#722ed1')
+    expect(groupColor('example', 0)).toBe('#8c8c8c')
+  })
+
+  it('未知分组按索引轮换回退色', () => {
+    expect(groupColor('unknown-a', 0)).toBe('#13c2c2')
+    expect(groupColor('unknown-b', 1)).toBe('#eb2f96')
+  })
+
+  it('索引超出回退色数组长度时取模轮换', () => {
+    expect(groupColor('unknown-c', 6)).toBe('#13c2c2')
+    expect(groupColor('unknown-d', 7)).toBe('#eb2f96')
+  })
+
+  it('GROUP_COLOR_MAP 五个已知分组齐全', () => {
+    expect(Object.keys(GROUP_COLOR_MAP).sort()).toEqual(['arc', 'example', 'inception', 'portal', 'shelby'])
+  })
+})
+
+describe('toggleKey', () => {
+  it('不存在时追加到末尾', () => {
+    expect(toggleKey(['a'], 'b')).toEqual(['a', 'b'])
+  })
+
+  it('存在时移除且其余顺序不变', () => {
+    expect(toggleKey(['a', 'b', 'c'], 'b')).toEqual(['a', 'c'])
+  })
+})
