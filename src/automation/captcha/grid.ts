@@ -81,7 +81,9 @@ async function toStandardImage(buf: Buffer, size: number): Promise<Jimp> {
 }
 
 /** 容器元素截图回退（整图 img 缺失时）：中心裁剪正方形 + 等比缩放；Google 改版兜底，warn 可见不静默 */
-async function fallbackCaptureGrid(ch: Frame, size: number): Promise<string> {
+async function fallbackCaptureGrid(deps: GridDeps, ch: Frame, size: number): Promise<string> {
+  // 截图前动画稳定等待
+  await deps.page.waitForTimeout(1000)
   const shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
   if (!shot) throw new Error('九宫格网格截图失败（整图 img 缺失且容器截图失败）')
   saveDebugImage('grid-raw-fallback', shot)
@@ -121,13 +123,20 @@ function saveDebugImage(name: string, buf: Buffer): void {
  * 缩放目标 = naturalWidth（450=4x4，否则 300）；img 缺失回退容器截图（warn）
  */
 async function readGridImage(deps: GridDeps, ch: Frame): Promise<{ b64: string } | null> {
+  // 等网格渐入动画稳定后再取图（真机 2026-09-10：动画未稳定截图被平台拒 ERROR_GARBAGE_SAMPLE）
+  await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+  /** 回退截图目标尺寸：4x4（16 格）官方 450，否则 300（真机：固定 300 导致 4x4 分类置信度弱） */
+  const fallbackSize = async (): Promise<number> => {
+    const tileCount = await ch.locator(TILE_SELECTOR).count().catch(() => 0)
+    return tileCount === 16 ? 450 : 300
+  }
   const info = await ch.locator(GRID_IMG_SELECTOR).first().evaluate((el) => {
     const img = el as HTMLImageElement
     return { src: img.src, naturalWidth: img.naturalWidth }
   }).catch(() => null)
   if (!info || !info.src) {
     deps.logger.warn('九宫格整图 img 未找到，回退容器元素截图（Google 结构可能已变化）')
-    return { b64: await fallbackCaptureGrid(ch, 300) }
+    return { b64: await fallbackCaptureGrid(deps, ch, await fallbackSize()) }
   }
   let buf: Buffer
   try {
@@ -139,15 +148,15 @@ async function readGridImage(deps: GridDeps, ch: Frame): Promise<{ b64: string }
         const ab = await r.arrayBuffer()
         return Array.from(new Uint8Array(ab))
       }).catch(() => null)
-      if (!bytes) return { b64: await fallbackCaptureGrid(ch, 300) }
+      if (!bytes) return { b64: await fallbackCaptureGrid(deps, ch, await fallbackSize()) }
       buf = Buffer.from(bytes as number[])
     } else {
       const res = await fetch(info.src)
-      if (!res.ok) return { b64: await fallbackCaptureGrid(ch, 300) }
+      if (!res.ok) return { b64: await fallbackCaptureGrid(deps, ch, await fallbackSize()) }
       buf = Buffer.from(await res.arrayBuffer())
     }
   } catch {
-    return { b64: await fallbackCaptureGrid(ch, 300) }
+    return { b64: await fallbackCaptureGrid(deps, ch, await fallbackSize()) }
   }
   const size = info.naturalWidth >= 400 ? 450 : 300
   saveDebugImage('grid-raw', buf)
@@ -321,7 +330,16 @@ async function solveOneRound(deps: GridDeps, rc: RoundCtx): Promise<boolean> {
   rc.qid = qid
   const grid = await readGridImage(deps, rc.ch)
   if (!grid) throw new Error('九宫格网格图获取失败')
-  const result = await rc.classify(grid.b64, qid, GRID_COST_POINTS)
+  let result: GridResult
+  try {
+    result = await rc.classify(grid.b64, qid, GRID_COST_POINTS)
+  } catch (e) {
+    if (e instanceof CaptchaFailure && /ERROR_GARBAGE_SAMPLE|ERROR_ILLEGAL_IMAGE|ERROR_PARSE_IMAGE_FAIL/.test(e.message)) {
+      deps.logger.warn({ err: e.message }, '九宫格分类图片质量被平台拒收，跳过本轮（下一轮重新截图）')
+      return false
+    }
+    throw e
+  }
   if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
   if (result.objects.length === 0) {
     deps.logger.warn('九宫格分类返回空数组，跳过本轮（不点验证，等下一轮）')

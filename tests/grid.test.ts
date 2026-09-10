@@ -186,6 +186,16 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(classify).toHaveBeenCalledTimes(2)
   })
 
+  it('图片质量拒收跳过本轮：下一轮重新截图再分类求解成功', async () => {
+    const state = baseState()
+    const classify = vi.fn()
+      .mockRejectedValueOnce(new CaptchaFailure('yescaptcha 创建任务失败: ERROR_GARBAGE_SAMPLE'))
+      .mockResolvedValue({ type: 'multi', objects: [0] })
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
+    expect(classify).toHaveBeenCalledTimes(2)
+    expect(state.verifyClicked).toBe(true)
+  })
+
   it('提示语未覆盖映射抛错', async () => {
     const state = baseState()
     state.prompt = '潜水艇'
