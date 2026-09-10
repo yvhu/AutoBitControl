@@ -73,12 +73,18 @@ describe('AppDb', () => {
 
   it('验证码统计聚合（按本地日期过滤）', async () => {
     const p = await db.upsertProfile('bb-1', 'A')
-    await db.logCaptcha(p.id, 'task-a', 'turnstile', 0.03, true)
-    await db.logCaptcha(p.id, 'task-a', 'hcaptcha', 0.05, false)
-    await db.logCaptcha(p.id, 'task-b', 'turnstile', 0.03, true)
+    await db.logCaptcha(p.id, 'task-a', 'yescaptcha', 'turnstile', 0.03, true)
+    await db.logCaptcha(p.id, 'task-a', 'yescaptcha', 'hcaptcha', 0.05, false)
+    await db.logCaptcha(p.id, 'task-b', 'yescaptcha', 'turnstile', 0.03, true)
     const stats = await db.captchaStats(todayStr())
     expect(stats.count).toBe(3)
     expect(stats.totalCost).toBeCloseTo(0.11)
+  })
+
+  it('captcha_logs 含 platform 列（新库建表 + 老库补列）', async () => {
+    await db.logCaptcha(null, null, 'capsolver', 'turnstile', 25, false)
+    const row = await (db as unknown as { exec: (sql: string) => Promise<Array<Record<string, unknown>>> }).exec('SELECT platform FROM captcha_logs ORDER BY id DESC LIMIT 1')
+    expect(String(row[0].platform)).toBe('capsolver')
   })
 
   it('open_windows 登记/覆盖读取/清除 roundtrip', async () => {
@@ -346,7 +352,7 @@ describe('cleanupOld 历史数据清理', () => {
     await db.createBatch('bulk', 't', 'trigger-all', `${oldDate} 08:00:00.000`)
     await db.createBatch('bulk', 't', 'trigger-all', `${today} 08:00:00.000`)
     // captcha 记录 created_at 恒为当前时间，只验证保留期内不被误删
-    await db.logCaptcha(p.id, 't', 'turnstile', 0.01, true)
+    await db.logCaptcha(p.id, 't', 'yescaptcha', 'turnstile', 0.01, true)
     const result = await db.cleanupOld(90)
     expect(result.runs).toBe(1)
     expect(result.batches).toBe(1)

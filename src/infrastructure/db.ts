@@ -162,6 +162,7 @@ const SCHEMA = [
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER,
     task_key TEXT,
+    platform TEXT NOT NULL DEFAULT 'yescaptcha',
     kind TEXT NOT NULL,
     cost REAL NOT NULL DEFAULT 0,
     ok INTEGER NOT NULL,
@@ -279,6 +280,11 @@ export class AppDb {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
+    // 老库补列：captcha_logs 的 platform 列（多平台记账）后加；缺则补，幂等
+    const clInfo = await this.client.execute(`PRAGMA table_info(captcha_logs)`)
+    if (!clInfo.rows.some((r) => String(r.name) === 'platform')) {
+      await this.client.execute(`ALTER TABLE captcha_logs ADD COLUMN platform TEXT NOT NULL DEFAULT 'yescaptcha'`)
+    }
   }
 
   close(): void {
@@ -514,11 +520,11 @@ export class AppDb {
     return Number(rows[0]?.c ?? 0)
   }
 
-  /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
-  async logCaptcha(profileId: number | null, taskKey: string | null, kind: string, cost: number, ok: boolean): Promise<void> {
+  /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；platform 区分打码平台；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
+  async logCaptcha(profileId: number | null, taskKey: string | null, platform: string, kind: string, cost: number, ok: boolean): Promise<void> {
     const now = new Date()
     const localWall = localWallNow()
-    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?)', [profileId, taskKey, kind, cost, ok ? 1 : 0, localWall])
+    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, platform, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [profileId, taskKey, platform, kind, cost, ok ? 1 : 0, localWall])
   }
 
   /** 某天的打码统计：次数与总费用（点）；created_at 为本地墙钟时间，直接按日期前缀过滤（与 todayStr 口径一致） */

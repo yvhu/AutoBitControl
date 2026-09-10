@@ -314,7 +314,7 @@ export class WindowRunner {
           accountRow,
           // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
           onCaptchaLog: (kind, ok, costPoints) => {
-            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, kind, costPoints, ok), undefined)
+            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, 'yescaptcha', kind, costPoints, ok), undefined)
           },
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
