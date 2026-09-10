@@ -65,7 +65,7 @@ interface FakeState {
   displayCount?: number
   /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
   usdcRadioCount?: number
-  /** v2 挑战是否已渲染（detectV2Challenge 经 ctx.js → page.evaluate 假实现读取；缺省 false） */
+  /** v2 挑战是否已渲染（detectV2Challenge 经 page.frames 假实现读取；缺省 false） */
   v2Challenge?: boolean
   /** 提交按钮 isEnabled 读取钩子（证明 ensureSubmitEnabled 被调） */
   onSubmitEnabledCheck?: () => void
@@ -133,8 +133,12 @@ function makeCtx(state: FakeState) {
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     getByText: (t: string) => ({ count: async () => (state.texts[t] ? 1 : 0) }),
-    // ctx.js 的 evaluate 假实现：不执行函数体，直接返回 state.v2Challenge 控制检测结果
-    evaluate: () => Promise.resolve(state.v2Challenge ?? false),
+    // findAnchorFrame/findChallengeFrame 的 frames 假实现：v2Challenge=true 时返回一个 v2 锚点 frame
+    // （URL 含 recaptcha/enterprise/anchor 且 sitekey ≠ 常驻 v3），否则空数组
+    frames: () =>
+      state.v2Challenge
+        ? [{ url: () => 'https://www.google.com/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve' }]
+        : [],
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -392,11 +396,12 @@ anchor.addEventListener('click', function () { if (onepass) solved() })
 window.addEventListener('message', function (e) { if (e.data === 'grid-solved') solved() })
 </script></body></html>`
 
-  /** bframe fixture：九宫格挑战页（提示语「停车计时器」→ /m/015qbp；9 格可点、点格加 selected class；验证按钮通知 anchor 完成） */
+  /** bframe fixture：九宫格挑战页（提示语「停车计时器」→ /m/015qbp；9 格可点、点格加 selected class；验证按钮通知 anchor 完成；
+   *   第一格含官方 DEMO 形态的整图 img div.rc-image-tile-wrapper > img（1x1 PNG），供 grid 模块 readGridImage 读取） */
   const BFRAME_HTML = `<!doctype html><html><body>
 <div class="rc-imageselect-desc-wrapper"><strong>停车计时器</strong></div>
 <div id="rc-imageselect-target"><table>
-<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
+<tr><td style="width:96px;height:96px"><div class="rc-image-tile-wrapper"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="></div></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
 <tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
 <tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
 </table></div>
@@ -431,21 +436,23 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
     await new Promise<void>((r) => server.close(() => r()))
   })
 
-  /** 构造真实浏览器页面的 TaskContext；假打码服务记录调用（九宫格路线：solveGrid；autoSolve 仅保留接口兼容） */
-  function makeBrowserCtx(page: Page, task: ArcFaucetTask, captcha: { solveGrid?: ReturnType<typeof vi.fn>; autoSolve?: ReturnType<typeof vi.fn> } = {}) {
+  /** 构造真实浏览器页面的 TaskContext；假打码服务记录调用（CaptchaProvider 形态：classifyGrid 即九宫格分类） */
+  function makeBrowserCtx(page: Page, task: ArcFaucetTask, captcha: { classifyGrid?: ReturnType<typeof vi.fn> } = {}) {
     return new TaskContext({
       page,
       task,
       human: new Humanizer(page),
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-      cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+      cfg: { captcha: { maxCostPerTask: 1500 } } as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
       artifactsDir: join(tmpdir(), 'arc-faucet-test-artifacts'),
       walletPasswords: {},
       accountRow: { metamask钱包地址: '0x835e' },
       captcha: {
-        autoSolve: captcha.autoSolve ?? vi.fn(),
-        solveGrid: captcha.solveGrid ?? vi.fn().mockResolvedValue({ type: 'multi', objects: [] }),
+        platform: 'test',
+        solveToken: vi.fn(),
+        classifyGrid: captcha.classifyGrid ?? vi.fn().mockResolvedValue({ type: 'multi', objects: [] }),
+        getBalance: vi.fn().mockResolvedValue(100000),
       } as never,
     })
   }
@@ -456,12 +463,12 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=plain'
-      const solveGrid = vi.fn()
-      const ctx = makeBrowserCtx(page, task, { solveGrid })
+      const classifyGrid = vi.fn()
+      const ctx = makeBrowserCtx(page, task, { classifyGrid })
       await task.run(ctx)
       expect(await page.locator('input[name="address"]').inputValue()).toBe('0x835e')
       expect(await page.getByText('on its way').count()).toBe(1)
-      expect(solveGrid).not.toHaveBeenCalled()
+      expect(classifyGrid).not.toHaveBeenCalled()
     } finally {
       await browser.close()
     }
@@ -473,10 +480,10 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=v2'
-      const solveGrid = vi.fn()
-      const ctx = makeBrowserCtx(page, task, { solveGrid })
+      const classifyGrid = vi.fn()
+      const ctx = makeBrowserCtx(page, task, { classifyGrid })
       await task.run(ctx)
-      expect(solveGrid).not.toHaveBeenCalled()
+      expect(classifyGrid).not.toHaveBeenCalled()
       expect(await detectV2Challenge(ctx)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {
@@ -490,11 +497,11 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=challenge'
-      const solveGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
-      const ctx = makeBrowserCtx(page, task, { solveGrid })
+      const classifyGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+      const ctx = makeBrowserCtx(page, task, { classifyGrid })
       await task.run(ctx)
-      expect(solveGrid).toHaveBeenCalledTimes(1)
-      expect(solveGrid.mock.calls[0][1]).toBe('/m/015qbp')
+      expect(classifyGrid).toHaveBeenCalledTimes(1)
+      expect(classifyGrid.mock.calls[0][1]).toBe('/m/015qbp')
       expect(await detectV2Challenge(ctx)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {

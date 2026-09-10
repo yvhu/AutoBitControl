@@ -15,6 +15,7 @@
  *     常驻 v3 不打码，避免白花点数）→ 再点 Send → 成功截图
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'
+import { findAnchorFrame, findChallengeFrame } from '../automation/captcha/grid'
 
 // —— 站点元素与文案（2026-09-09 SSR 核实）——
 /** 地址输入框 */
@@ -89,18 +90,10 @@ export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_E
 
 /**
  * 检测 v2 挑战是否已渲染：主文档存在 anchor iframe 且 sitekey ≠ 常驻 v3，或已出现网格 bframe
- * 注意：ctx.js 会把函数序列化到页面主世界执行，闭包捕获不到模块变量，v3 sitekey 必须在函数体内联
+ * （复用 automation/captcha 的 frame 查找，sitekey 排除逻辑单点维护，不在任务层内联）
  */
 export async function detectV2Challenge(ctx: TaskContext): Promise<boolean> {
-  return ctx.js(() => {
-    const v3Sitekey = '6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2'
-    const anchors = Array.from(document.querySelectorAll('iframe[src*="recaptcha/enterprise/anchor"], iframe[src*="recaptcha/api2/anchor"]'))
-    for (const el of anchors) {
-      const m = (el.getAttribute('src') ?? '').match(/[?&]k=([^&]+)/)
-      if (m && m[1] !== v3Sitekey) return true
-    }
-    return document.querySelector('iframe[src*="recaptcha/enterprise/bframe"], iframe[src*="recaptcha/api2/bframe"]') !== null
-  })
+  return findAnchorFrame(ctx.page, V3_SITEKEY) !== null || findChallengeFrame(ctx.page, V3_SITEKEY) !== null
 }
 
 /** 竞速等待：成功文案 / v2 挑战文案谁先出现；每 2s 补一次 DOM 挑战检测（v2 文案未渲染但 iframe 已注入时兜底）*/
@@ -149,9 +142,9 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {
     ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，走九宫格模拟点击')
-    const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY })
-    if (grid === 'none') throw new Error('未检测到验证码锚点 frame（打码服务未注入或无 anchor iframe）')
-    if (grid === 'failed') throw new Error('九宫格模拟点击失败（多轮未通过）')
+    const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY, maxRounds: 3 })
+    if (grid === 'none') throw new Error('未检测到验证码锚点 frame')
+    if (grid === 'failed') throw new Error('九宫格多轮未通过（同窗口风控上限，交由重试换新窗口）')
     // widget 完成后站点恢复提交按钮；再提交一次
     await ensureSubmitEnabled(ctx)
     outcome = await submitAndWait(ctx)
@@ -173,7 +166,7 @@ export class ArcFaucetTask extends SiteTask {
     group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
-    note: '真机核实（2026-09-09 rev2）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行（yescaptcha 官方：协议接口非 100% 通过），改走 ReCaptchaV2Classification 九宫格模拟点击（点复选框 → 截图网格 → 分类坐标 → 点选 → 验证 → aria-checked 循环）；九宫格路线受分类平台 4x4 识别能力与 Google 风控限制，挑战窗口实际靠重试后的新会话 v3 直过（真机批量 15 窗口 8 成功）；提示语映射覆盖常见 16+ 类（中英），未覆盖提示语任务失败；限频每资产×网络 1-2 小时一次且失败请求也计数（不做判定，用户隔天执行）；不连钱包，地址取自数据源「metamask钱包地址」列',
+    note: '真机核实（2026-09-10 rev3）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行，走官方 DEMO 对齐的九宫格模拟点击（原生整图分类/原生点击/单格刷新确认）；同窗口最多 3 轮（同会话风控：死磕即使选对也过不去），未过交重试换新窗口碰 v3 直过；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）',
     category: 'faucet',
     lastUpdated: '2026-09-09',
     enabled: true,
