@@ -34,6 +34,8 @@ interface FakeFrameState {
   /** verify 点击后是否让 anchor 变绿（模拟「选对才过」；多轮失败用例设 false） */
   verifySolves: boolean
   wrapperImg: { src: string; naturalWidth: number } | null
+  /** '#rc-imageselect-target' 容器截图失败次数（模拟元素动画中截图抛错；默认 0 即一次成功） */
+  targetShotFails: number
 }
 
 /** 构造 fake frame 世界：anchor frame + challenge bframe */
@@ -56,6 +58,15 @@ function makePage(state: FakeFrameState) {
       }
       if (sel === '#recaptcha-verify-button') {
         return { click: vi.fn(async () => { state.verifyClicked = true; if (state.verifySolves) state.anchorChecked = true }), count: async () => 0 }
+      }
+      if (sel === '#rc-imageselect-target') {
+        return {
+          screenshot: vi.fn(async () => {
+            if (state.targetShotFails > 0) { state.targetShotFails--; throw new Error('元素动画中截图失败') }
+            return Buffer.from('png')
+          }),
+          count: async () => 0,
+        }
       }
       if (sel === 'div.rc-image-tile-wrapper > img') {
         return { evaluate: vi.fn(async () => state.wrapperImg), count: async () => 0 }
@@ -83,6 +94,7 @@ function makePage(state: FakeFrameState) {
     return {
       first: () => ({ ...first() }),
       nth: (i: number) => (sel.includes('table td') ? (first() as { nth: (n: number) => unknown }).nth(i) : first()),
+      count: async () => (sel.includes('table td') ? state.tiles.length : 0),
     }
   }
   const anchorFrame = { url: () => 'https://www.google.com/recaptcha/enterprise/anchor?k=6LcV2', locator: () => anchorLoc }
@@ -115,6 +127,7 @@ const baseState = (): FakeFrameState => ({
   tiles: Array.from({ length: 9 }, () => ({ cls: '', src: 'img-0', clicks: 0 })),
   verifyClicked: false, verifySolves: true,
   wrapperImg: { src: 'data:image/png;base64,QUJD', naturalWidth: 300 },
+  targetShotFails: 0,
 })
 
 describe('findAnchorFrame / findChallengeFrame', () => {
@@ -194,6 +207,27 @@ describe('solveRecaptchaGrid 求解循环', () => {
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
     expect(classify).toHaveBeenCalledTimes(2)
     expect(state.verifyClicked).toBe(true)
+  })
+
+  it('整图 img 缺失回退容器截图：首次截图失败 1s 后重试成功，分类照常进行', async () => {
+    const state = baseState()
+    state.wrapperImg = null
+    state.targetShotFails = 1
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+    const logger = { info: vi.fn(), warn: vi.fn() }
+    const deps = { ...makeDeps(state, classify), logger } as never
+    await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
+    expect(logger.warn).toHaveBeenCalledWith('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
+    expect(classify).toHaveBeenCalledTimes(1)
+    expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
+    expect(state.verifyClicked).toBe(true)
+  })
+
+  it('整图 img 缺失且容器截图两次均失败 → 抛错（不重试第三次）', async () => {
+    const state = baseState()
+    state.wrapperImg = null
+    state.targetShotFails = 99
+    await expect(solveRecaptchaGrid(makeDeps(state, vi.fn()) as never)).rejects.toThrow('九宫格网格截图失败')
   })
 
   it('提示语未覆盖映射抛错', async () => {

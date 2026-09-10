@@ -77,12 +77,17 @@ export async function ensureUsdc(ctx: TaskContext): Promise<void> {
   if (!(await isUsdcChecked(ctx))) throw new Error('USDC 币种选择失败: radio 仍未选中')
 }
 
-/** 等提交按钮变为可用（地址校验通过后解除 disabled）；超时抛错 */
-export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_ENABLED_TIMEOUT_MS): Promise<void> {
+/**
+ * 等提交按钮变为可用（地址校验通过后解除 disabled）
+ * @param onPoll 每次轮询的回调（用于 hydration 清空自愈：发现地址框被清空立即重填）
+ * @throws 超时抛错
+ */
+export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_ENABLED_TIMEOUT_MS, onPoll?: () => Promise<void>): Promise<void> {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) {
     const btn = ctx.page.locator(SUBMIT_SELECTOR).first()
     if ((await btn.count()) > 0 && (await btn.isEnabled().catch(() => false))) return
+    if (onPoll) await onPoll().catch(() => {})
     await ctx.page.waitForTimeout(500)
   }
   throw new Error(`提交按钮 ${timeoutMs}ms 内未变为可用（地址校验未通过？）`)
@@ -133,16 +138,13 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   await addressInput.fill(address)
   await ensureNetwork(ctx)
   await ensureUsdc(ctx)
-  // React hydration 后重渲染会清掉程序化填充（真机首跑必现）——2s 快速检测重填，最多 3 次
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await ctx.page.waitForTimeout(2000)
+  // 提交按钮等待 + hydration 清空自愈合并（真机 2026-09-10 批量：React hydration 可晚于 6s 清空地址框，
+  // 12+/90 窗口首发失败；每 500ms 轮询发现空框即重填，直到按钮可用或超时）
+  await ensureSubmitEnabled(ctx, SUBMIT_ENABLED_TIMEOUT_MS, async () => {
     if (((await addressInput.inputValue().catch(() => '')) ?? '') === '') {
       await addressInput.fill(address)
-      continue
     }
-    break
-  }
-  await ensureSubmitEnabled(ctx)
+  })
   // 提交：v3 常驻不打码（浏览器自行生成 token）；被拒后站点动态注入 v2 挑战（anchor + 九宫格 bframe）
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {

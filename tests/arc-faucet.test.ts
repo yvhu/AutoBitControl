@@ -361,15 +361,16 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
 })
 
 describe('ArcFaucetTask run 地址快速自愈', () => {
-  it('fill 后输入框值被清空 → 2s 检测立即重填一次 → ensureSubmitEnabled 被调 → 成功（fill 共 2 次）', async () => {
-    const state = { ...baseState(), addressValue: '', texts: { [SUCCESS_TEXT]: true } }
+  it('fill 后输入框值被清空 → ensureSubmitEnabled 轮询检测到空框立即重填 → 按钮启用 → 成功（fill 共 2 次）', async () => {
+    const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
     const { ctx, clicks, addressFill, page } = makeCtx(state)
-    // 首次 fill 模拟 React hydration 重渲染清空：值不保留；快速自愈重填第二次才生效
+    // 首次 fill 模拟 React hydration 重渲染清空：值不保留；轮询自愈重填第二次才生效并启用按钮
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
       fills++
       if (fills === 1) return
       state.addressValue = v
+      state.submitEnabled = true
     })
     // 提交按钮 isEnabled 读取计数：ensureSubmitEnabled 内部轮询读取它
     let submitEnabledChecks = 0
@@ -381,9 +382,35 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
     await new ArcFaucetTask().run(ctx)
     expect(fills).toBe(2)
     expect(addressFill).toHaveBeenCalledTimes(2)
-    // 快速自愈循环以 2s 间隔检测（fake waitForTimeout 即时 resolve，不耗真实时间）
-    expect(page.waitForTimeout).toHaveBeenCalledWith(2000)
+    // 自愈已并入按钮轮询：以 500ms 间隔检测（fake waitForTimeout 即时 resolve，不耗真实时间）
+    expect(page.waitForTimeout).toHaveBeenCalledWith(500)
     expect(submitEnabledChecks).toBeGreaterThanOrEqual(1)
+    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
+  })
+
+  it('ensureSubmitEnabled 轮询期间地址框被清空 2 次均重填，最终按钮可用成功（fill ≥ 3 次）', async () => {
+    const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
+    const { ctx, clicks, addressFill } = makeCtx(state)
+    let fills = 0
+    addressFill.mockImplementation(async (v: string) => {
+      fills++
+      state.addressValue = v
+    })
+    // hydration 反复清空：前两次按钮检查时把地址框清空（模拟重渲染晚于重填），第三次检查按钮启用
+    let enabledChecks = 0
+    state.onSubmitEnabledCheck = () => {
+      enabledChecks++
+      if (enabledChecks <= 2) state.addressValue = ''
+      else state.submitEnabled = true
+    }
+    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
+    ctx.goto = vi.fn().mockResolvedValue(undefined)
+    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
+    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
+    await new ArcFaucetTask().run(ctx)
+    // 首填 + 轮询中 2 次重填（每次清空都被发现并重填，直到按钮可用）
+    expect(fills).toBeGreaterThanOrEqual(3)
     expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
     expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })

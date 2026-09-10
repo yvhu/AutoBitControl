@@ -84,7 +84,13 @@ async function toStandardImage(buf: Buffer, size: number): Promise<Jimp> {
 async function fallbackCaptureGrid(deps: GridDeps, ch: Frame, size: number): Promise<string> {
   // 截图前动画稳定等待
   await deps.page.waitForTimeout(1000)
-  const shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+  let shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+  if (!shot) {
+    // 真机 2026-09-10 教训：元素动画中截图易失败，重试即恢复（rev2 窗口 11/19 一次失败即抛错）
+    deps.logger.warn('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
+    await deps.page.waitForTimeout(1000)
+    shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+  }
   if (!shot) throw new Error('九宫格网格截图失败（整图 img 缺失且容器截图失败）')
   saveDebugImage('grid-raw-fallback', shot)
   const img = await Jimp.read(shot)
