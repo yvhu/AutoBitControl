@@ -36,14 +36,23 @@ export interface ExecutionConfig {
   humanize: { minDelayMs: number; maxDelayMs: number }
 }
 
-/** 验证码打码服务配置 */
-export interface CaptchaConfig {
+/** yescaptcha 平台专属配置 */
+export interface YesCaptchaConfig {
   apiBase: string
   clientKey: string
+}
+
+/** 打码配置：provider 选平台，平台专属参数放同名字段（未来接入 capsolver 时并列新增） */
+export interface CaptchaConfig {
+  /** 打码平台标识（当前支持 yescaptcha；无对应 clientKey 时打码能力整体禁用） */
+  provider: string
+  /** 平台约束：识别 120 秒超时、结果 120 秒内有效 */
   solveTimeoutMs: number
+  /** 轮询解题结果的间隔（太频繁触发平台限流，太慢拉长任务耗时） */
   pollIntervalMs: number
+  /** 单任务打码费用上限（点，1000 点 = ¥1） */
   maxCostPerTask: number
-  taskTypes: Record<string, string>
+  yescaptcha: YesCaptchaConfig
 }
 
 /** Web 面板监听配置 */
@@ -162,21 +171,13 @@ const defaults: AppConfig = {
     humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },
   captcha: {
-    apiBase: 'https://api.yescaptcha.com',
-    clientKey: '',
-    // 平台约束：识别 120 秒超时、结果 120 秒内有效
+    provider: 'yescaptcha',
     solveTimeoutMs: 120000,
-    // 轮询解题结果的间隔（太频繁会触发平台限流，太慢则拉长任务耗时）
     pollIntervalMs: 3000,
-    // 单任务打码费用上限（点，1000 点 = ¥1）
     maxCostPerTask: 1500,
-    // 平台任务类型精确拼写（按 yescaptcha 官方文档，改错会导致创建任务失败）
-    taskTypes: {
-      turnstile: 'TurnstileTaskProxyless',
-      recaptcha_v2: 'NoCaptchaTaskProxyless',
-      recaptcha_v3: 'RecaptchaV3TaskProxyless',
-      hcaptcha: 'HCaptchaTaskProxyless',
-      image: 'ImageToTextTask',
+    yescaptcha: {
+      apiBase: 'https://api.yescaptcha.com',
+      clientKey: '',
     },
   },
   // 仅监听本机：面板不对外网暴露
@@ -268,7 +269,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     cfg = deepMerge(cfg, JSON.parse(readFileSync(local, 'utf-8')))
   }
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
-  if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.clientKey = env.CAPTCHA_CLIENT_KEY
+  if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.yescaptcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
   // WEB_PORT 非法值（NaN/小数/越界）静默忽略并保留默认端口（config 层无 logger，不做告警）
   if (env.WEB_PORT) {

@@ -23,18 +23,13 @@
     }
   },
   "captcha": {
-    "apiBase": "https://api.yescaptcha.com",
-    "clientKey": "",
+    "provider": "yescaptcha",
     "solveTimeoutMs": 120000,
     "pollIntervalMs": 3000,
     "maxCostPerTask": 1500,
-    "taskTypes": {
-      "turnstile": "TurnstileTaskProxyless",
-      "recaptcha_v2": "NoCaptchaTaskProxyless",
-      "recaptcha_v2_grid": "ReCaptchaV2Classification",
-      "recaptcha_v3": "RecaptchaV3TaskProxyless",
-      "hcaptcha": "HCaptchaTaskProxyless",
-      "image": "ImageToTextTask"
+    "yescaptcha": {
+      "apiBase": "https://api.yescaptcha.com",
+      "clientKey": ""
     }
   },
   "scheduler": {
