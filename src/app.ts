@@ -9,6 +9,7 @@ import { acquireSingleInstanceLock, singleInstanceLockPath, SingleInstanceError 
 import { createLogger } from './infrastructure/logger'
 import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
+import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
@@ -287,6 +288,16 @@ export async function startApp(): Promise<void> {
     }
   } catch (e) {
     logger.warn({ err: (e as Error).message }, '历史数据清理失败（不影响运行）')
+  }
+
+  // 截图目录按日期清理：早于保留期限的日期目录整目录删除（截图文件无限累积，需与 DB 同节奏收敛）
+  try {
+    const prunedScreenshots = pruneScreenshots(cfg.storage.screenshotDir, cfg.storage.screenshotRetainDays)
+    if (prunedScreenshots.removed > 0) {
+      logger.info({ retainDays: cfg.storage.screenshotRetainDays, removed: prunedScreenshots.removed }, '已清理超期截图目录')
+    }
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, '截图目录清理失败（不影响运行）')
   }
 
   // 优雅退出：server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）

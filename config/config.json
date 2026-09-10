@@ -74,6 +74,7 @@
     "logDir": "data/logs",
     "logLevel": "info",
     "logRetainDays": 7,
-    "dbRetainDays": 90
+    "dbRetainDays": 90,
+    "screenshotRetainDays": 90
   }
 }

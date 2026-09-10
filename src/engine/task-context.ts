@@ -452,22 +452,20 @@ export class TaskContext {
   }
 
   /**
-   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 官方整图分类 → 点选 → 验证，多轮循环直至 aria-checked=true
+   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 官方整图分类 → 点选 → 验证，无限递归直至 aria-checked=true
    * （与 solveCaptcha 口径统一：读 meta.captcha.auto；未注入打码服务或 auto=false 返回 'none'）
    * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点，避免误点无效果的复选框）
-   * @param opts.maxRounds 同窗口验证轮数上限（默认 3，见自动化模块 MAX_ROUNDS_DEFAULT）
-   * @returns 'none' 无服务/自动处理关闭/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
-   * @throws 提示语未覆盖映射/整图缺失等结构性错误（普通 Error，任务进入重试换新窗口）；
+   * @returns 'none' 无服务/自动处理关闭/无锚点 frame；'solved' 通过；'failed' 仅「挑战无法恢复」路径
+   * @throws 挑战收回且重点锚点多次无法恢复等结构性错误（普通 Error，任务进入重试换新窗口）；
    *   余额不足/平台分类异常（CaptchaFailure，任务进入 captcha_failed 终态不重试）
    */
-  async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
+  async solveRecaptchaGrid(opts?: { siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
     const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
     if ((taskCfg.auto ?? true) === false) return 'none'
     return runRecaptchaGrid(
       { page: this.page, provider: this.deps.captcha, logger: this.turnstileLogger(), human: this.human },
       {
-        maxRounds: opts?.maxRounds,
         siteKeyExclude: opts?.siteKeyExclude,
         maxCostPerTask: this.deps.cfg.captcha.maxCostPerTask,
         onLog: (platform, kind, ok, costPoints) => {

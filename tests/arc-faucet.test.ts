@@ -34,7 +34,7 @@ import {
 import { TaskContext } from '../src/tasks/base'
 import { Humanizer } from '../src/automation/humanize'
 
-// challenge 模式集成测试会跑真实 solveOneRound：诊断落盘与目录清理（pruneDebugDir）都 mock 掉，
+// challenge 模式集成测试会跑真实九宫格求解主循环：诊断落盘与目录清理（pruneDebugDir）都 mock 掉，
 // 防止测试把截图写进 data/screenshots/grid-debug，也防止清理逻辑误删真机诊断文件（readFileSync 保留原实现读 fixture）
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -530,7 +530,7 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=challenge'
-      const classifyGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+      const classifyGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
       const ctx = makeBrowserCtx(page, task, { classifyGrid })
       await task.run(ctx)
       expect(classifyGrid).toHaveBeenCalledTimes(1)

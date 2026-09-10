@@ -125,10 +125,10 @@ describe('TaskContext 九宫格求解包装', () => {
     await expect(ctx.solveRecaptchaGrid()).resolves.toBe('none')
   })
 
-  it('solveRecaptchaGrid：注入 captcha 后委托模块并透传 maxRounds（无锚点 frame → none）', async () => {
+  it('solveRecaptchaGrid：注入 captcha 后委托模块（无 maxRounds 概念；无锚点 frame → none）', async () => {
     const deps = { ...baseDeps(makeFakePage({})), cfg: { captcha: { maxCostPerTask: 1500 } }, captcha: { platform: 'test', solveToken: vi.fn(), classifyGrid: vi.fn().mockResolvedValue({ type: 'multi', objects: [0] }), getBalance: vi.fn().mockResolvedValue(100000) } }
     const ctx = new TaskContext(deps as never)
-    await expect(ctx.solveRecaptchaGrid({ maxRounds: 2 })).resolves.toBe('none')
+    await expect(ctx.solveRecaptchaGrid({ siteKeyExclude: '6LcV3' })).resolves.toBe('none')
   })
 })
 

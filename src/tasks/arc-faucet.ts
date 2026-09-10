@@ -149,9 +149,9 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
   let outcome = await submitAndWait(ctx)
   if (outcome === 'captcha') {
     ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，走九宫格模拟点击')
-    const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY, maxRounds: 3 })
+    const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY })
     if (grid === 'none') throw new Error('未检测到验证码锚点 frame')
-    if (grid === 'failed') throw new Error('九宫格多轮未通过（同窗口风控上限，交由重试换新窗口）')
+    if (grid === 'failed') throw new Error('九宫格挑战无法恢复（交任务重试换新窗口）')
     // widget 完成后站点恢复提交按钮；再提交一次（站点残留挑战文案/iframe，重提交只等成功文案，防误判新一轮挑战）
     await ensureSubmitEnabled(ctx)
     outcome = await submitAndWait(ctx, false)
@@ -173,7 +173,7 @@ export class ArcFaucetTask extends SiteTask {
     group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
-    note: '真机核实（2026-09-10 rev3）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行，走官方 DEMO 对齐的九宫格模拟点击（原生整图分类/原生点击/单格刷新确认）；同窗口最多 3 轮（同会话风控：死磕即使选对也过不去），未过交重试换新窗口碰 v3 直过；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）',
+    note: '真机核实（2026-09-10 rev3.1）：挑战为 reCAPTCHA Enterprise v2 复选框（sitekey 6LcCqC8s，页面另常驻 v3 6LcNs_0p）；挑战出现后提交按钮禁用直到 widget 完成——token 注入路线不可行，走官方 DEMO 对齐的九宫格模拟点击（原生整图分类/原生点击/单格刷新确认），无限递归到成功：select-more 先补点未注册格再刷新换图，incorrect/请重试/无提示刷新换图（reload 优先、skip 兜底）；未过/挑战无法恢复交重试换新窗口碰 v3 直过；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）',
     category: 'faucet',
     lastUpdated: '2026-09-09',
     enabled: true,
