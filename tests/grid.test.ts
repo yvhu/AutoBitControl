@@ -18,6 +18,8 @@ interface FakeTile {
   register?: boolean
   /** 点击后图片刷新的新 src（模拟 Google 刷新格子整图；未设置不刷新） */
   refreshSrc?: string
+  /** 原生点击直接抛错（模拟 viewport 小窗口底部格子不可见；默认 false，抛错时 class 不变） */
+  throwOnClick?: boolean
   /** 该格被点击次数（断言用） */
   clicks: number
 }
@@ -77,6 +79,7 @@ function makePage(state: FakeFrameState) {
             const t = state.tiles[i]
             return {
               click: vi.fn(async () => {
+                if (t.throwOnClick) throw new Error('元素不在可视区')
                 t.clicks++
                 // 首次点击触发图片刷新（src 变化不选中）；否则按 register 决定是否注册选中
                 if (t.refreshSrc && t.src !== t.refreshSrc) { t.src = t.refreshSrc; return }
@@ -281,6 +284,21 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(logger.warn).toHaveBeenCalledWith({ idx: 0 }, '九宫格该格点击未注册，坐标拟人点击兜底重试一次')
     expect(logger.warn).toHaveBeenCalledWith({ idx: 0 }, '九宫格该格点击仍未注册（放弃该格，交由下一轮兜底）')
     expect(state.tiles[0].clicks).toBe(1)
+    expect(state.verifyClicked).toBe(true)
+  })
+
+  it('原生点击抛错（viewport 小窗口底部格子不可见，真机窗口 16）：坐标兜底点击选中，轮次正常完成', async () => {
+    const state = baseState()
+    state.tiles[0].throwOnClick = true
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+    const human = { clickAt: vi.fn(async () => { state.tiles[0].cls = (state.tiles[0].cls + ' selected').trim() }) }
+    const logger = { info: vi.fn(), warn: vi.fn() }
+    const deps = { ...makeDeps(state, classify), human, logger } as never
+    await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
+    expect(human.clickAt).toHaveBeenCalledTimes(1)
+    expect(human.clickAt).toHaveBeenCalledWith(50, 50)
+    expect(logger.warn).toHaveBeenCalledWith({ idx: 0, err: expect.any(String) }, '九宫格格子原生点击失败，尝试坐标拟人兜底')
+    expect(state.tiles[0].cls).toContain('selected')
     expect(state.verifyClicked).toBe(true)
   })
 

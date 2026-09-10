@@ -210,13 +210,13 @@ async function humanClickInFrame(page: Page, human: Humanizer, ch: Frame, select
   }
 }
 
-/** 原生点击（官方 selenium click 等价：trusted、自动滚动居中） */
-async function nativeClick(ch: Frame, selector: string, nth = 0): Promise<boolean> {
+/** 原生点击（官方 selenium click 等价：trusted、自动滚动居中）；返回 null=成功，否则错误信息 */
+async function nativeClick(ch: Frame, selector: string, nth = 0): Promise<string | null> {
   try {
     await ch.locator(selector).nth(nth).click({ timeout: 5000 })
-    return true
-  } catch {
-    return false
+    return null
+  } catch (e) {
+    return (e as Error).message
   }
 }
 
@@ -278,8 +278,11 @@ async function ensureBalance(deps: GridDeps, maxCostPerTask?: number): Promise<v
 async function clickTile(deps: GridDeps, rc: RoundCtx, idx: number): Promise<void> {
   const src0 = await readTileImgSrc(rc.ch, idx)
   const diag = { idx, beforeClass: await readTileClass(rc.ch, idx), hit: false }
-  if (!(await nativeClick(rc.ch, TILE_SELECTOR, idx))) {
-    deps.logger.warn({ idx }, '九宫格格子原生点击失败，尝试坐标拟人兜底')
+  // 先滚动到可视区（跨源 iframe Playwright 无法自动滚动；真机窗口 16：底部两行格子可视区外导致点击抛错/未注册）
+  await rc.ch.locator(TILE_SELECTOR).nth(idx).evaluate((el) => (el as HTMLElement).scrollIntoView({ block: 'center' })).catch(() => {})
+  const err = await nativeClick(rc.ch, TILE_SELECTOR, idx)
+  if (err) {
+    deps.logger.warn({ idx, err }, '九宫格格子原生点击失败，尝试坐标拟人兜底')
     await humanClickInFrame(deps.page, deps.human, rc.ch, TILE_SELECTOR, idx)
   }
   let rounds = 0
@@ -313,7 +316,8 @@ async function clickTile(deps: GridDeps, rc: RoundCtx, idx: number): Promise<voi
     }
     deps.logger.info({ step: 'grid-tile-confirm', idx, hasObject }, '九宫格格子刷新确认')
     if (!hasObject) break
-    await nativeClick(rc.ch, TILE_SELECTOR, idx)
+    const reErr = await nativeClick(rc.ch, TILE_SELECTOR, idx)
+    if (reErr) deps.logger.warn({ idx, err: reErr }, '九宫格该格确认再点失败')
   }
   deps.logger.info({ step: 'grid-click-diag', ...diag, afterClass: await readTileClass(rc.ch, idx) }, '九宫格点击诊断')
 }
@@ -355,7 +359,7 @@ async function solveOneRound(deps: GridDeps, rc: RoundCtx): Promise<boolean> {
   for (const idx of result.objects) await clickTile(deps, rc, idx)
   // 官方点 verify 前 sleep 3：等全部格子动画收尾（图片还在变化时点 verify 会被 Google 判选择未完成）
   await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
-  if (!(await nativeClick(rc.ch, VERIFY_SELECTOR))) {
+  if (await nativeClick(rc.ch, VERIFY_SELECTOR)) {
     deps.logger.warn('九宫格验证按钮点击失败')
     return false
   }
@@ -399,7 +403,7 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
   const anchorChecked = async (): Promise<boolean> =>
     (await anchor.locator(ANCHOR_SELECTOR).first().getAttribute('aria-checked').catch(() => null)) === 'true'
   // 点复选框触发挑战；点击失败不中断（后续轮次自纠）
-  if (!(await nativeClick(anchor, ANCHOR_SELECTOR))) {
+  if (await nativeClick(anchor, ANCHOR_SELECTOR)) {
     deps.logger.warn('锚点复选框点击失败（继续流程，后续轮次自纠）')
   }
   // 等挑战 frame 出现；期间锚点直接变绿 = 一键通过（v3 直过等价）
