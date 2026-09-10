@@ -63,7 +63,6 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                         nullable: true
  *                         properties:
  *                           auto: { type: boolean, description: '是否自动打码' }
- *                           maxCost: { type: integer, description: '单任务费用上限（点）' }
  *                       concurrency: { type: integer, description: '任务级并发：同一时间最多几个窗口并行，缺省 4' }
  */
 

@@ -18,7 +18,7 @@ export class FaucetExampleTask extends SiteTask {
     wallet: 'metamask',
     timeoutSec: 240,
     retry: { max: 1, backoffSec: 300 },
-    captcha: { auto: true, maxCost: 1500 },
+    captcha: { auto: true },
     concurrency: 4,
   }
 

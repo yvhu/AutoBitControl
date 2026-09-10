@@ -224,7 +224,7 @@ describe('Shelby 领水任务集成（真实浏览器 + 本地 fixture + 路由�
         task,
         human: new Humanizer(page),
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-        cfg: { captcha: { enabled: false, maxCostPerTask: 1.5, client: null as never } } as never,
+        cfg: { captcha: { maxCostPerTask: 1500 } } as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
         artifactsDir: join(tmpdir(), 'shelby-faucet-test-artifacts'),
         walletPasswords: {},

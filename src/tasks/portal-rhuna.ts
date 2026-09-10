@@ -57,7 +57,7 @@ export class PortalRhunaTask extends SiteTask {
     // 登录弹窗 + 领取处理宽松（接口高负载可慢至 60s+）+ 刷新恢复兜底，放宽单次超时
     timeoutSec: 1200,
     retry: { max: 2, backoffSec: 600 },
-    captcha: { auto: true, maxCost: 1500 },
+    captcha: { auto: true },
     concurrency: 2,
   }
 

@@ -162,7 +162,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`），`loginByWallet()` 按此查找适配器（见[第 4 章](#4-钱包弹窗)） |
 | `timeoutSec` | `number?` | `180` | 单次运行超时秒数；默认取全局 `execution.taskTimeoutMs / 1000`，超时抛 `任务 X 超时` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；默认取全局 `execution.retryMax`/`execution.retryBackoffSec` |
-| `captcha` | `{ auto?: boolean; maxCost?: number }?` | `{ auto: true }` | 验证码处理（见[第 5 章](#5-验证码)）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码；`maxCost` 是声明性字段——当前代码中费用上限统一由 `config.json` 的 `captcha.maxCostPerTask` 全局控制，任务级 `maxCost` 仅作预算记录，不参与运行时判断 |
+| `captcha` | `{ auto?: boolean }?` | `{ auto: true }` | 验证码处理（见[第 5 章](#5-验证码)）。`auto` 控制调用 `solveCaptcha()` 时是否实际打码 |
 | `concurrency` | `number?` | `4` | 任务级并发：同一时间最多几个窗口并行跑该任务；批量触发时按此额度滚动分批跑完所有启用窗口；缺省 4（`DEFAULT_TASK_CONCURRENCY`，定义于 `src/engine/task.ts`）。portal-rhuna 为 2，其余任务为 4 |
 | `requiresFileAssign` | `boolean?` | `undefined` | 声明任务依赖「上传前自动文件随机分配」：计划 `config` 配置了 `fileAssign` 且该任务通过守卫时，触发会先自动执行一次分配；分配失败则该任务本次跳过（`file-assign-failed`）。shelbynet 上传任务（`xyz-shelbynet`）为 `true` |
 
@@ -180,7 +180,7 @@ meta: TaskMeta = {
   wallet: 'metamask',
   timeoutSec: 180,
   retry: { max: 2, backoffSec: 600 },
-  captcha: { auto: true, maxCost: 1500 },
+  captcha: { auto: true },
   concurrency: 4,
 }
 ```

@@ -486,8 +486,6 @@ export interface paths {
                                 captcha?: {
                                     /** @description 是否自动打码 */
                                     auto?: boolean;
-                                    /** @description 单任务费用上限（点） */
-                                    maxCost?: number;
                                 } | null;
                                 concurrency?: number;
                                 group?: {
