@@ -419,7 +419,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const logger = { info: vi.fn(), warn: vi.fn() }
     const deps = { ...makeDeps(state, classify), logger } as never
     await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
-    expect(logger.warn).toHaveBeenCalledWith('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(String) }), '九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
     expect(classify).toHaveBeenCalledTimes(2)
     expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
     expect(state.verifyClicked).toBe(true)
