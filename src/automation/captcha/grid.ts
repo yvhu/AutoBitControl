@@ -42,10 +42,10 @@ export const VERIFY_SELECTOR = '#recaptcha-verify-button'
 export const GRID_IMG_SELECTOR = 'div.rc-image-tile-wrapper > img'
 /** 官方换图按钮（同题换一批新图） */
 export const RELOAD_SELECTOR = '#recaptcha-reload-button'
-/** 跳过按钮（换一批新题；Google 结构变化兜底：aria-label/title 中英双匹配） */
-export const SKIP_SELECTORS = ['[aria-label="跳过"]', '[title="跳过"]', '[aria-label="Skip"]', '[title="Skip"]']
-/** 4x4「下一个」翻页按钮（勾选后出现；Google 结构变化兜底：aria-label/title/文本中英多路匹配） */
-export const NEXT_SELECTORS = ['[aria-label="下一个"]', '[title="下一个"]', '[aria-label="Next"]', '[title="Next"]', 'button:has-text("下一个")']
+/** 跳过按钮（4x4 换题；Google 结构变化兜底：属性包含匹配 + 文本匹配中英多路） */
+export const SKIP_SELECTORS = ['[aria-label*="跳过"]', '[title*="跳过"]', '[aria-label*="Skip"]', '[title*="Skip"]', 'button:has-text("跳过")']
+/** 4x4「下一个」翻页按钮（勾选后出现；属性包含匹配 + 文本匹配中英多路） */
+export const NEXT_SELECTORS = ['[aria-label*="下一个"]', '[title*="下一个"]', '[aria-label*="Next"]', '[title*="Next"]', 'button:has-text("下一个")']
 /** 挑战收回后重点锚点恢复上限（超出视为无法恢复，抛错交任务重试换窗口） */
 export const RECHECK_ANCHOR_MAX = 3
 /** 单格确认循环上限（官方递归上界） */
@@ -107,14 +107,22 @@ async function fallbackCaptureGrid(deps: GridDeps, ch: Frame, size: number): Pro
   await deps.page.waitForTimeout(500)
   // 优先截表格元素（真机 3x3：截容器中心裁剪会切掉底部白色分割线）；表格不存在回退容器
   const targetSel = (await ch.locator(GRID_TABLE_SELECTOR).first().count().catch(() => 0)) > 0 ? GRID_TABLE_SELECTOR : '#rc-imageselect-target'
-  let shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+  let firstErr = ''
+  let shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch((e) => { firstErr = (e as Error).message; return null })
   if (!shot) {
     // 真机 2026-09-10 教训：元素动画中截图易失败，重试即恢复（rev2 窗口 11/19 一次失败即抛错）
-    deps.logger.warn('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
+    deps.logger.warn({ err: firstErr }, '九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
     await deps.page.waitForTimeout(1000)
-    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch((e) => { firstErr = `${firstErr} | 重试: ${(e as Error).message}`; return null })
   }
-  if (!shot) throw new Error('九宫格网格截图失败（整图 img 缺失且容器截图失败）')
+  if (!shot) {
+    // 诊断落盘：截图两次失败时 dump bframe DOM 供真机排查（Google 结构变化/元素状态异常）
+    try {
+      const html = (await ch.locator('body').first().evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '')) ?? ''
+      if (html) writeFileSync(join(process.cwd(), 'data', 'screenshots', 'grid-debug', `bframe-dump-${Date.now()}.html`), html)
+    } catch { /* 诊断 dump 失败静默 */ }
+    throw new Error(`九宫格网格截图失败（整图 img 缺失且容器截图失败）: ${firstErr.slice(0, 300)}`)
+  }
   saveDebugImage('grid-raw-fallback', shot)
   const img = await Jimp.read(shot)
   const w = img.getWidth()
