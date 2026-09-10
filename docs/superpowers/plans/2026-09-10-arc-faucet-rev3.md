@@ -2118,7 +2118,11 @@ export function captchaRouter(deps: { captchaBalance: () => Promise<{ points: nu
 
 ```powershell
 git rm src/integrations/yescaptcha.ts src/automation/recaptcha-grid.ts src/automation/turnstile.ts tests/captcha.test.ts
+git rm -r src/automation/human-verify
+git rm tests/human-verify.test.ts
 ```
+
+（`src/automation/human-verify/` 与 `tests/human-verify.test.ts` 是上次中断会话的遗留死代码：全仓库无 import 引用、无对应计划文档；用户已确认一并删除，未来需要时按新架构重写。）
 
 - [ ] **Step 8: 全量测试 + typecheck（arc 测试除外）**
 
