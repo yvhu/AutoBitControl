@@ -26,7 +26,7 @@ export interface YesCaptchaApiCfg {
 export class YesCaptchaApiClient {
   constructor(private cfg: YesCaptchaApiCfg) {}
 
-  /** 平台接口统一调用（官方未限定 createTask/getBalance 耗时30s 固定超时覆盖慢响应） */
+  /** 平台接口统一调用（官方未限定 createTask/getBalance 耗时；30s 固定超时覆盖慢响应） */
   private async call(path: string, body: unknown): Promise<YesCaptchaResp> {
     return httpJson<YesCaptchaResp>({ baseUrl: this.cfg.apiBase, path, method: 'POST', body, timeoutMs: 30000 })
   }

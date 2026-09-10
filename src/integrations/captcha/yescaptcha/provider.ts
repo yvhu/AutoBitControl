@@ -4,7 +4,7 @@
  * 设计思路：所有解题调用挂在串行 promise 链上（平台每账号 1 并发硬限制，超限直接报错），
  * 即使调度器并发触发多个任务，平台侧也永远只有 1 个识别任务在跑
  * 官方依据（计划核对总表）：请求/响应字段逐字对齐 33351/196857/229767 与各任务类型页；
- * 轮询节奏对齐官方「间隔3秒一次」120秒任务超时」（由 cfg.solveTimeoutMs/pollIntervalMs 承接）
+ * 轮询节奏对齐官方「间隔3秒一次」「120秒任务超时」（由 cfg.solveTimeoutMs/pollIntervalMs 承接）
  */
 import type { CaptchaProvider, TokenCaptchaKind, GridResult } from '../provider'
 import { CaptchaFailure } from '../provider'

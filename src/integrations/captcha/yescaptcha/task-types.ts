@@ -1,10 +1,10 @@
 /**
  * yescaptcha 平台任务类型映射（平台私有实现细节，不进用户配置）
  * 类型名按 yescaptcha 官方文档精确拼写，出处见计划核对总表（wiki 页面 164286 价格表 + 各类型页）：
- *   turnstile → TurnstileTaskProxyless（1734913）；recaptcha_v2 → NoCaptchaTaskProxyless（29796）
- *   recaptcha_v3 → RecaptchaV3TaskProxyless（55381）；hcaptcha → HCaptchaTaskProxyless（929858）
- *   recaptcha_v2_grid → ReCaptchaV2Classification（8055169）
- * 注意：官方 image 类型（ImageToTextTask 页 64300）参数为 body 且分同步/异步双形态，本次不迁移
+ *   turnstile → TurnstileTaskProxyless（61734913）；recaptcha_v2 → NoCaptchaTaskProxyless（229796）
+ *   recaptcha_v3 → RecaptchaV3TaskProxyless（655381）；hcaptcha → HCaptchaTaskProxyless（7929858）
+ *   recaptcha_v2_grid → ReCaptchaV2Classification（18055169）
+ * 注意：官方 image 类型（ImageToTextTask，164300）参数为 body 且分同步/异步双形态，本次不迁移
  */
 import type { TokenCaptchaKind, CaptchaKind } from '../provider'
 
