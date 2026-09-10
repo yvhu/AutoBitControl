@@ -351,11 +351,17 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(state.verifyClicked).toBe(true)
   })
 
-  it('整图 img 缺失且容器截图两次均失败 → 抛错（不重试第三次）', async () => {
+  it('整图 img 缺失且容器截图两次均失败 → 刷新换图后重试直至成功（rev3.1 不再抛错）', async () => {
     const state = baseState()
     state.wrapperImg = null
-    state.targetShotFails = 99
-    await expect(solveRecaptchaGrid(makeDeps(state, vi.fn()) as never)).rejects.toThrow('九宫格网格截图失败')
+    state.targetShotFails = 2
+    state.reloadChangesSrc = true
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    const logger = { info: vi.fn(), warn: vi.fn() }
+    const deps = { ...makeDeps(state, classify), logger } as never
+    await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
+    expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
+    expect(classify).toHaveBeenCalledTimes(1)
   })
 
   it('提示语首读为空（bframe 晚渲染）：轮询后读到再分类，求解成功', async () => {
