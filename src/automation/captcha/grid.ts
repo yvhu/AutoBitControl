@@ -3,11 +3,18 @@
  * （RecaptchaResolver 的 verify_entire_captcha / verify_single_captcha 流程），rev3.1 起无限递归到成功
  * 与 rev2 实现的关键差异（真机 0 通过三根因的修复）：
  *   1. 网格图取 div.rc-image-tile-wrapper > img 原生整图（naturalWidth 300/450 定尺寸），
- *      缺失回退容器元素截图（按格子数定尺寸，截图前动画稳定等待）
+ *      缺失回退容器元素截图（优先表格元素，按格子数定尺寸，截图前动画稳定等待与滚动复位）
  *   2. 格子点击用原生元素点击为主（点击前 iframe 内滚动到可视区），坐标拟人点击只做未注册兜底
- *   3. 失败不分轮次上限：无限递归到成功（用户确认 rev3.1）——
- *      select-more 先补点未注册格（点击过快自愈）再刷新换图；incorrect/try-again 刷新换图；
- *      分类格数<3/空数组/图片质量拒收 → 直接刷新换图不硬点；未覆盖提示语 → 跳过换题
+ *   3. 失败不分轮次上限：无限递归到成功（用户确认 rev3.1）
+ * rev3.2 按钮分流（真机按钮形态观察，2026-09-10）：
+ *   - 3x3：验证按钮从开始就常驻；无跳过按钮，换图用刷新（同题换图）；官方支持 confidence 0.5
+ *     （返回所有大于分值的格子，默认只返前三会漏选）；点验证前完整确认：重截重分类、
+ *     平台还返回未选格就补点（最多 3 轮）
+ *   - 4x4：没勾选时按钮是「跳过」（换题）、勾选后变「下一个」（翻页），翻到最后一页才出现验证按钮；
+ *     分类不传 confidence（指定无意义）
+ *   - 换图/换题统一 changeImages：3x3 刷新 / 4x4 跳过；select-more 先补点未注册格再验证，
+ *     incorrect/try-again/无提示 换图重试；空数组/图片质量拒收/非 multi → 换图不硬点；
+ *     未覆盖提示语 → 换图换题重试
  * 工程护栏：余额不足抛 CaptchaFailure；任务超时由 window-runner 兜底；
  *   挑战收回且重点锚点 RECHECK_ANCHOR_MAX 次无法恢复 → 抛错交任务重试换窗口
  * 保留的真机验证资产：提示语中英映射、siteKeyExclude、grid-debug 诊断截图、
@@ -37,8 +44,8 @@ export const GRID_IMG_SELECTOR = 'div.rc-image-tile-wrapper > img'
 export const RELOAD_SELECTOR = '#recaptcha-reload-button'
 /** 跳过按钮（换一批新题；Google 结构变化兜底：aria-label/title 中英双匹配） */
 export const SKIP_SELECTORS = ['[aria-label="跳过"]', '[title="跳过"]', '[aria-label="Skip"]', '[title="Skip"]']
-/** 主分类最少格数：少于它直接换图不硬点（Google 每轮至少要求点 3 格，少选必 select-more，真机实证） */
-export const MIN_SELECT_TILES = 3
+/** 4x4「下一个」翻页按钮（勾选后出现；Google 结构变化兜底：aria-label/title/文本中英多路匹配） */
+export const NEXT_SELECTORS = ['[aria-label="下一个"]', '[title="下一个"]', '[aria-label="Next"]', '[title="Next"]', 'button:has-text("下一个")']
 /** 挑战收回后重点锚点恢复上限（超出视为无法恢复，抛错交任务重试换窗口） */
 export const RECHECK_ANCHOR_MAX = 3
 /** 单格确认循环上限（官方递归上界） */
@@ -88,16 +95,24 @@ async function toStandardImage(buf: Buffer, size: number): Promise<Jimp> {
   return img
 }
 
+/** 网格表格元素（截图优先对象：精确 n×n 正方形，含全部白色分割线；容器略高于表格，截容器会切掉底部边线） */
+const GRID_TABLE_SELECTOR = '#rc-imageselect-target table'
+
 /** 容器元素截图回退（整图 img 缺失时）：中心裁剪正方形 + 等比缩放；Google 改版兜底，warn 可见不静默 */
 async function fallbackCaptureGrid(deps: GridDeps, ch: Frame, size: number): Promise<string> {
   // 截图前动画稳定等待
   await deps.page.waitForTimeout(1000)
-  let shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+  // 截图前滚动复位：点格子时的 scrollIntoView 会把网格滚出可视区（越界部分截图成空白，真机准确率下降），先滚回顶部
+  await ch.locator('#rc-imageselect-target').first().evaluate((el) => (el as HTMLElement).scrollIntoView({ block: 'start' })).catch(() => {})
+  await deps.page.waitForTimeout(500)
+  // 优先截表格元素（真机 3x3：截容器中心裁剪会切掉底部白色分割线）；表格不存在回退容器
+  const targetSel = (await ch.locator(GRID_TABLE_SELECTOR).first().count().catch(() => 0)) > 0 ? GRID_TABLE_SELECTOR : '#rc-imageselect-target'
+  let shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
   if (!shot) {
     // 真机 2026-09-10 教训：元素动画中截图易失败，重试即恢复（rev2 窗口 11/19 一次失败即抛错）
     deps.logger.warn('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
     await deps.page.waitForTimeout(1000)
-    shot = await ch.locator('#rc-imageselect-target').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
+    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
   }
   if (!shot) throw new Error('九宫格网格截图失败（整图 img 缺失且容器截图失败）')
   saveDebugImage('grid-raw-fallback', shot)
@@ -273,6 +288,9 @@ interface RoundCtx {
   classify: (image: string, questionId: string, costPoints: number, confidence?: number) => Promise<GridResult>
 }
 
+/** 主网格 multi 分类结果（classifyRound 已过滤非 multi/空数组） */
+type MultiGridResult = Extract<GridResult, { type: 'multi' }>
+
 /** 打码前余额校验（不烧点数原则：余额低于上限直接 CaptchaFailure） */
 async function ensureBalance(deps: GridDeps, maxCostPerTask?: number): Promise<void> {
   if (maxCostPerTask === undefined) return
@@ -357,9 +375,23 @@ async function skipImages(deps: GridDeps, ch: Frame): Promise<boolean> {
   return false
 }
 
-/** 换图组合：先官方 reload（同题换图），图未变再 skip（换题） */
-async function refreshImages(deps: GridDeps, ch: Frame): Promise<void> {
-  if (!(await reloadImages(deps, ch))) await skipImages(deps, ch)
+/** 点 4x4「下一个」按钮翻页（勾选后出现）；任一选择器命中即成功 */
+async function clickNext(deps: GridDeps, ch: Frame): Promise<boolean> {
+  for (const sel of NEXT_SELECTORS) {
+    const err = await nativeClick(ch, sel)
+    if (!err) {
+      await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
+      return true
+    }
+  }
+  deps.logger.warn('九宫格下一个按钮点击失败（选择器未命中，Google 结构可能变化）')
+  return false
+}
+
+/** 换图/换题：3x3 点「刷新」（同题换图）；4x4 点「跳过」（换题；没勾选时按钮正好是跳过） */
+async function changeImages(deps: GridDeps, ch: Frame, is3x3: boolean): Promise<void> {
+  if (is3x3) await reloadImages(deps, ch)
+  else await skipImages(deps, ch)
 }
 
 /** select-more 补点：本轮目标格中 class 不含 selected 的重新点选（点击过快未注册自愈）；返回是否补了点 */
@@ -376,11 +408,13 @@ async function supplementUnselected(deps: GridDeps, rc: RoundCtx, targetIdx: num
 }
 
 /**
- * 九宫格模拟点击求解主入口（rev3.1：无限递归到成功，对齐官方 DEMO）：
+ * 九宫格模拟点击求解主入口（rev3.2：无限递归到成功 + 3x3/4x4 按钮分流）：
  * 找锚点 → 点复选框 → 等挑战 frame → 无限循环（每轮重取 frame）：
- *   提示语（轮询）→ 未覆盖跳过换题；取图分类 → 格数<3/空数组/图片拒收刷新换图；
- *   点选 → verify → aria-checked=true 返回 solved；否则按错误提示分流：
- *   select-more 先补点未注册格再 verify，仍未过刷新换图；incorrect/try-again/无提示 刷新换图
+ *   格子数先读定 3x3/4x4 分流 → 提示语（轮询）→ 未覆盖换图/换题；
+ *   取图分类（3x3 confidence 0.5）→ 空数组/非 multi/图片质量拒收 换图；
+ *   点选 → 3x3 验证前确认循环（重截重分类补点）→ 4x4 验证按钮不在先点「下一个」翻页 → verify；
+ *   aria-checked=true 返回 solved；否则按错误提示分流：
+ *   select-more 先补点未注册格再 verify，仍未过换图；incorrect/try-again/无提示 换图（3x3 刷新 / 4x4 跳过）
  * 工程护栏：挑战收回且重点锚点 RECHECK_ANCHOR_MAX 次无果 → 抛错（任务重试换窗口）；
  *   余额不足抛 CaptchaFailure（终态不重试）
  * @param opts.siteKeyExclude 跳过的常驻 sitekey（页面常驻 v3 锚点，避免误点无效果的复选框）
@@ -390,7 +424,7 @@ async function supplementUnselected(deps: GridDeps, rc: RoundCtx, targetIdx: num
  */
 export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): Promise<'solved' | 'none' | 'failed'> {
   const onLog = opts.onLog ?? (() => {})
-  /** 分类封装：余额校验 + 官方价格分档记账（主网格 6 点 / 1x1 单格 2 点）；不传 confidence（官方默认前三） */
+  /** 分类封装：余额校验 + 官方价格分档记账（主网格 6 点 / 1x1 单格 2 点）；confidence 由调用方定（3x3 传 0.5） */
   const classify = async (image: string, questionId: string, costPoints: number, confidence?: number) => {
     await ensureBalance(deps, opts.maxCostPerTask)
     try {
@@ -440,6 +474,13 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     challenge = ch
     recheckCount = 0
     const rc: RoundCtx = { ch, qid: '', prompt: '', classify }
+    // 格子数先读一次：决定 3x3/4x4 分流（网格可能未渲染完，读 0 时重试一次）
+    let tileCount = await ch.locator(TILE_SELECTOR).count().catch(() => 0)
+    if (tileCount === 0) {
+      await deps.page.waitForTimeout(1000)
+      tileCount = await ch.locator(TILE_SELECTOR).count().catch(() => 0)
+    }
+    const is3x3 = tileCount === 9
     // 提示语轮询（bframe DOM 可能晚于 frame 附着渲染）
     const promptDeadline = Date.now() + PROMPT_POLL_TIMEOUT_MS
     let prompt = ''
@@ -449,69 +490,115 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
       await deps.page.waitForTimeout(PROMPT_POLL_MS)
     }
     if (!prompt) {
-      deps.logger.warn('九宫格提示文字未读到，刷新换图后重试')
-      await refreshImages(deps, rc.ch)
+      deps.logger.warn('九宫格提示文字未读到，换图后重试')
+      await changeImages(deps, rc.ch, is3x3)
       continue
     }
     const qid = mapQuestionId(prompt)
     if (!qid) {
-      deps.logger.warn({ prompt }, '未覆盖的九宫格提示语，跳过换题后重试')
-      await skipImages(deps, rc.ch)
+      // 题不认识（本地映射表未覆盖）：拿不到平台要求的题目编号，换图/换题重来
+      deps.logger.warn({ prompt }, '未覆盖的九宫格提示语，换图换题后重试')
+      await changeImages(deps, rc.ch, is3x3)
       continue
     }
-    deps.logger.info({ prompt, qid }, '九宫格识别目标')
+    deps.logger.info({ prompt, qid, is3x3 }, '九宫格识别目标')
     rc.prompt = prompt
     rc.qid = qid
-    // 取图 + 分类（readGridImage 内部兜底截图可能抛错——真机 44：截图两次失败不得穿透主循环，刷新换图重试）
+    tileCount = await ch.locator(TILE_SELECTOR).count().catch(() => 0)
+    // 3x3 官方支持 confidence 0.5：返回所有大于分值的格子（默认只返前三，会漏选）；4x4 指定无意义不传
+    const classifyConfidence = tileCount === 9 ? 0.5 : undefined
+    // 取图 + 分类（readGridImage 内部兜底截图可能抛错——真机 44：截图两次失败不得穿透主循环，换图重试）
     let grid: { b64: string } | null = null
     try {
       grid = await readGridImage(deps, rc.ch)
     } catch (e) {
-      deps.logger.warn({ err: (e as Error).message }, '九宫格网格图获取失败，刷新换图后重试')
-      await refreshImages(deps, rc.ch)
+      deps.logger.warn({ err: (e as Error).message }, '九宫格网格图获取失败，换图后重试')
+      await changeImages(deps, rc.ch, tileCount === 9)
       continue
     }
     if (!grid) {
-      deps.logger.warn('九宫格网格图获取失败，刷新换图后重试')
-      await refreshImages(deps, rc.ch)
+      deps.logger.warn('九宫格网格图获取失败，换图后重试')
+      await changeImages(deps, rc.ch, tileCount === 9)
       continue
     }
-    let result: GridResult
-    try {
-      result = await rc.classify(grid.b64, qid, GRID_COST_POINTS)
-    } catch (e) {
-      if (e instanceof CaptchaFailure && /ERROR_GARBAGE_SAMPLE|ERROR_ILLEGAL_IMAGE|ERROR_PARSE_IMAGE_FAIL/.test(e.message)) {
-        deps.logger.warn({ err: e.message }, '九宫格分类图片质量被平台拒收，刷新换图后重试')
-        await refreshImages(deps, rc.ch)
-        continue
+    const classifyRound = async (): Promise<MultiGridResult | null> => {
+      let result: GridResult
+      try {
+        result = await rc.classify(grid!.b64, qid, GRID_COST_POINTS, classifyConfidence)
+      } catch (e) {
+        if (e instanceof CaptchaFailure && /ERROR_GARBAGE_SAMPLE|ERROR_ILLEGAL_IMAGE|ERROR_PARSE_IMAGE_FAIL/.test(e.message)) {
+          deps.logger.warn({ err: e.message }, '九宫格分类图片质量被平台拒收，换图后重试')
+          await changeImages(deps, rc.ch, tileCount === 9)
+          return null
+        }
+        throw e
       }
-      throw e
+      if (result.type !== 'multi') {
+        deps.logger.warn('九宫格分类未返回 multi 结果，换图后重试')
+        await changeImages(deps, rc.ch, tileCount === 9)
+        return null
+      }
+      if (result.objects.length === 0) {
+        deps.logger.warn('九宫格分类返回空数组，换图后重试')
+        await changeImages(deps, rc.ch, tileCount === 9)
+        return null
+      }
+      return result
     }
-    if (result.type !== 'multi') {
-      deps.logger.warn('九宫格分类未返回 multi 结果，刷新换图后重试')
-      await refreshImages(deps, rc.ch)
-      continue
-    }
-    if (result.objects.length < MIN_SELECT_TILES) {
-      deps.logger.warn({ count: result.objects.length }, '九宫格分类格数过少（少选必失败），刷新换图后重试')
-      await refreshImages(deps, rc.ch)
-      continue
-    }
+    const result = await classifyRound()
+    if (!result) continue
     deps.logger.info({ objects: result.objects }, '九宫格识别完成，开始点选')
-    for (const idx of result.objects) await clickTile(deps, rc, idx)
+    const clicked = new Set<number>()
+    for (const idx of result.objects) { await clickTile(deps, rc, idx); clicked.add(idx) }
+    // —— 3x3：验证按钮常驻，点验证前完整确认：重截重分类，平台还返回未选格就补点，最多 3 轮 ——
+    if (tileCount === 9) {
+      for (let confirm = 0; confirm < 3; confirm++) {
+        let confirmGrid: { b64: string } | null = null
+        try {
+          confirmGrid = await readGridImage(deps, rc.ch)
+        } catch {
+          break
+        }
+        if (!confirmGrid) break
+        let confirmResult: GridResult
+        try {
+          confirmResult = await rc.classify(confirmGrid.b64, qid, GRID_COST_POINTS, classifyConfidence)
+        } catch {
+          break
+        }
+        if (confirmResult.type !== 'multi' || confirmResult.objects.length === 0) break
+        const fresh = confirmResult.objects.filter((i) => !clicked.has(i))
+        if (fresh.length === 0) break
+        deps.logger.info({ fresh }, '九宫格验证前确认：补点新识别格')
+        for (const idx of fresh) { await clickTile(deps, rc, idx); clicked.add(idx) }
+      }
+    }
     // 等全部格子动画收尾再点验证（图片还在变化时点 verify 会被 Google 判选择未完成）
     await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
+    // —— 4x4 按钮分流：验证按钮在 → 验证；下一个在 → 翻页继续；都不在 → 重读一轮 ——
+    if (tileCount !== 9) {
+      const verifyVisible = async (): Promise<boolean> => {
+        const btn = rc.ch.locator(VERIFY_SELECTOR).first()
+        return (await btn.count().catch(() => 0)) > 0 && (await btn.isVisible().catch(() => false))
+      }
+      if (!(await verifyVisible())) {
+        deps.logger.info('4x4 验证按钮未出现，点下一个翻页继续')
+        await clickNext(deps, rc.ch)
+        continue
+      }
+    }
     if (await nativeClick(rc.ch, VERIFY_SELECTOR)) {
-      deps.logger.warn('九宫格验证按钮点击失败，刷新换图后重试')
-      await refreshImages(deps, rc.ch)
+      deps.logger.warn('九宫格验证按钮点击失败，换图后重试')
+      await changeImages(deps, rc.ch, tileCount === 9)
       continue
     }
     await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     if (await anchorChecked()) { deps.logger.info('九宫格验证通过'); return 'solved' }
+    // —— 验证失败后的错误处理 ——
     const hint = await readErrorHint(rc.ch)
     deps.logger.info({ step: 'grid-round-state', prompt, qid, objects: result.objects, hint }, '九宫格轮次状态')
     if (hint === 'select-more') {
-      // 先判点击过快：本轮目标格中仍有未选中的 → 补点 → 再 verify（不换图不浪费）
+      // 先判点击过快：本轮目标格中仍有未选中的 → 补点 → 再验证（不换图不浪费）
       const supplemented = await supplementUnselected(deps, rc, result.objects)
       if (supplemented) {
         await deps.page.waitForTimeout(2500 + Math.floor(Math.random() * 1000))
@@ -519,16 +606,16 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
         await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
         if (await anchorChecked()) { deps.logger.info('九宫格补点后验证通过'); return 'solved' }
         const hint2 = await readErrorHint(rc.ch)
-        deps.logger.warn({ hint: hint2 ?? 'none' }, '九宫格补点后仍未通过，刷新换图重试')
+        deps.logger.warn({ hint: hint2 ?? 'none' }, '九宫格补点后仍未通过，换图重试')
       } else {
-        deps.logger.warn('九宫格已点格子全部选中仍提示未选全（平台分类没找全），刷新换图重试')
+        deps.logger.warn('九宫格已点格子全部选中仍提示未选全（平台分类没找全），换图重试')
       }
-      await refreshImages(deps, rc.ch)
+      await changeImages(deps, rc.ch, tileCount === 9)
       continue
     }
-    if (hint === 'try-again') deps.logger.warn('Google 提示请重试（同会话已风控重置），刷新换图重试')
-    else if (hint === 'incorrect') deps.logger.warn('九宫格选择错误（Google 已刷题），刷新换图重试')
-    else deps.logger.warn('九宫格验证后无提示且未通过，刷新换图重试')
-    await refreshImages(deps, rc.ch)
+    if (hint === 'try-again') deps.logger.warn('Google 提示请重试（同会话已风控重置），换图重试')
+    else if (hint === 'incorrect') deps.logger.warn('九宫格选择错误（Google 已刷题），换图重试')
+    else deps.logger.warn('九宫格验证后无提示且未通过，换图重试')
+    await changeImages(deps, rc.ch, tileCount === 9)
   }
 }

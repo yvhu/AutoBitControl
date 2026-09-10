@@ -44,6 +44,12 @@ interface FakeFrameState {
   wrapperImg: { src: string; naturalWidth: number } | null
   /** '#rc-imageselect-target' 容器截图失败次数（模拟元素动画中截图抛错；默认 0 即一次成功） */
   targetShotFails: number
+  /** 表格元素是否存在（缺省 true；截图优先表格，表格缺失回退容器） */
+  hasTable: boolean
+  /** 容器截图调用次数（断言用） */
+  containerShotCalls: number
+  /** 表格截图调用次数（断言用） */
+  tableShotCalls: number
   /** readErrorHint 的错误提示状态：'select-more'/'incorrect' 走选择器探针，其余文本（如「请重试」）走 body 全帧匹配 */
   hintText: string
   /** 官方换图按钮点击是否真的换图（tile0 src 变化）；false 时 reload 判定失败转 skip */
@@ -54,6 +60,16 @@ interface FakeFrameState {
   reloadClicks: number
   /** 跳过按钮点击次数（断言用） */
   skipClicks: number
+  /** 验证按钮是否可见（4x4 翻页分流：勾选后最后一页才出现；3x3 常驻恒可见。默认 true） */
+  verifyVisible: boolean
+  /** 「下一个」按钮是否可见（4x4 勾选后出现；默认 false） */
+  nextVisible: boolean
+  /** 「下一个」按钮点击次数（断言用） */
+  nextClicks: number
+  /** 「下一个」点击后切换的新提示语（4x4 翻页；未设置则翻页不换提示语） */
+  nextPrompt: string
+  /** 换图按钮点击后切换的新提示语（3x3 未覆盖提示语换图后变已覆盖；未设置则提示语不变） */
+  reloadChangesPrompt: string
 }
 
 /** 构造 fake frame 世界：anchor frame + challenge bframe */
@@ -79,15 +95,27 @@ function makePage(state: FakeFrameState) {
           state.verifyClicked = true
           state.verifyClicks++
           if (state.verifySolves && state.verifyClicks > (state.verifySolveDelay ?? 0)) state.anchorChecked = true
-        }), count: async () => 0 }
+        }), count: async () => (state.verifyVisible ? 1 : 0), isVisible: async () => state.verifyVisible }
       }
       if (sel === '#rc-imageselect-target') {
         return {
           screenshot: vi.fn(async () => {
+            state.containerShotCalls++
             if (state.targetShotFails > 0) { state.targetShotFails--; throw new Error('元素动画中截图失败') }
             return Buffer.from('png')
           }),
           count: async () => 0,
+          evaluate: vi.fn(async () => ({})),
+        }
+      }
+      if (sel === '#rc-imageselect-target table') {
+        return {
+          screenshot: vi.fn(async () => {
+            state.tableShotCalls++
+            if (state.targetShotFails > 0) { state.targetShotFails--; throw new Error('元素动画中截图失败') }
+            return Buffer.from('png')
+          }),
+          count: async () => (state.hasTable ? 1 : 0),
         }
       }
       if (sel === 'div.rc-image-tile-wrapper > img') {
@@ -103,10 +131,17 @@ function makePage(state: FakeFrameState) {
         return { count: async () => 0, textContent: vi.fn(async () => state.hintText) }
       }
       if (sel === '#recaptcha-reload-button') {
-        return { click: vi.fn(async () => { state.reloadClicks++; if (state.reloadChangesSrc) state.tiles[0].src = `reloaded-${state.reloadClicks}` }), count: async () => 0 }
+        return { click: vi.fn(async () => {
+          state.reloadClicks++
+          if (state.reloadChangesSrc) state.tiles[0].src = `reloaded-${state.reloadClicks}`
+          if (state.reloadChangesPrompt) state.prompt = state.reloadChangesPrompt
+        }), count: async () => 0 }
       }
       if (sel.includes('跳过') || sel.includes('Skip')) {
         return { click: vi.fn(async () => { state.skipClicks++; if (state.skipChangesPrompt) state.prompt = state.skipChangesPrompt }), count: async () => 0 }
+      }
+      if (sel.includes('下一个') || sel.includes('Next')) {
+        return { click: vi.fn(async () => { state.nextClicks++; if (state.nextPrompt) state.prompt = state.nextPrompt; state.verifyVisible = true }), count: async () => (state.nextVisible ? 1 : 0) }
       }
       if (sel.includes('table td')) {
         return {
@@ -160,13 +195,14 @@ const makeDeps = (state: FakeFrameState, classify: ReturnType<typeof vi.fn>) => 
   human: { clickAt: vi.fn() } as never,
 })
 
-const baseState = (): FakeFrameState => ({
+const baseState = (tileCount = 9): FakeFrameState => ({
   anchorChecked: false, anchorClicked: false, prompt: '停车计时器', promptEmptyReads: 0, promptReads: 0,
-  tiles: Array.from({ length: 9 }, () => ({ cls: '', src: 'img-0', clicks: 0 })),
+  tiles: Array.from({ length: tileCount }, () => ({ cls: '', src: 'img-0', clicks: 0 })),
   verifyClicked: false, verifySolves: true, verifyClicks: 0,
   wrapperImg: { src: 'data:image/png;base64,QUJD', naturalWidth: 300 },
-  targetShotFails: 0,
-  hintText: '', reloadChangesSrc: false, skipChangesPrompt: '', reloadClicks: 0, skipClicks: 0,
+  targetShotFails: 0, hasTable: true, containerShotCalls: 0, tableShotCalls: 0,
+  hintText: '', reloadChangesSrc: false, reloadChangesPrompt: '', skipChangesPrompt: '', reloadClicks: 0, skipClicks: 0,
+  verifyVisible: true, nextVisible: false, nextClicks: 0, nextPrompt: '',
 })
 
 describe('findAnchorFrame / findChallengeFrame', () => {
@@ -209,25 +245,55 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(classify).not.toHaveBeenCalled()
   })
 
-  it('官方全流程：原生整图分类 → 点格 → 验证 → aria-checked 变绿 → solved', async () => {
+  it('官方全流程：原生整图分类 → 点格 → 确认循环（同结果不补点）→ 验证 → aria-checked 变绿 → solved', async () => {
     const state = baseState()
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(1)
+    // 3x3 主分类 + 验证前确认循环再分类（fake 同结果 → 无补点 → break）
+    expect(classify).toHaveBeenCalledTimes(2)
     const [b64, qid] = classify.mock.calls[0]
     expect(qid).toBe('/m/015qbp')
     expect(typeof b64).toBe('string')
+    expect(classify.mock.calls[0][2]).toBe(0.5)
     expect(state.tiles[0].cls).toContain('selected')
     expect(state.tiles[1].cls).toContain('selected')
     expect(state.tiles[2].cls).toContain('selected')
     expect(state.verifyClicked).toBe(true)
   })
 
-  it('分类不传 confidence（官方 DEMO 默认阈值）', async () => {
+  it('分类 confidence：3x3 传 0.5（官方返所有大于分值格）；4x4 不传（指定无意义）', async () => {
+    const state3 = baseState()
+    const classify3 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await solveRecaptchaGrid(makeDeps(state3, classify3) as never)
+    expect(classify3.mock.calls[0][2]).toBe(0.5)
+    const state4 = baseState(16)
+    const classify4 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await solveRecaptchaGrid(makeDeps(state4, classify4) as never)
+    expect(classify4.mock.calls[0][2]).toBeUndefined()
+  })
+
+  it('3x3 确认循环：第二轮分类返回新未选格 → 补点该格 → 验证成功', async () => {
     const state = baseState()
+    const classify = vi.fn()
+      .mockResolvedValueOnce({ type: 'multi', objects: [0, 1, 2] })
+      .mockResolvedValue({ type: 'multi', objects: [0, 1, 2, 5] })
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
+    expect(state.tiles[5].cls).toContain('selected')
+    expect(state.verifyClicked).toBe(true)
+    expect(classify.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('4x4 下一页分流：验证按钮不可见 → 点「下一个」翻页（换提示语）→ 下一轮分类 → 验证可见 → 成功', async () => {
+    const state = baseState(16)
+    state.verifyVisible = false
+    state.nextVisible = true
+    state.nextPrompt = '红绿灯'
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
-    await solveRecaptchaGrid(makeDeps(state, classify) as never)
-    expect(classify.mock.calls[0][2]).toBeUndefined()
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
+    expect(state.nextClicks).toBeGreaterThanOrEqual(1)
+    expect(classify.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(classify.mock.calls[1][1]).toBe('/m/015qff')
+    expect(state.verifyClicked).toBe(true)
   })
 
   it('分类空数组：不硬点，官方换图按钮换图后下一轮分类成功（classify ≥2 次）', async () => {
@@ -242,15 +308,14 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(state.verifyClicked).toBe(true)
   })
 
-  it('分类格数 < MIN_SELECT_TILES（少选必失败）：不硬点，换图后下一轮成功', async () => {
+  it('分类少格不再硬拦：3x3 确认循环补点漏识别格 → 验证成功', async () => {
     const state = baseState()
-    state.reloadChangesSrc = true
     const classify = vi.fn()
       .mockResolvedValueOnce({ type: 'multi', objects: [0, 1] })
       .mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
-    expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
+    expect(state.reloadClicks).toBe(0)
+    expect(state.tiles[2].cls).toContain('selected')
     expect(state.verifyClicked).toBe(true)
   })
 
@@ -275,7 +340,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
     state.reloadChangesSrc = true
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    // 主分类 + 确认循环（第 1 轮）→ 换图 → 主分类 + 确认循环（第 2 轮）
+    expect(classify).toHaveBeenCalledTimes(4)
     expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
     expect(state.verifyClicks).toBe(2)
   })
@@ -287,7 +353,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     state.reloadChangesSrc = true
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    expect(classify).toHaveBeenCalledTimes(4)
     expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
   })
 
@@ -298,19 +364,26 @@ describe('solveRecaptchaGrid 求解循环', () => {
     state.reloadChangesSrc = true
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    expect(classify).toHaveBeenCalledTimes(4)
     expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
   })
 
-  it('未覆盖提示语：点跳过换题 → 换题后 solved', async () => {
-    const state = baseState()
-    state.prompt = '潜水艇'
-    state.skipChangesPrompt = '停车计时器'
-    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
-    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(state.skipClicks).toBeGreaterThanOrEqual(1)
-    expect(classify).toHaveBeenCalledTimes(1)
-    expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
+  it('未覆盖提示语：3x3 点刷新换图（换图后提示语已覆盖）→ solved；4x4 点跳过换题 → solved', async () => {
+    const state3 = baseState()
+    state3.prompt = '潜水艇'
+    state3.reloadChangesSrc = true
+    state3.reloadChangesPrompt = '停车计时器'
+    const classify3 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state3, classify3) as never)).resolves.toBe('solved')
+    expect(state3.reloadClicks).toBeGreaterThanOrEqual(1)
+    expect(classify3.mock.calls[0][1]).toBe('/m/015qbp')
+    const state4 = baseState(16)
+    state4.prompt = '潜水艇'
+    state4.skipChangesPrompt = '停车计时器'
+    const classify4 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state4, classify4) as never)).resolves.toBe('solved')
+    expect(state4.skipClicks).toBeGreaterThanOrEqual(1)
+    expect(classify4.mock.calls[0][1]).toBe('/m/015qbp')
   })
 
   it('挑战 frame 消失（frames 只剩 anchor）且未变绿：重点锚点 3 次无法恢复 → 抛错交任务重试换窗口', async () => {
@@ -333,7 +406,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
       .mockRejectedValueOnce(new CaptchaFailure('yescaptcha 创建任务失败: ERROR_GARBAGE_SAMPLE'))
       .mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    // 主分类拒收 → 换图 → 主分类 + 确认循环
+    expect(classify).toHaveBeenCalledTimes(3)
     expect(state.verifyClicked).toBe(true)
   })
 
@@ -346,9 +420,25 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const deps = { ...makeDeps(state, classify), logger } as never
     await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
     expect(logger.warn).toHaveBeenCalledWith('九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
-    expect(classify).toHaveBeenCalledTimes(1)
+    expect(classify).toHaveBeenCalledTimes(2)
     expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
     expect(state.verifyClicked).toBe(true)
+  })
+
+  it('fallback 截图优先表格元素（3x3 底部边线不裁切）；表格缺失回退容器', async () => {
+    const state1 = baseState()
+    state1.wrapperImg = null
+    const classify1 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state1, classify1) as never)).resolves.toBe('solved')
+    expect(state1.tableShotCalls).toBeGreaterThanOrEqual(1)
+    expect(state1.containerShotCalls).toBe(0)
+    const state2 = baseState()
+    state2.wrapperImg = null
+    state2.hasTable = false
+    const classify2 = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state2, classify2) as never)).resolves.toBe('solved')
+    expect(state2.containerShotCalls).toBeGreaterThanOrEqual(1)
+    expect(state2.tableShotCalls).toBe(0)
   })
 
   it('整图 img 缺失且容器截图两次均失败 → 刷新换图后重试直至成功（rev3.1 不再抛错）', async () => {
@@ -361,7 +451,8 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const deps = { ...makeDeps(state, classify), logger } as never
     await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
     expect(state.reloadClicks).toBeGreaterThanOrEqual(1)
-    expect(classify).toHaveBeenCalledTimes(1)
+    // 下一轮主分类 + 确认循环
+    expect(classify).toHaveBeenCalledTimes(2)
   })
 
   it('提示语首读为空（bframe 晚渲染）：轮询后读到再分类，求解成功', async () => {
@@ -370,7 +461,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
     expect(state.promptReads).toBeGreaterThan(1)
-    expect(classify).toHaveBeenCalledTimes(1)
+    expect(classify).toHaveBeenCalledTimes(2)
     expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
   })
 
@@ -420,15 +511,17 @@ describe('solveRecaptchaGrid 求解循环', () => {
       .mockResolvedValue({ type: 'single', hasObject: true })
     const onLog = vi.fn()
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never, { onLog })).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    // 主分类 + 单格确认 + 3x3 验证前确认循环（single 结果 → break）
+    expect(classify).toHaveBeenCalledTimes(3)
     expect(typeof classify.mock.calls[1][0]).toBe('string')
     expect(classify.mock.calls[1][1]).toBe('/m/015qbp')
     expect(state.tiles[0].clicks).toBe(2)
     expect(state.tiles[0].src).toBe('new-img')
     expect(state.tiles[0].cls).toContain('selected')
-    // 记账走 onLog（不传 provider.classifyGrid）：主网格 6 点、单格 1x1 2 点（TILE_COST_POINTS）
+    // 记账走 onLog（不传 provider.classifyGrid）：主网格 6 点、单格 1x1 2 点（TILE_COST_POINTS）、确认循环 6 点
     expect(onLog).toHaveBeenNthCalledWith(1, 'test', 'recaptcha_v2_grid', true, 6)
     expect(onLog).toHaveBeenNthCalledWith(2, 'test', 'recaptcha_v2_grid', true, 2)
+    expect(onLog).toHaveBeenNthCalledWith(3, 'test', 'recaptcha_v2_grid', true, 6)
   })
 
   it('点击后图片刷新：单格 1x1 确认分类 hasObject=false 不再点击', async () => {
@@ -438,7 +531,7 @@ describe('solveRecaptchaGrid 求解循环', () => {
       .mockResolvedValueOnce({ type: 'multi', objects: [0, 1, 2] })
       .mockResolvedValue({ type: 'single', hasObject: false })
     await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
-    expect(classify).toHaveBeenCalledTimes(2)
+    expect(classify).toHaveBeenCalledTimes(3)
     expect(state.tiles[0].clicks).toBe(1)
     expect(state.tiles[0].cls).not.toContain('selected')
   })

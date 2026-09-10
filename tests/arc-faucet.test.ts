@@ -533,7 +533,8 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
       const classifyGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
       const ctx = makeBrowserCtx(page, task, { classifyGrid })
       await task.run(ctx)
-      expect(classifyGrid).toHaveBeenCalledTimes(1)
+      // rev3.2：主分类 + 3x3 验证前确认循环再分类一次（同结果 → 不补点）
+      expect(classifyGrid).toHaveBeenCalledTimes(2)
       expect(classifyGrid.mock.calls[0][1]).toBe('/m/015qbp')
       expect(await detectV2Challenge(ctx)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
