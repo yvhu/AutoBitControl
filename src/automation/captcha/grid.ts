@@ -15,6 +15,11 @@
  *   - 换图/换题统一 changeImages：3x3 刷新 / 4x4 跳过；select-more 先补点未注册格再验证，
  *     incorrect/try-again/无提示 换图重试；空数组/图片质量拒收/非 multi → 换图不硬点；
  *     未覆盖提示语 → 换图换题重试
+ * rev3.3 全场景加固（真机窗口 18/19/20 任务超时复盘，2026-09-10）：
+ *   - 回退截图重试 3 次（1s/2s 递增间隔，三次错误摘要用 | 拼接进异常信息）
+ *   - 跳过/下一个按钮未命中、未覆盖提示语、截图终败 → bframe DOM 落盘 grid-debug（选择器学习/排障）
+ *   - 未覆盖提示语连续 5 次、下一个按钮连续 5 次失败 → 抛错交任务重试换窗口（防空转到任务超时）
+ *   - verify 点击瞬时失败等 1s 重试一次（不浪费一轮选择）；每窗口每次求解入口 dump 一次 bframe DOM
  * 工程护栏：余额不足抛 CaptchaFailure；任务超时由 window-runner 兜底；
  *   挑战收回且重点锚点 RECHECK_ANCHOR_MAX 次无法恢复 → 抛错交任务重试换窗口
  * 保留的真机验证资产：提示语中英映射、siteKeyExclude、grid-debug 诊断截图、
@@ -113,14 +118,16 @@ async function fallbackCaptureGrid(deps: GridDeps, ch: Frame, size: number): Pro
     // 真机 2026-09-10 教训：元素动画中截图易失败，重试即恢复（rev2 窗口 11/19 一次失败即抛错）
     deps.logger.warn({ err: firstErr }, '九宫格网格截图失败（元素可能动画中），1 秒后重试一次')
     await deps.page.waitForTimeout(1000)
-    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch((e) => { firstErr = `${firstErr} | 重试: ${(e as Error).message}`; return null })
+    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch((e) => { firstErr = `${firstErr} | 第2次: ${(e as Error).message}`; return null })
   }
   if (!shot) {
-    // 诊断落盘：截图两次失败时 dump bframe DOM 供真机排查（Google 结构变化/元素状态异常）
-    try {
-      const html = (await ch.locator('body').first().evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '')) ?? ''
-      if (html) writeFileSync(join(process.cwd(), 'data', 'screenshots', 'grid-debug', `bframe-dump-${Date.now()}.html`), html)
-    } catch { /* 诊断 dump 失败静默 */ }
+    deps.logger.warn({ err: firstErr }, '九宫格网格截图第二次失败（元素可能动画中），2 秒后再试一次')
+    await deps.page.waitForTimeout(2000)
+    shot = await ch.locator(targetSel).first().screenshot({ type: 'png', timeout: 10000 }).catch((e) => { firstErr = `${firstErr} | 第3次: ${(e as Error).message}`; return null })
+  }
+  if (!shot) {
+    // 三次均失败：dump bframe DOM 供真机排查（Google 结构变化/元素状态异常）后抛错（主循环接住换图）
+    dumpBframeDom(ch, 'shot-fail')
     throw new Error(`九宫格网格截图失败（整图 img 缺失且容器截图失败）: ${firstErr.slice(0, 300)}`)
   }
   saveDebugImage('grid-raw-fallback', shot)
@@ -152,6 +159,20 @@ function saveDebugImage(name: string, buf: Buffer): void {
     pruneDebugDir(debugDir, GRID_DEBUG_MAX_FILES)
     writeFileSync(join(debugDir, `${name}-${Date.now()}.png`), buf)
   } catch { /* 诊断写盘失败静默 */ }
+}
+
+/** bframe DOM 落盘诊断（按钮选择器学习/排障用）：失败静默，目录受 pruneDebugDir 上限约束 */
+function dumpBframeDom(ch: Frame, tag: string): void {
+  void (async () => {
+    try {
+      const html = (await ch.locator('body').first().evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '')) ?? ''
+      if (!html) return
+      const dir = join(process.cwd(), 'data', 'screenshots', 'grid-debug')
+      mkdirSync(dir, { recursive: true })
+      pruneDebugDir(dir, GRID_DEBUG_MAX_FILES)
+      writeFileSync(join(dir, `bframe-${tag}-${Date.now()}.html`), html)
+    } catch { /* 诊断 dump 失败静默 */ }
+  })()
 }
 
 /**
@@ -379,6 +400,7 @@ async function skipImages(deps: GridDeps, ch: Frame): Promise<boolean> {
       return true
     }
   }
+  dumpBframeDom(ch, 'skip-miss')
   deps.logger.warn('九宫格跳过按钮点击失败（选择器未命中，Google 结构可能变化）')
   return false
 }
@@ -392,6 +414,7 @@ async function clickNext(deps: GridDeps, ch: Frame): Promise<boolean> {
       return true
     }
   }
+  dumpBframeDom(ch, 'next-miss')
   deps.logger.warn('九宫格下一个按钮点击失败（选择器未命中，Google 结构可能变化）')
   return false
 }
@@ -464,7 +487,12 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     challenge = findChallengeFrame(deps.page, opts.siteKeyExclude)
     if (!challenge && await anchorChecked()) { deps.logger.info('九宫格一键通过（未出图）'); return 'solved' }
   }
+  // 首轮 entry dump：每窗口每次求解入口落盘一次 bframe DOM（按钮选择器学习/排障用）
+  if (challenge) dumpBframeDom(challenge, 'entry')
   let recheckCount = 0
+  // 防空转计数：连续未覆盖提示语/下一个按钮连续失败达上限 → 抛错交任务重试换窗口（不再干等到任务超时）
+  let unknownPromptCount = 0
+  let nextFailCount = 0
   // 无限递归到成功：唯一正常出口 aria-checked=true
   while (true) {
     if (await anchorChecked()) { deps.logger.info('九宫格通过（aria-checked=true）'); return 'solved' }
@@ -505,6 +533,9 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     const qid = mapQuestionId(prompt)
     if (!qid) {
       // 题不认识（本地映射表未覆盖）：拿不到平台要求的题目编号，换图/换题重来
+      unknownPromptCount++
+      dumpBframeDom(rc.ch, 'unknown-prompt')
+      if (unknownPromptCount >= 5) throw new Error('九宫格提示语连续未覆盖（多次换图仍是未知题），交任务重试换新窗口')
       deps.logger.warn({ prompt }, '未覆盖的九宫格提示语，换图换题后重试')
       await changeImages(deps, rc.ch, is3x3)
       continue
@@ -512,6 +543,7 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     deps.logger.info({ prompt, qid, is3x3 }, '九宫格识别目标')
     rc.prompt = prompt
     rc.qid = qid
+    unknownPromptCount = 0
     tileCount = await ch.locator(TILE_SELECTOR).count().catch(() => 0)
     // 3x3 官方支持 confidence 0.5：返回所有大于分值的格子（默认只返前三，会漏选）；4x4 指定无意义不传
     const classifyConfidence = tileCount === 9 ? 0.5 : undefined
@@ -591,12 +623,22 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
       }
       if (!(await verifyVisible())) {
         deps.logger.info('4x4 验证按钮未出现，点下一个翻页继续')
-        await clickNext(deps, rc.ch)
+        if (await clickNext(deps, rc.ch)) nextFailCount = 0
+        else {
+          nextFailCount++
+          if (nextFailCount >= 5) throw new Error('九宫格下一个按钮连续点击失败，交任务重试换新窗口')
+        }
         continue
       }
     }
-    if (await nativeClick(rc.ch, VERIFY_SELECTOR)) {
-      deps.logger.warn('九宫格验证按钮点击失败，换图后重试')
+    // verify 点击瞬时失败先等 1s 重试一次（真机：瞬时失败即换图浪费一轮选择；两连败才换图）
+    let verifyErr = await nativeClick(rc.ch, VERIFY_SELECTOR)
+    if (verifyErr) {
+      await deps.page.waitForTimeout(1000)
+      verifyErr = await nativeClick(rc.ch, VERIFY_SELECTOR)
+    }
+    if (verifyErr) {
+      deps.logger.warn({ err: verifyErr }, '九宫格验证按钮点击失败，换图后重试')
       await changeImages(deps, rc.ch, tileCount === 9)
       continue
     }

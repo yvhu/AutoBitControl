@@ -68,6 +68,10 @@ interface FakeFrameState {
   nextClicks: number
   /** 「下一个」点击后切换的新提示语（4x4 翻页；未设置则翻页不换提示语） */
   nextPrompt: string
+  /** 「下一个」按钮点击恒抛错（模拟选择器未命中/按钮不可点；true 时点击不计数不换题） */
+  nextFails?: boolean
+  /** verify 第一次点击抛错（模拟瞬时失败需重试一次；点击计数仍计入） */
+  verifyThrowOnce?: boolean
   /** 换图按钮点击后切换的新提示语（3x3 未覆盖提示语换图后变已覆盖；未设置则提示语不变） */
   reloadChangesPrompt: string
 }
@@ -92,8 +96,9 @@ function makePage(state: FakeFrameState) {
       }
       if (sel === '#recaptcha-verify-button') {
         return { click: vi.fn(async () => {
-          state.verifyClicked = true
           state.verifyClicks++
+          if (state.verifyThrowOnce) { state.verifyThrowOnce = false; throw new Error('元素未可见，瞬时点击失败') }
+          state.verifyClicked = true
           if (state.verifySolves && state.verifyClicks > (state.verifySolveDelay ?? 0)) state.anchorChecked = true
         }), count: async () => (state.verifyVisible ? 1 : 0), isVisible: async () => state.verifyVisible }
       }
@@ -141,7 +146,10 @@ function makePage(state: FakeFrameState) {
         return { click: vi.fn(async () => { state.skipClicks++; if (state.skipChangesPrompt) state.prompt = state.skipChangesPrompt }), count: async () => 0 }
       }
       if (sel.includes('下一个') || sel.includes('Next')) {
-        return { click: vi.fn(async () => { state.nextClicks++; if (state.nextPrompt) state.prompt = state.nextPrompt; state.verifyVisible = true }), count: async () => (state.nextVisible ? 1 : 0) }
+        return { click: vi.fn(async () => {
+          if (state.nextFails) throw new Error('按钮不可点击')
+          state.nextClicks++; if (state.nextPrompt) state.prompt = state.nextPrompt; state.verifyVisible = true
+        }), count: async () => (state.nextVisible ? 1 : 0) }
       }
       if (sel.includes('table td')) {
         return {
@@ -386,6 +394,41 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(classify4.mock.calls[0][1]).toBe('/m/015qbp')
   })
 
+  it('未覆盖提示语连续 5 次（3x3 刷新不换题 / 4x4 跳过不换题）→ 抛错交任务重试换窗口', async () => {
+    const state3 = baseState()
+    state3.prompt = '潜水艇'
+    state3.reloadChangesSrc = false
+    const classify3 = vi.fn()
+    await expect(solveRecaptchaGrid(makeDeps(state3, classify3) as never)).rejects.toThrow(/连续未覆盖/)
+    expect(classify3).not.toHaveBeenCalled()
+    const state4 = baseState(16)
+    state4.prompt = '潜水艇'
+    state4.skipChangesPrompt = ''
+    const classify4 = vi.fn()
+    await expect(solveRecaptchaGrid(makeDeps(state4, classify4) as never)).rejects.toThrow(/连续未覆盖/)
+    expect(classify4).not.toHaveBeenCalled()
+  })
+
+  it('4x4 验证按钮未出现且下一个按钮连续 5 次点击失败 → 抛错交任务重试换窗口', async () => {
+    const state = baseState(16)
+    state.verifyVisible = false
+    state.nextVisible = true
+    state.nextFails = true
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).rejects.toThrow(/连续点击失败/)
+    // 每轮主分类一次（4x4 无验证前确认循环），5 轮后抛错
+    expect(classify).toHaveBeenCalledTimes(5)
+  })
+
+  it('verify 点击瞬时失败：等 1s 重试一次后成功 → solved', async () => {
+    const state = baseState()
+    state.verifyThrowOnce = true
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
+    expect(state.verifyClicks).toBeGreaterThanOrEqual(2)
+    expect(state.verifyClicked).toBe(true)
+  })
+
   it('挑战 frame 消失（frames 只剩 anchor）且未变绿：重点锚点 3 次无法恢复 → 抛错交任务重试换窗口', async () => {
     const state = baseState()
     const { anchorFrame } = makePage(state)
@@ -441,10 +484,25 @@ describe('solveRecaptchaGrid 求解循环', () => {
     expect(state2.tableShotCalls).toBe(0)
   })
 
-  it('整图 img 缺失且容器截图两次均失败 → 刷新换图后重试直至成功（rev3.1 不再抛错）', async () => {
+  it('整图 img 缺失且容器截图前两次失败：第 3 次成功 → 分类继续（截图重试 3 次）', async () => {
     const state = baseState()
     state.wrapperImg = null
     state.targetShotFails = 2
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
+    const logger = { info: vi.fn(), warn: vi.fn() }
+    const deps = { ...makeDeps(state, classify), logger } as never
+    await expect(solveRecaptchaGrid(deps)).resolves.toBe('solved')
+    // 首次截图 3 次尝试（前 2 失败第 3 成功）+ 验证前确认循环再截 1 次
+    expect(state.tableShotCalls).toBeGreaterThanOrEqual(3)
+    expect(state.reloadClicks).toBe(0)
+    expect(classify).toHaveBeenCalledTimes(2)
+    expect(state.verifyClicked).toBe(true)
+  })
+
+  it('整图 img 缺失且容器截图三次均失败 → 刷新换图后重试直至成功（rev3.1 不再抛错）', async () => {
+    const state = baseState()
+    state.wrapperImg = null
+    state.targetShotFails = 3
     state.reloadChangesSrc = true
     const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
     const logger = { info: vi.fn(), warn: vi.fn() }
