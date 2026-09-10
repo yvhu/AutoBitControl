@@ -391,7 +391,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ### solveRecaptchaGrid
 
 ```ts
-async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'>
+async solveRecaptchaGrid(opts?: { siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'>
 ```
 
 - **是什么**：reCAPTCHA v2 勾选后弹出的**九宫格选图挑战**的模拟点击求解，严格对齐 yescaptcha 官方 Python DEMO——点复选框 → 取原生整图（`div.rc-image-tile-wrapper > img` 的 src，naturalWidth 300/450 判 3x3/4x4，不再容器截图）→ 打码平台分类 → **原生元素点击**选格（坐标拟人点击只做未注册兜底）→ 单格刷新二次确认 → 点验证，多轮循环直至 `aria-checked=true`（变绿）。实现位于 `src/automation/captcha/grid.ts`（分类走打码平台 `classifyGrid`，任务类型映射内置于代码，见[第 5 章](#5-验证码)）。
@@ -400,12 +400,12 @@ async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string })
 
 ```ts
 await ctx.clickCheckin('#claim-btn')                    // 点击可能弹出 v2 勾选框
-const r = await ctx.solveRecaptchaGrid({ maxRounds: 3 }) // 检测到就模拟点选直至变绿
+const r = await ctx.solveRecaptchaGrid({ siteKeyExclude: '6Lc...v3 sitekey' }) // 检测到就无限递归点选直至变绿
 if (r === 'failed') throw new Error('九宫格求解轮数耗尽')
 await ctx.waitForText('领取成功')                        // 验证挑战已过、流程继续
 ```
 
-- **注意什么**：与 `solveCaptcha` 口径统一读 `meta.captcha.auto`（false 时返回 `'none'` 不花钱）。返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：同窗口轮数耗尽仍未通过（默认最多 3 轮，`opts.maxRounds` 可调；同会话连续验证有风控，耗尽后任务应抛普通错误交重试换新窗口，别同窗口死磕）。页面同时常驻 v3（隐形打分）与挑战注入 v2（复选框）两套 anchor iframe 时，用 `opts.siteKeyExclude` 传入常驻 v3 的 sitekey（`k=` 参数），模块会跳过 v3 锚点只点 v2（避免点到无效果的复选框）；anchor 点击失败只记 warn 继续流程，后续轮次会自纠。提示语未覆盖映射/整图缺失抛普通 `Error`（按 retry 重试换新窗口）；余额不足/分类接口失败抛 `CaptchaFailure`（`captcha_failed` 终态不重试）。分类记账按官方价格分档：主网格 6 点/次、1x1 单格 2 点/次，受 `captcha.maxCostPerTask` 余额上限约束。
+- **注意什么**：与 `solveCaptcha` 口径统一读 `meta.captcha.auto`（false 时返回 `'none'` 不花钱）。返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：仅「挑战收回且重点锚点多次无法恢复」路径（此时任务应抛普通错误交重试换新窗口）。**rev3.1 起无限递归到成功**（对齐官方 DEMO，无轮次上限）：「未选全」先补点未注册的格子（点击过快自愈）再验证，仍未过则刷新换图；「选错」/「请重试」/无提示未过 → 刷新换图重试；分类格数少于 3、空数组、图片质量被平台拒收 → 直接刷新换图不硬点；提示语未覆盖映射 → 跳过换题。页面同时常驻 v3（隐形打分）与挑战注入 v2（复选框）两套 anchor iframe 时，用 `opts.siteKeyExclude` 传入常驻 v3 的 sitekey（`k=` 参数），模块会跳过 v3 锚点只点 v2（避免点到无效果的复选框）；anchor 点击失败只记 warn 继续流程。余额不足/分类接口失败抛 `CaptchaFailure`（`captcha_failed` 终态不重试）；任务超时（`meta.timeoutSec`）由 window-runner 兜底。分类记账按官方价格分档：主网格 6 点/次、1x1 单格 2 点/次，受 `captcha.maxCostPerTask` 余额上限约束。
 
 ### screenshot
 
@@ -978,7 +978,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 - **原生整图**：网格图取 `div.rc-image-tile-wrapper > img` 的 src + naturalWidth（300 定 3x3、450 定 4x4）缩放提交；容器元素截图经 CSS 缩放裁剪会污染分类（真机分类乱跳/空数组），仅作整图缺失兜底。
 - **原生点击为主**：格子/验证按钮用元素原生点击（selenium click 等价，trusted 且自动居中）；页面坐标拟人点击（frame 偏移计算）有坐标漂移风险，只做未注册兜底重试一次。
 - **单格刷新确认**：点格后格子图可能刷新（1x1 小图 100x100 再分类，2 点/次），按 td class 判定选中，循环最多 3 轮。
-- **同窗口 maxRounds 风控上限**：默认 3 轮（`MAX_ROUNDS_DEFAULT`），连续多轮不过 = 同会话已被风控，返回 `'failed'` 交任务重试换新窗口。
+- **无限递归到成功（rev3.1）**：无轮次上限；失败分流——「未选全」先补点未注册格再验证，仍未过刷新换图；「选错」/「请重试」刷新换图；分类格数 <3 或空数组直接刷新换图不硬点；未覆盖提示语跳过换题。工程护栏：挑战收回且重点锚点 3 次无法恢复 → 抛错交任务重试换新窗口。
 - **提示语映射**：中英双语映射表（`question-map.ts`）；未覆盖的提示语直接抛错快速失败，按日志扩充映射优先于猜测。
 
 ### 费用上限与余额不足
@@ -995,7 +995,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
   - 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
   - 计入窗口熔断计数（见[第 11 章](#11-排错)）；
   - 每次尝试都记账（平台/类型/成败/点数），看板可见。
-- **九宫格求解失败**：① 提示语未覆盖映射、网格整图缺失等结构性错误抛**普通 `Error`**——按 retry 配置重试，换新窗口；② 同窗口多轮未通过（默认 `maxRounds` 3 轮）返回 `'failed'`（不抛错），由任务决定——通常抛普通错误交重试机制换新窗口（同会话已被风控，死磕必挂）。
+- **九宫格求解失败**：① 无限递归语义下大部分失败路径都在同会话自愈（补点/刷新换图/跳过换题），只有「挑战收回且重点锚点 3 次无法恢复」返回 `'failed'`（不抛错），由任务决定——通常抛普通错误交重试机制换新窗口；② 余额不足/分类接口失败抛 `CaptchaFailure`（`captcha_failed` 终态不重试）。
 
 ---
 
