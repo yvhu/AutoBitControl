@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { clickTurnstileBox, autoClickTurnstile, turnstileBox, turnstileVisible } from '../src/automation/turnstile'
+import { clickTurnstileBox, autoClickTurnstile, turnstileBox, turnstileVisible } from '../src/automation/captcha/turnstile'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
