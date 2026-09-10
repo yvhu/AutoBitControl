@@ -274,6 +274,12 @@ describe('waitForOutcome 竞速等待', () => {
     expect(await waitForOutcome(ctx, 300)).toBe('captcha')
   })
 
+  it('allowChallenge=false：残留挑战文案不算新一轮挑战 → null（超时）', async () => {
+    const state = { ...baseState(), texts: { [CAPTCHA_V2_TEXT]: true } }
+    const { ctx } = makeCtx(state)
+    expect(await waitForOutcome(ctx, 300, false)).toBeNull()
+  })
+
   it('两文案都出现 → success 优先', async () => {
     const state = { ...baseState(), texts: { [SUCCESS_TEXT]: true, [CAPTCHA_V2_TEXT]: true } }
     const { ctx } = makeCtx(state)

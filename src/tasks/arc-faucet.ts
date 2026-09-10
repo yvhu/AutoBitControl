@@ -96,24 +96,29 @@ export async function detectV2Challenge(ctx: TaskContext): Promise<boolean> {
   return findAnchorFrame(ctx.page, V3_SITEKEY) !== null || findChallengeFrame(ctx.page, V3_SITEKEY) !== null
 }
 
-/** 竞速等待：成功文案 / v2 挑战文案谁先出现；每 2s 补一次 DOM 挑战检测（v2 文案未渲染但 iframe 已注入时兜底）*/
-export async function waitForOutcome(ctx: TaskContext, timeoutMs: number): Promise<'success' | 'captcha' | null> {
+/**
+ * 竞速等待：成功文案 / v2 挑战文案谁先出现；每 2s 补一次 DOM 挑战检测（v2 文案未渲染但 iframe 已注入时兜底）
+ * allowChallenge=false 用于九宫格解决后的重提交——站点残留的挑战文案/iframe 会误判为新一轮挑战，重提交只等成功文案
+ */
+export async function waitForOutcome(ctx: TaskContext, timeoutMs: number, allowChallenge = true): Promise<'success' | 'captcha' | null> {
   const end = Date.now() + timeoutMs
   let lastCheck = 0
   while (Date.now() < end) {
     if (await ctx.textPresent(SUCCESS_TEXT)) return 'success'
-    if (await ctx.textPresent(CAPTCHA_V2_TEXT)) return 'captcha'
-    if (Date.now() - lastCheck >= 2000 && (await detectV2Challenge(ctx))) return 'captcha'
-    lastCheck = Date.now()
+    if (allowChallenge) {
+      if (await ctx.textPresent(CAPTCHA_V2_TEXT)) return 'captcha'
+      if (Date.now() - lastCheck >= 2000 && (await detectV2Challenge(ctx))) return 'captcha'
+      lastCheck = Date.now()
+    }
     await ctx.page.waitForTimeout(1000)
   }
   return null
 }
 
 /** 点提交并竞速等待结果 */
-async function submitAndWait(ctx: TaskContext): Promise<'success' | 'captcha' | null> {
+async function submitAndWait(ctx: TaskContext, allowChallenge = true): Promise<'success' | 'captcha' | null> {
   await ctx.human.click(SUBMIT_SELECTOR)
-  return waitForOutcome(ctx, SUBMIT_RACE_MS)
+  return waitForOutcome(ctx, SUBMIT_RACE_MS, allowChallenge)
 }
 
 /** Arc 领水主流程（模块级函数：任务类委托它，集成测试经任务类覆盖）*/
@@ -145,9 +150,9 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
     const grid = await ctx.solveRecaptchaGrid({ siteKeyExclude: V3_SITEKEY, maxRounds: 3 })
     if (grid === 'none') throw new Error('未检测到验证码锚点 frame')
     if (grid === 'failed') throw new Error('九宫格多轮未通过（同窗口风控上限，交由重试换新窗口）')
-    // widget 完成后站点恢复提交按钮；再提交一次
+    // widget 完成后站点恢复提交按钮；再提交一次（站点残留挑战文案/iframe，重提交只等成功文案，防误判新一轮挑战）
     await ensureSubmitEnabled(ctx)
-    outcome = await submitAndWait(ctx)
+    outcome = await submitAndWait(ctx, false)
   }
   if (outcome !== 'success') throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案（v2 挑战也未出现）`)
   // 成功截图留档；截图失败只告警，不判任务失败（真机偶发等字体加载超时）
