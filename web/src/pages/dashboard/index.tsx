@@ -152,7 +152,6 @@ export default function DashboardPage() {
 
   const { bulk, single } = useMemo(() => splitBatches(batches.data?.batches ?? []), [batches.data])
   const data = batches.data
-  const costYuan = ((data?.captchaToday.totalCost ?? 0) / 1000).toFixed(2)
   const unbatched = data?.unbatched ?? []
 
   return (
@@ -163,7 +162,6 @@ export default function DashboardPage() {
           <Segmented value={range} onChange={(v) => setRange(String(v))} options={RANGE_OPTIONS} />
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, color: token.colorTextSecondary, fontSize: 13 }}>
             <span>⚡ 实时运行 <b style={{ color: '#faad14' }}>{data?.running ?? 0}</b></span>
-            <span>💴 今日打码 <b>¥{costYuan}</b><span style={{ fontSize: 11 }}> / {data?.captchaToday.count ?? 0} 次</span></span>
           </div>
         </div>
       </Card>

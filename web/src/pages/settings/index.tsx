@@ -3,8 +3,6 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { useThemeMode } from '../../theme/useThemeMode'
 import {
   datasourceText,
-  formatBalance,
-  useBalance,
   useReloadDatasource,
   useSettings,
   useTestBitbrowser,
@@ -15,7 +13,6 @@ export default function SettingsPage() {
   const settings = useSettings()
   const reload = useReloadDatasource()
   const test = useTestBitbrowser()
-  const balance = useBalance()
   const { mode, setMode } = useThemeMode()
 
   if (settings.isPending) {
@@ -33,14 +30,6 @@ export default function SettingsPage() {
   }
 
   const s = settings.data
-
-  const queryBalance = () => {
-    balance.refetch().then((r) => {
-      if (r.data) {
-        message.success(r.data.configured ? `余额 ${r.data.points.toLocaleString()} 点（¥${r.data.yuan}）` : '未配置 Key')
-      }
-    })
-  }
 
   return (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
@@ -71,20 +60,6 @@ export default function SettingsPage() {
             { key: 'version', label: '版本', children: s.version },
           ]}
         />
-      </Card>
-
-      <Card size="small" title="yescaptcha">
-        <Space size="middle">
-          <Button loading={balance.isFetching} onClick={queryBalance}>
-            查询余额
-          </Button>
-          {balance.data ? (
-            <Tag color={balance.data.configured ? 'green' : 'default'}>{formatBalance(balance.data)}</Tag>
-          ) : (
-            <Typography.Text type="secondary">点击查询当前打码余额</Typography.Text>
-          )}
-          {balance.isError && <Typography.Text type="danger">余额查询失败</Typography.Text>}
-        </Space>
       </Card>
 
       <Card size="small" title="数据源">

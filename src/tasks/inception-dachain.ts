@@ -60,7 +60,6 @@ export class InceptionDachainTask extends SiteTask {
     // 开箱视频慢 + 最多 5 箱，放宽单次超时
     timeoutSec: 900,
     retry: { max: 2, backoffSec: 600 },
-    captcha: { auto: true },
     concurrency: 4,
   }
 

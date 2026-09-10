@@ -119,19 +119,6 @@ describe('TaskContext 通用页面工具', () => {
   })
 })
 
-describe('TaskContext 九宫格求解包装', () => {
-  it('solveRecaptchaGrid：未注入 captcha 服务 → none', async () => {
-    const ctx = new TaskContext({ ...baseDeps(makeFakePage({})) })
-    await expect(ctx.solveRecaptchaGrid()).resolves.toBe('none')
-  })
-
-  it('solveRecaptchaGrid：注入 captcha 后委托模块（无 maxRounds 概念；无锚点 frame → none）', async () => {
-    const deps = { ...baseDeps(makeFakePage({})), cfg: { captcha: { maxCostPerTask: 1500 } }, captcha: { platform: 'test', solveToken: vi.fn(), classifyGrid: vi.fn().mockResolvedValue({ type: 'multi', objects: [0] }), getBalance: vi.fn().mockResolvedValue(100000) } }
-    const ctx = new TaskContext(deps as never)
-    await expect(ctx.solveRecaptchaGrid({ siteKeyExclude: '6LcV3' })).resolves.toBe('none')
-  })
-})
-
 /** 可脚本化假页面：texts 为当前出现文案集合；reload 执行 onReload 改写集合（模拟刷新恢复） */
 function makeRecoverPage(initTexts: string[], onReload: () => string[]) {
   let texts = [...initTexts]

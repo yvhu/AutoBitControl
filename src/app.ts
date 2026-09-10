@@ -1,7 +1,7 @@
 /**
  * 应用装配（顶层）：startApp 按依赖顺序组装全部模块并启动
  * 依赖方向：顶层依赖所有层，仅被 index.ts 调用（唯一的组装点，compose root）
- * 装配顺序即依赖顺序：配置/日志 → 数据库 → 比特浏览器同步 → 任务/钱包/打码 →
+ * 装配顺序即依赖顺序：配置/日志 → 数据库 → 比特浏览器同步 → 任务/钱包 →
  * 执行器/队列 → Web 服务
  */
 import { loadConfig } from './infrastructure/config'
@@ -17,7 +17,6 @@ import { recoverRetryTasks } from './engine/retry-recovery'
 import { Scheduler } from './engine/scheduler'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
-import { createCaptchaProvider } from './integrations/captcha'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
@@ -155,9 +154,6 @@ export async function startApp(): Promise<void> {
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
 
-  // clientKey 未配置时 captcha 为 null：任务侧 solveCaptcha 直接返回 none，无 Key 也能跑
-  const captcha = createCaptchaProvider(cfg.captcha)
-
   // enqueuer 后置声明：runner 的 scheduleRetry 闭包引用它（重试到期重新入队），
   // 二者互相依赖（enqueuer 需要 runner），先声明变量再在下方赋值
   let enqueuer!: CoalescingEnqueuer
@@ -168,7 +164,6 @@ export async function startApp(): Promise<void> {
     driver: new PatchrightDriver(),
     tasks,
     wallets,
-    captcha,
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
@@ -249,15 +244,6 @@ export async function startApp(): Promise<void> {
       get error() { return datasource.error },
       path: cfg.dataSource.path,
     },
-    // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
-    captchaBalance: async () => {
-      if (!captcha) return null
-      try {
-        return { points: await captcha.getBalance(), platform: captcha.platform }
-      } catch {
-        return null
-      }
-    },
     fileAssignService,
     clash: {
       service: clashService,
@@ -280,10 +266,10 @@ export async function startApp(): Promise<void> {
     logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
   })
 
-  // 历史数据清理：按保留天数删超期 runs/batches/captcha_logs（本地文件无限增长，启动时收敛一次）
+  // 历史数据清理：按保留天数删超期 runs/batches（本地文件无限增长，启动时收敛一次）
   try {
     const cleaned = await db.cleanupOld(cfg.storage.dbRetainDays)
-    if (cleaned.runs + cleaned.batches + cleaned.captcha > 0) {
+    if (cleaned.runs + cleaned.batches > 0) {
       logger.info({ retainDays: cfg.storage.dbRetainDays, cleaned }, '已清理超期历史数据')
     }
   } catch (e) {

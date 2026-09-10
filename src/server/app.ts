@@ -21,7 +21,6 @@ import { openapiSpec } from './openapi'
 import { batchesRouter } from './routes/batches'
 import { tasksRouter } from './routes/tasks'
 import { profilesRouter } from './routes/profiles'
-import { captchaRouter } from './routes/captcha'
 import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
@@ -49,7 +48,6 @@ export interface ServerDeps {
     isOpen(id: string): Promise<boolean>
     openPids(ids: string[]): Promise<Set<string>>
   }
-  captchaBalance: () => Promise<{ points: number; platform: string } | null>
   /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 文件随机分配服务（面板工具路由与计划自动分配共用单实例） */
@@ -76,7 +74,6 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
-  api.use(captchaRouter(deps))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())

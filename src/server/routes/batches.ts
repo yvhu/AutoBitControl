@@ -78,7 +78,6 @@ export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; t
       batches,
       unbatched,
       running,
-      captchaToday: await deps.db.captchaStats(today),
       taskNames,
       today,
     })

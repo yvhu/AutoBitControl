@@ -18,7 +18,6 @@ export class MintExampleTask extends SiteTask {
     wallet: 'petra', // 该站点用 Petra 钱包
     timeoutSec: 300,
     retry: { max: 1, backoffSec: 600 },
-    captcha: { auto: true },
     concurrency: 4,
   }
 

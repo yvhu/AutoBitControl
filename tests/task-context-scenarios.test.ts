@@ -21,7 +21,7 @@ function makeCtx(page: import('patchright').Page, accountRow?: Record<string, st
     task,
     human: new Humanizer(page),
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-    cfg: { captcha: { maxCostPerTask: 1500 } } as never,
+    cfg: {} as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
     artifactsDir: '',
     walletPasswords: {},

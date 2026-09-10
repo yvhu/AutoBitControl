@@ -36,25 +36,6 @@ export interface ExecutionConfig {
   humanize: { minDelayMs: number; maxDelayMs: number }
 }
 
-/** yescaptcha 平台专属配置 */
-export interface YesCaptchaConfig {
-  apiBase: string
-  clientKey: string
-}
-
-/** 打码配置：provider 选平台，平台专属参数放同名字段（未来接入 capsolver 时并列新增） */
-export interface CaptchaConfig {
-  /** 打码平台标识（当前支持 yescaptcha；无对应 clientKey 时打码能力整体禁用） */
-  provider: string
-  /** 平台约束：识别 120 秒超时、结果 120 秒内有效 */
-  solveTimeoutMs: number
-  /** 轮询解题结果的间隔（太频繁触发平台限流，太慢拉长任务耗时） */
-  pollIntervalMs: number
-  /** 单任务打码费用上限（点，1000 点 = ¥1） */
-  maxCostPerTask: number
-  yescaptcha: YesCaptchaConfig
-}
-
 /** Web 面板监听配置 */
 export interface WebConfig {
   host: string
@@ -71,7 +52,7 @@ export interface StorageConfig {
   prettyColorize?: boolean
   /** 日志文件保留天数（按天滚动的历史文件保留 N 天，默认 7） */
   logRetainDays?: number
-  /** 数据库历史数据保留天数（runs/batches/captcha_logs 超期行启动时清理，默认 90） */
+  /** 数据库历史数据保留天数（runs/batches 超期行启动时清理，默认 90） */
   dbRetainDays: number
   /** 截图目录按日期保留天数（默认 90；启动时删除早于截止日的日期目录） */
   screenshotRetainDays: number
@@ -135,7 +116,6 @@ export interface ClashConfig {
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
   execution: ExecutionConfig
-  captcha: CaptchaConfig
   web: WebConfig
   storage: StorageConfig
   wallet: WalletConfig
@@ -172,16 +152,6 @@ const defaults: AppConfig = {
     // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
     humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },
-  captcha: {
-    provider: 'yescaptcha',
-    solveTimeoutMs: 120000,
-    pollIntervalMs: 3000,
-    maxCostPerTask: 1500,
-    yescaptcha: {
-      apiBase: 'https://api.yescaptcha.com',
-      clientKey: '',
-    },
-  },
   // 仅监听本机：面板不对外网暴露
   web: { host: '127.0.0.1', port: 3000 },
   storage: {
@@ -191,7 +161,7 @@ const defaults: AppConfig = {
     logLevel: 'info',
     // 历史日志文件保留 7 天，到期由 log4js 自动清理
     logRetainDays: 7,
-    // 数据库历史数据保留 90 天，超期行启动时清理（runs/batches/captcha_logs）
+    // 数据库历史数据保留 90 天，超期行启动时清理（runs/batches）
     dbRetainDays: 90,
     // 截图目录按日期保留 90 天，早于截止日的日期目录启动时删除（grid-debug 等非日期目录不动）
     screenshotRetainDays: 90,
@@ -273,7 +243,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     cfg = deepMerge(cfg, JSON.parse(readFileSync(local, 'utf-8')))
   }
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
-  if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.yescaptcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
   // WEB_PORT 非法值（NaN/小数/越界）静默忽略并保留默认端口（config 层无 logger，不做告警）
   if (env.WEB_PORT) {

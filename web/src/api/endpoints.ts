@@ -13,7 +13,6 @@ export const patchProfile = (id: number, body: { enabled?: boolean }) => patch<P
 export const resetBreaker = (id: number) => post<null>(`/api/profiles/${id}/breaker/reset`, {})
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})
 export const syncProfiles = () => post<{ count: number }>('/api/bitbrowser/sync', {})
-export const fetchBalance = () => get<{ configured: boolean; points: number; yuan: number }>('/api/captcha/balance')
 export const fetchSettings = () => get<SettingsData>('/api/settings')
 export const reloadDatasource = () => post<DatasourceInfo>('/api/datasource/reload', {})
 export const fetchGuide = () => get<{ content: string }>('/api/docs/guide')

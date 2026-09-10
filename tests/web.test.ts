@@ -12,7 +12,6 @@ interface MockDeps {
   db: {
     listRunsForDate: Mock
     listProfiles: Mock
-    captchaStats: Mock
     setProfileEnabled: Mock
     resetCircuitBreaker: Mock
     getTaskEnabled: Mock
@@ -41,11 +40,9 @@ interface MockDeps {
     bitbrowser: { apiBase: string }
     execution: { staggerMaxSec: number; circuitBreakerThreshold: number; maxConcurrentWindows: number }
     scheduler: { timezone: string }
-    captcha: { clientKey: string }
     dataSource: { path: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
-  captchaBalance: Mock
   datasource: {
     summary: Mock
     reload: Mock
@@ -63,7 +60,6 @@ function makeDeps(): MockDeps {
         { id: 2, profileId: 1, taskKey: 't2', date: '2026-08-28', status: 'failed', attempts: 2, error: 'boom', screenshot: 's.png', startedAt: null, finishedAt: null, profileName: '窗口1' },
       ]),
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 1 }]),
-      captchaStats: vi.fn().mockResolvedValue({ count: 5, totalCost: 230 }),
       setProfileEnabled: vi.fn().mockResolvedValue(undefined),
       resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
       getTaskEnabled: vi.fn().mockResolvedValue(true),
@@ -92,7 +88,6 @@ function makeDeps(): MockDeps {
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
       execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
-      captcha: { clientKey: 'test-secret-key-abc123' },
       dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
     bitbrowser: {
@@ -103,7 +98,6 @@ function makeDeps(): MockDeps {
       isOpen: vi.fn().mockResolvedValue(false),
       openPids: vi.fn().mockResolvedValue(new Set()),
     },
-    captchaBalance: vi.fn().mockResolvedValue({ points: 98210 }),
     datasource: {
       summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
       reload: vi.fn().mockResolvedValue(undefined),
@@ -131,7 +125,6 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.data.batches[0].stats.failed).toBe(1)
       expect(res.body.data.unbatched).toHaveLength(1)
       expect(res.body.data.running).toBeGreaterThan(0)
-      expect(res.body.data.captchaToday).toEqual({ count: 5, totalCost: 230 })
       expect(res.body.data.taskNames).toEqual({ t1: '任务1' })
     })
 
@@ -558,13 +551,6 @@ describe('server API（RESTful + envelope）', () => {
     expect(db.upsertProfile).toHaveBeenCalledTimes(107)
   })
 
-  it('GET /api/captcha/balance 返回点数', async () => {
-    const res = await request(createApp(makeDeps() as never)).get('/api/captcha/balance')
-    expect(res.body.code).toBe(0)
-    expect(res.body.data.points).toBe(98210)
-    expect(res.body.data.yuan).toBeCloseTo(98.21)
-  })
-
   it('GET /api/settings 返回非敏感配置且不含 clientKey', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).get('/api/settings')
@@ -685,7 +671,6 @@ describe('OpenAPI 文档与统一错误码', () => {
       '/api/profiles/{id}/open',
       '/api/profiles/{id}/close',
       '/api/profiles/{id}/breaker/reset',
-      '/api/captcha/balance',
       '/api/bitbrowser/test',
       '/api/bitbrowser/sync',
       '/api/settings',

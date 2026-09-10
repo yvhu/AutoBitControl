@@ -104,7 +104,6 @@ export class ShelbyExplorerTask extends SiteTask {
     // 600s 足够覆盖；卡死窗口（代理/会话坏）占并发槽时间从 15min 压到 10min
     timeoutSec: 600,
     retry: { max: 2, backoffSec: 60 },
-    captcha: { auto: true },
     concurrency: 4,
     // 依赖数据源「文件地址」列：计划触发时先自动文件随机分配（Scheduler.fire 据此执行）
     requiresFileAssign: true,

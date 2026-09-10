@@ -27,8 +27,6 @@ export class ExampleCheckinTask extends SiteTask {
     timeoutSec: 180,
     // 失败重试 2 次，每次间隔 600 秒
     retry: { max: 2, backoffSec: 600 },
-    // 验证码自动处理开关（auto）
-    captcha: { auto: true },
     concurrency: 4,
   }
 

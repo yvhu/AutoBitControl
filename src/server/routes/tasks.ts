@@ -58,11 +58,6 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                         properties:
  *                           max: { type: integer, description: 额外重试次数 }
  *                           backoffSec: { type: integer, description: 重试间隔（秒） }
- *                       captcha:
- *                         type: object
- *                         nullable: true
- *                         properties:
- *                           auto: { type: boolean, description: '是否自动打码' }
  *                       concurrency: { type: integer, description: '任务级并发：同一时间最多几个窗口并行，缺省 4' }
  */
 
@@ -168,7 +163,6 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         wallet: m.wallet ?? null,
         timeoutSec: m.timeoutSec ?? null,
         retry: m.retry ?? null,
-        captcha: m.captcha ?? null,
         concurrency: m.concurrency ?? DEFAULT_TASK_CONCURRENCY,
       })
     }

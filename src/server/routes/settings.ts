@@ -1,7 +1,7 @@
 /**
  * 设置路由（server 层）：公开非敏感配置（面板展示用）
  * 依赖方向：只读注入的 AppConfig、数据源状态与版本号；被 app 装配
- * 安全约束：只暴露非敏感项，绝不包含 captcha clientKey / 钱包密码等密钥
+ * 安全约束：只暴露非敏感项，绝不包含钱包密码等密钥
  */
 import { Router } from 'express'
 import type { AppConfig } from '../../infrastructure/config'

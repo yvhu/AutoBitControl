@@ -68,7 +68,6 @@ function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<stri
     driver: over.driver ?? makeDriver(),
     tasks: over.tasks ?? new Map([['ok-task', new OkTask()]]),
     wallets: over.wallets ?? (null as never),
-    captcha: null as never,
     logger,
     artifactsDir,
     walletPasswords,
@@ -202,7 +201,7 @@ describe('WindowRunner', () => {
   it('开窗失败重试后跳过窗口', async () => {
     const db = makeDb()
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     expect(bb.openBrowser).toHaveBeenCalledTimes(3)
     expect(statuses(db)).toEqual(['pending', 'skipped'])
@@ -213,7 +212,7 @@ describe('WindowRunner', () => {
       getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 3 } as Partial<RunRow>),
     })
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls).toHaveLength(1)
@@ -228,7 +227,7 @@ describe('WindowRunner', () => {
       nextRunSlot: vi.fn().mockResolvedValue(2),
     })
     const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls[0][3]).toBe(2) // 预写 pending 也开新轮次 slot
@@ -253,7 +252,7 @@ describe('WindowRunner', () => {
       bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
       execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 0 },
     } as never
-    const runner = new WindowRunner({ cfg: cfgZero, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', ok1], ['ok2', ok2]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg: cfgZero, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', ok1], ['ok2', ok2]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }, { taskKey: 'ok2' }])
     const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
     expect(calls.map(c => c[4])).toEqual(['pending', 'pending', 'skipped', 'skipped'])
@@ -419,7 +418,7 @@ describe('批次透传与 pending 预写', () => {
   it('新轮次会话启动时预写 pending 行并带 batchId', async () => {
     const db = makeFakeDb()
     const b = await db.createBatch('bulk', 'ok-task', 'trigger-all')
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task', batchId: b.id }])
     const row = await db.getLatestRun(1, 'ok-task', todayStr())
     expect(row?.batchId).toBe(b.id)
@@ -429,7 +428,7 @@ describe('批次透传与 pending 预写', () => {
   it('开窗失败时预写的 pending 行被结算为 skipped 且沿用 batchId', async () => {
     const db = makeFakeDb()
     const b = await db.createBatch('bulk', 't', 'trigger-all')
-    const runner = new WindowRunner({ cfg, db, bitbrowser: { openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) } as never, driver: makeDriver(), tasks: new Map(), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: { openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) } as never, driver: makeDriver(), tasks: new Map(), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 't', batchId: b.id }])
     const row = await db.getLatestRun(1, 't', todayStr())
     expect(row?.status).toBe('skipped')
@@ -440,7 +439,7 @@ describe('批次透传与 pending 预写', () => {
   it('retry_wait 续跑不预写新行、沿用原 batchId', async () => {
     const db = makeFakeDb()
     const b = await db.createBatch('bulk', 'fail-task', 'trigger-all')
-    const first = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['fail-task', new FailTask()]]), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const first = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['fail-task', new FailTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await first.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task', batchId: b.id }])
     // 第二次会话（重试恢复，不带 batchId）→ 续跑同一 slot，batchId 沿用
     await first.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
@@ -452,7 +451,7 @@ describe('批次透传与 pending 预写', () => {
   it('未注册任务就地结算预写 pending 行（沿用 slot 与 batchId，不留孤儿行）', async () => {
     const db = makeFakeDb()
     const b = await db.createBatch('bulk', 'ghost-task', 'trigger-all')
-    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map(), wallets: null as never, captcha: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map(), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ghost-task', batchId: b.id }])
     const row = await db.getLatestRun(1, 'ghost-task', todayStr())
     expect(row?.status).toBe('failed')

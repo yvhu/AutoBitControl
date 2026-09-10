@@ -22,16 +22,6 @@
       "maxDelayMs": 3000
     }
   },
-  "captcha": {
-    "provider": "yescaptcha",
-    "solveTimeoutMs": 120000,
-    "pollIntervalMs": 3000,
-    "maxCostPerTask": 1500,
-    "yescaptcha": {
-      "apiBase": "https://api.yescaptcha.com",
-      "clientKey": ""
-    }
-  },
   "scheduler": {
     "timezone": "Asia/Shanghai"
   },

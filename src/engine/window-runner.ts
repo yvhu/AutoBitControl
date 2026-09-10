@@ -15,7 +15,6 @@ import { AppDb, todayStr, localWallNow, type ProfileRow, type RunRow } from '../
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { Humanizer } from '../automation/humanize'
-import { CaptchaFailure, type CaptchaProvider } from '../integrations/captcha/provider'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
@@ -55,7 +54,6 @@ export interface WindowRunnerDeps {
   driver: BrowserDriver
   tasks: Map<string, { meta: TaskMeta; run(ctx: TaskContext): Promise<void> }>
   wallets: WalletRegistry
-  captcha: CaptchaProvider | null
   logger: Logger
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
@@ -308,14 +306,9 @@ export class WindowRunner {
           logger,
           artifactsDir: artifacts,
           walletPasswords: this.deps.walletPasswords,
-          captcha: this.deps.captcha ?? undefined,
           wallets: this.deps.wallets,
           walletSession,
           accountRow,
-          // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
-          onCaptchaLog: (platform, kind, ok, costPoints) => {
-            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, platform, kind, costPoints, ok), undefined)
-          },
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
         const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
@@ -325,9 +318,8 @@ export class WindowRunner {
         logger.info({ profile: profile.name, task: taskKey }, '签到成功')
         return row
       } catch (e) {
-        const isCaptcha = e instanceof CaptchaFailure
-        const status = nextStateAfterFailure(attempt, retryMax + 1, isCaptcha ? 'captcha' : 'error')
-        // 失败截图留档（含验证码失败现场），供面板"查看"排障
+        const status = nextStateAfterFailure(attempt, retryMax + 1, 'error')
+        // 失败截图留档，供面板"查看"排障
         const shot = await page.screenshot({ path: join(artifacts, `${date}-attempt${attempt}.png`) }).then(() => join(artifacts, `${date}-attempt${attempt}.png`)).catch(() => null)
         const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, status, { error: (e as Error).message, screenshot: shot, finishedAt: localWallNow() }), null)
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')

@@ -483,10 +483,6 @@ export interface paths {
                                     /** @description 重试间隔（秒） */
                                     backoffSec?: number;
                                 } | null;
-                                captcha?: {
-                                    /** @description 是否自动打码 */
-                                    auto?: boolean;
-                                } | null;
                                 concurrency?: number;
                                 group?: {
                                     /** @description 分组 key（全局唯一） */
@@ -1284,7 +1280,6 @@ export interface paths {
                                     inFlight?: boolean;
                                 }[];
                                 running?: number;
-                                captchaToday?: { count?: number; totalCost?: number; };
                                 taskNames?: { [key: string]: string; };
                             };
                         };
@@ -1348,55 +1343,6 @@ export interface paths {
             };
         };
         put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never;
-    };
-    "/api/captcha/balance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 打码余额（未配置 clientKey 或查询失败时 configured=false） */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 余额信息 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @example 0 */
-                            code?: number;
-                            /** @example ok */
-                            message?: string;
-                            data?: {
-                                configured?: boolean;
-                                points?: number;
-                                /** @description 1000 点 = ¥1 */
-                                yuan?: number;
-                                /** @description 打码平台标识（如 yescaptcha） */
-                                platform?: string;
-                            };
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
     };
     "/api/bitbrowser/test": {
         parameters: {

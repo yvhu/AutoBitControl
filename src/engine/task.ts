@@ -32,8 +32,6 @@ export interface TaskMeta {
   timeoutSec?: number
   /** 失败重试：max 额外重试次数、backoffSec 重试间隔（秒） */
   retry?: { max: number; backoffSec: number }
-  /** 验证码自动处理开关：auto 为 true 时调用 solveCaptcha 实际打码（费用上限由全局 captcha.maxCostPerTask 控制） */
-  captcha?: { auto?: boolean }
   /** 任务级并发：同一时间最多几个窗口并行跑该任务；缺省 DEFAULT_TASK_CONCURRENCY（4）；批量触发时滚动分批跑完 */
   concurrency?: number
   /** 声明任务依赖「上传前自动文件随机分配」：计划配置 fileAssign 时 fire 先执行一次分配，失败则本任务跳过 */

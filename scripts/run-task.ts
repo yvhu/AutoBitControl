@@ -8,7 +8,6 @@ import { createLogger } from '../src/infrastructure/logger'
 import { AppDb } from '../src/infrastructure/db'
 import { DataSource } from '../src/infrastructure/datasource'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
-import { createCaptchaProvider } from '../src/integrations/captcha'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
 import { PetraAdapter } from '../src/automation/wallet/petra'
@@ -50,7 +49,6 @@ async function main(): Promise<void> {
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
-  const captcha = createCaptchaProvider(cfg.captcha)
   let runner!: WindowRunner
   // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后 scheduleRetry 重跑）沿用同一批次
   let lastBatchId: number | null = null
@@ -85,7 +83,7 @@ async function main(): Promise<void> {
     }
   }
   runner = new WindowRunner({
-    cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, captcha, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords,
+    cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords,
     // 窗口复用：面板已打开的窗口直接接管（不复用则正常开新窗并在会话结束后关闭）
     reuseOpen: () => Promise.resolve(reuse),
     // 数据源行解析：与 app.ts 同逻辑（有窗口列按名匹配，无窗口列按窗口列表顺序取行）

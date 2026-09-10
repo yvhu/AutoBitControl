@@ -2,7 +2,7 @@ import { faker } from '@faker-js/faker'
 import { SiteTask, TaskContext, type TaskMeta } from './base'
 
 // 测试网水龙头领水参考实现：
-// 打开页面 → 状态判断（已领过/可领/维护中）→ 数据源邮箱（faker 兜底）→ 验证码 → 领取 → 断言成功
+// 打开页面 → 状态判断（已领过/可领/维护中）→ 数据源邮箱（faker 兜底）→ 领取 → 断言成功
 export class FaucetExampleTask extends SiteTask {
   meta: TaskMeta = {
     key: 'faucet-example',
@@ -18,7 +18,6 @@ export class FaucetExampleTask extends SiteTask {
     wallet: 'metamask',
     timeoutSec: 240,
     retry: { max: 1, backoffSec: 300 },
-    captcha: { auto: true },
     concurrency: 4,
   }
 
@@ -32,9 +31,6 @@ export class FaucetExampleTask extends SiteTask {
     const email = ctx.accountRow?.['邮箱'] || faker.internet.email()
     // 拟人输入（逐键延迟 + 少量错键回删），选择器换成站点真实输入框
     await ctx.typeInto('input[name="email"]', email)
-    // 显式处理验证码：solveCaptcha 在调用的位置检测并打码，
-    // 适用于"点击领取时才出现验证码"的站点
-    await ctx.solveCaptcha()
     // 点击领取并断言成功文案（出现余额变化或成功提示）
     await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
     // 成功截图留档（自动存档到 data/screenshots/<日期>/<窗口>/<任务>/）

@@ -1,5 +1,5 @@
 /**
- * 持久层（infrastructure）：本地 SQLite 数据访问（profiles 窗口 / runs 运行记录 / captcha_logs 打码日志）
+ * 持久层（infrastructure）：本地 SQLite 数据访问（profiles 窗口 / runs 运行记录）
  * 依赖方向：仅依赖 @libsql/client，被 engine/server 层依赖；RunStatus 类型被全局引用
  * 设计思路：数据层走本地文件（libsql 本地引擎，file: URL；file::memory: 供测试使用）；
  *           UNIQUE(profile_id, task_key, date) 保证每窗口每天每任务一行；
@@ -158,16 +158,6 @@ const SCHEMA = [
     created_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at)`,
-  `CREATE TABLE IF NOT EXISTS captcha_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_id INTEGER,
-    task_key TEXT,
-    platform TEXT NOT NULL DEFAULT 'yescaptcha',
-    kind TEXT NOT NULL,
-    cost REAL NOT NULL DEFAULT 0,
-    ok INTEGER NOT NULL,
-    created_at TEXT NOT NULL
-  )`,
   `CREATE TABLE IF NOT EXISTS task_states (
     task_key TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 1
@@ -280,11 +270,6 @@ export class AppDb {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
-    // 老库补列：captcha_logs 的 platform 列（多平台记账）后加；缺则补，幂等
-    const clInfo = await this.client.execute(`PRAGMA table_info(captcha_logs)`)
-    if (!clInfo.rows.some((r) => String(r.name) === 'platform')) {
-      await this.client.execute(`ALTER TABLE captcha_logs ADD COLUMN platform TEXT NOT NULL DEFAULT 'yescaptcha'`)
-    }
   }
 
   close(): void {
@@ -520,18 +505,6 @@ export class AppDb {
     return Number(rows[0]?.c ?? 0)
   }
 
-  /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；platform 区分打码平台；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
-  async logCaptcha(profileId: number | null, taskKey: string | null, platform: string, kind: string, cost: number, ok: boolean): Promise<void> {
-    const localWall = localWallNow()
-    await this.exec('INSERT INTO captcha_logs (profile_id, task_key, platform, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [profileId, taskKey, platform, kind, cost, ok ? 1 : 0, localWall])
-  }
-
-  /** 某天的打码统计：次数与总费用（点）；created_at 为本地墙钟时间，直接按日期前缀过滤（与 todayStr 口径一致） */
-  async captchaStats(date: string): Promise<{ count: number; totalCost: number }> {
-    const rows = await this.exec(`SELECT COUNT(*) AS count, COALESCE(SUM(cost), 0) AS total FROM captcha_logs WHERE date(created_at) = ?`, [date])
-    return { count: (rows[0]?.count as number | undefined) ?? 0, totalCost: (rows[0]?.total as number | undefined) ?? 0 }
-  }
-
   /** 读窗口打开状态登记（无登记返回 null）；是否真实存活由调用方经比特浏览器 /browser/pids 实测 */
   async getOpenWindow(bitbrowserId: string): Promise<{ http: string } | null> {
     const rows = await this.exec('SELECT http FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
@@ -554,18 +527,17 @@ export class AppDb {
 
   /**
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
-   * batches/captcha_logs 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
+   * batches 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
    * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数按 0 处理：仅清理今天之前的数据）
    * @returns 各表删除行数
    */
-  async cleanupOld(retainDays: number): Promise<{ runs: number; batches: number; captcha: number }> {
+  async cleanupOld(retainDays: number): Promise<{ runs: number; batches: number }> {
     const safeDays = Math.max(0, retainDays)
     const now = new Date()
     const cutoff = todayStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - safeDays))
     const r1 = await this.client.execute({ sql: 'DELETE FROM runs WHERE date < ?', args: [cutoff] })
     const r2 = await this.client.execute({ sql: 'DELETE FROM batches WHERE date(created_at) < date(?)', args: [cutoff] })
-    const r3 = await this.client.execute({ sql: 'DELETE FROM captcha_logs WHERE date(created_at) < date(?)', args: [cutoff] })
-    return { runs: Number(r1.rowsAffected), batches: Number(r2.rowsAffected), captcha: Number(r3.rowsAffected) }
+    return { runs: Number(r1.rowsAffected), batches: Number(r2.rowsAffected) }
   }
 }

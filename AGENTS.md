@@ -1,6 +1,6 @@
 # AutoBitControl — AI 协作者指南
 
-Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化操作 + yescaptcha 自动打码。Node 单进程 + Vite React 面板。所有注释/文档/commit message 用中文。
+Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化操作。Node 单进程 + Vite React 面板。所有注释/文档/commit message 用中文。
 
 ## 常用命令
 
@@ -23,7 +23,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 - `config/config.json` — 通用参数（已提交）
   - `execution.maxConcurrentWindows`：全局开窗上限（缺省 4，与任务级 concurrency 双闸门取更严者）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
-- `config/.env` — 密钥与端口：`CAPTCHA_CLIENT_KEY`、`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
+- `config/.env` — 密钥与端口：`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
 定时任务时区在 `scheduler.timezone`（默认 Asia/Shanghai）。
 
@@ -38,8 +38,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ```
 
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
-- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、captcha/（打码平台抽象：provider 接口 + yescaptcha 适配器 + 工厂）
-- `automation/`：humanize.ts（拟人操作）、captcha/（自研人机验证：detect/token-solve/grid/turnstile/question-map）、wallet/（types 注册表 + metamask/petra 适配器）
+- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）
+- `automation/`：humanize.ts（拟人操作）、captcha/turnstile.ts（自研 Cloudflare 方框拟人点击）、wallet/（types 注册表 + metamask/petra 适配器）
 - `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
@@ -51,11 +51,11 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/captcha/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
 
 ## 数据层
 
-本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`captcha_logs`、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（tests 与 db 均用注入隔离，不连真库）。
+本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
 
 ## 前端与 API 变更
 
@@ -67,10 +67,10 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 - `docs/API-GUIDE.md` 是面板「文档」页渲染的**唯一用户手册**，以下改动必须同步它：
   - 新增/修改 TaskMeta 字段或 TaskContext 方法 → 更新第 2/3 章对应小节
-  - 新增/修改配置段或配置键 → 更新 9.1 配置表（`scheduler`、`clash` 段曾因此漏同步）
-  - 新增/修改后端 API → 更新 9.3 REST 接口总表（@swagger 注解也要同步写）
-  - 新增/修改面板页面或功能 → 更新 9.2 面板使用（页面数量、新页说明）及相应章节
-  - 新增工具（`src/tools/`）→ 更新第 12 章工具中心
+  - 新增/修改配置段或配置键 → 更新 8.1 配置表（`scheduler`、`clash` 段曾因此漏同步）
+  - 新增/修改后端 API → 更新 8.3 REST 接口总表（@swagger 注解也要同步写）
+  - 新增/修改面板页面或功能 → 更新 8.2 面板使用（页面数量、新页说明）及相应章节
+  - 新增工具（`src/tools/`）→ 更新第 11 章工具中心
 - 真机踩坑经验 → 追加 `docs/TASK-DEVELOPMENT-LESSONS.md`
 - 设计文档仍走 `docs/superpowers/specs/`，计划走 `docs/superpowers/plans/`；但它们是**内部文档**，不能替代上述用户文档
 - 文档改动与代码同批提交，commit 用 `docs:` 前缀（中文描述）

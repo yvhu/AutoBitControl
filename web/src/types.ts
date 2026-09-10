@@ -29,7 +29,7 @@ export type BatchDetailData = EnvelopeData<'/api/batches/{id}'>
 
 export type RunRow = EnvelopeData<'/api/batches/{id}'>['runs'][number]
 
-// 任务 meta 视图：与 /api/tasks envelope data 一致（retry/captcha 均为对象或 null，见 server 注解）
+// 任务 meta 视图：与 /api/tasks envelope data 一致（retry 为对象或 null，见 server 注解）
 export type TaskMetaView = EnvelopeData<'/api/tasks'>[number]
 
 // 定时计划视图：与 /api/schedules envelope data 一致（config 已解析为对象）

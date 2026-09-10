@@ -1,7 +1,7 @@
 /**
  * 任务上下文（engine 层）：任务编写者唯一接触的运行环境接口
  * 依赖方向：依赖 automation/integrations/infrastructure，被 tasks 层依赖
- * 设计思路：把页面/拟人/钱包/验证码/截图封装成语义化方法，
+ * 设计思路：把页面/拟人/钱包/截图封装成语义化方法，
  * 任务代码不直接碰 patchright 细节（选择器查找等见 docs/API-GUIDE.md）
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -12,13 +12,10 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
 import { Humanizer } from '../automation/humanize'
-import type { CaptchaProvider, CaptchaLogFn } from '../integrations/captcha/provider'
 import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
 import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
-import { solveRecaptchaGrid as runRecaptchaGrid } from '../automation/captcha/grid'
-import { autoSolve as runAutoSolve } from '../automation/captcha/token-solve'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
@@ -34,9 +31,7 @@ export interface TaskContextDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，来自配置 wallet.passwords 与环境变量 WALLET_PASSWORDS；同类型钱包共用同一密码） */
   walletPasswords: Record<string, string>
-  captcha?: CaptchaProvider
   wallets?: WalletRegistry
-  onCaptchaLog?: CaptchaLogFn
   /** 当前窗口在数据源中的行（列名 -> 值）；无映射为 null（任务可用 faker 兜底） */
   accountRow?: Record<string, string> | null
   /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 ensureWalletReady 跳过） */
@@ -165,23 +160,6 @@ export class TaskContext {
   /** 按键（单键如 'Enter'/'Escape'/'Tab'，或组合键如 'Control+A'/'Shift+Tab'，用加号连接；纯键盘操作，往输入框打字请用 typeInto） */
   async pressKey(key: string): Promise<void> {
     await this.page.keyboard.press(key)
-  }
-
-  /**
-   * 在当前页面检测并处理验证码（调用处即检测点；内部走打码平台适配层 CaptchaProvider）
-   * @returns 'none' 未注入服务/任务关闭自动处理/未检测到；'solved' 解题并回填成功；'failed' 已解题但回填目标缺失
-   * @throws CaptchaFailure 余额不足/解题失败（任务进入 captcha_failed 终态不重试）
-   */
-  async solveCaptcha(): Promise<'none' | 'solved' | 'failed'> {
-    if (!this.deps.captcha) return 'none'
-    const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
-    return runAutoSolve(this.page, this.deps.captcha, {
-      enabled: taskCfg.auto ?? true,
-      maxCostPerTask: this.deps.cfg.captcha.maxCostPerTask,
-      onLog: (platform, kind, ok, costPoints) => {
-        this.deps.onCaptchaLog?.(platform, kind, ok, costPoints)
-      },
-    })
   }
 
   /** 截图存到产物目录，返回文件绝对路径（面板按路径取图） */
@@ -418,7 +396,7 @@ export class TaskContext {
     return false
   }
 
-  /** Turnstile/九宫格模块日志包装：注入窗口名（模块消息为通用措辞）；兼容单参字符串与对象+消息两种调用形态 */
+  /** Turnstile 模块日志包装：注入窗口名（模块消息为通用措辞）；兼容单参字符串与对象+消息两种调用形态 */
   private turnstileLogger(): Pick<Logger, 'info' | 'warn'> {
     return {
       info: (...args: unknown[]) => {
@@ -449,30 +427,6 @@ export class TaskContext {
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
     return runTurnstileAutoClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, budgetMs)
-  }
-
-  /**
-   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 官方整图分类 → 点选 → 验证，无限递归直至 aria-checked=true
-   * （与 solveCaptcha 口径统一：读 meta.captcha.auto；未注入打码服务或 auto=false 返回 'none'）
-   * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点，避免误点无效果的复选框）
-   * @returns 'none' 无服务/自动处理关闭/无锚点 frame；'solved' 通过；'failed' 仅「挑战无法恢复」路径
-   * @throws 挑战收回且重点锚点多次无法恢复等结构性错误（普通 Error，任务进入重试换新窗口）；
-   *   余额不足/平台分类异常（CaptchaFailure，任务进入 captcha_failed 终态不重试）
-   */
-  async solveRecaptchaGrid(opts?: { siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
-    if (!this.deps.captcha) return 'none'
-    const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
-    if ((taskCfg.auto ?? true) === false) return 'none'
-    return runRecaptchaGrid(
-      { page: this.page, provider: this.deps.captcha, logger: this.turnstileLogger(), human: this.human },
-      {
-        siteKeyExclude: opts?.siteKeyExclude,
-        maxCostPerTask: this.deps.cfg.captcha.maxCostPerTask,
-        onLog: (platform, kind, ok, costPoints) => {
-          this.deps.onCaptchaLog?.(platform, kind, ok, costPoints)
-        },
-      },
-    )
   }
 
   /**

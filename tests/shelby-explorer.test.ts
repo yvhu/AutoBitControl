@@ -256,7 +256,6 @@ describe('ShelbyExplorerTask 元信息', () => {
     expect(t.meta.concurrency).toBe(4)
     expect(t.meta.sourceUrl).toBe('https://cryptorank.io/zh/drophunting/shelby-activity1120')
     expect(t.meta.lastUpdated).toBe('2026-09-07')
-    expect(t.meta.captcha).toEqual({ auto: true })
   })
 })
 
@@ -292,7 +291,7 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
         task,
         human: new Humanizer(page),
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-        cfg: { captcha: { maxCostPerTask: 1500 } } as never,
+        cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
         artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
         walletPasswords: { petra: 'pw' },
@@ -323,7 +322,7 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
         task,
         human: new Humanizer(page),
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-        cfg: { captcha: { maxCostPerTask: 1500 } } as never,
+        cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
         artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
         walletPasswords: { petra: 'pw' },

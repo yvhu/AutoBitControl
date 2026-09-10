@@ -1,7 +1,7 @@
 /**
  * Arc 领水任务（faucet-arc）单测与集成测试：
- * - 单测：网络/币种默认值助手与确保函数、竞速等待的纯逻辑分支（注入假 page/human，不连真浏览器）
- * - 集成：真实 chromium + 本地 fixture，验证 run() 全链路（无验证码 / v2 一键通过 / 九宫格 challenge 三模式）
+ * - 单测：网络/币种默认值助手与确保函数、成功文案等待的纯逻辑分支（注入假 page/human，不连真浏览器）
+ * - 集成：真实 chromium + 本地 fixture，验证 run() 全链路（plain 模式一次提交成功）
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'patchright'
@@ -18,11 +18,8 @@ import {
   ensureUsdc,
   ensureSubmitEnabled,
   waitForOutcome,
-  detectV2Challenge,
-  V3_SITEKEY,
   ArcFaucetTask,
   SUCCESS_TEXT,
-  CAPTCHA_V2_TEXT,
   NETWORK_DISPLAY_SELECTOR,
   NETWORK_BUTTON_SELECTOR,
   NETWORK_OPTION_SELECTOR,
@@ -33,13 +30,6 @@ import {
 } from '../src/tasks/arc-faucet'
 import { TaskContext } from '../src/tasks/base'
 import { Humanizer } from '../src/automation/humanize'
-
-// challenge 模式集成测试会跑真实九宫格求解主循环：诊断落盘与目录清理（pruneDebugDir）都 mock 掉，
-// 防止测试把截图写进 data/screenshots/grid-debug，也防止清理逻辑误删真机诊断文件（readFileSync 保留原实现读 fixture）
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>()
-  return { ...actual, mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn() }
-})
 
 /** 每个选择器的假元素（count 恒 1 的通用形态；需要可变行为的测试直接改 state 或替换字段） */
 interface FakeElem {
@@ -65,8 +55,6 @@ interface FakeState {
   displayCount?: number
   /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
   usdcRadioCount?: number
-  /** v2 挑战是否已渲染（detectV2Challenge 经 page.frames 假实现读取；缺省 false） */
-  v2Challenge?: boolean
   /** 提交按钮 isEnabled 读取钩子（证明 ensureSubmitEnabled 被调） */
   onSubmitEnabledCheck?: () => void
 }
@@ -133,12 +121,6 @@ function makeCtx(state: FakeState) {
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     getByText: (t: string) => ({ count: async () => (state.texts[t] ? 1 : 0) }),
-    // findAnchorFrame/findChallengeFrame 的 frames 假实现：v2Challenge=true 时返回一个 v2 锚点 frame
-    // （URL 含 recaptcha/enterprise/anchor 且 sitekey ≠ 常驻 v3），否则空数组
-    frames: () =>
-      state.v2Challenge
-        ? [{ url: () => 'https://www.google.com/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve' }]
-        : [],
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -154,7 +136,7 @@ function makeCtx(state: FakeState) {
   return { ctx, clicks, log, addressFill, page }
 }
 
-const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, v2Challenge: false, addressValue: '0xabc' })
+const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, addressValue: '0xabc' })
 
 describe('currentNetwork 当前网络读取', () => {
   it('返回下拉显示值', async () => {
@@ -261,50 +243,16 @@ describe('ensureSubmitEnabled 提交按钮可用等待', () => {
   })
 })
 
-describe('waitForOutcome 竞速等待', () => {
-  it('成功文案先出现 → success', async () => {
+describe('waitForOutcome 成功文案等待', () => {
+  it('成功文案出现 → true', async () => {
     const state = { ...baseState(), texts: { [SUCCESS_TEXT]: true } }
     const { ctx } = makeCtx(state)
-    expect(await waitForOutcome(ctx, 300)).toBe('success')
+    expect(await waitForOutcome(ctx, 300)).toBe(true)
   })
 
-  it('v2 挑战文案先出现 → captcha', async () => {
-    const state = { ...baseState(), texts: { [CAPTCHA_V2_TEXT]: true } }
-    const { ctx } = makeCtx(state)
-    expect(await waitForOutcome(ctx, 300)).toBe('captcha')
-  })
-
-  it('allowChallenge=false：残留挑战文案不算新一轮挑战 → null（超时）', async () => {
-    const state = { ...baseState(), texts: { [CAPTCHA_V2_TEXT]: true } }
-    const { ctx } = makeCtx(state)
-    expect(await waitForOutcome(ctx, 300, false)).toBeNull()
-  })
-
-  it('两文案都出现 → success 优先', async () => {
-    const state = { ...baseState(), texts: { [SUCCESS_TEXT]: true, [CAPTCHA_V2_TEXT]: true } }
-    const { ctx } = makeCtx(state)
-    expect(await waitForOutcome(ctx, 300)).toBe('success')
-  })
-
-  it('都未出现 → null（超时）', async () => {
+  it('未出现 → false（超时）', async () => {
     const { ctx } = makeCtx(baseState())
-    expect(await waitForOutcome(ctx, 300)).toBeNull()
-  })
-})
-
-describe('detectV2Challenge 挑战检测', () => {
-  it('无挑战 → false', async () => {
-    const { ctx } = makeCtx({ ...baseState(), v2Challenge: false })
-    expect(await detectV2Challenge(ctx)).toBe(false)
-  })
-
-  it('存在 v2 anchor（k≠v3 sitekey）→ true', async () => {
-    const { ctx } = makeCtx({ ...baseState(), v2Challenge: true })
-    expect(await detectV2Challenge(ctx)).toBe(true)
-  })
-
-  it('常驻 v3 sitekey 契约', () => {
-    expect(V3_SITEKEY).toBe('6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2')
+    expect(await waitForOutcome(ctx, 300)).toBe(false)
   })
 })
 
@@ -320,7 +268,6 @@ describe('ArcFaucetTask 元信息', () => {
     expect(t.meta.wallet).toBeUndefined()
     expect(t.meta.timeoutSec).toBe(420)
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
-    expect(t.meta.captcha).toEqual({ auto: true })
     expect(t.meta.concurrency).toBe(3)
   })
 })
@@ -420,45 +367,9 @@ describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
   let server: Server
   let baseUrl: string
 
-  /** anchor iframe fixture：一键通过模式（?onepass=1）点复选框即变绿；挑战模式等 bframe 验证完成发来 grid-solved 才变绿；两种模式都回传 anchor-solved 给父页 */
-  const ANCHOR_HTML = `<!doctype html><html><body><div id="recaptcha-anchor" role="checkbox" aria-checked="false" style="width:28px;height:28px"></div><script>
-const anchor = document.getElementById('recaptcha-anchor')
-const onepass = new URLSearchParams(location.search).get('onepass') === '1'
-const solved = function () { anchor.setAttribute('aria-checked', 'true'); window.parent.postMessage('anchor-solved', '*') }
-anchor.addEventListener('click', function () { if (onepass) solved() })
-window.addEventListener('message', function (e) { if (e.data === 'grid-solved') solved() })
-</script></body></html>`
-
-  /** bframe fixture：九宫格挑战页（提示语「停车计时器」→ /m/015qbp；9 格可点、点格加 selected class；验证按钮通知 anchor 完成；
-   *   第一格含官方 DEMO 形态的整图 img div.rc-image-tile-wrapper > img（1x1 PNG），供 grid 模块 readGridImage 读取） */
-  const BFRAME_HTML = `<!doctype html><html><body>
-<div class="rc-imageselect-desc-wrapper"><strong>停车计时器</strong></div>
-<div id="rc-imageselect-target"><table>
-<tr><td style="width:96px;height:96px"><div class="rc-image-tile-wrapper"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="></div></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
-<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
-<tr><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td><td style="width:96px;height:96px"></td></tr>
-</table></div>
-<button id="recaptcha-verify-button">验证</button>
-<script>
-document.querySelectorAll('#rc-imageselect-target table td').forEach(function (td) { td.addEventListener('click', function () { td.classList.add('selected') }) })
-document.getElementById('recaptcha-verify-button').addEventListener('click', function () {
-  const anchorFrame = window.parent.document.querySelector('iframe[src*="anchor"]')
-  if (anchorFrame) anchorFrame.contentWindow.postMessage('grid-solved', '*')
-})
-</script></body></html>`
-
   beforeAll(async () => {
     server = createServer((req, res) => {
-      const path = (req.url ?? '/').split('?')[0]
       res.setHeader('content-type', 'text/html; charset=utf-8')
-      if (path === '/recaptcha/enterprise/anchor') {
-        res.end(ANCHOR_HTML)
-        return
-      }
-      if (path === '/recaptcha/enterprise/bframe') {
-        res.end(BFRAME_HTML)
-        return
-      }
       res.end(readFileSync(join(__dirname, 'fixtures', 'arc-faucet.html'), 'utf-8'))
     })
     await new Promise<void>((r) => server.listen(0, r))
@@ -469,74 +380,30 @@ document.getElementById('recaptcha-verify-button').addEventListener('click', fun
     await new Promise<void>((r) => server.close(() => r()))
   })
 
-  /** 构造真实浏览器页面的 TaskContext；假打码服务记录调用（CaptchaProvider 形态：classifyGrid 即九宫格分类） */
-  function makeBrowserCtx(page: Page, task: ArcFaucetTask, captcha: { classifyGrid?: ReturnType<typeof vi.fn> } = {}) {
+  /** 构造真实浏览器页面的 TaskContext */
+  function makeBrowserCtx(page: Page, task: ArcFaucetTask) {
     return new TaskContext({
       page,
       task,
       human: new Humanizer(page),
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-      cfg: { captcha: { maxCostPerTask: 1500 } } as never,
+      cfg: {} as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
       artifactsDir: join(tmpdir(), 'arc-faucet-test-artifacts'),
       walletPasswords: {},
       accountRow: { metamask钱包地址: '0x835e' },
-      captcha: {
-        platform: 'test',
-        solveToken: vi.fn(),
-        classifyGrid: captcha.classifyGrid ?? vi.fn().mockResolvedValue({ type: 'multi', objects: [] }),
-        getBalance: vi.fn().mockResolvedValue(100000),
-      } as never,
     })
   }
 
-  it('plain 模式：无验证码，一次提交成功且不触发九宫格', async () => {
+  it('plain 模式：无验证码，一次提交成功', async () => {
     const browser = await chromium.launch({ headless: true })
     try {
       const page = await browser.newPage()
       const task = new ArcFaucetTask()
       task.meta.url = baseUrl + '/?mode=plain'
-      const classifyGrid = vi.fn()
-      const ctx = makeBrowserCtx(page, task, { classifyGrid })
+      const ctx = makeBrowserCtx(page, task)
       await task.run(ctx)
       expect(await page.locator('input[name="address"]').inputValue()).toBe('0x835e')
-      expect(await page.getByText('on its way').count()).toBe(1)
-      expect(classifyGrid).not.toHaveBeenCalled()
-    } finally {
-      await browser.close()
-    }
-  }, 90000)
-
-  it('v2 模式：首次提交触发挑战 → 一键通过（未出图）→ 再提交成功', async () => {
-    const browser = await chromium.launch({ headless: true })
-    try {
-      const page = await browser.newPage()
-      const task = new ArcFaucetTask()
-      task.meta.url = baseUrl + '/?mode=v2'
-      const classifyGrid = vi.fn()
-      const ctx = makeBrowserCtx(page, task, { classifyGrid })
-      await task.run(ctx)
-      expect(classifyGrid).not.toHaveBeenCalled()
-      expect(await detectV2Challenge(ctx)).toBe(true)
-      expect(await page.getByText('on its way').count()).toBe(1)
-    } finally {
-      await browser.close()
-    }
-  }, 90000)
-
-  it('challenge 模式：v2 挑战 → 九宫格求解（假分类）→ 按钮恢复 → 再提交成功', async () => {
-    const browser = await chromium.launch({ headless: true })
-    try {
-      const page = await browser.newPage()
-      const task = new ArcFaucetTask()
-      task.meta.url = baseUrl + '/?mode=challenge'
-      const classifyGrid = vi.fn().mockResolvedValue({ type: 'multi', objects: [0, 1, 2] })
-      const ctx = makeBrowserCtx(page, task, { classifyGrid })
-      await task.run(ctx)
-      // rev3.2：主分类 + 3x3 验证前确认循环再分类一次（同结果 → 不补点）
-      expect(classifyGrid).toHaveBeenCalledTimes(2)
-      expect(classifyGrid.mock.calls[0][1]).toBe('/m/015qbp')
-      expect(await detectV2Challenge(ctx)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {
       await browser.close()

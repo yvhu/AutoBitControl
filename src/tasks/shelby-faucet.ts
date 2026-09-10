@@ -148,7 +148,6 @@ export class ShelbyFaucetTask extends SiteTask {
     timeoutSec: 300,
     // 短退避：服务端计数幂等，重跑补领至上限即收敛
     retry: { max: 2, backoffSec: 120 },
-    captcha: { auto: true },
     concurrency: 6,
   }
 
