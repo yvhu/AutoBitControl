@@ -65,7 +65,11 @@
 ## 9. reCAPTCHA 九宫格（rev3 教训，2026-09-10）
 
 - 同窗口死磕验证必挂：同一窗口连续多轮验证失败后即使选对 Google 也不给过（同会话风控）；maxRounds 上限（默认 3）后必须交任务重试换新窗口
-- 点击未注册根因是坐标漂移：页面坐标拟人点击（frame 偏移计算）在真机窗口 92 连续 5 轮未注册；官方 DEMO 用元素原生点击（selenium click 等价）为主，坐标点击只做未注册兜底
+- 点击未注册根因是坐标漂移：页面坐标拟人点击（frame 偏移计算）在真机窗口 92 连续 5 轮未注册；官方 DEMO 用元素原生点击（selenium click 等价）为主，坐标点击只做未注册兜底（rev3 真机批量 10 窗口 grid-click-diag 全部 hit=true 验证通过）
 - 网格图必须用原生整图：div.rc-image-tile-wrapper > img 的 src + naturalWidth（300/450 定尺寸）；容器元素截图经 CSS 缩放裁剪后分类乱跳/空数组（窗口 93/100）
 - 提示语映射未覆盖直接抛错快速失败（扩充映射表优先于猜测）
 - frame 失效防护：Google 换图后旧 Frame 引用可能失效，每轮必须重取 challenge frame
+- **九宫格解决后重提交有残留文案误判**（真机窗口 73/80）：widget 变绿后站点残留 "verify that you are not a bot" 文案与 anchor iframe 仍在 DOM——重提交的竞速等待若继续匹配挑战文案/iframe 会立即误判为新一轮挑战而抛错（尽管验证已通过）。重提交必须只等成功文案（arc 任务 `submitAndWait(ctx, false)` 关闭挑战检测）
+- **容器截图 fallback 两个硬要求**（真机窗口 83/79）：① 必须按格子数定尺寸（4x4→450x450、3x3→300x300，官方平台按尺寸判图型），恒 300 会分类漏格子（红绿灯只返 2 格→必 select-more）；② 截图前等 1.5-2.5s 动画稳定，动画中截图被平台拒 `ERROR_GARBAGE_SAMPLE`
+- **图片质量拒收跳轮不终态**：`ERROR_GARBAGE_SAMPLE`/`ERROR_ILLEGAL_IMAGE`/`ERROR_PARSE_IMAGE_FAIL` 是平台对单张图的拒收，跳过本轮重截即可，不是 captcha_failed 终态（余额/key 错误才是终态）
+- **rev3 真机批量结论（2026-09-10，窗口 73-82）**：10/10 全部成功；多个窗口（73/75/79 等）实测走通「v2 挑战 → 九宫格自动选图（原生点击全命中）→ aria-checked 变绿 → 按钮恢复 → 重提交 → 成功文案」全链路；首发失败窗口靠 retry 换新会话恢复（地址校验/网络瞬时失败均自愈）
