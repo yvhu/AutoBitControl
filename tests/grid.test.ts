@@ -25,6 +25,10 @@ interface FakeFrameState {
   anchorChecked: boolean
   anchorClicked: boolean
   prompt: string
+  /** 提示语前 N 次读取返回空（模拟 bframe DOM 晚于 frame 附着渲染）；默认 0 */
+  promptEmptyReads: number
+  /** 提示语已被读取次数（轮询断言用） */
+  promptReads: number
   tiles: FakeTile[]
   verifyClicked: boolean
   /** verify 点击后是否让 anchor 变绿（模拟「选对才过」；多轮失败用例设 false） */
@@ -45,7 +49,10 @@ function makePage(state: FakeFrameState) {
   const chLocator = (sel: string) => {
     const first = () => {
       if (sel.includes('.rc-imageselect-desc-wrapper')) {
-        return { textContent: vi.fn(async () => state.prompt), count: async () => 0 }
+        return { textContent: vi.fn(async () => {
+          state.promptReads++
+          return state.promptReads > state.promptEmptyReads ? state.prompt : ''
+        }), count: async () => 0 }
       }
       if (sel === '#recaptcha-verify-button') {
         return { click: vi.fn(async () => { state.verifyClicked = true; if (state.verifySolves) state.anchorChecked = true }), count: async () => 0 }
@@ -104,7 +111,7 @@ const makeDeps = (state: FakeFrameState, classify: ReturnType<typeof vi.fn>) => 
 })
 
 const baseState = (): FakeFrameState => ({
-  anchorChecked: false, anchorClicked: false, prompt: '停车计时器',
+  anchorChecked: false, anchorClicked: false, prompt: '停车计时器', promptEmptyReads: 0, promptReads: 0,
   tiles: Array.from({ length: 9 }, () => ({ cls: '', src: 'img-0', clicks: 0 })),
   verifyClicked: false, verifySolves: true,
   wrapperImg: { src: 'data:image/png;base64,QUJD', naturalWidth: 300 },
@@ -183,6 +190,16 @@ describe('solveRecaptchaGrid 求解循环', () => {
     const state = baseState()
     state.prompt = '潜水艇'
     await expect(solveRecaptchaGrid(makeDeps(state, vi.fn()) as never)).rejects.toThrow(/未覆盖/)
+  })
+
+  it('提示语首读为空（bframe 晚渲染）：轮询后读到再分类，求解成功', async () => {
+    const state = baseState()
+    state.promptEmptyReads = 1
+    const classify = vi.fn().mockResolvedValue({ type: 'multi', objects: [0] })
+    await expect(solveRecaptchaGrid(makeDeps(state, classify) as never)).resolves.toBe('solved')
+    expect(state.promptReads).toBeGreaterThan(1)
+    expect(classify).toHaveBeenCalledTimes(1)
+    expect(classify.mock.calls[0][1]).toBe('/m/015qbp')
   })
 
   it('多轮未通过（verifySolves=false，aria-checked 恒 false）达到 maxRounds=3 返回 failed', async () => {

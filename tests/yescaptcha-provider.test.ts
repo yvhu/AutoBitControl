@@ -82,6 +82,14 @@ describe('YesCaptchaProvider.solveToken', () => {
     await expect(provider().solveToken('recaptcha_v2', 'sk', 'https://x.io')).resolves.toBe('resp-ok')
   })
 
+  it('ready 但 solution 字段缺失（格式异常）抛 CaptchaFailure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('createTask')) return new Response(JSON.stringify({ errorId: 0, taskId: 't-1' }), { status: 200 })
+      return new Response(JSON.stringify({ errorId: 0, status: 'ready', solution: {} }), { status: 200 })
+    }))
+    await expect(provider().solveToken('turnstile', 'sk', 'https://x.io')).rejects.toThrow(/解题结果格式异常/)
+  })
+
   it('两个 solveToken 串行执行（平台每账号 1 并发硬限制）', async () => {
     let inFlight = 0
     let peak = 0
@@ -98,6 +106,13 @@ describe('YesCaptchaProvider.solveToken', () => {
     const p = provider()
     await Promise.all([p.solveToken('turnstile', 'sk1', 'https://x.io'), p.solveToken('turnstile', 'sk2', 'https://x.io')])
     expect(peak).toBe(1)
+  })
+})
+
+describe('YesCaptchaProvider.getBalance', () => {
+  it('errorId!=0 抛 CaptchaFailure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ errorId: 1, errorCode: 'ERROR_KEY_DOES_NOT_EXIST' }), { status: 200 })))
+    await expect(provider().getBalance()).rejects.toThrow(/查询余额失败/)
   })
 })
 

@@ -522,7 +522,6 @@ export class AppDb {
 
   /** 记录一次打码事件（成功/失败都记，供成本统计与面板展示）；platform 区分打码平台；created_at 存本地墙钟时间字符串（与 runs.date 同口径），毫秒精度，与日期前缀过滤兼容 */
   async logCaptcha(profileId: number | null, taskKey: string | null, platform: string, kind: string, cost: number, ok: boolean): Promise<void> {
-    const now = new Date()
     const localWall = localWallNow()
     await this.exec('INSERT INTO captcha_logs (profile_id, task_key, platform, kind, cost, ok, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [profileId, taskKey, platform, kind, cost, ok ? 1 : 0, localWall])
   }

@@ -36,8 +36,9 @@ export class YesCaptchaProvider implements CaptchaProvider {
         if (resp.status === 'ready') {
           const s = resp.solution ?? {}
           // 官方：turnstile 取 solution.token；其余取 solution.gRecaptchaResponse
-          if (kind === 'turnstile') return s.token ?? ''
-          return s.gRecaptchaResponse ?? ''
+          const token = kind === 'turnstile' ? s.token : s.gRecaptchaResponse
+          if (!token) throw new CaptchaFailure(`yescaptcha 解题结果格式异常: taskId=${taskId}`)
+          return token
         }
         await new Promise((r) => setTimeout(r, this.cfg.pollIntervalMs))
       }

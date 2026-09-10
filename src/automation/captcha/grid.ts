@@ -41,6 +41,9 @@ const CONFIRM_WAIT_MS = 3000
 const GRID_COST_POINTS = 6
 /** 单格 1x1 分类点数（官方价格表：100x100 2 点数） */
 const TILE_COST_POINTS = 2
+/** 提示语轮询预算与间隔（真机教训：bframe DOM 可能晚于 frame 附着渲染，单次读取会误判未找到） */
+const PROMPT_POLL_TIMEOUT_MS = 10000
+const PROMPT_POLL_MS = 500
 /** grid-debug 诊断目录文件数上限 */
 const GRID_DEBUG_MAX_FILES = 40
 
@@ -207,6 +210,8 @@ async function readErrorHint(ch: Frame): Promise<'select-more' | 'incorrect' | n
   const probes: Array<[string, 'select-more' | 'incorrect']> = [
     ['.rc-imageselect-error-select-more', 'select-more'],
     ['.rc-imageselect-error-select-something', 'select-more'],
+    ['.rc-imageselect-error-dynamic-more', 'select-more'],
+    ['.rc-imageselect-error-dynamic-select-more', 'select-more'],
     ['.rc-imageselect-incorrect-response', 'incorrect'],
   ]
   for (const [sel, kind] of probes) {
@@ -300,7 +305,14 @@ async function clickTile(deps: GridDeps, rc: RoundCtx, idx: number): Promise<voi
 
 /** 单轮：读提示语 → 官方整图分类 → 逐格点选 → 等动画收尾 → 点验证 → 返回是否通过 */
 async function solveOneRound(deps: GridDeps, rc: RoundCtx): Promise<boolean> {
-  const prompt = ((await rc.ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
+  // 真机教训：bframe DOM 可能晚于 frame 附着渲染，提示语短轮询读取（frame 失效由 catch 兜底继续轮询）
+  const promptDeadline = Date.now() + PROMPT_POLL_TIMEOUT_MS
+  let prompt = ''
+  while (Date.now() < promptDeadline) {
+    prompt = ((await rc.ch.locator(PROMPT_SELECTOR).first().textContent().catch(() => '')) ?? '').trim()
+    if (prompt) break
+    await deps.page.waitForTimeout(PROMPT_POLL_MS)
+  }
   if (!prompt) throw new Error('九宫格提示文字未找到')
   const qid = mapQuestionId(prompt)
   if (!qid) throw new Error(`未覆盖的九宫格提示语: ${prompt}`)
@@ -385,12 +397,8 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     }
     challenge = ch
     const rc: RoundCtx = { ch, qid: '', prompt: '', classify }
-    try {
-      await solveOneRound(deps, rc)
-    } catch (e) {
-      // 提示语未覆盖/整图缺失等结构性错误：重试大概率同错，直接抛出由任务层决定
-      throw e
-    }
+    // 提示语未覆盖/整图缺失等结构性错误：重试大概率同错，直接抛出由任务层决定
+    await solveOneRound(deps, rc)
     if (await anchorChecked()) return 'solved'
     deps.logger.warn({ round: round + 1 }, '九宫格本轮未通过，继续下一轮')
     challenge = findChallengeFrame(deps.page, opts.siteKeyExclude)

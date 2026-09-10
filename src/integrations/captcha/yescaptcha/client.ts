@@ -49,6 +49,7 @@ export class YesCaptchaApiClient {
   /** 查询账户余额（官方 229767：body={clientKey}；balance 为点数 Decimal） */
   async getBalance(): Promise<number> {
     const resp = await this.call('/getBalance', { clientKey: this.cfg.clientKey })
+    if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询余额失败: ${resp.errorCode ?? resp.errorId}`)
     return resp.balance ?? 0
   }
 }
