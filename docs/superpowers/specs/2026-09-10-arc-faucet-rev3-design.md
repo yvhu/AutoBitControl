@@ -193,3 +193,28 @@ solveRecaptchaGrid(deps: { page; provider; logger; human }, opts: { maxRounds?; 
 - 平台 4x4 识别能力本身有限：分类准确率受平台限制，3 轮未过即换窗口，不烧点数死磕
 - blob: 型 img src 需 frame 内 fetch，实施时处理
 - 每轮分类记账（6 点/次 + 单格 2 点/次）在 maxCostPerTask（1500 点）内：3 轮 + 补确认足够
+
+## rev3.1 修订（2026-09-10 真机批量驱动，用户确认）
+
+批量 90 窗口真机验证（76+/90 成功）后，用户确认以下设计变更：
+
+### 变更 1：截图文件日期清理
+
+- `storage` 新增 `screenshotRetainDays: 90`（默认；与 dbRetainDays 同档）
+- 启动时与 DB 历史清理同批执行：删除 `data/screenshots/<日期>/` 早于截止日的目录
+- grid-debug 诊断目录 40 文件上限逻辑不动
+
+### 变更 2：九宫格求解无限递归到成功（对齐官方 DEMO）
+
+- **删除 maxRounds 概念**：`MAX_ROUNDS_DEFAULT`、`ctx.solveRecaptchaGrid()` 的 maxRounds 参数、arc 任务 `maxRounds: 3` 全部移除
+- 主循环无轮次上限，唯一正常出口 = aria-checked=true → solved
+- 失败分流（按 Google 错误提示）：
+  - 「未选全」(select-more)：先判点击过快——本轮目标格中仍有 class 不含 selected 的 → 补点 → 短等待 → 再点 verify；已点格子全部 selected（平台确实没找全）→ 点刷新换图下一轮
+  - 「选错」(incorrect) → 刷新换图下一轮
+  - 「请重试」(try-again，新增识别：全文案匹配 请重试/Please try again 等) → 刷新换图下一轮
+  - 无提示且未过 → 刷新换图下一轮
+- 换图操作：优先 `#recaptcha-reload-button`（官方换图入口，同题换一批图）；reload 无效（图未变）→ 点「跳过」（aria-label/title 中英双匹配）换题；都失败只 warn 不阻塞
+- 分类前置条件：空数组或 objects < 3 → 直接刷新换图（少选必失败，不硬点）；平台图片质量拒收 → 刷新换图
+- 未覆盖提示语 → 点「跳过」换题（不再抛错退出；reload 不换题，必须 skip）
+- 工程护栏（无限递归的终止条件）：余额不足 → CaptchaFailure 终态；任务超时 timeoutSec=420s 兜底；挑战收回且重点锚点 3 次无法恢复挑战 → 抛「九宫格挑战无法恢复」交任务重试换窗口
+- 返回值语义：`'none'`（无锚点）、`'solved'`（成功）、`'failed'` 仅剩「挑战无法恢复」路径
