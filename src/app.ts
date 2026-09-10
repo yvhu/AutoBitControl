@@ -16,7 +16,7 @@ import { recoverRetryTasks } from './engine/retry-recovery'
 import { Scheduler } from './engine/scheduler'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
-import { YesCaptchaClient, CaptchaService } from './integrations/yescaptcha'
+import { createCaptchaProvider } from './integrations/captcha'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
@@ -154,14 +154,8 @@ export async function startApp(): Promise<void> {
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
 
-  const yescaptcha = new YesCaptchaClient(
-    { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
-    cfg.captcha.taskTypes,
-  )
   // clientKey 未配置时 captcha 为 null：任务侧 solveCaptcha 直接返回 none，无 Key 也能跑
-  const captcha = cfg.captcha.clientKey
-    ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask })
-    : null
+  const captcha = createCaptchaProvider(cfg.captcha)
 
   // enqueuer 后置声明：runner 的 scheduleRetry 闭包引用它（重试到期重新入队），
   // 二者互相依赖（enqueuer 需要 runner），先声明变量再在下方赋值
@@ -256,8 +250,9 @@ export async function startApp(): Promise<void> {
     },
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败即异常路径）
     captchaBalance: async () => {
+      if (!captcha) return null
       try {
-        return { points: await yescaptcha.getBalance() }
+        return { points: await captcha.getBalance(), platform: captcha.platform }
       } catch {
         return null
       }

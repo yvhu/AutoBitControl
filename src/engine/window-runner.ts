@@ -15,7 +15,7 @@ import { AppDb, todayStr, localWallNow, type ProfileRow, type RunRow } from '../
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { Humanizer } from '../automation/humanize'
-import { CaptchaFailure, CaptchaService } from '../integrations/yescaptcha'
+import { CaptchaFailure, type CaptchaProvider } from '../integrations/captcha/provider'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
@@ -55,7 +55,7 @@ export interface WindowRunnerDeps {
   driver: BrowserDriver
   tasks: Map<string, { meta: TaskMeta; run(ctx: TaskContext): Promise<void> }>
   wallets: WalletRegistry
-  captcha: CaptchaService | null
+  captcha: CaptchaProvider | null
   logger: Logger
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
@@ -313,8 +313,8 @@ export class WindowRunner {
           walletSession,
           accountRow,
           // 打码成本回写 captcha_logs（成功/失败都记，看板统计用）；写失败仅告警不影响任务
-          onCaptchaLog: (kind, ok, costPoints) => {
-            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, 'yescaptcha', kind, costPoints, ok), undefined)
+          onCaptchaLog: (platform, kind, ok, costPoints) => {
+            void this.safeDb(() => db.logCaptcha(profile.id, taskKey, platform, kind, costPoints, ok), undefined)
           },
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)

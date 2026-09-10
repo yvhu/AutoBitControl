@@ -43,9 +43,9 @@ export default function AppLayout() {
   const balanceTag = (() => {
     if (captchaBalance.isError || !captchaBalance.data) return <Tag>状态未知</Tag>
     return captchaBalance.data.configured ? (
-      <Tag color="green">yescaptcha ¥{captchaBalance.data.yuan.toFixed(2)}</Tag>
+      <Tag color="green">{captchaBalance.data.platform || '打码平台'} ¥{captchaBalance.data.yuan.toFixed(2)}</Tag>
     ) : (
-      <Tag>yescaptcha 未配置</Tag>
+      <Tag>打码平台未配置</Tag>
     )
   })()
 

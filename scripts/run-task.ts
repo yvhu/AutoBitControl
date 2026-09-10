@@ -8,7 +8,7 @@ import { createLogger } from '../src/infrastructure/logger'
 import { AppDb } from '../src/infrastructure/db'
 import { DataSource } from '../src/infrastructure/datasource'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
-import { YesCaptchaClient, CaptchaService } from '../src/integrations/yescaptcha'
+import { createCaptchaProvider } from '../src/integrations/captcha'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
 import { PetraAdapter } from '../src/automation/wallet/petra'
@@ -50,11 +50,7 @@ async function main(): Promise<void> {
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
-  const yescaptcha = new YesCaptchaClient(
-    { apiBase: cfg.captcha.apiBase, clientKey: cfg.captcha.clientKey, solveTimeoutMs: cfg.captcha.solveTimeoutMs, pollIntervalMs: cfg.captcha.pollIntervalMs },
-    cfg.captcha.taskTypes,
-  )
-  const captcha = cfg.captcha.clientKey ? new CaptchaService(yescaptcha, { maxCostPerTask: cfg.captcha.maxCostPerTask }) : null
+  const captcha = createCaptchaProvider(cfg.captcha)
   let runner!: WindowRunner
   // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后 scheduleRetry 重跑）沿用同一批次
   let lastBatchId: number | null = null

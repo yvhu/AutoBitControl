@@ -28,18 +28,18 @@ import { ok, asyncHandler } from '../http/response'
  *                     configured: { type: boolean }
  *                     points: { type: number }
  *                     yuan: { type: number, description: '1000 点 = ¥1' }
+ *                     platform: { type: string, description: '打码平台标识（如 yescaptcha）' }
  */
 
-export function captchaRouter(deps: { captchaBalance: () => Promise<{ points: number } | null> }): Router {
+export function captchaRouter(deps: { captchaBalance: () => Promise<{ points: number; platform: string } | null> }): Router {
   const router = Router()
   router.get('/captcha/balance', asyncHandler(async (req, res) => {
     const balance = await deps.captchaBalance()
     if (balance === null) {
-      ok(res, { configured: false, points: 0, yuan: 0 })
+      ok(res, { configured: false, points: 0, yuan: 0, platform: '' })
       return
     }
-    // 点 → 元换算：1000 点 = ¥1（yescaptcha 官方定价单位）
-    ok(res, { configured: true, points: balance.points, yuan: Number((balance.points / 1000).toFixed(2)) })
+    ok(res, { configured: true, points: balance.points, yuan: Number((balance.points / 1000).toFixed(2)), platform: balance.platform })
   }))
   return router
 }

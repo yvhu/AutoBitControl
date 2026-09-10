@@ -12,12 +12,13 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
 import { Humanizer } from '../automation/humanize'
-import type { CaptchaService } from '../integrations/yescaptcha'
+import type { CaptchaProvider, CaptchaLogFn } from '../integrations/captcha/provider'
 import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
-import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/turnstile'
-import { solveRecaptchaGrid as runRecaptchaGrid } from '../automation/recaptcha-grid'
+import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
+import { solveRecaptchaGrid as runRecaptchaGrid } from '../automation/captcha/grid'
+import { autoSolve as runAutoSolve } from '../automation/captcha/token-solve'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
@@ -33,9 +34,9 @@ export interface TaskContextDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，来自配置 wallet.passwords 与环境变量 WALLET_PASSWORDS；同类型钱包共用同一密码） */
   walletPasswords: Record<string, string>
-  captcha?: CaptchaService
+  captcha?: CaptchaProvider
   wallets?: WalletRegistry
-  onCaptchaLog?: (kind: string, ok: boolean, costPoints: number) => void
+  onCaptchaLog?: CaptchaLogFn
   /** 当前窗口在数据源中的行（列名 -> 值）；无映射为 null（任务可用 faker 兜底） */
   accountRow?: Record<string, string> | null
   /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 ensureWalletReady 跳过） */
@@ -173,12 +174,11 @@ export class TaskContext {
   async solveCaptcha(): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
     const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
-    return this.deps.captcha.autoSolve(this.page, {
+    return runAutoSolve(this.page, this.deps.captcha, {
       enabled: taskCfg.auto ?? true,
-      profileId: this.deps.profile.id,
-      taskKey: this.deps.task.meta.key,
-      onLog: (kind, ok, costPoints) => {
-        this.deps.onCaptchaLog?.(kind, ok, costPoints)
+      maxCostPerTask: this.deps.cfg.captcha.maxCostPerTask,
+      onLog: (platform, kind, ok, costPoints) => {
+        this.deps.onCaptchaLog?.(platform, kind, ok, costPoints)
       },
     })
   }
@@ -451,21 +451,28 @@ export class TaskContext {
   }
 
   /**
-   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 截图网格 → yescaptcha 分类 → 按坐标点选 → 验证，
-   * 多轮循环直至 aria-checked=true（未注入打码服务返回 'none'，语义同 solveCaptcha）
+   * reCAPTCHA 九宫格模拟点击求解：点复选框 → 官方整图分类 → 点选 → 验证，多轮循环直至 aria-checked=true
+   * （与 solveCaptcha 口径统一：读 meta.captcha.auto；未注入打码服务或 auto=false 返回 'none'）
    * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点，避免误点无效果的复选框）
-   * @returns 'none' 无服务/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
-   * @throws 提示语未覆盖映射 / 分类失败（CaptchaFailure）
+   * @param opts.maxRounds 同窗口验证轮数上限（默认 3，见自动化模块 MAX_ROUNDS_DEFAULT）
+   * @returns 'none' 无服务/自动处理关闭/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
+   * @throws 提示语未覆盖映射 / 平台分类异常（CaptchaFailure）
    */
   async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
-    return runRecaptchaGrid({ page: this.page, captcha: this.deps.captcha, logger: this.turnstileLogger(), human: this.human }, {
-      maxRounds: opts?.maxRounds,
-      siteKeyExclude: opts?.siteKeyExclude,
-      onLog: (kind, ok, costPoints) => {
-        this.deps.onCaptchaLog?.(kind, ok, costPoints)
+    const taskCfg = this.deps.task.meta.captcha ?? { auto: true }
+    if ((taskCfg.auto ?? true) === false) return 'none'
+    return runRecaptchaGrid(
+      { page: this.page, provider: this.deps.captcha, logger: this.turnstileLogger(), human: this.human },
+      {
+        maxRounds: opts?.maxRounds,
+        siteKeyExclude: opts?.siteKeyExclude,
+        maxCostPerTask: this.deps.cfg.captcha.maxCostPerTask,
+        onLog: (platform, kind, ok, costPoints) => {
+          this.deps.onCaptchaLog?.(platform, kind, ok, costPoints)
+        },
       },
-    })
+    )
   }
 
   /**

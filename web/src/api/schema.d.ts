@@ -1384,6 +1384,8 @@ export interface paths {
                                 points?: number;
                                 /** @description 1000 点 = ¥1 */
                                 yuan?: number;
+                                /** @description 打码平台标识（如 yescaptcha） */
+                                platform?: string;
                             };
                         };
                     };

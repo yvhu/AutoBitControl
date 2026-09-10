@@ -49,7 +49,7 @@ export interface ServerDeps {
     isOpen(id: string): Promise<boolean>
     openPids(ids: string[]): Promise<Set<string>>
   }
-  captchaBalance: () => Promise<{ points: number } | null>
+  captchaBalance: () => Promise<{ points: number; platform: string } | null>
   /** 数据源状态与重载（面板设置页展示；app.ts 用闭包包住 DataSource 实例） */
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 文件随机分配服务（面板工具路由与计划自动分配共用单实例） */
