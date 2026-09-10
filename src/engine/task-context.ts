@@ -168,8 +168,9 @@ export class TaskContext {
   }
 
   /**
-   * 在当前页面检测并处理验证码（调用处即检测点）
-   * @returns 'none' 未注入服务或任务关闭自动处理；'solved' 成功；失败抛 CaptchaFailure
+   * 在当前页面检测并处理验证码（调用处即检测点；内部走打码平台适配层 CaptchaProvider）
+   * @returns 'none' 未注入服务/任务关闭自动处理/未检测到；'solved' 解题并回填成功；'failed' 已解题但回填目标缺失
+   * @throws CaptchaFailure 余额不足/解题失败（任务进入 captcha_failed 终态不重试）
    */
   async solveCaptcha(): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'
@@ -456,7 +457,8 @@ export class TaskContext {
    * @param opts.siteKeyExclude 跳过的常驻 sitekey（如页面常驻 v3 锚点，避免误点无效果的复选框）
    * @param opts.maxRounds 同窗口验证轮数上限（默认 3，见自动化模块 MAX_ROUNDS_DEFAULT）
    * @returns 'none' 无服务/自动处理关闭/无锚点 frame；'solved' 通过；'failed' 轮数耗尽
-   * @throws 提示语未覆盖映射 / 平台分类异常（CaptchaFailure）
+   * @throws 提示语未覆盖映射/整图缺失等结构性错误（普通 Error，任务进入重试换新窗口）；
+   *   余额不足/平台分类异常（CaptchaFailure，任务进入 captcha_failed 终态不重试）
    */
   async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'> {
     if (!this.deps.captcha) return 'none'

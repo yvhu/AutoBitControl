@@ -1,6 +1,6 @@
 # AutoBitControl API 使用手册（小白友好版）
 
-> 目标读者：第一次接触自动化的你。本文按「是什么 → 什么时候用 → 怎么用 → 注意什么」的顺序讲解，不预设任何编程背景。所有代码签名、默认值与报错文案，均以仓库当前代码为准（`src/engine/task-context.ts`、`src/automation/humanize.ts`、`src/engine/task.ts`、`src/integrations/yescaptcha.ts`、`src/infrastructure/config.ts`、`src/server/routes/*`、`scripts/*`）。
+> 目标读者：第一次接触自动化的你。本文按「是什么 → 什么时候用 → 怎么用 → 注意什么」的顺序讲解，不预设任何编程背景。所有代码签名、默认值与报错文案，均以仓库当前代码为准（`src/engine/task-context.ts`、`src/automation/humanize.ts`、`src/engine/task.ts`、`src/integrations/captcha/*`、`src/automation/captcha/*`、`src/infrastructure/config.ts`、`src/server/routes/*`、`scripts/*`）。
 
 配套资源：
 
@@ -376,7 +376,7 @@ await ctx.pressKey('Shift+Tab')               // 反向切换焦点（回到上�
 async solveCaptcha(): Promise<'none' | 'solved' | 'failed'>
 ```
 
-- **是什么**：在**当前页面**检测验证码（CAPTCHA），检测到就交给打码平台解题并回填，详见[第 5 章](#5-验证码)。
+- **是什么**：在**当前页面**检测验证码（CAPTCHA），检测到就交给**打码平台适配层（CaptchaProvider，当前 yescaptcha）**解题并回填，详见[第 5 章](#5-验证码)。
 - **什么时候用**：验证码可能出现的时刻——通常就在点击提交按钮**之前**（很多站点点击时才弹出验证码）。
 - **怎么用**：
 
@@ -386,7 +386,7 @@ await ctx.solveCaptcha()                                   // 此时才检测 + 
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
 
-- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：类型上存在，但实现中失败一律抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态，见[第 5 章](#5-验证码)与[第 10 章](#10-常用模式)）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
+- **注意什么**：返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没检测到验证码（不花钱）；`'solved'`：检测到并解题成功（token 已回填页面）；`'failed'`：解题成功但页面上没有回填目标元素（token 没写进去，任务可自行兜底）。解题失败（余额不足/解题超时等）抛 `CaptchaFailure`（任务进入 `captcha_failed` 终态不重试，见[第 5 章](#5-验证码)与[第 10 章](#10-常用模式)）。**框架不会在 goto 后自动打码**，打码只发生在你显式调用它的位置。
 
 ### solveRecaptchaGrid
 
@@ -394,7 +394,7 @@ await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 async solveRecaptchaGrid(opts?: { maxRounds?: number; siteKeyExclude?: string }): Promise<'none' | 'solved' | 'failed'>
 ```
 
-- **是什么**：reCAPTCHA v2 勾选后弹出的**九宫格选图挑战**的模拟点击求解——点复选框 → 截图网格 → yescaptcha 分类 → 按返回坐标拟人点选格子 → 点验证，多轮循环直至 `aria-checked=true`（变绿）。实现位于 `src/automation/recaptcha-grid.ts`（分类走 yescaptcha 的 `ReCaptchaV2Classification` 任务类型，映射见 `config.json` 的 `captcha.taskTypes` 的 `recaptcha_v2_grid` 键）。
+- **是什么**：reCAPTCHA v2 勾选后弹出的**九宫格选图挑战**的模拟点击求解，严格对齐 yescaptcha 官方 Python DEMO——点复选框 → 取原生整图（`div.rc-image-tile-wrapper > img` 的 src，naturalWidth 300/450 判 3x3/4x4，不再容器截图）→ 打码平台分类 → **原生元素点击**选格（坐标拟人点击只做未注册兜底）→ 单格刷新二次确认 → 点验证，多轮循环直至 `aria-checked=true`（变绿）。实现位于 `src/automation/captcha/grid.ts`（分类走打码平台 `classifyGrid`，任务类型映射内置于代码，见[第 5 章](#5-验证码)）。
 - **什么时候用**：站点用 reCAPTCHA v2（`iframe[src*="recaptcha/api2/anchor"]` 或 enterprise 版），点击勾选框后会弹九宫格选图，且打码平台 token 回填方案不适用时。与 `solveCaptcha()` 二选一，不要对同一个挑战两种都调。
 - **怎么用**：
 
@@ -405,7 +405,7 @@ if (r === 'failed') throw new Error('九宫格求解轮数耗尽')
 await ctx.waitForText('领取成功')                        // 验证挑战已过、流程继续
 ```
 
-- **注意什么**：返回值语义——`'none'`：未注入打码服务、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：轮数耗尽仍未通过（默认最多 5 轮，`opts.maxRounds` 可调）。页面同时常驻 v3（隐形打分）与挑战注入 v2（复选框）两套 anchor iframe 时，用 `opts.siteKeyExclude` 传入常驻 v3 的 sitekey（`k=` 参数），模块会跳过 v3 锚点只点 v2（避免点到无效果的复选框）；anchor 点击失败只记 warn 继续流程，后续轮次会自纠。提示语未覆盖映射或分类接口失败直接抛错（任务失败进入重试）。每次分类按 6 点/次记账到打码统计，受 `captcha.maxCostPerTask` 余额上限约束。
+- **注意什么**：与 `solveCaptcha` 口径统一读 `meta.captcha.auto`（false 时返回 `'none'` 不花钱）。返回值语义——`'none'`：未注入打码服务、`captcha.auto` 为 false、或页面上没有锚点（勾选框）frame；`'solved'`：挑战通过（含勾选后直接变绿的一键通过）；`'failed'`：同窗口轮数耗尽仍未通过（默认最多 3 轮，`opts.maxRounds` 可调；同会话连续验证有风控，耗尽后任务应抛普通错误交重试换新窗口，别同窗口死磕）。页面同时常驻 v3（隐形打分）与挑战注入 v2（复选框）两套 anchor iframe 时，用 `opts.siteKeyExclude` 传入常驻 v3 的 sitekey（`k=` 参数），模块会跳过 v3 锚点只点 v2（避免点到无效果的复选框）；anchor 点击失败只记 warn 继续流程，后续轮次会自纠。提示语未覆盖映射/整图缺失抛普通 `Error`（按 retry 重试换新窗口）；余额不足/分类接口失败抛 `CaptchaFailure`（`captcha_failed` 终态不重试）。分类记账按官方价格分档：主网格 6 点/次、1x1 单格 2 点/次，受 `captcha.maxCostPerTask` 余额上限约束。
 
 ### screenshot
 
@@ -788,7 +788,7 @@ async turnstileVisible(selectors?: string[]): Promise<boolean>
 async autoClickTurnstile(budgetMs = 10000): Promise<boolean>
 ```
 
-- **是什么**：交互式 Cloudflare Turnstile 人机验证方框处理——检测右下角浮层 iframe 里的方框并**拟人点击**（ISP 住宅 IP 一点即过，无需图片题）。实现位于 `src/automation/turnstile.ts`。
+- **是什么**：交互式 Cloudflare Turnstile 人机验证方框处理——检测右下角浮层 iframe 里的方框并**拟人点击**（ISP 住宅 IP 一点即过，无需图片题）。实现位于 `src/automation/captcha/turnstile.ts`。
 - **什么时候用**：站点点 Claim/提交后弹出 interaction-only Turnstile 方框（右下角浮层）时。
 - **怎么用**：
 
@@ -919,23 +919,36 @@ wallets.register(new PhantomAdapter())
 
 ## 5. 验证码
 
-### 支持类型与 yescaptcha 类型映射
+### 架构：打码平台抽象 + 自研人机验证模块
 
-检测器（`src/integrations/yescaptcha.ts`）支持 5 种类型，映射（`config.json` 的 `captcha.taskTypes`，默认可覆盖）：
+验证码能力分两层，任务代码只经 TaskContext 的两个方法（`solveCaptcha` / `solveRecaptchaGrid`）使用，两层之间靠平台无关接口对接：
 
-| 类型 | 检测 iframe | yescaptcha 任务类型 | 估算费用（点） |
+- **打码平台适配层**（`src/integrations/captcha/`）：
+  - `provider.ts` — 平台无关契约：`CaptchaProvider` 接口（`solveToken` 解题 / `classifyGrid` 九宫格分类 / `getBalance` 查余额 / `platform` 标识）、`CaptchaFailure` 业务失败异常、各类型估算费用表 `ESTIMATED_COST_POINTS`、记账回调 `CaptchaLogFn`；
+  - `yescaptcha/` — yescaptcha 平台实现：`client.ts` 原始 API 协议封装（createTask/getTaskResult/getBalance）、`provider.ts` 适配器（串行队列，平台每账号 1 并发硬限制）、`task-types.ts` 类型映射（平台内部拼写，不进用户配置）；
+  - `index.ts` — 工厂 `createCaptchaProvider(cfg)`：按 `captcha.provider` 装配，无 clientKey 返回 null（打码能力整体禁用）。未来接入 capsolver/2captcha 等 = 新增平台子目录 + 配置切换 provider。
+- **自研人机验证模块**（`src/automation/captcha/`）：只依赖 provider 接口——`detect.ts`（页面验证码检测，enterprise 支持）、`token-solve.ts`（检测 → 余额校验 → 平台解题 → 回填 → 记账）、`grid.ts`（九宫格模拟点击求解，对齐官方 DEMO）、`turnstile.ts`（方框拟人点击）、`question-map.ts`（九宫格提示语 → 问题 ID 中英映射）。
+
+### 支持类型与平台任务类型映射
+
+自动检测与打码支持 **4 种 token 类 + 九宫格分类**，任务类型映射内置于代码（`src/integrations/captcha/yescaptcha/task-types.ts`，已从配置移入）：
+
+| 类型 | 检测方式 | yescaptcha 任务类型 | 估算费用（点） |
 | --- | --- | --- | --- |
 | `turnstile`（Cloudflare） | `iframe[src*="challenges.cloudflare.com"]` | `TurnstileTaskProxyless` | 25 |
-| `recaptcha_v2` | `iframe[src*="recaptcha/api2/anchor"]` | `NoCaptchaTaskProxyless` | 15 |
-| `recaptcha_v3` | 无 iframe（需业务侧处理） | `RecaptchaV3TaskProxyless` | 20 |
+| `recaptcha_v2` | `iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/enterprise/anchor"]` | `NoCaptchaTaskProxyless` | 15 |
+| `recaptcha_v3` | 无 iframe：`script[src*="recaptcha/api.js"], script[src*="recaptcha/enterprise.js"]` 的 `render` 参数提取 sitekey（`render=explicit` 是 v2 显式渲染，不视为 v3） | `RecaptchaV3TaskProxyless` | 20 |
 | `hcaptcha` | `iframe[src*="hcaptcha.com/captcha"]` | `HCaptchaTaskProxyless` | 30 |
-| `image` | 手动场景 | `ImageToTextTask` | 4 |
+| `recaptcha_v2_grid`（九宫格） | 不由检测器产出：`ctx.solveRecaptchaGrid()` 内部按 anchor/bframe URL 查找（兼容 api2 与 enterprise 段） | `ReCaptchaV2Classification` | 主网格 6 / 单格 2 |
 
-费用仅为估算（`ESTIMATED_COST_POINTS`），用于每次打码的日志统计（`logCaptcha`，看板顶部打码统计汇总）。sitekey 从 iframe src 的 `k=`/`sitekey=` 参数或页面 `data-sitekey` 属性读取；检测每 300ms 轮询一次，最多 5 秒，没检测到返回 `none`。
+**image（`ImageToTextTask`）未接入**：官方参数为 `body` 且分同步/异步双形态，与现 token 轮询模型不同；项目当前无任何任务使用 image 类型，未来有需求再按官方文档单独实现。
+
+- **enterprise 检测支持**：enterprise 版 reCAPTCHA 的 anchor/bframe URL 含 `recaptcha/enterprise` 段，检测同时匹配 api2 与 enterprise——enterprise 站点不会漏检。
+- 费用仅为估算（1 点 = ¥0.001），用于每次打码的日志统计（看板顶部「今日打码」汇总）。sitekey 优先从 iframe src 的 `k=`/`sitekey=` 参数提取（最可靠），失败再查页面 `data-sitekey` 属性；检测每 300ms 轮询一次，最多 5 秒，没检测到返回 `'none'`。
 
 ### auto 配置
 
-`meta.captcha.auto`（默认 `true`）控制 `solveCaptcha()` 调用时是否实际打码：`auto: false` 时直接返回 `'none'`，不产生费用。**打码只发生在任务显式调用 `ctx.solveCaptcha()` 的位置**——框架不会在 `goto` 后自动打码。任务应在验证码可能出现的位置（通常就在点击提交按钮之前）调用一次：
+`meta.captcha.auto`（默认 `true`）控制 `solveCaptcha()` **与 `solveRecaptchaGrid()`** 调用时是否实际打码（两方法口径统一）：`auto: false` 时直接返回 `'none'`，不产生费用。**打码只发生在任务显式调用 ctx 方法的位置**——框架不会在 `goto` 后自动打码。任务应在验证码可能出现的位置（通常就在点击提交按钮之前）调用一次：
 
 ```ts
 await ctx.typeInto('input[name="email"]', 'my-email@example.com')
@@ -958,19 +971,31 @@ await ctx.solveCaptcha()
 await ctx.clickCheckin('#claim-btn', { assert: '.success-toast' })
 ```
 
+### 九宫格行为要点（对齐官方 DEMO）
+
+`ctx.solveRecaptchaGrid()` 的流程与参数见[第 3 章](#solvecaptchagrid)，真机校准出的行为要点：
+
+- **原生整图**：网格图取 `div.rc-image-tile-wrapper > img` 的 src + naturalWidth（300 定 3x3、450 定 4x4）缩放提交；容器元素截图经 CSS 缩放裁剪会污染分类（真机分类乱跳/空数组），仅作整图缺失兜底。
+- **原生点击为主**：格子/验证按钮用元素原生点击（selenium click 等价，trusted 且自动居中）；页面坐标拟人点击（frame 偏移计算）有坐标漂移风险，只做未注册兜底重试一次。
+- **单格刷新确认**：点格后格子图可能刷新（1x1 小图 100x100 再分类，2 点/次），按 td class 判定选中，循环最多 3 轮。
+- **同窗口 maxRounds 风控上限**：默认 3 轮（`MAX_ROUNDS_DEFAULT`），连续多轮不过 = 同会话已被风控，返回 `'failed'` 交任务重试换新窗口。
+- **提示语映射**：中英双语映射表（`question-map.ts`）；未覆盖的提示语直接抛错快速失败，按日志扩充映射优先于猜测。
+
 ### 费用上限与余额不足
 
-- 费用上限：`config.json` 的 `captcha.maxCostPerTask`（默认 1500 点）。每次打码前 `ensureBalance(上限)` 检查余额。
-- 余额不足：抛 `yescaptcha 余额不足: X 点 < Y 点`（`CaptchaFailure`）。
-- 查询余额：面板「设置」页点「查询余额」→ `GET /api/captcha/balance`（返回 `{ configured, points, yuan }`，1 元 = 1000 点）。
+- 费用上限：`config.json` 的 `captcha.maxCostPerTask`（默认 1500 点）。token 类解题前、九宫格每次分类前都校验余额（不烧点数原则）。
+- 余额不足：抛 `打码余额不足: X 点 < Y 点`（`CaptchaFailure`）。
+- 查询余额：面板「设置」页点「查询余额」→ `GET /api/captcha/balance`（返回 `{ configured, points, yuan, platform }`，1 元 = 1000 点；`platform` 是打码平台标识，如 `yescaptcha`）。
 
-### 失败行为
+### 失败行为（错误分类语义）
 
-打码失败（创建任务失败 / 解题超时 / 回填异常）统一抛 `CaptchaFailure`。窗口运行器识别该异常后：
+两类失败走向不同，写任务与排障先分清：
 
-- 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
-- 计入窗口熔断计数（见[第 11 章](#11-排错)）；
-- 每次尝试都记录 `logCaptcha(kind, ok, costPoints)`，看板可见。
+- **`CaptchaFailure`（打码业务失败）**：余额不足 / 创建任务失败 / 解题超时 / 分类超时 / 分类结果格式异常 / 无 sitekey。窗口运行器识别该异常后：
+  - 运行状态直接进入 `captcha_failed`（**不按 retry 配置重试**——重试大概率再失败，白烧钱）；
+  - 计入窗口熔断计数（见[第 11 章](#11-排错)）；
+  - 每次尝试都记账（平台/类型/成败/点数），看板可见。
+- **九宫格求解失败**：① 提示语未覆盖映射、网格整图缺失等结构性错误抛**普通 `Error`**——按 retry 配置重试，换新窗口；② 同窗口多轮未通过（默认 `maxRounds` 3 轮）返回 `'failed'`（不抛错），由任务决定——通常抛普通错误交重试机制换新窗口（同会话已被风控，死磕必挂）。
 
 ---
 
@@ -1160,7 +1185,7 @@ randomMicroMove(): Promise<void>
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API：默认地址 `http://127.0.0.1:54345`；单次开窗请求超时 30 秒；开窗失败最多重试 3 次；退避间隔 5 秒/30 秒/120 秒。环境变量 `BITBROWSER_API_BASE` 可覆盖地址 |
 | `execution` | `staggerMaxSec`、`maxConcurrentWindows`、`windowTimeoutMs`、`taskTimeoutMs`、`retryMax`、`retryBackoffSec`、`circuitBreakerThreshold`、`humanize` | 执行引擎：并发为任务级（`meta.concurrency`，缺省 4，见第 2 章 TaskMeta 字段表）**加全局窗口上限**（`maxConcurrentWindows`，缺省 4，双闸门取更严者，机器资源兜底）；`staggerMaxSec` 是窗口会话启动随机错峰上限（秒，默认 120，0 关闭）；单窗口会话超时默认 15 分钟（到点剩余任务标「窗口超时」跳过）；`taskTimeoutMs`/`retryMax`/`retryBackoffSec` 是单任务超时与重试的全局默认（任务 meta 可逐个覆盖）；`circuitBreakerThreshold` 是窗口熔断阈值（连续失败达到即跳过剩余任务）；`humanize.minDelayMs`/`humanize.maxDelayMs` 是拟人动作的随机停顿区间（默认 800/3000 毫秒） |
-| `captcha` | `clientKey`、`apiBase`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`taskTypes` | 打码服务（yescaptcha）：`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）；`maxCostPerTask` 是单任务打码费用上限（点数，1000 点 = ¥1）；`taskTypes` 是验证码类型 → 平台任务类型的映射，除 5 种自动检测类型外还支持 `recaptcha_v2_grid`（`ReCaptchaV2Classification`，九宫格分类识别，6 点/次，供 `ctx.solveRecaptchaGrid()` 使用；图片需缩放至 300x300/450x450/100x100） |
+| `captcha` | `provider`、`solveTimeoutMs`、`pollIntervalMs`、`maxCostPerTask`、`yescaptcha` | 打码平台：`provider` 选平台（当前支持 `yescaptcha`；无对应 clientKey 时打码能力整体禁用）；`solveTimeoutMs` 平台解题超时（默认 120s，对齐官方 120 秒任务超时）；`pollIntervalMs` 结果轮询间隔（默认 3s，对齐官方「间隔 3 秒一次」）；`maxCostPerTask` 单任务打码费用上限（点数，1000 点 = ¥1）；`yescaptcha.apiBase`/`yescaptcha.clientKey` 平台专属参数，`clientKey` 用环境变量 `CAPTCHA_CLIENT_KEY` 配置（**不要在 config.json 里明文写密钥**）。验证码类型 → 平台任务类型的映射已移入代码 `src/integrations/captcha/yescaptcha/task-types.ts`（平台内部拼写不进用户配置） |
 | `web` | `host`、`port` | **后端 API** 监听地址，默认 `127.0.0.1:3000`（仅本机可访问，只出接口不托管页面）。环境变量 `WEB_PORT` 可改端口；非整数或越界（不在 1-65535）时**静默忽略**，保留默认端口。**前端面板**由 Vite dev server 提供（`npm run dev` 启动，端口由环境变量 `VITE_PORT` 控制，默认 5173，页面 + 热更新），Vite 的 /api 代理自动跟随 `WEB_PORT` |
 | `wallet` | `passwords` | 钱包解锁密码映射（钱包类型 key → 密码，如 `metamask`/`petra`，同类型钱包共用同一密码）。环境变量 `WALLET_PASSWORDS` 传 JSON 字符串，解析成功时**覆盖配置文件同名 key**；解析失败不抛错，保留配置文件值并在启动时告警（提醒检查 JSON 格式） |
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches/captcha_logs 保留天数，超期行启动时清理。 |
@@ -1201,7 +1226,7 @@ randomMicroMove(): Promise<void>
 | POST | `/api/profiles/:id/open` | 打开窗口（登记 open_windows，任务会话复用该窗口） |
 | POST | `/api/profiles/:id/close` | 关闭窗口 |
 | POST | `/api/profiles/:id/breaker/reset` | 重置该窗口熔断计数 |
-| GET | `/api/captcha/balance` | 打码余额查询 |
+| GET | `/api/captcha/balance` | 打码余额查询（响应含 `configured`/`points`/`yuan`/`platform` 平台标识，如 `yescaptcha`） |
 | POST | `/api/bitbrowser/test` | 比特浏览器连接测试 |
 | POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库 |
 | GET | `/api/settings` | 公开只读设置（不含密钥）＋ 数据源状态 |
@@ -1529,7 +1554,7 @@ if (done) return   // 今日已做 → 直接成功
 | `AppKit 弹窗未出现 X 钱包入口` | AppKit 弹窗视图异常，归一化没找到钱包入口 | 站点改版/弹窗渲染异常/`entryTestId` 填错 | 核对 `entryTestId` 与站点当前 AppKit 视图（见[第 3 章](#3-taskcontext-方法全解) openAppKitWallet） |
 | `未注册的钱包适配器: X` | `meta.wallet` 的 key 没人认领 | key 拼错或适配器没在 `src/app.ts` 注册 | 核对 key 与注册列表（见[第 4 章](#4-钱包弹窗)） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec`（默认 180 秒），按普通失败处理 | run 卡死；某个等待动作超时太长 | 核对各等待方法的超时参数；必要时上调 `meta.timeoutSec` 或全局 `execution.taskTimeoutMs` |
-| `yescaptcha 余额不足: X 点 < Y 点` | 打码平台余额不够付这道题 | 余额低于费用上限 | 去平台充值；或下调 `captcha.maxCostPerTask`（见[打码失败与余额](#打码失败与余额)） |
+| `打码余额不足: X 点 < Y 点` | 打码平台余额不够付这道题 | 余额低于费用上限 | 去平台充值；或下调 `captcha.maxCostPerTask`（见[打码失败与余额](#打码失败与余额)） |
 | `yescaptcha 创建任务失败` | 平台没接这道题 | `clientKey` 无效或题型不支持 | 核对 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持（见[第 5 章](#5-验证码)） |
 | `yescaptcha 解题超时` | 平台解题超过 `solveTimeoutMs` 还没出结果 | 题目太难/平台拥堵 | 任务会以 `captcha_failed` 终态收场（不重试）；看日志 taskId 与截图 |
 
@@ -1551,7 +1576,7 @@ if (done) return   // 今日已做 → 直接成功
 
 ### 打码失败与余额
 
-- `yescaptcha 余额不足: X 点 < Y 点` → 充值或下调 `config.json` 的 `captcha.maxCostPerTask`；
+- `打码余额不足: X 点 < Y 点` → 充值或下调 `config.json` 的 `captcha.maxCostPerTask`；
 - `yescaptcha 创建任务失败` / `yescaptcha 解题超时` → 检查 `CAPTCHA_CLIENT_KEY` 与站点验证码类型是否被支持；
 - 看板顶部「今日打码」统计汇总每次打码的 `kind/cost/ok`；运行状态 `captcha_failed` 表示打码失败（不重试）。
 
@@ -1617,7 +1642,7 @@ if (done) return   // 今日已做 → 直接成功
 | 操作步骤 | ✅ | 按你亲手点网页的顺序写，越具体越好：点哪个按钮（按钮上写的什么字）、往哪个框输什么、要不要等。**不用管选择器怎么写**，描述「按钮上的字」即可，AI 会去找 | 越模糊 AI 越要靠猜，第一版越可能返工 |
 | 成功判定 | ✅ | 成功后才出现的文案/徽章，尽量写页面原文（语言、大小写）。这是断言依据，见[第 10 章「成功断言写法」](#成功断言写法) | 没判定 = AI 只能猜，可能把「点到按钮」误当成功 |
 | 已领取判定 | ✅ | 今天已领过时页面显示的提示原文（如 `Please wait 24 hours`）；没有这种状态写「无」 | 不写可能重复领取触发风控，或天天报失败 |
-| 验证码 | 选填 | 有没有、长什么样，按支持列表对号入座（详见[第 5 章](#5-验证码)）：`turnstile`（Cloudflare 转圈）＝ 一个小方框，点一下转圈就过；或 Cloudflare 的「确认你是人类」勾选框（勾完转圈通过）；`recaptcha_v2` ＝ 谷歌「我不是机器人」勾选框，点完可能弹九宫格选图；`hcaptcha` ＝ hCaptcha 勾选框，样子类似谷歌；`image` ＝ 图片上写字/数字要你认；`recaptcha_v3` ＝ 页面看不到（隐形后台打分），一般不需要描述。拿不准写「不知道」 | 不知道时 AI 按支持列表常规处理，试跑再确认 |
+| 验证码 | 选填 | 有没有、长什么样，按支持列表对号入座（详见[第 5 章](#5-验证码)）：`turnstile`（Cloudflare 转圈）＝ 一个小方框，点一下转圈就过；或 Cloudflare 的「确认你是人类」勾选框（勾完转圈通过）；`recaptcha_v2` ＝ 谷歌「我不是机器人」勾选框，点完可能弹九宫格选图；`hcaptcha` ＝ hCaptcha 勾选框，样子类似谷歌；`image` ＝ 图片上写字/数字要你认（**此类目前未接入打码平台**）；`recaptcha_v3` ＝ 页面看不到（隐形后台打分），一般不需要描述。拿不准写「不知道」 | 不知道时 AI 按支持列表常规处理，试跑再确认 |
 | 弹窗 | 选填 | 打开会不会弹公告/新手引导挡住按钮？关闭按钮长什么样（右上角 X？「知道了」？） | AI 默认不处理，被挡住时试跑失败再补 `closeModal` |
 | 数据源 | 选填 | 哪些输入内容每个窗口不一样（邮箱/邀请码/收款地址…），准备写在 `config/accounts.xlsx` 的哪一列 | 内容无所谓的内容 AI 用 faker 随机（见[第 10 章「数据源与 faker」](#数据源与-faker)） |
 | 选择器 | 选填 | DevTools 右键元素 → Copy → Copy selector（见[第 3 章「选择器查找技巧」](#选择器查找技巧)）。不会用就写「AI 帮找」 | AI 访问网站自己核实 |

@@ -1,7 +1,7 @@
 /**
  * Arc 领水任务（faucet-arc）单测与集成测试：
  * - 单测：网络/币种默认值助手与确保函数、竞速等待的纯逻辑分支（注入假 page/human，不连真浏览器）
- * - 集成：真实 chromium + 本地 fixture，验证 run() 全链路（无验证码 / v2 挑战两模式）
+ * - 集成：真实 chromium + 本地 fixture，验证 run() 全链路（无验证码 / v2 一键通过 / 九宫格 challenge 三模式）
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'patchright'

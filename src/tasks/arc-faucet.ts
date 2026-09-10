@@ -11,7 +11,7 @@
  *   成功：headline "Tokens sent" + "20 testnet USDC is on its way to your wallet and should appear shortly."
  *   限频：每资产×网络 1-2 小时限领一次（不做判定：用户隔天执行一次，撞限频按失败处理）
  * 流程：开页 → 填 metamask 地址（数据源列，不连钱包）→ 校验网络/币种默认值 → 点 Send → 竞速成功文案/v2 提示
- *   → v2 出现走九宫格模拟点击（点复选框 → 截图网格 → yescaptcha 分类 → 点选 → 验证 → aria-checked 循环；
+ *   → v2 出现走九宫格模拟点击（点复选框 → 取原生整图（div.rc-image-tile-wrapper > img）→ 打码平台分类 → 原生点击选格 → 验证 → aria-checked 循环；
  *     常驻 v3 不打码，避免白花点数）→ 再点 Send → 成功截图
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'

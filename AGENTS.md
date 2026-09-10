@@ -38,8 +38,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ```
 
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
-- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、yescaptcha.ts
-- `automation/`：humanize.ts（拟人操作）、wallet/（types 注册表 + metamask/petra 适配器）
+- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、captcha/（打码平台抽象：provider 接口 + yescaptcha 适配器 + 工厂）
+- `automation/`：humanize.ts（拟人操作）、captcha/（自研人机验证：detect/token-solve/grid/turnstile/question-map）、wallet/（types 注册表 + metamask/petra 适配器）
 - `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
