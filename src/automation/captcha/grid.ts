@@ -462,8 +462,15 @@ export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): P
     deps.logger.info({ prompt, qid }, '九宫格识别目标')
     rc.prompt = prompt
     rc.qid = qid
-    // 取图 + 分类
-    const grid = await readGridImage(deps, rc.ch)
+    // 取图 + 分类（readGridImage 内部兜底截图可能抛错——真机 44：截图两次失败不得穿透主循环，刷新换图重试）
+    let grid: { b64: string } | null = null
+    try {
+      grid = await readGridImage(deps, rc.ch)
+    } catch (e) {
+      deps.logger.warn({ err: (e as Error).message }, '九宫格网格图获取失败，刷新换图后重试')
+      await refreshImages(deps, rc.ch)
+      continue
+    }
     if (!grid) {
       deps.logger.warn('九宫格网格图获取失败，刷新换图后重试')
       await refreshImages(deps, rc.ch)
