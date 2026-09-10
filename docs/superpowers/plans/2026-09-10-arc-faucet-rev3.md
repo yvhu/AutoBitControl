@@ -21,7 +21,7 @@
 
 ```ts
 // integrations/captcha/provider.ts
-export type TokenCaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
+export type TokenCaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
 export type CaptchaKind = TokenCaptchaKind | 'recaptcha_v2_grid'
 export interface CaptchaDetected { kind: TokenCaptchaKind; sitekey: string | null }
 export class CaptchaFailure extends Error {}
@@ -76,6 +76,29 @@ captcha: CaptchaProvider | null
 onCaptchaLog: (platform: string, kind: string, ok: boolean, costPoints: number) => void
 ```
 
+## yescaptcha 官方文档核对总表（硬性约束）
+
+**原则：凡写入 yescaptcha 适配器的每一行，必须能指向下表官方出处；核对不到的类型/参数一律不写。**
+
+| 代码元素 | 官方出处（wiki 页面） | 官方原文要点 |
+|---|---|---|
+| POST /createTask，body `{clientKey, task:{type,...}}`，响应 `errorId/errorCode/errorDescription/taskId` | 33351 createTask | 「task 验证码类型」「errorId: 0 - 没有错误，1 - 有错误」 |
+| POST /getTaskResult，body `{clientKey, taskId}`，响应 `status: processing/ready` + `solution` | 196857 getTaskResult | 「**间隔3秒一次**请求 getTaskResult 接口轮询获取结果」「直到获取结果，或者报错，或者 **120秒任务超时**」「每个任务创建以后只计费一次」 |
+| POST /getBalance，body `{clientKey}`，响应 `balance`（Decimal） | 229767 getBalance | 「balance：帐户余额（点数）1元1000点」 |
+| turnstile → type `TurnstileTaskProxyless`，参数 `websiteURL/websiteKey`，响应 `solution.token` | 61734913 | 「25 POINTS」「token 一次性使用，有效期120s，建议在60s内使用」 |
+| recaptcha_v2 → type `NoCaptchaTaskProxyless`，参数 `websiteURL/websiteKey/isInvisible(否)`，响应 `solution.gRecaptchaResponse` | 229796 | 「15 POINTS」「遇到isInvisible类型的reCaptchaV2需要添加此参数」 |
+| recaptcha_v3 → type `RecaptchaV3TaskProxyless`，参数 `websiteURL/websiteKey/pageAction`，响应 `solution.gRecaptchaResponse` | 655381 | 「20 POINTS」「pageAction 此值必须正确，否则识别的结果无效」 |
+| hcaptcha → type `HCaptchaTaskProxyless`，参数 `websiteURL/websiteKey/userAgent(否)/isInvisible(否)/rqdata(否)`，响应 `solution.gRecaptchaResponse` | 7929858 | 「30 点数」「通过率不是100%，通过率只有10%~90%不等」 |
+| recaptcha_v2_grid → type `ReCaptchaV2Classification`，参数 `image/question/confidence`，响应 `objects`(multi)/`hasObject`(single) | 18055169 | 「image：Base64 编码的图片，不要包含 data: 前缀」「必须将图片缩放至标准大小 (100x100, 300x300, 450x450)」「question：以 /m/ 开头」「confidence 非必填；3x3 指定分值（建议0.5）返回所有大于该分值的结果，不指定返回前三；**4x4和1x1指定此值无意义**」「300x300 450x450 **6 POINTS**、100x100 **2 点数**」「1x1：按下3x3后刷出来的小图，缩放到100x100，返回 hasObject 是否需要点击」 |
+| 模拟点击流程（点锚点→提示语→整图→点格→1x1确认→verify→aria-checked） | 29786113 官方 Python DEMO + GitHub RecaptchaResolver | 见 spec rev3 第 4 节流程骨架 |
+| **不迁移**：image（ImageToTextTask） | 164300 | 官方参数为 `body`（非 image），且分同步（OcrBase/Muggle 2点）与异步（4/15点）双形态——与现 token 轮询模型不同；项目无任何任务使用 image 类型，**本次不写**（未来有需求时按 164300 单独实现） |
+
+**官方要点对实现的三个强制约束：**
+
+1. 轮询节奏：`pollIntervalMs` 默认 3000（官方「间隔3秒一次」）、`solveTimeoutMs` 默认 120000（官方「120秒任务超时」）——config 默认值不变即对齐
+2. 九宫格记账分两档：主网格（300x300/450x450）**6 点**、单格 1x1（100x100）**2 点**——rev2 统一记 6 点是错的，必须分档
+3. 主网格分类**不传 confidence**（官方：不指定时返回前三；4x4 指定无意义）；1x1 单格分类也不传（官方：1x1 指定无意义）
+
 ---
 
 ### Task 1: `integrations/captcha/provider.ts` 平台接口与共享类型
@@ -102,9 +125,9 @@ describe('provider 共享类型', () => {
     expect(e.message).toBe('余额不足')
   })
 
-  it('成本估算表覆盖全部验证码类型', () => {
+  it('成本估算表覆盖全部验证码类型（不含 image：官方 ImageToTextTask 本次不迁移）', () => {
     expect(Object.keys(ESTIMATED_COST_POINTS).sort()).toEqual(
-      ['turnstile', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'image', 'recaptcha_v2_grid'].sort(),
+      ['turnstile', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'recaptcha_v2_grid'].sort(),
     )
   })
 })
@@ -126,8 +149,8 @@ Expected: FAIL（模块不存在）
  * 设计思路：各打码平台 API 差异（任务类型名/认证/返回结构）由平台子目录自行消化，
  * 对外统一实现 CaptchaProvider；未来接入 capsolver/2captcha 等 = 新增平台子目录 + config 切换
  */
-/** token 类验证码类型（solveToken 支持） */
-export type TokenCaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'image'
+/** token 类验证码类型（solveToken 支持；image 类型官方为 body 参数且同步/异步双形态，本次不迁移，见计划核对总表） */
+export type TokenCaptchaKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
 /** 全部验证码类型（含九宫格图片分类，仅用于记账/日志） */
 export type CaptchaKind = TokenCaptchaKind | 'recaptcha_v2_grid'
 
@@ -143,13 +166,12 @@ export class CaptchaFailure extends Error {}
 /** 九宫格分类结果：multi = 需要点击的格子序号（3x3 为 0-8，4x4 为 0-15）；single = 单图是否含目标 */
 export type GridResult = { type: 'multi'; objects: number[] } | { type: 'single'; hasObject: boolean }
 
-/** 各类型单次解题估算点数（1 点 = ¥0.001；结果接口不返回单价，按官方定价档位估算，仅用于成本日志与看板统计） */
+/** 各类型单次解题估算点数（1 点 = ¥0.001；点数按 yescaptcha 官方价格表，见计划核对总表） */
 export const ESTIMATED_COST_POINTS: Record<CaptchaKind, number> = {
   turnstile: 25,
   recaptcha_v2: 15,
   recaptcha_v3: 20,
   hcaptcha: 30,
-  image: 4,
   recaptcha_v2_grid: 6,
 }
 
@@ -165,14 +187,15 @@ export interface CaptchaProvider {
    * @param kind 验证码类型（决定平台任务类型与 solution 取值字段）
    * @param sitekey 站点 sitekey（缺失由实现抛 CaptchaFailure）
    * @param pageUrl 触发验证码的页面地址
-   * @param extra 透传给平台任务体的附加参数（如 recaptcha_v3 的 minScore）
+   * @param extra 透传给平台任务体的附加参数（官方可选参数原样透传：recaptcha_v2 的 isInvisible、
+   *   recaptcha_v3 的 pageAction、hcaptcha 的 userAgent/isInvisible/rqdata）
    */
   solveToken(kind: TokenCaptchaKind, sitekey: string | null, pageUrl: string, extra?: Record<string, unknown>): Promise<string>
   /**
-   * 九宫格图片分类：提交网格/单格图（已缩放到标准尺寸的 Base64，无 data: 前缀）与问题 ID
-   * @param image 图片 Base64（无 data: 前缀）
-   * @param questionId 问题 ID（如 '/m/015qbp'）
-   * @param confidence 置信度阈值（0-1，可选，不传走平台默认）
+   * 九宫格图片分类：提交网格/单格图（已缩放到官方标准尺寸的 Base64，无 data: 前缀）与问题 ID
+   * @param image 图片 Base64（无 data: 前缀；官方要求标准大小 100x100/300x300/450x450）
+   * @param questionId 问题 ID（官方要求以 /m/ 开头）
+   * @param confidence 置信度阈值（官方 int 非必填；3x3 指定后返回所有大于分值的结果；4x4/1x1 指定无意义）
    */
   classifyGrid(image: string, questionId: string, confidence?: number): Promise<GridResult>
   /** 查询账户余额（点） */
@@ -507,7 +530,11 @@ Expected: FAIL（模块不存在）
 ```ts
 /**
  * yescaptcha 平台任务类型映射（平台私有实现细节，不进用户配置）
- * 类型名按 yescaptcha 官方文档精确拼写，改错会导致创建任务失败
+ * 类型名按 yescaptcha 官方文档精确拼写，出处见计划核对总表（wiki 页面 164286 价格表 + 各类型页）：
+ *   turnstile → TurnstileTaskProxyless（61734913）；recaptcha_v2 → NoCaptchaTaskProxyless（229796）
+ *   recaptcha_v3 → RecaptchaV3TaskProxyless（655381）；hcaptcha → HCaptchaTaskProxyless（7929858）
+ *   recaptcha_v2_grid → ReCaptchaV2Classification（18055169）
+ * 注意：官方 image 类型（ImageToTextTask，164300）参数为 body 且分同步/异步双形态，本次不迁移
  */
 import type { TokenCaptchaKind, CaptchaKind } from '../provider'
 
@@ -517,15 +544,14 @@ export const YESCAPTCHA_TOKEN_TASK_TYPES: Record<TokenCaptchaKind, string> = {
   recaptcha_v2: 'NoCaptchaTaskProxyless',
   recaptcha_v3: 'RecaptchaV3TaskProxyless',
   hcaptcha: 'HCaptchaTaskProxyless',
-  image: 'ImageToTextTask',
 }
 
-/** 九宫格图片分类任务类型 */
+/** 九宫格图片分类任务类型（官方：返回图片坐标需要模拟点击，不返回 RESPONSE） */
 export const YESCAPTCHA_GRID_TASK_TYPE = 'ReCaptchaV2Classification'
 
 /** 记账/日志全类型（含九宫格） */
 export const ALL_CAPTCHA_KINDS: CaptchaKind[] = [
-  'turnstile', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'image', 'recaptcha_v2_grid',
+  'turnstile', 'recaptcha_v2', 'recaptcha_v3', 'hcaptcha', 'recaptcha_v2_grid',
 ]
 ```
 
@@ -538,14 +564,16 @@ export const ALL_CAPTCHA_KINDS: CaptchaKind[] = [
  * yescaptcha 原始 API 客户端（integrations/captcha/yescaptcha 层）：createTask/getTaskResult/getBalance
  * 依赖方向：依赖 infrastructure/http 与 provider 的 CaptchaFailure，被本平台 provider 使用
  * 设计思路：只做协议封装不做编排（串行排队/轮询超时在 provider 层）
+ * 官方出处（计划核对总表）：createTask=wiki 33351、getTaskResult=wiki 196857、getBalance=wiki 229767
  */
 import { httpJson } from '../../../infrastructure/http'
 import { CaptchaFailure } from '../provider'
 
-/** 平台响应包（errorId=0 表示成功；solution 字段随任务类型不同） */
+/** 平台响应包（官方字段：errorId 0=无错误 1=有错误；status processing/ready；solution 随任务类型不同） */
 export interface YesCaptchaResp {
   errorId?: number
   errorCode?: string
+  errorDescription?: string
   taskId?: string
   status?: string
   solution?: { token?: string; gRecaptchaResponse?: string; text?: string; objects?: number[]; hasObject?: boolean; type?: string }
@@ -560,12 +588,12 @@ export interface YesCaptchaApiCfg {
 export class YesCaptchaApiClient {
   constructor(private cfg: YesCaptchaApiCfg) {}
 
-  /** 平台接口统一调用（30s 固定超时：createTask/getBalance 都是快接口） */
+  /** 平台接口统一调用（官方未限定 createTask/getBalance 耗时；30s 固定超时覆盖慢响应） */
   private async call(path: string, body: unknown): Promise<YesCaptchaResp> {
     return httpJson<YesCaptchaResp>({ baseUrl: this.cfg.apiBase, path, method: 'POST', body, timeoutMs: 30000 })
   }
 
-  /** 创建识别任务，返回 taskId；errorId 判空避免平台省略该字段时误判失败 */
+  /** 创建识别任务（官方 33351：body={clientKey, task}；返回 taskId 供 getTaskResult 轮询） */
   async createTask(task: Record<string, unknown>): Promise<string> {
     const resp = await this.call('/createTask', { clientKey: this.cfg.clientKey, task })
     if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 创建任务失败: ${resp.errorCode ?? resp.errorId}`)
@@ -573,14 +601,14 @@ export class YesCaptchaApiClient {
     return resp.taskId
   }
 
-  /** 查询任务结果（未就绪 status!=='ready' 由调用方处理；errorId!=0 快速失败） */
+  /** 查询任务结果（官方 196857：body={clientKey, taskId}；errorId!=0 快速失败；status 非 ready 由调用方继续轮询） */
   async getTaskResult(taskId: string): Promise<YesCaptchaResp> {
     const resp = await this.call('/getTaskResult', { clientKey: this.cfg.clientKey, taskId })
     if (resp.errorId != null && resp.errorId !== 0) throw new CaptchaFailure(`yescaptcha 查询结果失败: ${resp.errorCode ?? resp.errorId}`)
     return resp
   }
 
-  /** 查询账户余额（点） */
+  /** 查询账户余额（官方 229767：body={clientKey}；balance 为点数 Decimal） */
   async getBalance(): Promise<number> {
     const resp = await this.call('/getBalance', { clientKey: this.cfg.clientKey })
     return resp.balance ?? 0
@@ -598,10 +626,12 @@ export class YesCaptchaApiClient {
  * 依赖方向：依赖本目录 client 与 task-types，对外只暴露 CaptchaProvider 契约
  * 设计思路：所有解题调用挂在串行 promise 链上（平台每账号 1 并发硬限制，超限直接报错），
  * 即使调度器并发触发多个任务，平台侧也永远只有 1 个识别任务在跑
+ * 官方依据（计划核对总表）：请求/响应字段逐字对齐 33351/196857/229767 与各任务类型页；
+ * 轮询节奏对齐官方「间隔3秒一次」「120秒任务超时」（由 cfg.solveTimeoutMs/pollIntervalMs 承接）
  */
 import type { CaptchaProvider, TokenCaptchaKind, GridResult } from '../provider'
 import { CaptchaFailure } from '../provider'
-import { YesCaptchaApiClient, type YesCaptchaResp } from './client'
+import { YesCaptchaApiClient } from './client'
 import { YESCAPTCHA_TOKEN_TASK_TYPES, YESCAPTCHA_GRID_TASK_TYPE } from './task-types'
 
 export interface YesCaptchaProviderCfg {
@@ -621,14 +651,15 @@ export class YesCaptchaProvider implements CaptchaProvider {
       if (!sitekey) throw new CaptchaFailure('验证码未找到 sitekey')
       const taskType = YESCAPTCHA_TOKEN_TASK_TYPES[kind]
       if (!taskType) throw new CaptchaFailure(`不支持的验证码类型: ${kind}`)
+      // 官方任务体：type + websiteURL/websiteKey + 各类型可选参数（extra 原样透传）
       const taskId = await this.client.createTask({ type: taskType, websiteURL: pageUrl, websiteKey: sitekey, ...extra })
       const deadline = Date.now() + this.cfg.solveTimeoutMs
       while (Date.now() < deadline) {
         const resp = await this.client.getTaskResult(taskId)
         if (resp.status === 'ready') {
           const s = resp.solution ?? {}
+          // 官方：turnstile 取 solution.token；其余取 solution.gRecaptchaResponse
           if (kind === 'turnstile') return s.token ?? ''
-          if (kind === 'image') return s.text ?? ''
           return s.gRecaptchaResponse ?? ''
         }
         await new Promise((r) => setTimeout(r, this.cfg.pollIntervalMs))
@@ -640,6 +671,7 @@ export class YesCaptchaProvider implements CaptchaProvider {
 
   classifyGrid(image: string, questionId: string, confidence?: number): Promise<GridResult> {
     const run = async (): Promise<GridResult> => {
+      // 官方任务体（wiki 18055169）：type=ReCaptchaV2Classification + image（无 data: 前缀）+ question（/m/ 开头）+ confidence（可选）
       const taskId = await this.client.createTask({
         type: YESCAPTCHA_GRID_TASK_TYPE,
         image,
@@ -651,6 +683,7 @@ export class YesCaptchaProvider implements CaptchaProvider {
         const resp = await this.client.getTaskResult(taskId)
         if (resp.status === 'ready') {
           const s = resp.solution ?? {}
+          // 官方：multi → objects（需要点击的格子序号）；single（1x1 小图）→ hasObject（是否需要点击）
           if (s.type === 'multi' && Array.isArray(s.objects)) return { type: 'multi', objects: s.objects }
           if (s.type === 'single' && typeof s.hasObject === 'boolean') return { type: 'single', hasObject: s.hasObject }
           if (Array.isArray(s.objects)) return { type: 'multi', objects: s.objects }
@@ -1416,6 +1449,10 @@ export const MAX_ROUNDS_DEFAULT = 3
 const CONFIRM_MAX = 3
 /** 点格后查 class 的等待（官方 time.sleep(3)） */
 const CONFIRM_WAIT_MS = 3000
+/** 主网格分类点数（官方价格表：300x300/450x450 6 POINTS） */
+const GRID_COST_POINTS = 6
+/** 单格 1x1 分类点数（官方价格表：100x100 2 点数） */
+const TILE_COST_POINTS = 2
 /** grid-debug 诊断目录文件数上限 */
 const GRID_DEBUG_MAX_FILES = 40
 
@@ -1612,7 +1649,8 @@ interface RoundCtx {
   ch: Frame
   qid: string
   prompt: string
-  classify: (image: string, questionId: string, confidence?: number) => Promise<GridResult>
+  /** 分类封装：costPoints 按官方价格分档（主网格 6 点 / 1x1 单格 2 点），记账与余额校验内聚在此 */
+  classify: (image: string, questionId: string, costPoints: number, confidence?: number) => Promise<GridResult>
 }
 
 /** 打码前余额校验（不烧点数原则：余额低于上限直接 CaptchaFailure） */
@@ -1652,14 +1690,14 @@ async function clickTile(deps: GridDeps, rc: RoundCtx, idx: number): Promise<voi
       deps.logger.warn({ idx }, '九宫格该格点击仍未注册（放弃该格，交由下一轮兜底）')
       break
     }
-    // 图片已刷新：等新图稳定（1.5-2.5s 随机）后截图该格做 1x1 分类
+    // 图片已刷新：等新图稳定（1.5-2.5s 随机）后截图该格做 1x1 分类（官方：100x100，2 点）
     await deps.page.waitForTimeout(1500 + Math.floor(Math.random() * 1000))
     const shot = await rc.ch.locator(TILE_SELECTOR).nth(idx).locator('img').first().screenshot({ type: 'png', timeout: 10000 }).catch(() => null)
     if (!shot) { deps.logger.warn({ idx }, '九宫格该格新图截图失败，放弃确认'); break }
     let hasObject = false
     try {
       const singleB64 = (await (await toStandardImage(shot, 100)).getBufferAsync(Jimp.MIME_PNG)).toString('base64')
-      const r = await rc.classify(singleB64, rc.qid)
+      const r = await rc.classify(singleB64, rc.qid, TILE_COST_POINTS)
       hasObject = r.type === 'single' && r.hasObject
     } catch (e) {
       deps.logger.warn({ idx, err: (e as Error).message }, '九宫格该格新图分类失败，放弃确认')
@@ -1683,7 +1721,7 @@ async function solveOneRound(deps: GridDeps, rc: RoundCtx): Promise<boolean> {
   rc.qid = qid
   const grid = await readGridImage(deps, rc.ch)
   if (!grid) throw new Error('九宫格网格图获取失败')
-  const result = await rc.classify(grid.b64, qid)
+  const result = await rc.classify(grid.b64, qid, GRID_COST_POINTS)
   if (result.type !== 'multi') throw new Error('九宫格分类未返回 multi 结果')
   if (result.objects.length === 0) {
     deps.logger.warn('九宫格分类返回空数组，跳过本轮（不点验证，等下一轮）')
@@ -1715,14 +1753,15 @@ async function solveOneRound(deps: GridDeps, rc: RoundCtx): Promise<boolean> {
 export async function solveRecaptchaGrid(deps: GridDeps, opts: GridOpts = {}): Promise<'solved' | 'none' | 'failed'> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS_DEFAULT
   const onLog = opts.onLog ?? (() => {})
-  const classify = async (image: string, questionId: string, confidence?: number) => {
+  /** 分类封装：余额校验 + 官方价格分档记账（主网格 6 点 / 1x1 单格 2 点）；不传 confidence（官方默认前三） */
+  const classify = async (image: string, questionId: string, costPoints: number, confidence?: number) => {
     await ensureBalance(deps, opts.maxCostPerTask)
     try {
       const r = await deps.provider.classifyGrid(image, questionId, confidence)
-      onLog(deps.provider.platform, 'recaptcha_v2_grid', true, 6)
+      onLog(deps.provider.platform, 'recaptcha_v2_grid', true, costPoints)
       return r
     } catch (e) {
-      onLog(deps.provider.platform, 'recaptcha_v2_grid', false, 6)
+      onLog(deps.provider.platform, 'recaptcha_v2_grid', false, costPoints)
       throw e
     }
   }
@@ -2247,8 +2286,9 @@ git commit -m "feat: arc 领水接入新九宫格求解（同窗口 3 轮上限�
 - 第 3 章 TaskContext：`solveRecaptchaGrid` 增加 `maxRounds` 参数说明与「读 meta.captcha.auto，与 solveCaptcha 口径统一」；`solveCaptcha` 说明改为「内部走打码平台适配层（CaptchaProvider）」
 - 第 5 章验证码整章重写：
   - 架构：打码平台抽象（integrations/captcha）+ 自研人机验证模块（automation/captcha），列出目录结构与 provider 接口
+  - 支持类型：4 种 token 类（turnstile/recaptcha_v2/recaptcha_v3/hcaptcha）+ 九宫格 recaptcha_v2_grid；**明确写明 image（ImageToTextTask）未接入**（官方 body 参数、同步/异步双形态，无使用方）
   - 检测：enterprise 支持说明（enterprise/anchor、enterprise.js）
-  - 九宫格：官方 DEMO 对齐说明（原生整图/naturalWidth/原生点击/单格刷新确认/同窗口 maxRounds 风控上限）
+  - 九宫格：官方 DEMO 对齐说明（原生整图/naturalWidth/原生点击/单格刷新确认/同窗口 maxRounds 风控上限/记账分档：主网格 6 点、1x1 单格 2 点）
   - 错误分类语义：CaptchaFailure → captcha_failed 终态不重试；九宫格多轮未过（普通 Error）→ retry_wait
 - 9.1 配置表：captcha 段重写为 provider/solveTimeoutMs/pollIntervalMs/maxCostPerTask/yescaptcha（删 taskTypes 说明，注明已移入代码）
 - 9.3 REST 接口总表：`/api/captcha/balance` 响应增加 platform 字段说明
