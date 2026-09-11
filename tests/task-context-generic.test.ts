@@ -119,6 +119,21 @@ describe('TaskContext 通用页面工具', () => {
   })
 })
 
+describe('TaskContext waitCaptchaPassed 插件等待', () => {
+  it('锚点 aria-checked=true → 委托 plugin-wait 返回 passed', async () => {
+    const anchorFrame = {
+      url: () => 'https://www.google.com/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve',
+      locator: () => ({ first: () => ({ getAttribute: vi.fn().mockResolvedValue('true') }) }),
+    }
+    const page = {
+      frames: () => [anchorFrame],
+      waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    }
+    const ctx = new TaskContext(baseDeps(page as never))
+    expect(await ctx.waitCaptchaPassed()).toBe('passed')
+  })
+})
+
 /** 可脚本化假页面：texts 为当前出现文案集合；reload 执行 onReload 改写集合（模拟刷新恢复） */
 function makeRecoverPage(initTexts: string[], onReload: () => string[]) {
   let texts = [...initTexts]

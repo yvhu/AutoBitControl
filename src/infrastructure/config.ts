@@ -36,6 +36,19 @@ export interface ExecutionConfig {
   humanize: { minDelayMs: number; maxDelayMs: number }
 }
 
+/** yescaptcha 平台专属配置 */
+export interface YesCaptchaConfig {
+  apiBase: string
+  clientKey: string
+}
+
+/** 打码配置：provider 选平台，平台专属参数放同名字段（未来接入 capsolver 时并列新增） */
+export interface CaptchaConfig {
+  /** 打码平台标识（当前支持 yescaptcha；无对应 clientKey 时余额能力禁用） */
+  provider: string
+  yescaptcha: YesCaptchaConfig
+}
+
 /** Web 面板监听配置 */
 export interface WebConfig {
   host: string
@@ -116,6 +129,7 @@ export interface ClashConfig {
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
   execution: ExecutionConfig
+  captcha: CaptchaConfig
   web: WebConfig
   storage: StorageConfig
   wallet: WalletConfig
@@ -151,6 +165,10 @@ const defaults: AppConfig = {
     maxConcurrentWindows: 4,
     // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
     humanize: { minDelayMs: 800, maxDelayMs: 3000 },
+  },
+  captcha: {
+    provider: 'yescaptcha',
+    yescaptcha: { apiBase: 'https://api.yescaptcha.com', clientKey: '' },
   },
   // 仅监听本机：面板不对外网暴露
   web: { host: '127.0.0.1', port: 3000 },
@@ -243,6 +261,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     cfg = deepMerge(cfg, JSON.parse(readFileSync(local, 'utf-8')))
   }
   // 环境变量优先级最高：部署环境可注入密钥而不落盘
+  if (env.CAPTCHA_CLIENT_KEY) cfg.captcha.yescaptcha.clientKey = env.CAPTCHA_CLIENT_KEY
   if (env.BITBROWSER_API_BASE) cfg.bitbrowser.apiBase = env.BITBROWSER_API_BASE
   // WEB_PORT 非法值（NaN/小数/越界）静默忽略并保留默认端口（config 层无 logger，不做告警）
   if (env.WEB_PORT) {

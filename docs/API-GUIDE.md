@@ -762,6 +762,29 @@ if (await ctx.turnstileVisible()) { /* 方框仍在：验证未通过 */ }
 
 - **注意什么**：`clickTurnstileBox` 点击被浏览器拒绝（iframe 重渲染期间的 `Protocol error` 瞬时错误）会**自动重新取盒重试**（最多 3 次、间隔 1-2s 随机；非瞬时错误直接抛）；方框未出现返回 false。选择器默认 `div[data-turnstile-container] iframe:visible` + `iframe[src*="challenges.cloudflare.com"]:visible`，站点结构特殊时用 `opts.selectors` 覆盖。
 
+### waitCaptchaPassed
+
+```ts
+async waitCaptchaPassed(opts?: { timeoutMs?: number; siteKeyExclude?: string }): Promise<'passed' | 'none' | 'timeout'>
+```
+
+- **是什么**：等待浏览器内**打码平台插件**自动完成验证码解题（见[第 12 章「验证码（浏览器插件路线）」](#12-验证码浏览器插件路线)）。插件在浏览器内自动识别并完成验证，任务代码只需等它变绿。官方判断方式（yescaptcha wiki 64194741）：轮询锚点 iframe 的 `#recaptcha-anchor` 的 `aria-checked="true"`，30 次 × 3 秒 = **90 秒**超时口径。
+- **什么时候用**：站点提交后被拒、注入 reCAPTCHA 挑战（复选框/九宫格）时——插件会自动把题做掉，我们只等结果。**平台无关**：装哪家插件（yescaptcha/capsolver/2captcha）代码都一样，换平台 = 换插件。
+- **怎么用**：
+
+```ts
+// arc 领水：提交 → 检测到挑战 → 等插件解题 → 按钮恢复 → 再提交
+let outcome = await submitAndWait(ctx)
+if (outcome === 'captcha') {
+  const solved = await ctx.waitCaptchaPassed({ siteKeyExclude: V3_SITEKEY })
+  if (solved !== 'passed') throw new Error(solved === 'none' ? '未检测到验证码锚点 frame' : '等待验证码插件解题超时')
+  await ensureSubmitEnabled(ctx)
+  outcome = await submitAndWait(ctx, false) // 重提交只等成功文案（残留挑战文案会误判）
+}
+```
+
+- **注意什么**：返回 `'none'`（无锚点）/`'timeout'`（90 秒没变绿，抛错交重试换窗口，日志会提示检查插件 ClientKey/余额/扩展是否启用）；`siteKeyExclude` 用于跳过页面常驻 v3 锚点（v3 评分与 v2 挑战双锚点并存时）。插件在后台消耗平台点数，任务侧无单次成本记录。
+
 ### 方法对比速查
 
 这几个方法长得像但职责不同，选错会写出「看起来对、跑起来翻车」的任务：
@@ -776,6 +799,7 @@ if (await ctx.turnstileVisible()) { /* 方框仍在：验证未通过 */ }
 | 等元素**消失**（loading 遮罩） | `waitForGone` | `assertVisible` | 等消失 vs 等出现 |
 | 看**当前**网址是否包含某片段 | `urlIncludes` | `waitForUrl` | 即时看一眼 vs 蹲点等 |
 | 等网址**变成**包含某片段（跳转） | `waitForUrl` | `urlIncludes` | 蹲点等 vs 即时看一眼 |
+| 站点弹 reCAPTCHA 挑战等插件自动解 | `waitCaptchaPassed` | 自己点格子 | 插件解题（第 12 章） vs 手动模拟点击 |
 | 打开页面 | `goto` | — | **打开页面 ≠ 签到成功**，成功与否要后续断言 |
 
 ### 选择器查找技巧
@@ -1066,6 +1090,7 @@ randomMicroMove(): Promise<void>
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches 保留天数，超期行启动时清理。 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 | `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
+| `captcha` | `provider`、`yescaptcha.apiBase`、`yescaptcha.clientKey` | 打码平台配置（插件路线，见[第 12 章](#12-验证码浏览器插件路线)）：`provider` 选平台（当前 `yescaptcha`，未来平台并列新增字段）；`yescaptcha` 是平台专属段（API 地址与密钥）。环境变量 `CAPTCHA_CLIENT_KEY` 可覆盖 clientKey；未配置 Key 时面板余额显示「未配置」，任务侧插件无 Key 无法解题 |
 | `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck` | 代理网络工具（详见[第 11 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 目标分组（留空时面板下拉选，选择后自动写回本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时） |
 
 ### 8.2 面板使用
@@ -1103,6 +1128,7 @@ randomMicroMove(): Promise<void>
 | POST | `/api/profiles/:id/breaker/reset` | 重置该窗口熔断计数 |
 | POST | `/api/bitbrowser/test` | 比特浏览器连接测试 |
 | POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库 |
+| GET | `/api/captcha/balance` | 打码平台余额（未配置 clientKey 或查询失败时 configured=false；platform 为平台标识如 yescaptcha，1000 点 = ¥1） |
 | GET | `/api/settings` | 公开只读设置（不含密钥）＋ 数据源状态 |
 | POST | `/api/datasource/reload` | 重载数据源 Excel |
 | GET | `/api/screenshots` | 取截图文件 |
@@ -1424,6 +1450,8 @@ if (done) return   // 今日已做 → 直接成功
 | `AppKit 弹窗未出现 X 钱包入口` | AppKit 弹窗视图异常，归一化没找到钱包入口 | 站点改版/弹窗渲染异常/`entryTestId` 填错 | 核对 `entryTestId` 与站点当前 AppKit 视图（见[第 3 章](#3-taskcontext-方法全解) openAppKitWallet） |
 | `未注册的钱包适配器: X` | `meta.wallet` 的 key 没人认领 | key 拼错或适配器没在 `src/app.ts` 注册 | 核对 key 与注册列表（见[第 4 章](#4-钱包弹窗)） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec`（默认 180 秒），按普通失败处理 | run 卡死；某个等待动作超时太长 | 核对各等待方法的超时参数；必要时上调 `meta.timeoutSec` 或全局 `execution.taskTimeoutMs` |
+| `等待验证码插件解题超时` | 90 秒内插件没把验证码做掉（`waitCaptchaPassed` 返回 timeout） | 插件没启用/ClientKey 未配置或余额不足；站点风控；代理异常 | 检查比特窗口扩展是否启用、插件里的 ClientKey 与余额；看失败截图里挑战是否还在 |
+| `未检测到验证码锚点 frame` | 挑战检测到了但锚点 iframe 没找到（`waitCaptchaPassed` 返回 none） | v2 锚点被 v3 常驻锚点干扰；页面结构变化 | 核对 `siteKeyExclude` 是否传了常驻 v3 sitekey；看失败截图 |
 
 完整业务错误码清单见 /api-docs。
 
@@ -1620,3 +1648,33 @@ Get-NetTCPConnection -State Listen | Where-Object { $pids -contains $_.OwningPro
 - 测速全部超时 → 机场限制并发或节点本身不可用：调低 `testConcurrency`；若持续全网挂，去 Clash 客户端检查/切换订阅
 - 分组选择重启后丢失 → 你很可能在 `config.local.json` 里也写了 `clash.group`（它覆盖 config.json 的写回值），删掉其中一处
 - 不想自动切换只想要手动控制 → `autoCheck.enabled` 设为 false（手动入口不受影响）
+
+
+---
+
+## 12. 验证码（浏览器插件路线）
+
+### 思路：插件解题，任务只等结果
+
+打码平台（yescaptcha/capsolver/2captcha 等）大多提供**浏览器插件**：插件装在窗口浏览器里，页面出现 reCAPTCHA/hCaptcha 等挑战时，插件自动识别并完成验证（勾选/选图全由插件做），站点 widget 变绿。任务代码不需要截图、分类、点格子——只需**等待验证通过**。
+
+- **平台无关**：换平台 = 换插件 + 插件里换个 key，代码零改动
+- **官方判断方式**（yescaptcha wiki 64194741）：轮询锚点 iframe 的 `#recaptcha-anchor` 的 `aria-checked="true"`，30 次 × 3 秒 = 90 秒
+- **封装**：`ctx.waitCaptchaPassed({ siteKeyExclude })`（见[第 3 章](#3-taskcontext-方法全解)），返回 `'passed' | 'none' | 'timeout'`
+- **插件安装**（一次性）：比特浏览器「扩展中心」→ 添加扩展（Chrome 商店或本地包）→ 插件里填平台 ClientKey → 按窗口启用
+
+### arc 领水接法（示例）
+
+```
+填表 → 点 Send → 竞速（成功文案 / v2 挑战出现）
+挑战 → ctx.waitCaptchaPassed({ siteKeyExclude: V3_SITEKEY })   // 插件后台解题
+  passed → 等提交按钮恢复 → 再点 Send（只等成功文案，防残留挑战文案误判）→ 成功
+  none / timeout → 抛错 → 重试换窗口
+```
+
+### 注意事项
+
+1. **插件识别耗时**：官方口径 10-80s，`waitCaptchaPassed` 默认等 90s；多窗口并发时插件可能内部排队，必要时调大 `timeoutMs`
+2. **余额**：插件消耗平台点数（与 API 同账号）；插件 key 失效/余额不足的表现 = 永远超时，看面板余额（`GET /api/captcha/balance`）与插件弹窗
+3. **站点风控**：插件默认向页面注入工作状态 flag（可在插件高级设置关闭，若被检测）
+4. **失败语义**：插件解不出 → `'timeout'` → 普通失败重试换窗口；不存在「打码平台调用失败」终态（无 API 调用可言）

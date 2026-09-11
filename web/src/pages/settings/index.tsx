@@ -1,4 +1,4 @@
-import { Alert, App, Button, Card, Descriptions, Segmented, Space, Spin, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Descriptions, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useThemeMode } from '../../theme/useThemeMode'
 import {
@@ -9,7 +9,6 @@ import {
 } from './hooks'
 
 export default function SettingsPage() {
-  const { message } = App.useApp()
   const settings = useSettings()
   const reload = useReloadDatasource()
   const test = useTestBitbrowser()

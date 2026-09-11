@@ -11,6 +11,7 @@ import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
+import { createCaptchaPlatform } from './integrations/captcha'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
 import { recoverRetryTasks } from './engine/retry-recovery'
@@ -141,6 +142,9 @@ export async function startApp(): Promise<void> {
   // 钱包密码环境变量解析失败告警（config 层无 logger，此处统一提示）
   if (cfg.wallet.parseError) logger.warn('WALLET_PASSWORDS 环境变量解析失败，已忽略（请检查 JSON 格式）')
 
+  // clientKey 未配置时 captcha 为 null：面板显示"未配置 Key"；插件解题路线不依赖平台实例（解题在浏览器内完成）
+  const captcha = createCaptchaPlatform(cfg.captcha)
+
   // 数据源（Excel 账号表）：加载失败仅告警（数据源是可选增强，任务侧 faker 兜底）
   const datasource = new DataSource()
   await datasource.load(cfg.dataSource.path)
@@ -252,6 +256,15 @@ export async function startApp(): Promise<void> {
         updateConfigFile({ group })
       },
       anyRunning: () => enqueuer.anyRunning(),
+    },
+    // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败走异常路径）
+    captchaBalance: async () => {
+      if (!captcha) return null
+      try {
+        return { points: await captcha.getBalance(), platform: captcha.platform }
+      } catch {
+        return null
+      }
     },
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出

@@ -7,12 +7,15 @@
  *   币种：三张 radio 卡片（USDC/EURC/CIRBTC），input[name="currency"][value="USDC"] 默认 checked；
  *     卡片 [data-testid="select-card-USDC"]（三卡片 id 重复非法，禁用 id 选择器）
  *   验证码：reCAPTCHA v3 无形（页面常驻 api.js，浏览器自行生成 token，不主动打码）
+ *     + v2 回退挑战（提交被拒后动态注入 anchor/bframe iframe，站点文案 "Please verify that you are not a bot and submit again."）
  *   成功：headline "Tokens sent" + "20 testnet USDC is on its way to your wallet and should appear shortly."
  *   限频：每资产×网络 1-2 小时限领一次（不做判定：用户隔天执行一次，撞限频按失败处理）
- * 流程：开页 → 填 metamask 地址（数据源列，不连钱包）→ 校验网络/币种默认值 → 点 Send → 等成功文案
- *   → 成功截图（人机验证处理待定：yescaptcha 已移除）
+ * 流程：开页 → 填 metamask 地址（数据源列，不连钱包）→ 校验网络/币种默认值 → 点 Send → 竞速成功文案/v2 提示
+ *   → v2 出现走浏览器插件自动解题（waitCaptchaPassed 等锚点 aria-checked=true；常驻 v3 不打码，
+ *     插件在浏览器内自动识别点击，任务侧只等信号）→ 再点 Send → 成功截图
  */
 import { SiteTask, TaskContext, type TaskMeta } from './base'
+import { findAnchorFrame, findChallengeFrame } from '../automation/captcha/frame-find'
 
 // —— 站点元素与文案（2026-09-09 SSR 核实）——
 /** 地址输入框 */
@@ -33,10 +36,14 @@ export const CURRENCY_CARD_SELECTOR = '[data-testid="select-card-USDC"]'
 export const SUBMIT_SELECTOR = 'form button[type="submit"]'
 /** 领取成功文案（任务单判定文案） */
 export const SUCCESS_TEXT = 'is on its way to your wallet and should appear shortly'
+/** v2 挑战提示文案（提交被拒后出现；出现才触发插件解题等待） */
+export const CAPTCHA_V2_TEXT = 'verify that you are not a bot'
 /** 提交按钮 enabled 轮询上限（毫秒） */
 export const SUBMIT_ENABLED_TIMEOUT_MS = 15000
-/** 单次提交后的成功文案等待（毫秒） */
+/** 单次提交后的竞速等待（毫秒） */
 export const SUBMIT_RACE_MS = 30000
+/** 常驻 v3 sitekey（页面加载即有，挑战检测时排除） */
+export const V3_SITEKEY = '6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2'
 
 /** 读取 Network 下拉当前显示值（元素缺失/读取失败返回空串） */
 export async function currentNetwork(ctx: TaskContext): Promise<string> {
@@ -87,24 +94,36 @@ export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_E
 }
 
 /**
- * 等成功文案出现（单次提交后的唯一判定）；轮询 1s 间隔
- * @returns 预算内文案出现 true / 超时 false
+ * 检测 v2 挑战是否已渲染：主文档存在 anchor iframe 且 sitekey ≠ 常驻 v3，或已出现网格 bframe
+ * （复用 automation/captcha 的 frame 查找，sitekey 排除逻辑单点维护，不在任务层内联）
  */
-export async function waitForOutcome(ctx: TaskContext, timeoutMs: number): Promise<boolean> {
-  const end = Date.now() + timeoutMs
-  while (Date.now() < end) {
-    if (await ctx.textPresent(SUCCESS_TEXT)) return true
-    await ctx.page.waitForTimeout(1000)
-  }
-  return false
+export async function detectV2Challenge(ctx: TaskContext): Promise<boolean> {
+  return findAnchorFrame(ctx.page, V3_SITEKEY) !== null || findChallengeFrame(ctx.page, V3_SITEKEY) !== null
 }
 
-/** 点提交并等成功文案；超时抛错（提交后 30000ms 内未出现成功文案） */
-async function submitAndWait(ctx: TaskContext): Promise<void> {
-  await ctx.human.click(SUBMIT_SELECTOR)
-  if (!(await waitForOutcome(ctx, SUBMIT_RACE_MS))) {
-    throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案`)
+/**
+ * 竞速等待：成功文案 / v2 挑战文案谁先出现；每 2s 补一次 DOM 挑战检测（v2 文案未渲染但 iframe 已注入时兜底）
+ * allowChallenge=false 用于插件解题后的重提交——站点残留的挑战文案/iframe 会误判为新一轮挑战，重提交只等成功文案
+ */
+export async function waitForOutcome(ctx: TaskContext, timeoutMs: number, allowChallenge = true): Promise<'success' | 'captcha' | null> {
+  const end = Date.now() + timeoutMs
+  let lastCheck = 0
+  while (Date.now() < end) {
+    if (await ctx.textPresent(SUCCESS_TEXT)) return 'success'
+    if (allowChallenge) {
+      if (await ctx.textPresent(CAPTCHA_V2_TEXT)) return 'captcha'
+      if (Date.now() - lastCheck >= 2000 && (await detectV2Challenge(ctx))) return 'captcha'
+      lastCheck = Date.now()
+    }
+    await ctx.page.waitForTimeout(1000)
   }
+  return null
+}
+
+/** 点提交并竞速等待结果 */
+async function submitAndWait(ctx: TaskContext, allowChallenge = true): Promise<'success' | 'captcha' | null> {
+  await ctx.human.click(SUBMIT_SELECTOR)
+  return waitForOutcome(ctx, SUBMIT_RACE_MS, allowChallenge)
 }
 
 /** Arc 领水主流程（模块级函数：任务类委托它，集成测试经任务类覆盖）*/
@@ -126,8 +145,18 @@ async function runArcFaucet(ctx: TaskContext): Promise<void> {
       await addressInput.fill(address)
     }
   })
-  // 提交：v3 常驻不打码（浏览器自行生成 token）；只等成功文案，超时抛错交重试
-  await submitAndWait(ctx)
+  // 提交：v3 常驻不打码（浏览器自行生成 token）；被拒后站点动态注入 v2 挑战（anchor + 九宫格 bframe）
+  let outcome = await submitAndWait(ctx)
+  if (outcome === 'captcha') {
+    ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，等待浏览器插件自动解题')
+    const solved = await ctx.waitCaptchaPassed({ siteKeyExclude: V3_SITEKEY })
+    if (solved === 'none') throw new Error('未检测到验证码锚点 frame')
+    if (solved === 'timeout') throw new Error('等待验证码插件解题超时（检查插件 ClientKey/余额）')
+    // 插件完成后站点恢复提交按钮；再提交一次（只等成功文案，防残留挑战文案误判）
+    await ensureSubmitEnabled(ctx)
+    outcome = await submitAndWait(ctx, false)
+  }
+  if (outcome !== 'success') throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案（v2 挑战也未出现）`)
   // 成功截图留档；截图失败只告警，不判任务失败（真机偶发等字体加载超时）
   try {
     await ctx.screenshot('arc-faucet-success')
@@ -144,7 +173,7 @@ export class ArcFaucetTask extends SiteTask {
     group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
-    note: '真机核实（2026-09-09）：站点为 reCAPTCHA Enterprise（页面常驻 v3 sitekey 6LcNs_0p，浏览器自行生成 token）；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）；人机验证处理待定（yescaptcha 已移除）',
+    note: '真机核实（2026-09-09）：站点为 reCAPTCHA Enterprise（页面常驻 v3 sitekey 6LcNs_0p，浏览器自行生成 token）；提交被拒后动态注入 v2 挑战——人机验证走浏览器插件自动解题（waitCaptchaPassed，插件=yescaptcha 人机助手；插件在浏览器内自动识别点击，任务侧只等 aria-checked 变绿）；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）',
     category: 'faucet',
     lastUpdated: '2026-09-09',
     enabled: true,

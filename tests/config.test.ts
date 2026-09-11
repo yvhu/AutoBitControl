@@ -14,6 +14,8 @@ describe('loadConfig', () => {
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
     expect(cfg.execution.staggerMaxSec).toBe(120)
     expect(cfg.execution.maxConcurrentWindows).toBe(4)
+    expect(cfg.captcha.provider).toBe('yescaptcha')
+    expect(cfg.captcha.yescaptcha.clientKey).toBe('')
   })
 
   it('config.json 与 config.local.json 深度合并，local 覆盖', () => {
@@ -30,6 +32,11 @@ describe('loadConfig', () => {
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:9999')
     expect(cfg.execution.windowTimeoutMs).toBe(999000)
     expect(cfg.web.port).toBe(3000)
+  })
+
+  it('环境变量覆盖 clientKey', () => {
+    const cfg = loadConfig({ rootDir: dir, env: { CAPTCHA_CLIENT_KEY: 'abc123' } })
+    expect(cfg.captcha.yescaptcha.clientKey).toBe('abc123')
   })
 
   it('WEB_PORT 合法值覆盖默认端口', () => {

@@ -26,6 +26,7 @@ import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
 import { toolsRouter } from './routes/tools'
+import { captchaRouter } from './routes/captcha'
 import { notFoundHandler, errorHandler } from './http/error'
 
 // 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
@@ -59,6 +60,8 @@ export interface ServerDeps {
     saveGroup(group: string): Promise<void>
     anyRunning(): boolean
   }
+  /** 打码平台余额查询（未配置/查询失败返回 null，路由统一走 configured:false 分支） */
+  captchaBalance: () => Promise<{ points: number; platform: string } | null>
 }
 
 /**
@@ -81,6 +84,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
   api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, clash: deps.clash, fileAssignService: deps.fileAssignService }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
+  api.use(captchaRouter({ captchaBalance: deps.captchaBalance }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

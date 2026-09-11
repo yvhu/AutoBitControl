@@ -16,6 +16,7 @@ import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
 import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
+import { waitCaptchaPassed as runPluginWait } from '../automation/captcha/plugin-wait'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
@@ -427,6 +428,16 @@ export class TaskContext {
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
     return runTurnstileAutoClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, budgetMs)
+  }
+
+  /**
+   * 等待浏览器内打码平台插件自动完成验证码解题（插件路线：平台无关，装哪家插件都一样）
+   * 官方判断方式：锚点 iframe 的 aria-checked=true（wiki 64194741，30×3s=90s）
+   * @param opts.siteKeyExclude 跳过的常驻 sitekey（页面常驻 v3 锚点排除）
+   * @returns 'passed' 通过；'none' 无锚点；'timeout' 超时（任务应抛错交重试）
+   */
+  async waitCaptchaPassed(opts?: { timeoutMs?: number; siteKeyExclude?: string }): Promise<'passed' | 'none' | 'timeout'> {
+    return runPluginWait({ page: this.page, logger: this.turnstileLogger() }, opts)
   }
 
   /**
