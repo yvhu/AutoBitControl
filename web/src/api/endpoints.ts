@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, ClashStatusData, ClashTestData, ClashOptimizeResult } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, ClashStatusData, ClashTestData, ClashOptimizeResult } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -11,6 +11,8 @@ export const openProfile = (id: number) => post<{ already: boolean }>(`/api/prof
 export const closeProfile = (id: number) => post<null>(`/api/profiles/${id}/close`, {})
 export const patchProfile = (id: number, body: { enabled?: boolean }) => patch<ProfileRow>(`/api/profiles/${id}`, body)
 export const resetBreaker = (id: number) => post<null>(`/api/profiles/${id}/breaker/reset`, {})
+export const batchProfiles = (action: ProfileBatchAction, ids: number[]) =>
+  post<ProfileBatchResult>('/api/profiles/batch', { action, ids })
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})
 export const syncProfiles = () => post<{ count: number }>('/api/bitbrowser/sync', {})
 export const fetchBalance = () => get<{ configured: boolean; points: number; yuan: number; platform: string }>('/api/captcha/balance')

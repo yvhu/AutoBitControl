@@ -21,6 +21,16 @@ export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'captcha_
 
 export type ProfileRow = EnvelopeData<'/api/profiles'>[number]
 
+/** 批量窗口操作类型（与后端 /api/profiles/batch 的 action 枚举一致） */
+export type ProfileBatchAction = 'open' | 'close' | 'resetBreaker'
+
+/** 批量操作结果（total=总数，succeeded=成功数，failed=逐项失败清单） */
+export interface ProfileBatchResult {
+  total: number
+  succeeded: number
+  failed: Array<{ id: number; error: string }>
+}
+
 export type BatchItem = EnvelopeData<'/api/batches'>['batches'][number]
 
 export type BatchesData = EnvelopeData<'/api/batches'>
