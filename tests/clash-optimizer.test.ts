@@ -97,10 +97,19 @@ describe('ClashService.test（测当前节点）', () => {
     expect(adapter.delay).not.toHaveBeenCalled()
   })
 
-  it('分组不存在 → CLASH_GROUP_NOT_FOUND', async () => {
-    const { adapter } = makeAdapter({})
+  it('配置分组不存在 → 告警并回退到 GLOBAL', async () => {
+    logger.warn.mockClear()
+    const { adapter } = makeAdapter({}, { groups: [{ name: 'GLOBAL', now: 'HK-01', all: ['HK-01', 'HK-02'] }] })
     const svc = makeService(adapter as never, makeCfg({ group: 'NOPE' }))
-    await expect(svc.test()).rejects.toMatchObject({ status: 400, code: 40008 })
+    const r = await svc.testGroup()
+    expect(r.group).toBe('GLOBAL')
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('无任何分组时 → CLASH_GROUP_NOT_FOUND', async () => {
+    const { adapter } = makeAdapter({}, { groups: [] })
+    const svc = makeService(adapter as never, makeCfg({ group: 'NOPE' }))
+    await expect(svc.testGroup()).rejects.toMatchObject({ status: 400, code: 40008 })
   })
 
   it('busy 锁：进行中再次调用 409', async () => {

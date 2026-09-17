@@ -100,7 +100,7 @@ import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimi
  * @swagger
  * /api/tools/clash/status:
  *   get:
- *     summary: 代理网络状态（客户端探测/分组/当前节点/自动检测状态）
+ *     summary: 代理网络状态（客户端探测/主代理分组/当前节点/自动检测状态）
  *     responses:
  *       '200':
  *         description: 状态汇总
@@ -129,10 +129,10 @@ import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimi
  * @swagger
  * /api/tools/clash/test:
  *   post:
- *     summary: 代理节点测速（只读，不切换）
+ *     summary: 当前节点测速（只读，不切换；只测当前节点）
  *     responses:
  *       '200':
- *         description: 测速结果（nodes 按得分升序）
+ *         description: 当前节点测速结果（node 为 null 表示直连/未选择节点无可测）
  *         content:
  *           application/json:
  *             schema:
@@ -145,16 +145,15 @@ import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimi
  *                   properties:
  *                     group: { type: string }
  *                     currentNode: { type: string, nullable: true }
- *                     currentUsable: { type: boolean, nullable: true }
- *                     nodes:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           name: { type: string }
- *                           urls: { type: array, items: { type: object } }
- *                           score: { type: number }
- *                           usable: { type: boolean }
+ *                     currentUsable: { type: boolean }
+ *                     node:
+ *                       type: object
+ *                       nullable: true
+ *                       properties:
+ *                         name: { type: string }
+ *                         urls: { type: array, items: { type: object } }
+ *                         score: { type: number }
+ *                         usable: { type: boolean }
  */
 
 /**

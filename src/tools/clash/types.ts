@@ -38,7 +38,7 @@ export interface NodeTestResult {
   usable: boolean
 }
 
-/** 测速结果（test 与 optimize 共用；nodes 已按得分升序） */
+/** 全节点测速结果（testGroup 与 optimize 共用；nodes 已按得分升序） */
 export interface ClashTestResult {
   group: string
   /** 分组当前选中节点（切换/节奏判定依据） */

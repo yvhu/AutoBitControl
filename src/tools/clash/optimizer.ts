@@ -51,9 +51,6 @@ export function scoreNode(urls: UrlDelay[], weights: number[], timeoutMs: number
   return { score, usable: reachableCount > 0 }
 }
 
-/** 配置文件名校验：仅普通 yaml/yml 文件名（防路径穿越） */
-const PROFILE_FILE_RE = /^[\w.-]+\.ya?ml$/i
-
 export class ClashService {
   private busy = false
 
@@ -69,14 +66,14 @@ export class ClashService {
     return detectClash(this.deps.adapter)
   }
 
-  /** 当前工作分组：优先配置 clash.group，其次 GLOBAL/第一个 Selector 组 */
+  /** 当前工作分组：优先配置 clash.group；配置分组不存在时告警并回退 GLOBAL/第一个 Selector 组 */
   private async resolveGroup(): Promise<ClashGroup> {
     const configured = this.deps.getCfg().group
     const groups = await this.deps.adapter.groups()
     if (configured) {
       const g = groups.find((x) => x.name === configured)
-      if (!g) throw new ToolError(400, TOOL_ERROR_CODES.CLASH_GROUP_NOT_FOUND, `目标分组不存在: ${configured}`)
-      return g
+      if (g) return g
+      this.deps.logger.warn({ configured, available: groups.map((x) => x.name) }, 'Clash 配置的主代理分组不存在，已回退到默认分组（请在 config.json 修正 clash.group）')
     }
     const fallback = groups.find((x) => x.name === 'GLOBAL') ?? groups[0]
     if (!fallback) throw new ToolError(400, TOOL_ERROR_CODES.CLASH_GROUP_NOT_FOUND, '未找到可用的 Selector 分组（请检查 Clash 配置）')
