@@ -10,6 +10,8 @@ import {
   syncProfiles,
 } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
+import { batchProfiles } from '../../api/endpoints'
+import type { ProfileBatchAction } from '../../types'
 import type { ProfileRow } from '../../types'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
@@ -107,6 +109,31 @@ export function useSyncProfiles() {
     onSuccess: (res) => {
       message.success(`已同步 ${res.count} 个窗口`)
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 按选中窗口 id 提取 bitbrowserId（保持入参顺序，忽略不存在项；复制 ID 与批量按钮共用） */
+export function joinBitbrowserIds(profiles: ProfileRow[], ids: Array<string | number>): string[] {
+  const byId = new Map(profiles.map((p) => [String(p.id), p.bitbrowserId]))
+  return ids.map((id) => byId.get(String(id))).filter((v): v is string => v !== undefined)
+}
+
+/** 批量窗口操作（打开/关闭/重置熔断）；完成后按汇总弹消息并刷新窗口列表 */
+export function useBatchProfiles() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ action, ids }: { action: ProfileBatchAction; ids: number[] }) => batchProfiles(action, ids),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      if (res.failed.length === 0) {
+        message.success(`已完成 ${res.succeeded} 个窗口`)
+        return
+      }
+      const sample = res.failed.slice(0, 3).map((f) => `#${f.id}: ${f.error}`).join('；')
+      message.warning(`成功 ${res.succeeded}，失败 ${res.failed.length}（${sample}${res.failed.length > 3 ? ' 等' : ''}）`)
     },
     onError: (e) => message.error(errMsg(e)),
   })

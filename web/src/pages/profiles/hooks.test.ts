@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterProfiles, profileSorters } from './hooks'
+import { filterProfiles, joinBitbrowserIds, profileSorters } from './hooks'
 import type { ProfileRow } from '../../types'
 
 const mk = (id: number, name: string, bitbrowserId: string): ProfileRow => ({
@@ -67,5 +67,25 @@ describe('profileSorters', () => {
       { ...mk(2, '窗口B', 'b'), enabled: 0 },
     ]
     expect(sorted(rows, profileSorters.enabled).map((p) => p.enabled)).toEqual([0, 1])
+  })
+})
+
+describe('joinBitbrowserIds', () => {
+  const profiles = [
+    mk(1, '窗口A', 'bb-1'),
+    mk(2, '窗口B', 'bb-2'),
+    mk(3, '窗口C', 'bb-3'),
+  ]
+
+  it('按选中 id 取对应 bitbrowserId，保持选中顺序', () => {
+    expect(joinBitbrowserIds(profiles, [3, 1])).toEqual(['bb-3', 'bb-1'])
+  })
+
+  it('空选返回空数组', () => {
+    expect(joinBitbrowserIds(profiles, [])).toEqual([])
+  })
+
+  it('忽略不存在的 id', () => {
+    expect(joinBitbrowserIds(profiles, [1, 999])).toEqual(['bb-1'])
   })
 })
