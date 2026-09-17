@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
+import type { Key } from 'react'
 import {
   App,
   Avatar,
   Button,
   Card,
+  Divider,
   Empty,
   Input,
   Progress,
@@ -19,7 +21,9 @@ import type { ColumnsType } from 'antd/es/table'
 import type { ProfileRow } from '../../types'
 import {
   filterProfiles,
+  joinBitbrowserIds,
   profileSorters,
+  useBatchProfiles,
   useBreakerThreshold,
   useCloseProfile,
   useOpenProfile,
@@ -41,6 +45,8 @@ export default function ProfilesPage() {
   const close = useCloseProfile()
   const reset = useResetBreaker()
   const sync = useSyncProfiles()
+  const batch = useBatchProfiles()
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([])
 
   const threshold = thresholdQ.data ?? 0
 
@@ -52,6 +58,16 @@ export default function ProfilesPage() {
       message.success('已复制窗口ID')
     } catch {
       message.error(`复制失败，请手动复制：${id}`)
+    }
+  }
+
+  const copyIds = async () => {
+    const ids = joinBitbrowserIds(profiles.data ?? [], selectedRowKeys)
+    try {
+      await navigator.clipboard.writeText(ids.join('\n'))
+      message.success(`已复制 ${ids.length} 个窗口ID`)
+    } catch {
+      message.error('复制失败，请手动复制')
     }
   }
 
@@ -228,12 +244,44 @@ export default function ProfilesPage() {
           <Typography.Text type="secondary">
             {profiles.data?.length ?? 0} 个窗口 · 启用 {profiles.data?.filter((p) => p.enabled === 1).length ?? 0}
           </Typography.Text>
+          <Divider type="vertical" />
+          <Typography.Text type={selectedRowKeys.length > 0 ? 'primary' : 'secondary'}>
+            {selectedRowKeys.length > 0 ? `已选 ${selectedRowKeys.length} 个窗口` : '未选窗口'}
+          </Typography.Text>
+          <Button
+            disabled={selectedRowKeys.length === 0}
+            loading={batch.isPending && batch.variables?.action === 'open'}
+            onClick={() => batch.mutate({ action: 'open', ids: selectedRowKeys.map(Number) })}
+          >
+            批量打开
+          </Button>
+          <Button
+            disabled={selectedRowKeys.length === 0}
+            loading={batch.isPending && batch.variables?.action === 'close'}
+            onClick={() => batch.mutate({ action: 'close', ids: selectedRowKeys.map(Number) })}
+          >
+            批量关闭
+          </Button>
+          <Button disabled={selectedRowKeys.length === 0} onClick={copyIds}>
+            复制 ID
+          </Button>
+          <Button
+            disabled={selectedRowKeys.length === 0}
+            loading={batch.isPending && batch.variables?.action === 'resetBreaker'}
+            onClick={() => batch.mutate({ action: 'resetBreaker', ids: selectedRowKeys.map(Number) })}
+          >
+            重置熔断
+          </Button>
         </Space>
       </Card>
 
       <Card size="small">
         <Table<ProfileRow>
           rowKey={(p) => p.id}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+          }}
           columns={columns}
           dataSource={rows}
           loading={profiles.isPending}
