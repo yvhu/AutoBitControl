@@ -1091,7 +1091,7 @@ randomMicroMove(): Promise<void>
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 | `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
 | `captcha` | `provider`、`yescaptcha.apiBase`、`yescaptcha.clientKey` | 打码平台配置（插件路线，见[第 12 章](#12-验证码浏览器插件路线)）：`provider` 选平台（当前 `yescaptcha`，未来平台并列新增字段）；`yescaptcha` 是平台专属段（API 地址与密钥）。环境变量 `CAPTCHA_CLIENT_KEY` 可覆盖 clientKey；未配置 Key 时面板余额显示「未配置」，任务侧插件无 Key 无法解题 |
-| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck` | 代理网络工具（详见[第 11 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 目标分组（留空时面板下拉选，选择后自动写回本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时） |
+| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck` | 代理网络工具（详见[第 11 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 主代理分组（读当前节点与选优的锚点，默认 `🔰 节点选择`；面板不再提供分组下拉，需改时手改本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时） |
 
 ### 8.2 面板使用
 
@@ -1137,10 +1137,9 @@ randomMicroMove(): Promise<void>
 | GET | `/api/tools` | 工具清单（工具中心卡片数据源） |
 | POST | `/api/tools/file-assign/preview` | 文件随机分配预览（校验并生成分配计划，不落盘） |
 | POST | `/api/tools/file-assign/apply` | 文件随机分配执行（按回传计划改名并写回 accounts.xlsx） |
-| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/分组/当前节点/delay 能力/自动检测状态/任务在途标记） |
-| POST | `/api/tools/clash/test` | 节点测速（只读，不切换） |
-| POST | `/api/tools/clash/optimize` | 测速选优并切换节点 |
-| POST | `/api/tools/clash/group` | 设置目标分组（写回 config.json 的 clash.group） |
+| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/主代理分组/当前节点/delay 能力/自动检测状态/任务在途标记） |
+| POST | `/api/tools/clash/test` | 当前节点测速（只测当前节点） |
+| POST | `/api/tools/clash/optimize` | 测速选优并切换（在主代理分组内选优） |
 
 完整参数、请求体、响应与业务错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）。
 
@@ -1609,7 +1608,7 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 9 章「配方
 
 **配置**（`config.json` 的 `clash` 段，全带缺省，键说明见 8.1 配置表）。
 
-**面板操作**：顶部状态条显示内核类型/当前节点/检测节奏/全网可用性/任务运行中标记与实测混合口；分组下拉（未配置 group 时从 Clash 实时拉取，选择后自动写回 config.json）；「立即测速」只读测一遍（节点表格展示每 URL 延迟/得分/可用）；「选优并切换」测完直接切到最优节点（任务在途时会弹确认提示，因为换 IP 可能中断签到会话）。
+**面板操作**：顶部状态条显示内核类型/主代理分组/当前节点/检测节奏/全网可用性/任务运行中标记与实测混合口；「立即测速」只测当前节点（显示各 URL 延迟）；「选优并切换」在主代理分组（clash.group，默认「🔰 节点选择」）内测全部候选节点后切到最优节点（任务在途时会弹确认提示，因为换 IP 可能中断签到会话）。
 
 **定时自动检测**：正常节奏 30 分钟测一次；发现当前节点不可用或全网挂时进入快速节奏（2 分钟一次）直到恢复。**任务运行中只测速不切换**，切换延后到空闲窗口。切换失败自动回滚原节点。
 
