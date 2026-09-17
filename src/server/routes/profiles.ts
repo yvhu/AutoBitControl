@@ -226,17 +226,17 @@ export function profilesRouter(deps: {
   /** 批量操作类型（打开/关闭/重置熔断） */
   type BatchAction = 'open' | 'close' | 'resetBreaker'
 
-  /** 单窗口动作执行（单窗口端点与批量端点共用）；open 返回 already 语义 */
-  const applyAction = async (id: number, action: BatchAction): Promise<{ already?: boolean }> => {
-    const profile = await find(id)
+  /** 单窗口动作执行（单窗口端点与批量端点共用）；open 返回 already 语义；openIds 为批量预探测的存活集合（缺省逐窗口 isOpen） */
+  const applyAction = async (profile: ProfileRow, action: BatchAction, openIds?: Set<string>): Promise<{ already?: boolean }> => {
     if (action === 'resetBreaker') {
-      await deps.db.resetCircuitBreaker(id)
+      await deps.db.resetCircuitBreaker(profile.id)
       return {}
     }
     if (action === 'open') {
       // 已有登记且 pid 实测存活 → 直接复用（already），避免重复开窗
       const row = await deps.db.getOpenWindow(profile.bitbrowserId)
-      if (row && (await deps.bitbrowser.isOpen(profile.bitbrowserId))) return { already: true }
+      const alive = openIds ? openIds.has(profile.bitbrowserId) : await deps.bitbrowser.isOpen(profile.bitbrowserId)
+      if (row && alive) return { already: true }
       const opened = await deps.bitbrowser.openBrowser(profile.bitbrowserId)
       await deps.db.setOpenWindow(profile.bitbrowserId, opened.http)
       return { already: false }
@@ -280,14 +280,14 @@ export function profilesRouter(deps: {
     ok(res, profile)
   }))
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
-    await applyAction(Number(req.params.id), 'resetBreaker')
+    await applyAction(await find(Number(req.params.id)), 'resetBreaker')
     ok(res)
   }))
   router.post('/profiles/:id/open', asyncHandler(async (req, res) => {
-    ok(res, await applyAction(Number(req.params.id), 'open'))
+    ok(res, await applyAction(await find(Number(req.params.id)), 'open'))
   }))
   router.post('/profiles/:id/close', asyncHandler(async (req, res) => {
-    await applyAction(Number(req.params.id), 'close')
+    await applyAction(await find(Number(req.params.id)), 'close')
     ok(res)
   }))
   router.post('/profiles/batch', asyncHandler(async (req, res) => {
@@ -301,11 +301,24 @@ export function profilesRouter(deps: {
     }
     const action = body.action as BatchAction
     const ids = body.ids as number[]
+    // 一次性加载窗口表建 id→profile 映射，避免逐项全表 listProfiles
+    const byId = new Map<number, ProfileRow>((await deps.db.listProfiles(false)).map((p: ProfileRow) => [p.id, p] as const))
+    // open 前一次性探测全部选中窗口 pid（避免逐项 isOpen 单窗口请求）；探测失败降级为逐窗口 isOpen
+    let openIds: Set<string> | null = null
+    if (action === 'open') {
+      try {
+        openIds = await deps.bitbrowser.openPids(ids.map((id) => byId.get(id)?.bitbrowserId).filter((x): x is string => x !== undefined))
+      } catch {
+        openIds = null
+      }
+    }
     const failed: Array<{ id: number; error: string }> = []
     let succeeded = 0
     for (const id of ids) {
       try {
-        await applyAction(id, action)
+        const profile = byId.get(id)
+        if (!profile) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${id}`)
+        await applyAction(profile, action, openIds ?? undefined)
         succeeded++
       } catch (e) {
         failed.push({ id, error: e instanceof Error ? e.message : String(e) })

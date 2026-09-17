@@ -512,6 +512,8 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data).toEqual({ total: 1, succeeded: 1, failed: [] })
     expect(deps.bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
     expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234')
+    expect(deps.db.listProfiles).toHaveBeenCalledTimes(1)
+    expect(deps.bitbrowser.openPids).toHaveBeenCalledWith(['bb-1'])
   })
 
   it('POST /api/profiles/batch action=close 逐项关窗并汇总', async () => {
