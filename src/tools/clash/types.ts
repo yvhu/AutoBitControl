@@ -48,6 +48,17 @@ export interface ClashTestResult {
   nodes: NodeTestResult[]
 }
 
+/** 当前节点测速结果（「立即测速」单节点形态；node=null 表示直连/未选择节点无可测） */
+export interface CurrentNodeTestResult {
+  group: string
+  /** 分组当前选中节点名（DIRECT/REJECT/PASS 时为该特殊名） */
+  currentNode: string | null
+  /** 当前节点是否可达（不可测时为 false） */
+  currentUsable: boolean
+  /** 当前节点测速明细；null 表示不可测 */
+  node: NodeTestResult | null
+}
+
 /** 选优切换结果 */
 export interface OptimizeResult {
   chosen: string | null

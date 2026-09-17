@@ -10,8 +10,8 @@ import { ToolError, TOOL_ERROR_CODES } from '../errors'
 import type { ClashConfig } from '../../infrastructure/config'
 import type { Logger } from '../../infrastructure/logger'
 import type {
-  ClashDetectResult, ClashGroup,
-  ClashTestResult, NodeTestResult, OptimizeResult, UrlDelay,
+  ClashDetectResult, ClashGroup, ClashTestResult, CurrentNodeTestResult,
+  NodeTestResult, OptimizeResult, UrlDelay,
 } from './types'
 
 export interface ClashServiceDeps {
@@ -56,12 +56,8 @@ const PROFILE_FILE_RE = /^[\w.-]+\.ya?ml$/i
 
 export class ClashService {
   private busy = false
-  /** 面板写入的分组覆盖（config.json 写回前的运行时态，重启回落到配置值） */
-  private groupOverride = ''
 
-  constructor(private deps: ClashServiceDeps) {
-    this.groupOverride = deps.getCfg().group
-  }
+  constructor(private deps: ClashServiceDeps) {}
 
   /** 是否有检测/切换进行中（路由与自动检测共用） */
   get isBusy(): boolean {
@@ -73,14 +69,9 @@ export class ClashService {
     return detectClash(this.deps.adapter)
   }
 
-  /** 面板设置目标分组（写回 config.json 由路由负责，这里只更新运行时态） */
-  setGroup(group: string): void {
-    this.groupOverride = group
-  }
-
-  /** 当前目标分组：面板覆盖优先，其次配置，其次 GLOBAL/第一个 Selector 组 */
+  /** 当前工作分组：优先配置 clash.group，其次 GLOBAL/第一个 Selector 组 */
   private async resolveGroup(): Promise<ClashGroup> {
-    const configured = this.groupOverride || this.deps.getCfg().group
+    const configured = this.deps.getCfg().group
     const groups = await this.deps.adapter.groups()
     if (configured) {
       const g = groups.find((x) => x.name === configured)
@@ -92,18 +83,49 @@ export class ClashService {
     return fallback
   }
 
-  /** 只读测速：对分组内节点逐一测速评分（不动节点选择） */
-  async test(): Promise<ClashTestResult> {
+  /** 只读测速：当前节点（单节点；「立即测速」入口） */
+  async test(): Promise<CurrentNodeTestResult> {
     if (this.busy) throw new ToolError(409, TOOL_ERROR_CODES.TOOL_BUSY, '上一次检测/切换进行中，请稍候')
     this.busy = true
     try {
-      return await this.testInner()
+      return await this.testCurrentNode()
     } finally {
       this.busy = false
     }
   }
 
-  private async testInner(): Promise<ClashTestResult> {
+  /** 只读测速：分组内全部候选节点（选优/自动检测用） */
+  async testGroup(): Promise<ClashTestResult> {
+    if (this.busy) throw new ToolError(409, TOOL_ERROR_CODES.TOOL_BUSY, '上一次检测/切换进行中，请稍候')
+    this.busy = true
+    try {
+      return await this.testGroupInner()
+    } finally {
+      this.busy = false
+    }
+  }
+
+  private async testCurrentNode(): Promise<CurrentNodeTestResult> {
+    const cfg = this.deps.getCfg()
+    if (!this.deps.adapter.delaySupported) {
+      throw new ToolError(500, TOOL_ERROR_CODES.CLASH_API_FAILED, '当前内核不支持 delay 测速接口，无法测速')
+    }
+    const group = await this.resolveGroup()
+    const now = group.now
+    // 当前节点为空/直连/拦截/兜底时无可测意义，返回空态由前端提示
+    if (!now || now === 'DIRECT' || now === 'REJECT' || now === 'PASS') {
+      return { group: group.name, currentNode: now ?? null, currentUsable: false, node: null }
+    }
+    const results: UrlDelay[] = []
+    for (const url of cfg.testUrls) {
+      const out = await this.deps.adapter.delay(now, url)
+      results.push({ url, delayMs: out.delayMs, reachable: out.supported && out.reachable })
+    }
+    const { score, usable } = scoreNode(results, cfg.weights, cfg.testTimeoutMs)
+    return { group: group.name, currentNode: now, currentUsable: usable, node: { name: now, urls: results, score, usable } }
+  }
+
+  private async testGroupInner(): Promise<ClashTestResult> {
     const cfg = this.deps.getCfg()
     if (!this.deps.adapter.delaySupported) {
       throw new ToolError(500, TOOL_ERROR_CODES.CLASH_API_FAILED, '当前内核不支持 delay 测速接口，无法测速')
@@ -136,7 +158,7 @@ export class ClashService {
     this.busy = true
     try {
       const cfg = this.deps.getCfg()
-      const result = prev ?? (await this.testInner())
+      const result = prev ?? (await this.testGroupInner())
       const usable = result.nodes.filter((n) => n.usable)
       if (usable.length === 0) {
         this.deps.logger.warn({ group: result.group }, 'Clash 测速全网不可用（全部节点不通），不切换')
@@ -175,7 +197,7 @@ export class ClashService {
     }
   }
 
-  /** 面板状态汇总（探测 + 分组 + 当前节点 + delay 能力） */
+  /** 面板状态汇总（探测 + 工作分组 + 当前节点 + delay 能力） */
   async status(): Promise<{
     detected: boolean
     kernel: ClashDetectResult['kernel']
@@ -184,20 +206,18 @@ export class ClashService {
     delaySupported: boolean
     group: string
     currentNode: string | null
-    groups: Array<{ name: string; now?: string }>
   }> {
     const detect = await this.detect()
     const cfg = this.deps.getCfg()
-    const groupName = this.groupOverride || cfg.group
-    let groups: ClashGroup[] = []
+    const groupName = cfg.group
     let currentNode: string | null = null
     if (detect.detected) {
       try {
-        groups = await this.deps.adapter.groups()
+        const groups = await this.deps.adapter.groups()
         const g = groups.find((x) => x.name === groupName)
         currentNode = g?.now ?? null
       } catch {
-        groups = []
+        currentNode = null
       }
     }
     return {
@@ -208,7 +228,6 @@ export class ClashService {
       delaySupported: detect.detected && this.deps.adapter.delaySupported,
       group: groupName,
       currentNode,
-      groups: groups.map((g) => ({ name: g.name, now: g.now })),
     }
   }
 }

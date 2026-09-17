@@ -64,8 +64,8 @@ describe('scoreNode', () => {
   })
 })
 
-describe('ClashService.test', () => {
-  it('按并发测速并按得分升序返回', async () => {
+describe('ClashService.test（测当前节点）', () => {
+  it('只测当前节点，返回单节点结果', async () => {
     const { adapter } = makeAdapter({
       'HK-01': [{ reachable: true, delayMs: 100 }, { reachable: true, delayMs: 200 }],
       'HK-02': [{ reachable: true, delayMs: 50 }, { reachable: true, delayMs: 80 }],
@@ -75,8 +75,26 @@ describe('ClashService.test', () => {
     expect(r.group).toBe('GLOBAL')
     expect(r.currentNode).toBe('HK-01')
     expect(r.currentUsable).toBe(true)
-    expect(r.nodes.map((n) => n.name)).toEqual(['HK-02', 'HK-01'])
-    expect(r.nodes[0].score).toBeLessThan(r.nodes[1].score)
+    expect(r.node).toEqual({
+      name: 'HK-01',
+      urls: [
+        { url: 'https://a.com', delayMs: 100, reachable: true },
+        { url: 'https://b.com', delayMs: 200, reachable: true },
+      ],
+      score: 400,
+      usable: true,
+    })
+    expect(adapter.delay).not.toHaveBeenCalledWith('HK-02', expect.anything())
+  })
+
+  it('当前节点为 DIRECT → node=null、currentUsable=false', async () => {
+    const { adapter } = makeAdapter({}, { groups: [{ name: 'GLOBAL', now: 'DIRECT', all: ['DIRECT', 'HK-01'] }] })
+    const svc = makeService(adapter as never, makeCfg())
+    const r = await svc.test()
+    expect(r.currentNode).toBe('DIRECT')
+    expect(r.currentUsable).toBe(false)
+    expect(r.node).toBeNull()
+    expect(adapter.delay).not.toHaveBeenCalled()
   })
 
   it('分组不存在 → CLASH_GROUP_NOT_FOUND', async () => {
@@ -91,6 +109,22 @@ describe('ClashService.test', () => {
     const first = svc.test()
     await expect(svc.test()).rejects.toMatchObject({ status: 409, code: 40904 })
     await first
+  })
+})
+
+describe('ClashService.testGroup（全节点测速，选优/自动检测用）', () => {
+  it('按并发测速并按得分升序返回', async () => {
+    const { adapter } = makeAdapter({
+      'HK-01': [{ reachable: true, delayMs: 100 }, { reachable: true, delayMs: 200 }],
+      'HK-02': [{ reachable: true, delayMs: 50 }, { reachable: true, delayMs: 80 }],
+    })
+    const svc = makeService(adapter as never, makeCfg())
+    const r = await svc.testGroup()
+    expect(r.group).toBe('GLOBAL')
+    expect(r.currentNode).toBe('HK-01')
+    expect(r.currentUsable).toBe(true)
+    expect(r.nodes.map((n) => n.name)).toEqual(['HK-02', 'HK-01'])
+    expect(r.nodes[0].score).toBeLessThan(r.nodes[1].score)
   })
 })
 
