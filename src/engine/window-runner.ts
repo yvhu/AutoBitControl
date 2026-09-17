@@ -195,6 +195,10 @@ export class WindowRunner {
   /**
    * 开窗重试：按 retryBackoffMs 数列退避（5s → 30s → 120s），耗尽后抛最后一次错误
    * 设计权衡：退避间隔拉长是因为开窗失败多为本地服务抖动，给比特浏览器恢复时间
+   * 关键修正：比特 /browser/open 是异步的——请求发出后客户端就开始开窗，
+   * API 报错/超时 ≠ 窗口没开（真机教训：开窗"失败"的窗口堆积几十个撑爆内存）。
+   * 每次失败后都补一次 closeBrowser 清理可能已开/半开的窗口（close 自身失败忽略，
+   * 不阻断重试；幂等调用，未开的窗口 close 无害）
    */
   private async openWithRetry(id: string): Promise<OpenResult> {
     const { maxRetries, retryBackoffMs } = this.deps.cfg.bitbrowser
@@ -205,6 +209,7 @@ export class WindowRunner {
       } catch (e) {
         lastErr = e as Error
         this.deps.logger.warn({ id, attempt: attempt + 1 }, `开窗失败: ${lastErr.message}`)
+        await this.deps.bitbrowser.closeBrowser(id).catch(() => {})
         if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, retryBackoffMs[attempt] ?? 5000))
       }
     }

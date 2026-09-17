@@ -207,6 +207,29 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['pending', 'skipped'])
   })
 
+  it('每次开窗失败后都关闭窗口清理残留（比特开窗异步：报错≠窗口没开）', async () => {
+    const db = makeDb()
+    const bb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')) }
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bb.openBrowser).toHaveBeenCalledTimes(3)
+    expect(bb.closeBrowser).toHaveBeenCalledTimes(3)
+    expect(bb.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('开窗失败清理时 closeBrowser 自身报错不阻断重试流程', async () => {
+    const db = makeDb()
+    const bb = {
+      openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')),
+      closeBrowser: vi.fn().mockRejectedValue(new Error('关闭也失败')),
+    }
+    const runner = new WindowRunner({ cfg, db, bitbrowser: bb as never, driver: makeDriver(), tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bb.openBrowser).toHaveBeenCalledTimes(3)
+    expect(bb.closeBrowser).toHaveBeenCalledTimes(3)
+    expect(statuses(db)).toEqual(['pending', 'skipped'])
+  })
+
   it('窗口级跳过结算待重试行：retry_wait 行沿用原 slot 落终态（不新开轮次）', async () => {
     const db = makeDb({
       getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 1, slot: 3 } as Partial<RunRow>),
