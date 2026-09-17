@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Alert, Button, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Popconfirm, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
-import { summarizeNodes, useClashOptimize, useClashSetGroup, useClashStatus, useClashTest } from './hooks'
-import type { ClashNodeResult, ClashUrlDelay } from '../../types'
+import { summarizeNodes, useClashOptimize, useClashStatus, useClashTest } from './hooks'
+import type { ClashNodeResult, ClashTestData, ClashUrlDelay } from '../../types'
 
 const columns = [
   { title: '节点', dataIndex: 'name', key: 'name' },
@@ -21,8 +21,8 @@ export default function ClashPanel() {
   const status = useClashStatus()
   const test = useClashTest()
   const optimize = useClashOptimize()
-  const setGroup = useClashSetGroup()
   const [nodes, setNodes] = useState<ClashNodeResult[] | null>(null)
+  const [currentTest, setCurrentTest] = useState<ClashTestData | null>(null)
 
   if (status.isPending) {
     return <Alert type="info" showIcon message="正在探测本机 Clash 客户端..." />
@@ -55,6 +55,7 @@ export default function ClashPanel() {
         message={
           <Space wrap>
             <span>内核：{data.kernel ?? '未知'}</span>
+            <span>主代理分组：{data.group}</span>
             <span>当前节点：{data.currentNode ?? '未选择'}</span>
             {paceTag}
             {data.auto.allDown && <Tag color="red">全网不可用</Tag>}
@@ -65,28 +66,31 @@ export default function ClashPanel() {
       />
 
       <Space wrap>
-        <Select
-          value={data.group || undefined}
-          placeholder="选择目标分组"
-          style={{ width: 260 }}
-          options={data.groups.map((g) => ({ value: g.name, label: g.now ? `${g.name}（当前 ${g.now}）` : g.name }))}
-          onChange={(v) => {
-            setGroup.mutate(v)
-            // 切分组后旧测速结果已不适用，清空避免误导
-            setNodes(null)
-          }}
-        />
         <Button
           icon={<ReloadOutlined />}
           loading={test.isPending}
-          onClick={() => test.mutate(undefined, { onSuccess: (res) => setNodes(res.nodes) })}
+          onClick={() =>
+            test.mutate(undefined, {
+              onSuccess: (res) => {
+                setCurrentTest(res)
+                setNodes(null)
+              },
+            })
+          }
         >
           立即测速
         </Button>
         <Popconfirm
           title="确定选优并切换？"
           description={data.anyRunning ? '有任务正在运行，切换节点会更换 IP，可能中断签到会话' : '将切换到当前最优节点'}
-          onConfirm={() => optimize.mutate(undefined, { onSuccess: (res) => setNodes(res.nodes) })}
+          onConfirm={() =>
+            optimize.mutate(undefined, {
+              onSuccess: (res) => {
+                setNodes(res.nodes)
+                setCurrentTest(null)
+              },
+            })
+          }
           okText="确定"
           cancelText="取消"
         >
@@ -95,6 +99,18 @@ export default function ClashPanel() {
           </Button>
         </Popconfirm>
       </Space>
+
+      {currentTest && currentTest.node && (
+        <Typography.Text type="secondary">
+          当前节点 {currentTest.node.name} 测速：
+          {currentTest.node.urls.map((u) => `${u.url}: ${u.reachable ? `${u.delayMs}ms` : '超时'}`).join(' ｜ ')}
+        </Typography.Text>
+      )}
+      {currentTest && !currentTest.node && (
+        <Typography.Text type="warning">
+          {currentTest.currentNode ? `当前节点 ${currentTest.currentNode} 不可测（直连或未选择节点）` : '当前无可测节点'}
+        </Typography.Text>
+      )}
 
       {summary && (
         <Typography.Text type="secondary">
