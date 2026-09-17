@@ -68,7 +68,7 @@ export class AutoOptimizer {
         this.deps.logger.debug('Clash 自动检测跳过（上一次检测/切换进行中）')
         return
       }
-      const result = await this.deps.service.test()
+      const result = await this.deps.service.testGroup()
       this.lastCheckAt = new Date().toISOString()
       // 空节点列表（如分组无节点）不算全网挂
       this.allDown = result.nodes.length > 0 && result.nodes.every((n) => !n.usable)

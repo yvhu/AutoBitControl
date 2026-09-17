@@ -4,11 +4,11 @@ import type { ClashService } from '../src/tools/clash/optimizer'
 
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
 
-/** fake service：按场景预设 test/optimize 行为 */
+/** fake service：按场景预设 testGroup/optimize 行为 */
 function makeService(testImpl: () => Promise<unknown>, optimizeImpl: () => Promise<unknown>, busy = false) {
   return {
     isBusy: busy,
-    test: vi.fn(testImpl),
+    testGroup: vi.fn(testImpl),
     optimize: vi.fn(optimizeImpl),
   } as unknown as ClashService
 }
@@ -31,7 +31,7 @@ describe('AutoOptimizer', () => {
     const svc = makeService(allOk, switched)
     const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 0, fastMin: 2 } })
     a.start()
-    expect(svc.test).not.toHaveBeenCalled()
+    expect(svc.testGroup).not.toHaveBeenCalled()
   })
 
   it('start 幂等：重复 start 只跑一轮', async () => {
@@ -40,19 +40,19 @@ describe('AutoOptimizer', () => {
     a.start()
     a.start()
     await vi.advanceTimersByTimeAsync(0)
-    expect(svc.test).toHaveBeenCalledTimes(1)
+    expect(svc.testGroup).toHaveBeenCalledTimes(1)
     // 只存在一条调度链：30 分钟后仍是累计 2 次而非 3 次
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
-    expect(svc.test).toHaveBeenCalledTimes(2)
+    expect(svc.testGroup).toHaveBeenCalledTimes(2)
     a.stop()
   })
 
-  it('isBusy 时跳过本轮（不调 test）', async () => {
+  it('isBusy 时跳过本轮（不调 testGroup）', async () => {
     const svc = makeService(allOk, switched, true)
     const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 30, fastMin: 2 } })
     a.start()
     await vi.advanceTimersByTimeAsync(0)
-    expect(svc.test).not.toHaveBeenCalled()
+    expect(svc.testGroup).not.toHaveBeenCalled()
     a.stop()
   })
 
@@ -61,7 +61,7 @@ describe('AutoOptimizer', () => {
     const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 30, fastMin: 2 } })
     a.start()
     await vi.advanceTimersByTimeAsync(0)
-    expect(svc.test).toHaveBeenCalledTimes(1)
+    expect(svc.testGroup).toHaveBeenCalledTimes(1)
     expect(svc.optimize).not.toHaveBeenCalled()
     expect(a.status().pace).toBe('normal')
     a.stop()
@@ -116,7 +116,7 @@ describe('AutoOptimizer', () => {
     a.stop()
   })
 
-  it('test 抛错不中断循环（下一轮继续）', async () => {
+  it('testGroup 抛错不中断循环（下一轮继续）', async () => {
     const svc = makeService(() => Promise.reject(new Error('boom')), switched)
     const a = new AutoOptimizer({ service: svc, anyRunning: () => false, logger: logger as never, intervals: { normalMin: 30, fastMin: 2 } })
     a.start()
@@ -124,7 +124,7 @@ describe('AutoOptimizer', () => {
     expect(logger.warn).toHaveBeenCalled()
     // 正常节奏下一轮 30 分钟后仍在跑
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
-    expect(svc.test).toHaveBeenCalledTimes(2)
+    expect(svc.testGroup).toHaveBeenCalledTimes(2)
     a.stop()
   })
 
@@ -135,6 +135,6 @@ describe('AutoOptimizer', () => {
     await vi.advanceTimersByTimeAsync(0)
     a.stop()
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
-    expect(svc.test).toHaveBeenCalledTimes(1)
+    expect(svc.testGroup).toHaveBeenCalledTimes(1)
   })
 })
