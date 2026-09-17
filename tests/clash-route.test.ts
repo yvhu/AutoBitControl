@@ -15,10 +15,9 @@ const statusData = {
   delaySupported: true,
   group: 'GLOBAL',
   currentNode: 'HK-01',
-  groups: [{ name: 'GLOBAL', now: 'HK-01' }],
 }
 
-const testData = { group: 'GLOBAL', currentNode: 'HK-01', currentUsable: true, nodes: [] }
+const testData = { group: 'GLOBAL', currentNode: 'HK-01', currentUsable: true, node: { name: 'HK-01', urls: [], score: 100, usable: true } }
 const optimizeData = { chosen: 'HK-02', switched: true, nodes: [] }
 
 function makeApp() {
@@ -29,10 +28,8 @@ function makeApp() {
       status: vi.fn().mockResolvedValue(statusData),
       test: vi.fn().mockResolvedValue(testData),
       optimize: vi.fn().mockResolvedValue(optimizeData),
-      setGroup: vi.fn(),
     },
     auto: { status: () => ({ pace: 'normal' as const, lastCheckAt: null, allDown: false, deferredSwitches: 0 }) },
-    saveGroup: vi.fn().mockResolvedValue(undefined),
     anyRunning: () => false,
   }
   const datasource = { reload: vi.fn().mockResolvedValue(undefined), summary: vi.fn().mockReturnValue({ rows: 0, columns: [] }) }
@@ -66,6 +63,7 @@ describe('POST /api/tools/clash/test', () => {
     const res = await request(app).post('/api/tools/clash/test').send({})
     expect(res.body.code).toBe(0)
     expect(res.body.data.group).toBe('GLOBAL')
+    expect(res.body.data.node.name).toBe('HK-01')
   })
 
   it('ToolError 映射为统一失败响应', async () => {
@@ -83,29 +81,5 @@ describe('POST /api/tools/clash/optimize', () => {
     const res = await request(app).post('/api/tools/clash/optimize').send({})
     expect(res.body.data.switched).toBe(true)
     expect(res.body.data.chosen).toBe('HK-02')
-  })
-})
-
-describe('POST /api/tools/clash/group', () => {
-  it('写回配置并更新运行时分组', async () => {
-    const { app, clash } = makeApp()
-    const res = await request(app).post('/api/tools/clash/group').send({ group: 'GLOBAL' })
-    expect(res.body.code).toBe(0)
-    expect(clash.saveGroup).toHaveBeenCalledWith('GLOBAL')
-    expect(clash.service.setGroup).toHaveBeenCalledWith('GLOBAL')
-  })
-
-  it('参数非法 → 400/40000', async () => {
-    const { app } = makeApp()
-    const res = await request(app).post('/api/tools/clash/group').send({ group: '' })
-    expect(res.status).toBe(400)
-    expect(res.body.code).toBe(40000)
-  })
-
-  it('group 传空白串 → 400/40000', async () => {
-    const { app } = makeApp()
-    const res = await request(app).post('/api/tools/clash/group').send({ group: '   ' })
-    expect(res.status).toBe(400)
-    expect(res.body.code).toBe(40000)
   })
 })

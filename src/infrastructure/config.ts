@@ -4,7 +4,7 @@
  * 合并顺序：代码默认值 → config/config.json → config/config.local.json → 环境变量覆盖
  * 设计思路：deepMerge 递归合并使本地配置只需写差异项；存储路径最后统一解析为项目根的绝对路径
  */
-import { readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname, resolve, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as loadDotenv } from 'dotenv'
@@ -107,7 +107,7 @@ export interface ClashConfig {
   apiBase: string
   /** external-controller secret（客户端开启鉴权时必填，走 Authorization Bearer） */
   apiSecret: string
-  /** 目标分组名：留空时面板从 API 实时拉取分组选择（选择后由 updateConfigFile 写回此处） */
+  /** 目标分组名（默认主代理分组「🔰 节点选择」；不存在时服务回退 GLOBAL/首个 Selector 组） */
   group: string
   /** 测速目标 URL 列表（连通性+延迟判定依据） */
   testUrls: string[]
@@ -196,7 +196,7 @@ const defaults: AppConfig = {
     // external-controller 管理口（默认 9090）≠ 混合代理口 7890；探测后以 /configs 实测混合口为准
     apiBase: 'http://127.0.0.1:9090',
     apiSecret: '',
-    group: '',
+    group: '🔰 节点选择',
     // 测速目标：gstatic 204 为标准低开销探测（各机场通用）；google 兜底
     testUrls: ['https://www.gstatic.com/generate_204', 'https://www.google.com'],
     weights: [2, 1],
@@ -292,20 +292,4 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   // 数据源路径同样解析为绝对路径（与存储路径同法）
   if (!isAbsolute(cfg.dataSource.path)) cfg.dataSource.path = resolve(root, cfg.dataSource.path)
   return cfg
-}
-
-/**
- * 写回配置覆盖项到 config/config.json（面板运行时修改入口，如 clash 分组选择）
- * 读取现有文件与 patch 深合并后写回（保留原有全部键；JSON 无注释概念，手工注释会丢失，属已知代价）
- * 注意：config.local.json 中的同键会覆盖写回值（local 在 config.json 之后加载）
- * @param patch 覆盖项（当前仅 clash.group）
- * @param opts.rootDir 项目根目录，缺省为 src 上两级（与 loadConfig 同口径）
- * @throws 读写失败向上抛（由调用方路由映射为统一响应）
- */
-export function updateConfigFile(patch: { group?: string }, opts: LoadConfigOptions = {}): void {
-  const root = opts.rootDir ?? DEFAULT_ROOT
-  const path = join(root, 'config', 'config.json')
-  const current = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>) : {}
-  const merged = deepMerge(current, { clash: { ...patch } })
-  writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`)
 }

@@ -36,7 +36,7 @@
     "enabled": true,
     "apiBase": "http://127.0.0.1:7097",
     "apiSecret": "",
-    "group": "AutoSelection",
+    "group": "🔰 节点选择",
     "testUrls": [
       "https://www.gstatic.com/generate_204",
       "https://www.google.com"

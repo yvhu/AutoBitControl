@@ -28,7 +28,6 @@ import { ClashService } from './tools/clash/optimizer'
 import { AutoOptimizer } from './tools/clash/auto-optimizer'
 import { FileAssignService } from './tools/file-assign/applier'
 import { buildFileAssignRunner } from './tools/file-assign/runner'
-import { updateConfigFile } from './infrastructure/config'
 
 /**
  * 分页同步比特浏览器窗口列表到 profiles 表（每页 100，page 从 0 起）
@@ -252,9 +251,6 @@ export async function startApp(): Promise<void> {
     clash: {
       service: clashService,
       auto: clashAuto,
-      saveGroup: async (group) => {
-        updateConfigFile({ group })
-      },
       anyRunning: () => enqueuer.anyRunning(),
     },
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败走异常路径）

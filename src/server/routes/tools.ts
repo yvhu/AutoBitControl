@@ -11,7 +11,7 @@ import { preparePreview } from '../../tools/file-assign/planner'
 import type { FileAssignService } from '../../tools/file-assign/applier'
 import { ToolError } from '../../tools/errors'
 import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/types'
-import type { ClashTestResult, OptimizeResult, AutoOptimizerStatus } from '../../tools/clash/types'
+import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimizerStatus } from '../../tools/clash/types'
 
 /**
  * @swagger
@@ -121,7 +121,6 @@ import type { ClashTestResult, OptimizeResult, AutoOptimizerStatus } from '../..
  *                     delaySupported: { type: boolean }
  *                     group: { type: string }
  *                     currentNode: { type: string, nullable: true }
- *                     groups: { type: array, items: { type: object } }
  *                     auto: { type: object }
  *                     anyRunning: { type: boolean }
  */
@@ -182,27 +181,6 @@ import type { ClashTestResult, OptimizeResult, AutoOptimizerStatus } from '../..
  *                     switchNote: { type: string }
  */
 
-/**
- * @swagger
- * /api/tools/clash/group:
- *   post:
- *     summary: 设置目标分组（写回 config.json 的 clash.group）
- *     responses:
- *       '200':
- *         description: 分组已更新
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     group: { type: string }
- */
-
 /** clash 工具的路由依赖面（结构化类型，测试传普通对象替身） */
 export interface ClashRouteDeps {
   service: {
@@ -214,14 +192,11 @@ export interface ClashRouteDeps {
       delaySupported: boolean
       group: string
       currentNode: string | null
-      groups: Array<{ name: string; now?: string }>
     }>
-    test(): Promise<ClashTestResult>
+    test(): Promise<CurrentNodeTestResult>
     optimize(prev?: ClashTestResult): Promise<OptimizeResult>
-    setGroup(group: string): void
   }
   auto: { status(): AutoOptimizerStatus }
-  saveGroup(group: string): Promise<void>
   anyRunning(): boolean
 }
 
@@ -314,21 +289,6 @@ export function toolsRouter(deps: {
   router.post('/tools/clash/optimize', asyncHandler(async (req, res) => {
     try {
       ok(res, await deps.clash.service.optimize())
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
-  router.post('/tools/clash/group', asyncHandler(async (req, res) => {
-    const body = req.body as { group?: unknown }
-    if (typeof body?.group !== 'string' || body.group.trim() === '') {
-      fail(res, 400, ERROR_CODES.INVALID_ARGUMENT, '参数格式错误（group 不能为空）')
-      return
-    }
-    try {
-      await deps.clash.saveGroup(body.group)
-      deps.clash.service.setGroup(body.group)
-      ok(res, { group: body.group })
     } catch (e) {
       clashGuard(res, e)
     }

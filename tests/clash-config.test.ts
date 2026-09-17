@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll, beforeAll } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadConfig, updateConfigFile } from '../src/infrastructure/config'
+import { loadConfig } from '../src/infrastructure/config'
 
 let dir: string
 let cfgPath: string
@@ -26,26 +26,11 @@ describe('clash 配置段', () => {
     expect(cfg.clash.weights).toEqual([2, 1])
     expect(cfg.clash.testConcurrency).toBe(2)
     expect(cfg.clash.minGainMs).toBe(100)
+    expect(cfg.clash.group).toBe('🔰 节点选择')
   })
 
   it('config.json 的 clash.group 覆盖缺省值', () => {
     writeFileSync(cfgPath, JSON.stringify({ clash: { group: 'GLOBAL' } }, null, 2))
     expect(loadConfig({ rootDir: dir }).clash.group).toBe('GLOBAL')
-  })
-})
-
-describe('updateConfigFile', () => {
-  it('写回 group 且保留其他键', () => {
-    updateConfigFile({ group: '🚀 节点选择' }, { rootDir: dir })
-    const saved = JSON.parse(readFileSync(cfgPath, 'utf-8'))
-    expect(saved.clash.group).toBe('🚀 节点选择')
-  })
-
-  it('多次写回不丢历史键', () => {
-    writeFileSync(cfgPath, JSON.stringify({ execution: { staggerMaxSec: 60 }, clash: { group: 'A' } }, null, 2))
-    updateConfigFile({ group: 'B' }, { rootDir: dir })
-    const saved = JSON.parse(readFileSync(cfgPath, 'utf-8'))
-    expect(saved.clash.group).toBe('B')
-    expect(saved.execution.staggerMaxSec).toBe(60)
   })
 })

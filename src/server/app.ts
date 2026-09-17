@@ -53,11 +53,10 @@ export interface ServerDeps {
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 文件随机分配服务（面板工具路由与计划自动分配共用单实例） */
   fileAssignService: import('../tools/file-assign/applier').FileAssignService
-  /** 代理网络工具（tools/clash）：服务/自动检测/分组写回/在途判定 */
+  /** 代理网络工具（tools/clash）：服务/自动检测/在途判定 */
   clash: {
     service: import('../tools/clash/optimizer').ClashService
     auto: import('../tools/clash/auto-optimizer').AutoOptimizer
-    saveGroup(group: string): Promise<void>
     anyRunning(): boolean
   }
   /** 打码平台余额查询（未配置/查询失败返回 null，路由统一走 configured:false 分支） */
