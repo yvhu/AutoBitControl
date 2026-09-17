@@ -37,4 +37,3 @@ export const applyFileAssign = (body: { sourceDir: string; column: string; plan:
 export const fetchClashStatus = () => get<ClashStatusData>('/api/tools/clash/status')
 export const testClash = () => post<ClashTestData>('/api/tools/clash/test', {})
 export const optimizeClash = () => post<ClashOptimizeResult>('/api/tools/clash/optimize', {})
-export const setClashGroup = (group: string) => post<{ group: string }>('/api/tools/clash/group', { group })

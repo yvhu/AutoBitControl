@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash, setClashGroup } from '../../api/endpoints'
+import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
 import type { FileAssignTemplate, FileAssignRow, ClashNodeResult } from '../../types'
 
@@ -45,14 +45,18 @@ export function useClashStatus() {
   return useQuery({ queryKey: ['clash-status'], queryFn: fetchClashStatus, refetchInterval: 15000 })
 }
 
-/** 节点测速（只读） */
+/** 节点测速（只测当前节点） */
 export function useClashTest() {
   const { message } = App.useApp()
   return useMutation({
     mutationFn: () => testClash(),
     onSuccess: (res) => {
-      const usable = res.nodes.filter((n) => n.usable).length
-      message.success(`测速完成：共 ${res.nodes.length} 个节点，${usable} 个可用`)
+      if (!res.node) {
+        message.info(res.currentNode ? `当前节点 ${res.currentNode} 不可测（直连或未选择节点）` : '当前无可测节点')
+        return
+      }
+      const detail = res.node.urls.map((u) => (u.reachable ? `${u.delayMs}ms` : '超时')).join(' / ')
+      message.success(`当前节点 ${res.node.name}：${detail}`)
     },
     onError: (e) => message.error(errMsg(e)),
   })
@@ -66,20 +70,6 @@ export function useClashOptimize() {
     mutationFn: () => optimizeClash(),
     onSuccess: (res) => {
       message.success(res.switched ? `已切换到 ${res.chosen}` : `未切换${res.switchNote ? `（${res.switchNote}）` : ''}`)
-      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
-    },
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-/** 设置目标分组（写回 config.json） */
-export function useClashSetGroup() {
-  const { message } = App.useApp()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (group: string) => setClashGroup(group),
-    onSuccess: () => {
-      message.success('目标分组已更新')
       queryClient.invalidateQueries({ queryKey: ['clash-status'] })
     },
     onError: (e) => message.error(errMsg(e)),

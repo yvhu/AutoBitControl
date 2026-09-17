@@ -123,8 +123,8 @@ export interface ClashNodeResult {
 export interface ClashTestData {
   group: string
   currentNode: string | null
-  currentUsable: boolean | null
-  nodes: ClashNodeResult[]
+  currentUsable: boolean
+  node: ClashNodeResult | null
 }
 
 export interface ClashOptimizeResult {
@@ -142,7 +142,6 @@ export interface ClashStatusData {
   delaySupported: boolean
   group: string
   currentNode: string | null
-  groups: Array<{ name: string; now?: string }>
   auto: { pace: 'normal' | 'fast'; lastCheckAt: string | null; allDown: boolean; deferredSwitches: number }
   anyRunning: boolean
 }
