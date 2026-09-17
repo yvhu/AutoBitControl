@@ -163,6 +163,49 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  *         description: 窗口不存在（业务码 40402）
  */
 
+/**
+ * @swagger
+ * /api/profiles/batch:
+ *   post:
+ *     summary: 批量窗口操作（打开/关闭/重置熔断），逐项处理并汇总成败
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [action, ids]
+ *             properties:
+ *               action: { type: string, enum: [open, close, resetBreaker] }
+ *               ids:
+ *                 type: array
+ *                 items: { type: integer }
+ *     responses:
+ *       '200':
+ *         description: 逐项结果汇总
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total: { type: integer }
+ *                     succeeded: { type: integer }
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           error: { type: string }
+ *       '400':
+ *         description: action 非法或 ids 非空数字数组（业务码 40000）
+ */
+
 export function profilesRouter(deps: {
   db: AppDb
   bitbrowser: {
@@ -179,6 +222,32 @@ export function profilesRouter(deps: {
     if (!profile) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${id}`)
     return profile
   }
+
+  /** 批量操作类型（打开/关闭/重置熔断） */
+  type BatchAction = 'open' | 'close' | 'resetBreaker'
+
+  /** 单窗口动作执行（单窗口端点与批量端点共用）；open 返回 already 语义 */
+  const applyAction = async (id: number, action: BatchAction): Promise<{ already?: boolean }> => {
+    const profile = await find(id)
+    if (action === 'resetBreaker') {
+      await deps.db.resetCircuitBreaker(id)
+      return {}
+    }
+    if (action === 'open') {
+      // 已有登记且 pid 实测存活 → 直接复用（already），避免重复开窗
+      const row = await deps.db.getOpenWindow(profile.bitbrowserId)
+      if (row && (await deps.bitbrowser.isOpen(profile.bitbrowserId))) return { already: true }
+      const opened = await deps.bitbrowser.openBrowser(profile.bitbrowserId)
+      await deps.db.setOpenWindow(profile.bitbrowserId, opened.http)
+      return { already: false }
+    }
+    // close：无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略
+    const row = await deps.db.getOpenWindow(profile.bitbrowserId)
+    await deps.bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
+    if (row) await deps.db.clearOpenWindow(profile.bitbrowserId)
+    return {}
+  }
+
   router.get('/profiles', asyncHandler(async (req, res) => {
     const profiles = await deps.db.listProfiles(false)
     // 批量一次探测全部窗口 pid（避免 100 窗口逐个 isOpen 请求）；
@@ -211,32 +280,38 @@ export function profilesRouter(deps: {
     ok(res, profile)
   }))
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
-    const id = Number(req.params.id)
-    await find(id)
-    // 手动重置熔断：面板窗口操作列入口（连续失败恢复后放行）
-    await deps.db.resetCircuitBreaker(id)
+    await applyAction(Number(req.params.id), 'resetBreaker')
     ok(res)
   }))
   router.post('/profiles/:id/open', asyncHandler(async (req, res) => {
-    const profile = await find(Number(req.params.id))
-    // 已有登记且 pid 实测存活 → 直接复用（already），避免重复开窗
-    const row = await deps.db.getOpenWindow(profile.bitbrowserId)
-    if (row && await deps.bitbrowser.isOpen(profile.bitbrowserId)) {
-      ok(res, { already: true })
-      return
-    }
-    const opened = await deps.bitbrowser.openBrowser(profile.bitbrowserId)
-    // 登记打开状态（http 调试地址）：供面板状态展示与 task:run/窗口会话跨进程复用
-    await deps.db.setOpenWindow(profile.bitbrowserId, opened.http)
-    ok(res, { already: false })
+    ok(res, await applyAction(Number(req.params.id), 'open'))
   }))
   router.post('/profiles/:id/close', asyncHandler(async (req, res) => {
-    const profile = await find(Number(req.params.id))
-    const row = await deps.db.getOpenWindow(profile.bitbrowserId)
-    // 无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略（pid 已死等同已关）
-    await deps.bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
-    if (row) await deps.db.clearOpenWindow(profile.bitbrowserId)
+    await applyAction(Number(req.params.id), 'close')
     ok(res)
+  }))
+  router.post('/profiles/batch', asyncHandler(async (req, res) => {
+    const body = (req.body ?? {}) as { action?: unknown; ids?: unknown }
+    const valid: BatchAction[] = ['open', 'close', 'resetBreaker']
+    if (!valid.includes(body.action as BatchAction)) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'action 必须为 open/close/resetBreaker')
+    }
+    if (!Array.isArray(body.ids) || body.ids.length === 0 || !body.ids.every((x) => typeof x === 'number')) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'ids 必须为非空数字数组')
+    }
+    const action = body.action as BatchAction
+    const ids = body.ids as number[]
+    const failed: Array<{ id: number; error: string }> = []
+    let succeeded = 0
+    for (const id of ids) {
+      try {
+        await applyAction(id, action)
+        succeeded++
+      } catch (e) {
+        failed.push({ id, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    ok(res, { total: ids.length, succeeded, failed })
   }))
   return router
 }

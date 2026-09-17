@@ -504,6 +504,55 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
+  it('POST /api/profiles/batch action=open 逐项开窗并汇总', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/batch').send({ action: 'open', ids: [1] })
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ total: 1, succeeded: 1, failed: [] })
+    expect(deps.bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234')
+  })
+
+  it('POST /api/profiles/batch action=close 逐项关窗并汇总', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    const res = await request(createApp(deps as never)).post('/api/profiles/batch').send({ action: 'close', ids: [1] })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ total: 1, succeeded: 1, failed: [] })
+    expect(deps.bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('POST /api/profiles/batch action=resetBreaker 逐项清零', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/batch').send({ action: 'resetBreaker', ids: [1] })
+    expect(res.body.code).toBe(0)
+    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+  })
+
+  it('POST /api/profiles/batch 单项不存在记入 failed，其余继续，HTTP 仍 200', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/profiles/batch').send({ action: 'resetBreaker', ids: [999, 1] })
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.succeeded).toBe(1)
+    expect(res.body.data.failed).toEqual([{ id: 999, error: '窗口不存在: 999' }])
+    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+  })
+
+  it('POST /api/profiles/batch action 非法返回 400', async () => {
+    const res = await request(createApp(makeDeps() as never)).post('/api/profiles/batch').send({ action: 'nope', ids: [1] })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+  })
+
+  it('POST /api/profiles/batch ids 为空数组返回 400', async () => {
+    const res = await request(createApp(makeDeps() as never)).post('/api/profiles/batch').send({ action: 'open', ids: [] })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+  })
+
   it('POST /api/bitbrowser/test 返回连接状态', async () => {
     const res = await request(createApp(makeDeps() as never)).post('/api/bitbrowser/test')
     expect(res.body.code).toBe(0)
