@@ -2,18 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from 'antd'
-import { buildTemplate, sampleName, useFileAssignApply, summarizeNodes, useClashStatus, useClashOptimize } from './hooks'
+import { buildTemplate, sampleName, useFileAssignApply } from './hooks'
 import type { FileAssignTemplate } from '../../types'
 
 vi.mock('../../api/endpoints', () => ({
   applyFileAssign: vi.fn().mockResolvedValue({ renamedCount: 2, updatedRows: 2, reloadedRows: 2 }),
-  fetchClashStatus: vi.fn().mockResolvedValue({
-    detected: true, kernel: 'mihomo', mixedPort: 7890, apiBase: 'http://127.0.0.1:9090', delaySupported: true,
-    group: 'GLOBAL', currentNode: 'HK-01',
-    auto: { pace: 'normal', lastCheckAt: null, allDown: false, deferredSwitches: 0 }, anyRunning: false,
-  }),
-  testClash: vi.fn().mockResolvedValue({ group: 'GLOBAL', currentNode: 'HK-01', currentUsable: true, node: { name: 'HK-01', urls: [], score: 100, usable: true } }),
-  optimizeClash: vi.fn().mockResolvedValue({ chosen: 'HK-02', switched: true, nodes: [] }),
 }))
 
 const fixed = () => 0
@@ -89,43 +82,3 @@ describe('useFileAssignApply', () => {
   })
 })
 
-describe('summarizeNodes', () => {
-  it('统计可用/不可用并取最优节点', () => {
-    const nodes = [
-      { name: 'B', urls: [], score: 50, usable: true },
-      { name: 'A', urls: [], score: 100, usable: true },
-      { name: 'D', urls: [], score: 999, usable: false },
-    ]
-    expect(summarizeNodes(nodes)).toEqual({ usableCount: 2, downCount: 1, best: nodes[0] })
-  })
-
-  it('全部不可用 → best 为 null', () => {
-    expect(summarizeNodes([{ name: 'D', urls: [], score: 999, usable: false }])).toEqual({ usableCount: 0, downCount: 1, best: null })
-  })
-})
-
-describe('useClashStatus', () => {
-  it('返回探测状态', async () => {
-    const qc = new QueryClient()
-    const { result } = renderHook(() => useClashStatus(), {
-      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
-    })
-    await waitFor(() => expect(result.current.data?.detected).toBe(true))
-  })
-})
-
-describe('useClashOptimize', () => {
-  it('成功后失效 clash-status 查询', async () => {
-    const qc = new QueryClient()
-    const invalidate = vi.spyOn(qc, 'invalidateQueries')
-    const { result } = renderHook(() => useClashOptimize(), {
-      wrapper: ({ children }) => (
-        <App>
-          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
-        </App>
-      ),
-    })
-    result.current.mutate()
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['clash-status'] }))
-  })
-})
