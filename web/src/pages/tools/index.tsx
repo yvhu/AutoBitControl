@@ -1,21 +1,18 @@
 import { useState } from 'react'
 import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import { Alert, Card, Col, Row, Space, Tooltip, Typography } from 'antd'
-import { GlobalOutlined, SwapOutlined, ToolOutlined } from '@ant-design/icons'
+import { SwapOutlined, ToolOutlined } from '@ant-design/icons'
 import { useTools } from './hooks'
 import FileAssignPanel from './file-assign'
-import ClashPanel from './clash'
 
 /** 工具图标映射（按注册表 key；未登记的回落通用工具图标） */
 const TOOL_ICONS: Record<string, ReactNode> = {
   'file-assign': <SwapOutlined style={{ fontSize: 24, color: '#1677ff' }} />,
-  clash: <GlobalOutlined style={{ fontSize: 24, color: '#1677ff' }} />,
 }
 
 /** 工具面板组件映射（新增工具：注册表加 key + 此处加一行） */
 const TOOL_PANELS: Record<string, ComponentType> = {
   'file-assign': FileAssignPanel,
-  clash: ClashPanel,
 }
 
 /** 卡片描述固定两行截断：无论描述长短卡片等高，新工具自动套用 */

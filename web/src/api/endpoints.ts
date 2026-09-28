@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, ClashStatusData, ClashTestData, ClashOptimizeResult } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -32,8 +32,3 @@ export const runSchedule = (id: number) => post<{ taskKeys: string[]; skipped: A
 export const fetchTools = () => get<{ tools: ToolItem[] }>('/api/tools')
 export const previewFileAssign = (body: { sourceDir: string; column: string; template: FileAssignTemplate }) => post<FileAssignPreview>('/api/tools/file-assign/preview', body)
 export const applyFileAssign = (body: { sourceDir: string; column: string; plan: FileAssignRow[] }) => post<FileAssignApplyResult>('/api/tools/file-assign/apply', body)
-
-// ===== 代理网络工具 =====
-export const fetchClashStatus = () => get<ClashStatusData>('/api/tools/clash/status')
-export const testClash = () => post<ClashTestData>('/api/tools/clash/test', {})
-export const optimizeClash = () => post<ClashOptimizeResult>('/api/tools/clash/optimize', {})

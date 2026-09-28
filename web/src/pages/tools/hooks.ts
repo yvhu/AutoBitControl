@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { applyFileAssign, fetchTools, previewFileAssign, fetchClashStatus, testClash, optimizeClash } from '../../api/endpoints'
+import { applyFileAssign, fetchTools, previewFileAssign } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
-import type { FileAssignTemplate, FileAssignRow, ClashNodeResult } from '../../types'
+import type { FileAssignTemplate, FileAssignRow } from '../../types'
 
 /** 名称模板纯函数与表单类型（components 共享层；此处重导出保持既有引用） */
 export { buildTemplate, sampleName, DEFAULT_TEMPLATE_FORM, templateToForm } from '../../components/name-template'
@@ -36,48 +36,4 @@ export function useFileAssignApply() {
     },
     onError: (e) => message.error(errMsg(e)),
   })
-}
-
-// ===== 代理网络工具 =====
-
-/** 代理网络状态（15 秒轮询：探测/节奏/订阅实时性） */
-export function useClashStatus() {
-  return useQuery({ queryKey: ['clash-status'], queryFn: fetchClashStatus, refetchInterval: 15000 })
-}
-
-/** 节点测速（只测当前节点） */
-export function useClashTest() {
-  const { message } = App.useApp()
-  return useMutation({
-    mutationFn: () => testClash(),
-    onSuccess: (res) => {
-      if (!res.node) {
-        message.info(res.currentNode ? `当前节点 ${res.currentNode} 不可测（直连或未选择节点）` : '当前无可测节点')
-        return
-      }
-      const detail = res.node.urls.map((u) => (u.reachable ? `${u.delayMs}ms` : '超时')).join(' / ')
-      message.success(`当前节点 ${res.node.name}：${detail}`)
-    },
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-/** 选优并切换 */
-export function useClashOptimize() {
-  const { message } = App.useApp()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: () => optimizeClash(),
-    onSuccess: (res) => {
-      message.success(res.switched ? `已切换到 ${res.chosen}` : `未切换${res.switchNote ? `（${res.switchNote}）` : ''}`)
-      queryClient.invalidateQueries({ queryKey: ['clash-status'] })
-    },
-    onError: (e) => message.error(errMsg(e)),
-  })
-}
-
-/** 节点汇总（纯函数，面板与单测共用）：nodes 需已按得分升序 */
-export function summarizeNodes(nodes: ClashNodeResult[]): { usableCount: number; downCount: number; best: ClashNodeResult | null } {
-  const usable = nodes.filter((n) => n.usable)
-  return { usableCount: usable.length, downCount: nodes.length - usable.length, best: usable[0] ?? null }
 }
