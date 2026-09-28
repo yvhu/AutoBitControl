@@ -1091,7 +1091,6 @@ randomMicroMove(): Promise<void>
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 | `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
 | `captcha` | `provider`、`yescaptcha.apiBase`、`yescaptcha.clientKey` | 打码平台配置（插件路线，见[第 12 章](#12-验证码浏览器插件路线)）：`provider` 选平台（当前 `yescaptcha`，未来平台并列新增字段）；`yescaptcha` 是平台专属段（API 地址与密钥）。环境变量 `CAPTCHA_CLIENT_KEY` 可覆盖 clientKey；未配置 Key 时面板余额显示「未配置」，任务侧插件无 Key 无法解题 |
-| `clash` | `enabled`、`apiBase`、`apiSecret`、`group`、`testUrls`、`weights`、`maxNodes`、`testConcurrency`、`testTimeoutMs`、`minGainMs`、`autoCheck` | 代理网络工具（详见[第 11 章「代理网络」](#代理网络clash-工具)）：`enabled` 控制**定时自动检测**（手动入口不受限）；`apiBase` 是 external-controller **管理口**（默认 `http://127.0.0.1:9090`，注意不是 7890 代理流量口）；`apiSecret` 客户端开了鉴权才填；`group` 主代理分组（读当前节点与选优的锚点，默认 `🔰 节点选择`；面板不再提供分组下拉，需改时手改本文件）；`testUrls`/`weights` 测速目标与权重（默认 gstatic/google，权重 2:1）；`maxNodes`/`testConcurrency`/`testTimeoutMs`/`minGainMs` 测速规模/并发/单测超时/最小收益（低并发防机场风控）；`autoCheck.normalIntervalMin`/`fastIntervalMin` 正常/快速检测节奏（默认 30/2 分钟，0 关闭定时） |
 
 ### 8.2 面板使用
 
@@ -1101,7 +1100,7 @@ randomMicroMove(): Promise<void>
 - **窗口页**：搜索框（按名字/窗口 ID 过滤）＋「同步比特浏览器」按钮（拉取比特客户端窗口列表入库，含备注/序号/最近 IP/国家/内核版本元数据）＋ 窗口表（窗口名/序号、备注、IP、国家、内核、熔断计数与进度条、启用开关、操作列；表头可排序）。操作列含「打开/关闭」按钮（打开即拉起比特窗口并登记 `open_windows` 表，任务会话复用该窗口、结束后不关窗；再点一次关闭）、行内「复制ID」一键复制比特窗口 ID 到剪贴板；熔断计数 > 0 时显示「重置熔断」按钮（点击计数归零，按钮随之消失）。表头含复选框可多选窗口，选中后顶部工具条出现「已选 N 个窗口」与四个批量按钮——「批量打开」「批量关闭」「复制 ID」（换行合并选中窗口 ID 写入剪贴板，纯前端）「重置熔断」（未选中任何窗口时置灰）；批量打开/关闭/重置熔断走后端 `/api/profiles/batch`，完成后弹消息汇总成功/失败数。
 - **任务页**：任务按空投分组卡片分区展示：每组一张卡片，组头为彩色渐变图标块（组名首字）＋组名＋任务数，点击组头展开/收起；顶部「全部展开」「全部收起」按钮一键切换，默认全部收起；未写 group 的任务归入末尾「未分组」组；全部任务都未分组时保持平铺网格。组内任务卡片网格（每卡两列，行内卡片等高），卡片含任务名/key/分类徽章（签到/领水/铸币/其他）、钱包/并发/重试摘要、备注、来源页链接；备注超 3 行自动折叠，点「展开/收起」切换（行内卡片等高）；停用或已失效任务半透明显示。卡片开关写入本地库 `task_states` 表，切换**立即生效**（无需重启）；「立即触发」= 该任务在全部启用窗口跑一遍（在途时按钮禁用显示「运行中」）。
 - **定时任务页**：计划列表（名称/频率摘要/下次执行时间/包含的任务/自动分配标记），支持新建（四种频率模式，见第 7 章），任务多选下拉按空投分组归类（optgroup，未分组任务垫底；选项值仍为任务 key 不变）、编辑、删除、开关与「立即运行」；新建/编辑弹窗可选开启「上传前自动文件随机分配」（到点先分配再上传，分配失败跳过上传任务，见第 7 章）。
-- **工具页**：工具卡片中心（卡片数据来自 `GET /api/tools`，随需扩展），目前两个工具——「文件随机分配」与「代理网络」，点卡片展开对应工具面板，用法见[第 11 章](#11-工具中心)。
+- **工具页**：工具卡片中心（卡片数据来自 `GET /api/tools`，随需扩展），目前一个工具——「文件随机分配」，点卡片展开对应工具面板，用法见[第 11 章](#11-工具中心)。
 - **文档页**：左侧 antd Tree（本手册章节树 ＋ 🧩 任务示例三个源码节点 ＋ 📄 API 接口文档节点），右侧渲染本手册正文；点击章节锚点滚动定位，点击示例节点切换源码视图（逐行行号），点击 API 接口文档节点新窗口打开 /api-docs；代码块默认折叠（Collapse，点头部展开）；正文滚动时树自动高亮当前章节（scrollspy）。
 - **设置页**：比特浏览器卡（API 地址 ＋「测试连接」按钮与结果 Tag）；执行参数 Descriptions 只读展示（错峰上限/熔断阈值/版本）；数据源卡（账号表加载状态：路径 ＋ N 行 + 列名，不可用时 Alert 报错，改完 xlsx 点「重载」即时生效，无需重启）；主题卡（三态 Segmented，与顶栏一致）。
 
@@ -1137,9 +1136,6 @@ randomMicroMove(): Promise<void>
 | GET | `/api/tools` | 工具清单（工具中心卡片数据源） |
 | POST | `/api/tools/file-assign/preview` | 文件随机分配预览（校验并生成分配计划，不落盘） |
 | POST | `/api/tools/file-assign/apply` | 文件随机分配执行（按回传计划改名并写回 accounts.xlsx） |
-| GET | `/api/tools/clash/status` | 代理网络状态（客户端探测/主代理分组/当前节点/delay 能力/自动检测状态/任务在途标记） |
-| POST | `/api/tools/clash/test` | 当前节点测速（只测当前节点） |
-| POST | `/api/tools/clash/optimize` | 测速选优并切换（在主代理分组内选优） |
 
 完整参数、请求体、响应与业务错误码见面板文档页 → 📄 API 接口文档（/api-docs，可当场试调）。
 
@@ -1587,7 +1583,7 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 9 章「配方
 
 ## 11. 工具中心
 
-工具页是随需扩展的工具集合（卡片数据来自 `GET /api/tools`，在 `src/tools/index.ts` 的 TOOLS 注册表登记）。目前两个工具：文件随机分配、代理网络。
+工具页是随需扩展的工具集合（卡片数据来自 `GET /api/tools`，在 `src/tools/index.ts` 的 TOOLS 注册表登记）。目前一个工具：文件随机分配。
 
 ### 文件随机分配
 
@@ -1596,59 +1592,6 @@ AI 拿到这段会写出约 20 行的任务文件（结构同[第 9 章「配方
 - 流程：填源文件夹绝对路径 → 选目标列与名称模板 →「生成预览」（校验目录/列/数量，展示分配计划表）→「执行分配」（改名 + 写回 + 自动重载数据源）
 - 规则：文件数少于账号行数报错不执行；只改被分配到的 N 个文件，其余不动；模板由英文/数字/特殊字符组件组合，插入位置支持替换/前/后/指定位置后/指定文本后
 - **执行是破坏性操作且不回滚**（错误信息会附已改名清单），执行前务必核对预览
-
-### 代理网络（Clash 工具）
-
-背景：全部比特窗口代理都填 Clash 本地混合端口，所以切换 Clash 节点对全部窗口全局生效。本工具探测本机 Clash 客户端（通过 external-controller 管理 API），提供节点测速、综合评分选优、切换节点，并定时自动检测（网络变差自动换到可用节点）。
-
-**两个端口别搞混：**
-
-- `clash.apiBase`（默认 `http://127.0.0.1:9090`）是 external-controller **管理口**——测速/切节点都走它。需要 Clash 开启「外部控制 / External Controller」（一般在设置页，或配置里写 `external-controller: 127.0.0.1:9090`）。自检：浏览器打开 `http://127.0.0.1:9090/version`，返回 JSON 即已开启。
-- 7890 是**代理流量口**，窗口代理应填 `127.0.0.1:7890`（以面板顶部显示的实测混合口为准）。
-
-**配置**（`config.json` 的 `clash` 段，全带缺省，键说明见 8.1 配置表）。
-
-**面板操作**：顶部状态条显示内核类型/主代理分组/当前节点/检测节奏/全网可用性/任务运行中标记与实测混合口；「立即测速」只测当前节点（显示各 URL 延迟）；「选优并切换」在主代理分组（clash.group，默认「🔰 节点选择」）内测全部候选节点后切到最优节点（任务在途时会弹确认提示，因为换 IP 可能中断签到会话）。
-
-**定时自动检测**：正常节奏 30 分钟测一次；发现当前节点不可用或全网挂时进入快速节奏（2 分钟一次）直到恢复。**任务运行中只测速不切换**，切换延后到空闲窗口。切换失败自动回滚原节点。
-
-**评分规则**：每个节点对每个测试 URL 测延迟，全部不可达才判节点不可用（白名单机场节点只要有一个目标可达就不会被误杀）；得分 = 可达 URL 的加权延迟 + 不可达 URL 惩罚分，得分最低者当选；当选者比当前节点优势不足 `minGainMs` 时不切换（防频繁跳变）。
-
-**订阅相关**：本工具不做订阅管理（订阅新增/更新/切换都归 Clash 客户端自己——mihomo-party、Verge Rev 都有订阅列表界面）。如果整份订阅全挂，面板会红标「全网不可用」并保持快速重检，此时去客户端切换/更新订阅即可；订阅恢复后面板自动回到正常节奏。
-
-### 在不同 Clash 客户端开启外部控制
-
-**通用原理**：让内核实际加载的配置里含 `external-controller: 127.0.0.1:9090`，然后重启内核即可。本项目只在这台 Windows 机器上运行，只需管本机当前安装的客户端（换客户端后照下表重新配置一次即可）。
-
-| 客户端 | 开启方法 |
-| --- | --- |
-| Clash Party（mihomo-party） | 无界面开关，改 `%APPDATA%\mihomo-party\mihomo.yaml` 第 1 行的 `external-controller`；**升级/重装后可能被重置，症状就是面板又提示「未检测到 Clash」** |
-| Clash Verge Rev | 设置页找「Clash 设置」里的外部控制（External Controller）开关；找不到就改其数据目录（`%APPDATA%\io.github.clash-verge-rev.clash-verge-rev`）下的内核配置文件 |
-| Clash for Windows | Profiles 选中当前配置的 yaml，顶部加这行后重启内核（多数订阅模板自带这行） |
-| mihomo 裸核 | 直接改它的 config.yaml |
-
-**换客户端后的固定流程（3 步）**：
-
-1. 保证配置里那行生效，浏览器自检 `http://127.0.0.1:9090/version` 返回 JSON
-2. 端口不是 9090 → 改本项目的 `clash.apiBase`；客户端开了鉴权 → 把 secret 填进 `clash.apiSecret`
-3. 重启本项目（`npm run dev`），面板工具页显示「内核 mihomo」+ 实测混合口即成功
-
-**找不到配置文件在哪？** 用 PowerShell 反查内核进程监听的端口（除 7890/7891/7892 之外多出的监听端口，如 9090/9097 就是管理口候选）：
-
-```powershell
-$pids = @(Get-Process | Where-Object { $_.ProcessName -match 'clash|verge|party|mihomo' } | Select-Object -ExpandProperty Id)
-Get-NetTCPConnection -State Listen | Where-Object { $pids -contains $_.OwningProcess } | Select-Object LocalPort, OwningProcess
-```
-
-依次打开 `http://127.0.0.1:端口/version`，返回 JSON 的那个就是管理口。
-
-**常见问题：**
-
-- 面板提示「未检测到 Clash」→ 检查 Clash 是否开启外部控制、端口与 `apiBase` 是否一致、开了鉴权是否填了 `apiSecret`
-- 测速全部超时 → 机场限制并发或节点本身不可用：调低 `testConcurrency`；若持续全网挂，去 Clash 客户端检查/切换订阅
-- 分组选择重启后丢失 → 你很可能在 `config.local.json` 里也写了 `clash.group`（它覆盖 config.json 的写回值），删掉其中一处
-- 不想自动切换只想要手动控制 → `autoCheck.enabled` 设为 false（手动入口不受影响）
-
 
 ---
 
