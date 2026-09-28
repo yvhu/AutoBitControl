@@ -89,42 +89,6 @@ export interface SchedulerConfig {
   timezone: string
 }
 
-/** Clash 定时自动检测配置 */
-export interface ClashAutoCheckConfig {
-  /** 是否开启定时自动检测（节奏状态机开关） */
-  enabled: boolean
-  /** 正常态检测间隔（分钟；0 = 关闭定时） */
-  normalIntervalMin: number
-  /** 快速态检测间隔（分钟）：当前节点不可用/全网挂时缩短节奏 */
-  fastIntervalMin: number
-}
-
-/** Clash 代理网络工具配置（tools/clash 域使用） */
-export interface ClashConfig {
-  /** 工具开关（当前控制定时自动检测；手动入口不受限） */
-  enabled: boolean
-  /** external-controller 管理 API 地址（默认 9090；区别于 7890 混合代理口） */
-  apiBase: string
-  /** external-controller secret（客户端开启鉴权时必填，走 Authorization Bearer） */
-  apiSecret: string
-  /** 目标分组名（默认主代理分组「🔰 节点选择」；不存在时服务回退 GLOBAL/首个 Selector 组） */
-  group: string
-  /** 测速目标 URL 列表（连通性+延迟判定依据） */
-  testUrls: string[]
-  /** 各测试 URL 的权重（与 testUrls 按下标对应，缺位按 1） */
-  weights: number[]
-  /** 单轮测速最多测的节点数 */
-  maxNodes: number
-  /** 节点间测速并发上限（机场风控考虑） */
-  testConcurrency: number
-  /** 单次测速超时（毫秒） */
-  testTimeoutMs: number
-  /** 最小收益（加权分）：当选节点加权得分比当前节点低不到该值时不切换，避免频繁跳变 */
-  minGainMs: number
-  /** 定时自动检测配置 */
-  autoCheck: ClashAutoCheckConfig
-}
-
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -135,7 +99,6 @@ export interface AppConfig {
   wallet: WalletConfig
   dataSource: DataSourceConfig
   scheduler: SchedulerConfig
-  clash: ClashConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -190,23 +153,6 @@ const defaults: AppConfig = {
   dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
   // 定时任务固定时区：配置与展示统一按此时区（Asia/Shanghai 无 DST，一般无需改动）
   scheduler: { timezone: 'Asia/Shanghai' },
-  // Clash 代理网络工具：探测/测速/选优/定时检测
-  clash: {
-    enabled: true,
-    // external-controller 管理口（默认 9090）≠ 混合代理口 7890；探测后以 /configs 实测混合口为准
-    apiBase: 'http://127.0.0.1:9090',
-    apiSecret: '',
-    group: '🔰 节点选择',
-    // 测速目标：gstatic 204 为标准低开销探测（各机场通用）；google 兜底
-    testUrls: ['https://www.gstatic.com/generate_204', 'https://www.google.com'],
-    weights: [2, 1],
-    maxNodes: 20,
-    // 低并发防机场风控
-    testConcurrency: 2,
-    testTimeoutMs: 5000,
-    minGainMs: 100,
-    autoCheck: { enabled: true, normalIntervalMin: 30, fastIntervalMin: 2 },
-  },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */

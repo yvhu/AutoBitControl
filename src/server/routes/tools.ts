@@ -1,9 +1,8 @@
 /**
- * 工具路由（server 层）：工具清单 + 文件随机分配 + 代理网络（clash）
+ * 工具路由（server 层）：工具清单 + 文件随机分配
  * 依赖方向：server → tools（注册表/planner/applier）；ToolError 在此映射为统一响应
  */
 import { Router } from 'express'
-import type { Response } from 'express'
 import { ok, fail, asyncHandler } from '../http/response'
 import { ERROR_CODES } from '../http/errors'
 import { TOOLS } from '../../tools'
@@ -11,7 +10,6 @@ import { preparePreview } from '../../tools/file-assign/planner'
 import type { FileAssignService } from '../../tools/file-assign/applier'
 import { ToolError } from '../../tools/errors'
 import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/types'
-import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimizerStatus } from '../../tools/clash/types'
 
 /**
  * @swagger
@@ -96,113 +94,9 @@ import type { ClashTestResult, CurrentNodeTestResult, OptimizeResult, AutoOptimi
  *                     reloadedRows: { type: integer }
  */
 
-/**
- * @swagger
- * /api/tools/clash/status:
- *   get:
- *     summary: 代理网络状态（客户端探测/主代理分组/当前节点/自动检测状态）
- *     responses:
- *       '200':
- *         description: 状态汇总
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     detected: { type: boolean }
- *                     kernel: { type: string, nullable: true }
- *                     mixedPort: { type: integer, nullable: true }
- *                     apiBase: { type: string }
- *                     delaySupported: { type: boolean }
- *                     group: { type: string }
- *                     currentNode: { type: string, nullable: true }
- *                     auto: { type: object }
- *                     anyRunning: { type: boolean }
- */
-
-/**
- * @swagger
- * /api/tools/clash/test:
- *   post:
- *     summary: 当前节点测速（只读，不切换；只测当前节点）
- *     responses:
- *       '200':
- *         description: 当前节点测速结果（node 为 null 表示直连/未选择节点无可测）
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     group: { type: string }
- *                     currentNode: { type: string, nullable: true }
- *                     currentUsable: { type: boolean }
- *                     node:
- *                       type: object
- *                       nullable: true
- *                       properties:
- *                         name: { type: string }
- *                         urls: { type: array, items: { type: object } }
- *                         score: { type: number }
- *                         usable: { type: boolean }
- */
-
-/**
- * @swagger
- * /api/tools/clash/optimize:
- *   post:
- *     summary: 测速选优并切换节点（手动入口；任务在途由前端确认提示）
- *     responses:
- *       '200':
- *         description: 切换结果
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code: { type: integer, example: 0 }
- *                 message: { type: string, example: ok }
- *                 data:
- *                   type: object
- *                   properties:
- *                     chosen: { type: string, nullable: true }
- *                     switched: { type: boolean }
- *                     nodes: { type: array, items: { type: object } }
- *                     switchNote: { type: string }
- */
-
-/** clash 工具的路由依赖面（结构化类型，测试传普通对象替身） */
-export interface ClashRouteDeps {
-  service: {
-    status(): Promise<{
-      detected: boolean
-      kernel: string | null
-      mixedPort: number | null
-      apiBase: string
-      delaySupported: boolean
-      group: string
-      currentNode: string | null
-    }>
-    test(): Promise<CurrentNodeTestResult>
-    optimize(prev?: ClashTestResult): Promise<OptimizeResult>
-  }
-  auto: { status(): AutoOptimizerStatus }
-  anyRunning(): boolean
-}
-
 export function toolsRouter(deps: {
   xlsxPath: string
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void> }
-  clash: ClashRouteDeps
   /** 文件随机分配服务（app.ts 单例注入：面板手动分配与计划自动分配共用 busy 锁） */
   fileAssignService: FileAssignService
 }): Router {
@@ -256,40 +150,6 @@ export function toolsRouter(deps: {
         return
       }
       throw e
-    }
-  }))
-
-  /** 统一执行 clash 工具操作：ToolError 转统一响应，其余异常交给全局错误处理器 */
-  const clashGuard = (res: Response, e: unknown) => {
-    if (e instanceof ToolError) {
-      fail(res, e.status, e.code, e.message)
-      return
-    }
-    throw e
-  }
-
-  router.get('/tools/clash/status', asyncHandler(async (req, res) => {
-    try {
-      const s = await deps.clash.service.status()
-      ok(res, { ...s, auto: deps.clash.auto.status(), anyRunning: deps.clash.anyRunning() })
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
-  router.post('/tools/clash/test', asyncHandler(async (req, res) => {
-    try {
-      ok(res, await deps.clash.service.test())
-    } catch (e) {
-      clashGuard(res, e)
-    }
-  }))
-
-  router.post('/tools/clash/optimize', asyncHandler(async (req, res) => {
-    try {
-      ok(res, await deps.clash.service.optimize())
-    } catch (e) {
-      clashGuard(res, e)
     }
   }))
 

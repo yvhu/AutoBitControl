@@ -23,9 +23,6 @@ import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
 import { loadTasks } from './tasks'
 import { createApp } from './server/app'
-import { ClashAdapter } from './tools/clash/adapter'
-import { ClashService } from './tools/clash/optimizer'
-import { AutoOptimizer } from './tools/clash/auto-optimizer'
 import { FileAssignService } from './tools/file-assign/applier'
 import { buildFileAssignRunner } from './tools/file-assign/runner'
 
@@ -219,18 +216,6 @@ export async function startApp(): Promise<void> {
   })
   scheduler.start()
 
-  // 代理网络工具（tools/clash）：适配器 → 服务 → 定时自动检测；
-  // 在途守卫复用 enqueuer.anyRunning()（任务运行中不切换节点，避免换 IP 破坏签到会话）
-  const clashAdapter = new ClashAdapter(cfg.clash.apiBase, cfg.clash.apiSecret, cfg.clash.testTimeoutMs)
-  const clashService = new ClashService({ adapter: clashAdapter, getCfg: () => cfg.clash, logger })
-  const clashAuto = new AutoOptimizer({
-    service: clashService,
-    anyRunning: () => enqueuer.anyRunning(),
-    logger,
-    intervals: { normalMin: cfg.clash.autoCheck.normalIntervalMin, fastMin: cfg.clash.autoCheck.fastIntervalMin },
-  })
-  if (cfg.clash.enabled && cfg.clash.autoCheck.enabled) clashAuto.start()
-
   const app = createApp({
     db,
     enqueuer,
@@ -248,11 +233,6 @@ export async function startApp(): Promise<void> {
       path: cfg.dataSource.path,
     },
     fileAssignService,
-    clash: {
-      service: clashService,
-      auto: clashAuto,
-      anyRunning: () => enqueuer.anyRunning(),
-    },
     // 余额查询失败返回 null → 面板显示"未配置 Key"（容错优先，不打挂面板；getBalance 失败走异常路径）
     captchaBalance: async () => {
       if (!captcha) return null
@@ -310,7 +290,6 @@ export async function startApp(): Promise<void> {
   }
   const shutdown = () => {
     scheduler.stop()
-    clashAuto.stop()
     logger.info('正在关闭...')
     server.close(() => finish())
     // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）
