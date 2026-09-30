@@ -104,3 +104,77 @@ export interface FileAssignApplyResult {
   updatedRows: number
   reloadedRows: number
 }
+
+// ===== 空投追踪（手补类型：/api/airdrop/*） =====
+
+export type AirdropPriority = 'high' | 'mid' | 'low'
+
+/** 状态列视图（含列下项目数） */
+export interface AirdropStatusItem {
+  id: number
+  name: string
+  sortOrder: number
+  createdAt: string
+  projectCount: number
+}
+
+/** 待办子项（done 为 0/1，SQLite 无布尔） */
+export interface AirdropTodoItem {
+  id: number
+  projectId: number
+  content: string
+  done: 0 | 1
+  dueDate: string | null
+  priority: AirdropPriority
+  createdAt: string
+}
+
+/** 项目视图（含状态列名与子项数组） */
+export interface AirdropProjectView {
+  id: number
+  name: string
+  statusId: number
+  priority: AirdropPriority
+  deadline: string | null
+  link: string | null
+  note: string | null
+  createdAt: string
+  updatedAt: string
+  statusName: string
+  todos: AirdropTodoItem[]
+}
+
+/** 新建项目入参 */
+export interface AirdropProjectInput {
+  name: string
+  statusId: number
+  priority?: AirdropPriority
+  deadline?: string | null
+  link?: string | null
+  note?: string | null
+}
+
+/** 项目部分更新入参（拖拽流转传 statusId） */
+export interface AirdropProjectPatch {
+  name?: string
+  statusId?: number
+  priority?: AirdropPriority
+  deadline?: string | null
+  link?: string | null
+  note?: string | null
+}
+
+/** 单条提醒 */
+export interface AirdropReminderItem {
+  type: 'project' | 'todo'
+  id: number
+  name: string
+  date: string
+  daysLeft: number
+}
+
+/** 提醒汇总 */
+export interface AirdropReminders {
+  upcoming: AirdropReminderItem[]
+  overdue: AirdropReminderItem[]
+}

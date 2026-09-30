@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, AirdropPriority, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -32,3 +32,17 @@ export const runSchedule = (id: number) => post<{ taskKeys: string[]; skipped: A
 export const fetchTools = () => get<{ tools: ToolItem[] }>('/api/tools')
 export const previewFileAssign = (body: { sourceDir: string; column: string; template: FileAssignTemplate }) => post<FileAssignPreview>('/api/tools/file-assign/preview', body)
 export const applyFileAssign = (body: { sourceDir: string; column: string; plan: FileAssignRow[] }) => post<FileAssignApplyResult>('/api/tools/file-assign/apply', body)
+
+// ===== 空投追踪 =====
+export const fetchAirdropStatuses = () => get<AirdropStatusItem[]>('/api/airdrop/statuses')
+export const createAirdropStatus = (name: string) => post<AirdropStatusItem>('/api/airdrop/statuses', { name })
+export const updateAirdropStatus = (id: number, body: { name?: string; sortOrder?: number }) => patch<AirdropStatusItem>(`/api/airdrop/statuses/${id}`, body)
+export const deleteAirdropStatus = (id: number) => del<null>(`/api/airdrop/statuses/${id}`)
+export const fetchAirdropProjects = () => get<AirdropProjectView[]>('/api/airdrop/projects')
+export const createAirdropProject = (body: AirdropProjectInput) => post<AirdropProjectView>('/api/airdrop/projects', body)
+export const updateAirdropProject = (id: number, body: AirdropProjectPatch) => patch<AirdropProjectView>(`/api/airdrop/projects/${id}`, body)
+export const deleteAirdropProject = (id: number) => del<null>(`/api/airdrop/projects/${id}`)
+export const createAirdropTodo = (projectId: number, body: { content: string; dueDate?: string | null; priority: AirdropPriority }) => post<AirdropTodoItem>(`/api/airdrop/projects/${projectId}/todos`, body)
+export const updateAirdropTodo = (id: number, body: { done?: boolean; content?: string; dueDate?: string | null; priority?: AirdropPriority }) => patch<AirdropTodoItem>(`/api/airdrop/todos/${id}`, body)
+export const deleteAirdropTodo = (id: number) => del<null>(`/api/airdrop/todos/${id}`)
+export const fetchAirdropReminders = () => get<AirdropReminders>('/api/airdrop/reminders')
