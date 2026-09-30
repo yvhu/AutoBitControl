@@ -26,7 +26,7 @@ export default function StatusManageModal({ open, statuses, onClose }: {
       setNames(Object.fromEntries(statuses.map((s) => [s.id, s.name])))
       setNewName('')
     }
-  }, [open, statuses])
+  }, [open])
 
   const rename = (s: AirdropStatusItem) => {
     const name = (names[s.id] ?? '').trim()

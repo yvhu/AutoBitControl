@@ -51,7 +51,7 @@ export default function ProjectFormModal({ open, editing, statuses, defaultStatu
       note: editing?.note ?? null,
     })
     setTodos(editing ? toDrafts(editing.todos) : [])
-  }, [open, editing, statuses, defaultStatusId, form])
+  }, [open, editing, defaultStatusId, form])
 
   const addTodo = () => setTodos((prev) => [...prev, { key: nextKey(), content: '', dueDate: null, priority: 'mid' }])
 
