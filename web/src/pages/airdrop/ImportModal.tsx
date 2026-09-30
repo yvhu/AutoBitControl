@@ -2,7 +2,7 @@
  * 系统任务批量导入弹窗：逐行勾选 + 指定状态列/优先级；已绑定任务置灰
  * 依赖方向：依赖 ./hooks、./board 与 ../../types，被 index.tsx 挂载
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Checkbox, Empty, Modal, Select, Spin, Tag, Typography } from 'antd'
 import { PRIORITY_LABEL } from './board'
 import { useAirdropProjects, useImportProjects, useTasks } from './hooks'
@@ -16,6 +16,7 @@ export default function ImportModal({ open, onClose, statuses }: { open: boolean
   const projects = useAirdropProjects()
   const importProjects = useImportProjects()
   const [rows, setRows] = useState<Record<string, RowState>>({})
+  const initedRef = useRef(false)
 
   const boundMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -24,11 +25,16 @@ export default function ImportModal({ open, onClose, statuses }: { open: boolean
   }, [projects.data])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      initedRef.current = false
+      return
+    }
+    if (initedRef.current || !tasks.data) return
+    initedRef.current = true
     const init: Record<string, RowState> = {}
-    for (const t of tasks.data ?? []) init[t.key] = { checked: false, statusId: statuses[0]?.id, priority: 'mid' }
+    for (const t of tasks.data) init[t.key] = { checked: false, statusId: statuses[0]?.id, priority: 'mid' }
     setRows(init)
-  }, [open])
+  }, [open, tasks.data, statuses])
 
   const onOk = () => {
     const items: AirdropImportItem[] = []
