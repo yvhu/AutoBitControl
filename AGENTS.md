@@ -53,6 +53,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
 
+**AI 帮写任务（元素清单式模板）**：用户按 `docs/API-GUIDE.md` 附录模板提交新任务时：① 筛选选择器（原始长选择器 → 稳定短选择器，优先 id/data-testid/按钮文案，多候选说明取舍）② 缺失关键信息（登录标志/成功判定/数据源列）一次性列全问题，不逐条追问、不瞎编 ③ 直接写代码（登录竞速/刷新恢复/钱包/领取循环按既有任务模式），真机闭环照常。用户给的是真值素材，不猜。
+
 ## 数据层
 
 本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
