@@ -48,6 +48,14 @@ export function reminderBannerText(r: AirdropReminders): string | null {
   return parts.join('｜')
 }
 
+/** 状态列调色板（按列顺序循环取色；默认五列=蓝/橙/青/绿/灰） */
+export const STATUS_PALETTE = ['#2f54eb', '#d46b08', '#13a8a8', '#52c41a', '#8c959f', '#722ed1', '#eb2f96', '#a0d911']
+
+/** 按列顺序取色（index 循环回绕，负 index 安全） */
+export function statusColor(index: number): string {
+  return STATUS_PALETTE[((index % STATUS_PALETTE.length) + STATUS_PALETTE.length) % STATUS_PALETTE.length]
+}
+
 /** 优先级展示元数据 */
 export const PRIORITY_LABEL: Record<AirdropPriority, string> = { high: '高', mid: '中', low: '低' }
 export const PRIORITY_TAG: Record<AirdropPriority, 'red' | 'orange' | 'green'> = { high: 'red', mid: 'orange', low: 'green' }

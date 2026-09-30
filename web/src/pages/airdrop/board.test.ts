@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deadlineBadge, diffDays, diffTodos, groupByStatus, reminderBannerText, todayLocal } from './board'
+import { deadlineBadge, diffDays, diffTodos, groupByStatus, reminderBannerText, statusColor, STATUS_PALETTE, todayLocal } from './board'
 import type { TodoDraft } from './board'
 import type { AirdropProjectView, AirdropReminders, AirdropTodoItem } from '../../types'
 
@@ -98,5 +98,17 @@ describe('diffTodos', () => {
     expect(d.toDelete).toEqual([])
     expect(d.toCreate).toEqual([])
     expect(d.toUpdate).toEqual([])
+  })
+})
+
+describe('statusColor', () => {
+  it('前 8 列逐一取调色板原色', () => {
+    for (let i = 0; i < 8; i++) expect(statusColor(i)).toBe(STATUS_PALETTE[i])
+  })
+
+  it('index 8/9 回绕到 0/1；负 index 安全回绕', () => {
+    expect(statusColor(8)).toBe(STATUS_PALETTE[0])
+    expect(statusColor(9)).toBe(STATUS_PALETTE[1])
+    expect(statusColor(-1)).toBe(STATUS_PALETTE[7])
   })
 })
