@@ -2,13 +2,13 @@
  * 项目表单弹窗：新增/编辑项目字段 + 待办子项编辑器（保存时 diff 增删改）
  * 依赖方向：依赖 ./hooks、./board 与 ../types，被 index.tsx 引用
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button, DatePicker, Form, Input, Modal, Select } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { useSaveProject } from './hooks'
+import { useAirdropProjects, useSaveProject, useTasks } from './hooks'
 import { PRIORITY_LABEL, type TodoDraft } from './board'
-import type { AirdropPriority, AirdropProjectView, AirdropStatusItem } from '../../types'
+import type { AirdropPriority, AirdropProjectView, AirdropStatusItem, TaskMetaView } from '../../types'
 
 export interface ProjectFormValues {
   name: string
@@ -17,6 +17,7 @@ export interface ProjectFormValues {
   deadline: Dayjs | null
   link: string | null
   note: string | null
+  taskKey: string | null
 }
 
 let draftSeq = 0
@@ -39,6 +40,12 @@ export default function ProjectFormModal({ open, editing, statuses, defaultStatu
   const [form] = Form.useForm<ProjectFormValues>()
   const [todos, setTodos] = useState<TodoDraft[]>([])
   const saveProject = useSaveProject()
+  const tasks = useTasks()
+  const projects = useAirdropProjects()
+  const taskOptions = useMemo(() => (tasks.data ?? []).map((t: TaskMetaView) => {
+    const holder = (projects.data ?? []).find((p) => p.taskKey === t.key && p.id !== editing?.id)
+    return { value: t.key, label: holder ? `${t.name}（已关联：${holder.name}）` : t.name, disabled: Boolean(holder) }
+  }), [tasks.data, projects.data, editing?.id])
 
   useEffect(() => {
     if (!open) return
@@ -49,6 +56,7 @@ export default function ProjectFormModal({ open, editing, statuses, defaultStatu
       deadline: editing?.deadline ? dayjs(editing.deadline) : null,
       link: editing?.link ?? null,
       note: editing?.note ?? null,
+      taskKey: editing?.taskKey ?? null,
     })
     setTodos(editing ? toDrafts(editing.todos) : [])
   }, [open, editing, defaultStatusId, form])
@@ -60,7 +68,7 @@ export default function ProjectFormModal({ open, editing, statuses, defaultStatu
     const deadline = values.deadline ? values.deadline.format('YYYY-MM-DD') : null
     const cleaned = todos.filter((t) => t.content.trim()).map((t) => ({ ...t, content: t.content.trim() }))
     saveProject.mutate(
-      { id: editing?.id ?? null, values: { ...values, deadline }, todos: cleaned },
+      { id: editing?.id ?? null, values: { ...values, deadline, taskKey: values.taskKey ?? null }, todos: cleaned },
       { onSuccess: onClose },
     )
   }
@@ -87,6 +95,13 @@ export default function ProjectFormModal({ open, editing, statuses, defaultStatu
             <Input placeholder="https://..." />
           </Form.Item>
         </div>
+        <Form.Item name="taskKey" label="关联系统任务">
+          <Select
+            allowClear
+            placeholder="不关联（纯手动追踪）"
+            options={taskOptions}
+          />
+        </Form.Item>
         <Form.Item name="note" label="备注">
           <Input.TextArea rows={3} placeholder="记录规则、进度、注意点..." />
         </Form.Item>

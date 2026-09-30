@@ -1,10 +1,10 @@
 /**
- * 空投追踪看板页：提醒横幅 + 状态列拖拽 + 项目卡片 + 两个弹窗
+ * 空投追踪看板页：提醒横幅 + 状态列拖拽 + 项目卡片 + 导入/表单/状态管理弹窗
  * 依赖方向：依赖 ./board、./hooks 与各子组件，被 App.tsx 路由挂载
  */
 import { useMemo, useState } from 'react'
 import { Alert, Button, Card, Space, Typography } from 'antd'
-import { PlusOutlined, SettingOutlined } from '@ant-design/icons'
+import { DownloadOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons'
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { groupByStatus } from './board'
 import { useAirdropProjects, useAirdropReminders, useAirdropStatuses, useUpdateProject } from './hooks'
@@ -13,6 +13,7 @@ import StatusColumn from './StatusColumn'
 import ProjectCard from './ProjectCard'
 import ProjectFormModal from './ProjectFormModal'
 import StatusManageModal from './StatusManageModal'
+import ImportModal from './ImportModal'
 import type { AirdropProjectView } from '../../types'
 
 /** 空投追踪看板页：提醒横幅 + 状态列拖拽 + 项目卡片 + 两个弹窗 */
@@ -27,6 +28,7 @@ export default function AirdropPage() {
   const [editing, setEditing] = useState<AirdropProjectView | null>(null)
   const [defaultStatusId, setDefaultStatusId] = useState<number | undefined>(undefined)
   const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [dismissedKey, setDismissedKey] = useState<string | null>(null)
 
   const grouped = useMemo(() => groupByStatus(projects.data ?? []), [projects.data])
@@ -70,6 +72,7 @@ export default function AirdropPage() {
         </div>
         <Space>
           <Button icon={<SettingOutlined />} onClick={() => setStatusModalOpen(true)}>管理状态列</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => setImportOpen(true)}>从系统任务导入</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>新增项目</Button>
         </Space>
       </div>
@@ -92,6 +95,7 @@ export default function AirdropPage() {
         onClose={() => setFormOpen(false)}
       />
       <StatusManageModal open={statusModalOpen} statuses={statuses.data} onClose={() => setStatusModalOpen(false)} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} statuses={statuses.data} />
     </Space>
   )
 }
