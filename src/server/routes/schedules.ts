@@ -66,15 +66,7 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
   if (body.config !== undefined) {
     out.config = body.config as ScheduleConfig
   }
-  if (body.taskKeys !== undefined) {
-    if (!Array.isArray(body.taskKeys) || body.taskKeys.length === 0 || !body.taskKeys.every((k) => typeof k === 'string')) {
-      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKeys 必须为非空字符串数组')
-    }
-    out.taskKeys = body.taskKeys as string[]
-  } else if (!existing) {
-    throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKeys 必填')
-  }
-  // 合成最终 mode/config 做整体校验（新建与局部更新同规则）
+  // 合成最终 mode/config（先于 taskKeys 校验：空 taskKeys 是否合法取决于最终配置是否带 fileAssign）
   const finalMode = out.mode ?? (existing?.mode as ScheduleMode | undefined)
   const finalConfig = out.config ?? (existing ? (JSON.parse(existing.config) as ScheduleConfig) : undefined)
   if (!finalMode) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'mode 必填')
@@ -85,13 +77,44 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
     const faErr = validateFileAssign(finalConfig.fileAssign)
     if (faErr) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, faErr)
   }
-  // 任务 key 必须已注册（与手动触发同守卫，不引用幽灵任务）
+  if (body.taskKeys !== undefined) {
+    if (!Array.isArray(body.taskKeys) || !body.taskKeys.every((k) => typeof k === 'string')) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKeys 必须为字符串数组')
+    }
+    out.taskKeys = body.taskKeys as string[]
+  } else if (!existing) {
+    throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKeys 必填')
+  }
+  // 空 taskKeys 仅允许纯分配计划（最终配置带 fileAssign）
+  const finalTaskKeys = out.taskKeys ?? (existing ? (JSON.parse(existing.taskKeys) as string[]) : [])
+  if (finalTaskKeys.length === 0 && finalConfig?.fileAssign === undefined) {
+    throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKeys 为空时须同时配置 fileAssign（纯分配计划）')
+  }
+  // 只校验请求体提供的 key（existing 旧 key 运行期容忍 unknown-task，避免任务类移除后旧计划无法编辑）
   if (out.taskKeys !== undefined) {
     for (const k of out.taskKeys) {
       if (!deps.tasks.has(k)) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, `任务不存在: ${k}`)
     }
   }
   return out
+}
+
+/** 纯分配计划至多一条（工具页「文件随机分配」定时执行依赖该约定）；尝试再建第二条时拒绝 */
+async function assertNoOtherPureAssign(db: AppDb, excludeId: number | null): Promise<void> {
+  for (const s of await db.listSchedules()) {
+    if (excludeId !== null && s.id === excludeId) continue
+    let keys: unknown
+    let cfg: unknown
+    try {
+      keys = JSON.parse(s.taskKeys)
+      cfg = JSON.parse(s.config)
+    } catch {
+      continue
+    }
+    if (Array.isArray(keys) && keys.length === 0 && (cfg as Record<string, unknown>)?.fileAssign !== undefined) {
+      throw new HttpError(409, ERROR_CODES.SCHEDULE_PURE_ASSIGN_EXISTS, '已存在「仅分配」计划（文件随机分配定时执行），请编辑或删除原计划')
+    }
+  }
 }
 
 /**
@@ -183,7 +206,7 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                           digits: { type: object, nullable: true }
  *                           special: { type: object, nullable: true }
  *                           position: { type: object }
- *               taskKeys: { type: array, items: { type: string } }
+ *               taskKeys: { type: array, items: { type: string }, description: '可为空数组（纯分配计划：仅定时文件随机分配，须同时带 config.fileAssign）' }
  *             required: [name, mode, taskKeys]
  *     responses:
  *       '200':
@@ -230,6 +253,8 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                     updatedAt: { type: string }
  *       '400':
  *         description: 参数校验失败（业务码 40000）
+ *       '409':
+ *         description: 已存在「仅分配」计划（业务码 40906）
  */
 
 /**
@@ -274,7 +299,7 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                           digits: { type: object, nullable: true }
  *                           special: { type: object, nullable: true }
  *                           position: { type: object }
- *               taskKeys: { type: array, items: { type: string } }
+ *               taskKeys: { type: array, items: { type: string }, description: '可为空数组（纯分配计划：仅定时文件随机分配，须同时带 config.fileAssign）' }
  *     responses:
  *       '200':
  *         description: 更新成功（返回面板视图）
@@ -320,6 +345,8 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                     updatedAt: { type: string }
  *       '400':
  *         description: 参数校验失败（业务码 40000）
+ *       '409':
+ *         description: 已存在「仅分配」计划（业务码 40906）
  *       '404':
  *         description: 计划不存在（业务码 40406）
  */
@@ -382,6 +409,15 @@ function parseBody(deps: { tasks: Map<string, SiteTask> }, body: Record<string, 
  *                         properties:
  *                           taskKey: { type: string }
  *                           reason: { type: string, enum: [unknown-task, task-disabled, in-flight, file-assign-failed] }
+ *                     fileAssign:
+ *                       type: object
+ *                       nullable: true
+ *                       description: 本次触发的自动分配执行结果（纯分配计划或任务前分配；未返回表示本次未进入分配环节；ran=false 表示进入环节但未实际执行）
+ *                       properties:
+ *                         ran: { type: boolean }
+ *                         ok: { type: boolean }
+ *                         renamedCount: { type: integer, nullable: true }
+ *                         error: { type: string, nullable: true }
  *       '404':
  *         description: 计划不存在（业务码 40406）
  *       '409':
@@ -404,6 +440,7 @@ export function schedulesRouter(deps: { db: AppDb; scheduler: { runNow(s: Schedu
   router.post('/schedules', asyncHandler(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>
     const parsed = parseBody(deps, body)
+    if (parsed.taskKeys!.length === 0) await assertNoOtherPureAssign(deps.db, null)
     const s = await deps.db.createSchedule({
       name: parsed.name!,
       mode: parsed.mode!,
@@ -418,6 +455,7 @@ export function schedulesRouter(deps: { db: AppDb; scheduler: { runNow(s: Schedu
     const existing = await deps.db.getSchedule(id)
     if (!existing) throw new HttpError(404, ERROR_CODES.SCHEDULE_NOT_FOUND, '计划不存在')
     const parsed = parseBody(deps, (req.body ?? {}) as Record<string, unknown>, existing)
+    if (parsed.taskKeys !== undefined && parsed.taskKeys.length === 0) await assertNoOtherPureAssign(deps.db, id)
     const s = await deps.db.updateSchedule(id, {
       ...(parsed.name !== undefined ? { name: parsed.name } : {}),
       ...(parsed.enabled !== undefined ? { enabled: parsed.enabled } : {}),

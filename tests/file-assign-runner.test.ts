@@ -30,11 +30,12 @@ beforeAll(async () => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('buildFileAssignRunner', () => {
-  it('按 预览 → 执行 → 重载 顺序串联，apply 收到真实预览计划', async () => {
+  it('按 预览 → 执行 → 重载 顺序串联，apply 收到真实预览计划且结果透传', async () => {
     const apply = vi.fn().mockResolvedValue({ renamedCount: 1, updatedRows: 1 })
     const reload = vi.fn().mockResolvedValue(undefined)
     const run = buildFileAssignRunner({ xlsxPath, apply, reload })
-    await run(cfg)
+    const result = await run(cfg)
+    expect(result).toEqual({ renamedCount: 1, updatedRows: 1 })
     expect(apply).toHaveBeenCalledTimes(1)
     const params = apply.mock.calls[0][0] as { sourceDir: string; column: string; xlsxPath: string; plan: Array<{ newName: string }> }
     expect(params.sourceDir).toBe(dir)

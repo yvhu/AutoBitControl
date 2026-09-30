@@ -105,6 +105,13 @@ export interface FileAssignApplyResult {
   reloadedRows: number
 }
 
+/** 计划「立即运行」结果（/api/schedules/{id}/run；未返回 fileAssign 表示本次未进入分配环节；ran=false 表示进入环节但未实际执行） */
+export interface RunScheduleResult {
+  taskKeys: string[]
+  skipped: Array<{ taskKey: string; reason: string }>
+  fileAssign?: { ran: boolean; ok: boolean; renamedCount?: number; error?: string }
+}
+
 // ===== 空投追踪（手补类型：/api/airdrop/*） =====
 
 export type AirdropPriority = 'high' | 'mid' | 'low'

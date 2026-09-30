@@ -12,11 +12,12 @@ export interface FileAssignRunnerDeps {
   reload(): Promise<void>
 }
 
-/** 构建分配执行器：校验预览（不落盘）→ 执行改名与写回 → 重载数据源；任一步失败向上抛（Scheduler 捕获后跳过依赖文件的任务） */
-export function buildFileAssignRunner(deps: FileAssignRunnerDeps): (config: FileAssignConfig) => Promise<void> {
+/** 构建分配执行器：校验预览（不落盘）→ 执行改名与写回 → 重载数据源；任一步失败向上抛（Scheduler 捕获后跳过依赖文件的任务）；成功返回执行结果（renamedCount/updatedRows） */
+export function buildFileAssignRunner(deps: FileAssignRunnerDeps): (config: FileAssignConfig) => Promise<ApplyResult> {
   return async (config) => {
     const plan = await preparePreview({ sourceDir: config.sourceDir, column: config.column, template: config.template, xlsxPath: deps.xlsxPath })
-    await deps.apply({ sourceDir: config.sourceDir, column: config.column, plan: plan.plan, xlsxPath: deps.xlsxPath })
+    const result = await deps.apply({ sourceDir: config.sourceDir, column: config.column, plan: plan.plan, xlsxPath: deps.xlsxPath })
     await deps.reload()
+    return result
   }
 }

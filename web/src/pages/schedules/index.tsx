@@ -5,17 +5,18 @@
  */
 import { useState } from 'react'
 import {
-  App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm,
-  Segmented, Select, Space, Switch, Table, Tag, TimePicker, Typography,
+  App, Button, Card, Divider, Empty, Form, Input, Modal, Popconfirm,
+  Select, Space, Switch, Table, Tag, Typography,
 } from 'antd'
 import { ClockCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
-  MODE_OPTIONS, WEEKDAY_OPTIONS, DAY_OPTIONS, modeLabel, buildPayload, buildTaskOptions,
+  modeLabel, buildPayload, buildTaskOptions,
   useSchedules, useCreateSchedule, useUpdateSchedule, useDeleteSchedule, useRunSchedule,
   type FormValues,
 } from './hooks'
 import { useTasks } from '../tasks/hooks'
+import { ScheduleFields } from '../../components/schedule-fields'
 import { NameTemplateEditor } from '../../components/name-template-editor'
 import { buildTemplate, DEFAULT_TEMPLATE_FORM, templateToForm, type TemplateForm } from '../../components/name-template'
 import type { ScheduleItem, FileAssignTemplate } from '../../types'
@@ -33,7 +34,6 @@ export default function SchedulesPage() {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<ScheduleItem | null>(null)
   const [templateForm, setTemplateForm] = useState<TemplateForm>({ ...DEFAULT_TEMPLATE_FORM })
-  const mode = Form.useWatch('mode', form) ?? 'daily'
   const fileAssignEnabled = Form.useWatch('fileAssignEnabled', form) ?? false
 
   const taskOptions = buildTaskOptions(tasks ?? [])
@@ -96,8 +96,10 @@ export default function SchedulesPage() {
     },
     { title: '下次执行', dataIndex: 'nextRun', render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span> },
     {
-      title: '关联任务', dataIndex: 'taskNames', render: (names: Array<string | null>) => (
-        <Space size={4} wrap>{names.map((n, i) => (n ? <Tag key={i}>{n}</Tag> : <Tag key={i} color="red">未知任务</Tag>))}</Space>
+      title: '关联任务', dataIndex: 'taskNames', render: (names: Array<string | null>, s: ScheduleItem) => (
+        names.length === 0 && s.config.fileAssign
+          ? <Tag color="purple">仅分配</Tag>
+          : <Space size={4} wrap>{names.map((n, i) => (n ? <Tag key={i}>{n}</Tag> : <Tag key={i} color="red">未知任务</Tag>))}</Space>
       ),
     },
     {
@@ -155,52 +157,19 @@ export default function SchedulesPage() {
           <Form.Item name="name" label="计划名称" rules={[{ required: true, message: '请填写计划名称' }]}>
             <Input placeholder="例如：每日签到集合" maxLength={30} />
           </Form.Item>
-          <Form.Item name="mode" label="频率模式">
-            <Segmented options={MODE_OPTIONS} />
-          </Form.Item>
+          <ScheduleFields />
 
-          {mode === 'interval' && (
-            <Form.Item name="everyHours" label="执行间隔" rules={[{ required: true, message: '请填写间隔小时数' }]}>
-              <InputNumber min={1} max={23} addonAfter="小时一次（自 00:00 起算）" style={{ width: 260 }} />
-            </Form.Item>
-          )}
-
-          {mode === 'weekly' && (
-            <Form.Item name="weekdays" label="星期" rules={[{ required: true, message: '至少选择一个星期' }]}>
-              <Select mode="multiple" options={WEEKDAY_OPTIONS} placeholder="可多选" />
-            </Form.Item>
-          )}
-
-          {mode === 'monthly' && (
-            <Form.Item name="days" label="每月几号" rules={[{ required: true, message: '至少选择一个日期' }]}>
-              <Select mode="multiple" options={DAY_OPTIONS} placeholder="可多选（小月无该日自动跳过）" />
-            </Form.Item>
-          )}
-
-          {mode !== 'interval' && (
-            <Form.Item label="执行时间点">
-              <Form.List name="times" rules={[{ validator: async (_, value) => { if (!value || value.length === 0) throw new Error('至少一个时间点') } }]}>
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map(({ key, name }) => (
-                      <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
-                        <Form.Item name={name} rules={[{ required: true, message: '请选择时间' }]} style={{ marginBottom: 0 }}>
-                          <TimePicker format="HH:mm" />
-                        </Form.Item>
-                        <Button size="small" danger onClick={() => remove(name)}>删除</Button>
-                      </Space>
-                    ))}
-                    <Button type="dashed" onClick={() => add(dayjs('09:00', 'HH:mm'))} block>
-                      + 添加时间点
-                    </Button>
-                  </>
-                )}
-              </Form.List>
-            </Form.Item>
-          )}
-
-          <Form.Item name="taskKeys" label="选择任务（到点后依次触发）" rules={[{ required: true, message: '至少选择一个任务' }]}>
-            <Select mode="multiple" options={taskOptions} placeholder="多选任务" optionFilterProp="label" />
+          <Form.Item
+            name="taskKeys"
+            label="选择任务（到点后依次触发）"
+            rules={[{
+              validator: (_, value: string[] | undefined) => {
+                if (!fileAssignEnabled && (!value || value.length === 0)) return Promise.reject(new Error('至少选择一个任务'))
+                return Promise.resolve()
+              },
+            }]}
+          >
+            <Select mode="multiple" options={taskOptions} placeholder="多选任务（开启自动分配后可不选=仅分配计划）" optionFilterProp="label" />
           </Form.Item>
 
           <Divider style={{ margin: '4px 0 12px' }} />

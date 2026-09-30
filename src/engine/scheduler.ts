@@ -10,7 +10,7 @@
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 import type { TaskMeta } from './task'
-import type { FileAssignConfig } from '../tools/file-assign/types'
+import type { ApplyResult, FileAssignConfig } from '../tools/file-assign/types'
 import { wallClockIn, isDueMinute, type ScheduleConfig, type ScheduleMode } from './schedule'
 
 /** 一次触发的任务级结果（面板「立即运行」与日志共用） */
@@ -19,6 +19,8 @@ export interface RunNowResult {
   taskKeys: string[]
   /** 被跳过任务的明细 */
   skipped: Array<{ taskKey: string; reason: 'unknown-task' | 'task-disabled' | 'in-flight' | 'file-assign-failed' }>
+  /** 自动文件分配本次执行结果（计划带 fileAssign 且本次触发分配环节时返回；ran=false 表示本次未进入分配环节） */
+  fileAssign?: { ran: boolean; ok: boolean; renamedCount?: number; error?: string }
 }
 
 export interface SchedulerDeps {
@@ -38,7 +40,7 @@ export interface SchedulerDeps {
   logger: Logger
   /** 上传前自动分配执行器（app.ts 注入 preview+apply+数据源重载；engine 不依赖 tools 运行时） */
   fileAssign?: {
-    run(config: FileAssignConfig): Promise<void>
+    run(config: FileAssignConfig): Promise<ApplyResult>
   }
   /** 固定时区（配置 scheduler.timezone） */
   timezone: string
@@ -96,12 +98,13 @@ export class Scheduler {
     }
   }
 
+  // 注意：runNow 不写 lastFired 去重——到点分钟内手动「立即执行」可能同分钟再触发一次分配（busy 锁只挡并发不挡串行；二次分配会重新随机改名，文件名仍唯一）
   /** 立即运行一个计划（面板「立即运行」；停用校验在路由层） */
   async runNow(schedule: ScheduleRow): Promise<RunNowResult> {
     return this.fire(schedule)
   }
 
-  /** 触发计划内全部任务：第一遍守卫收集通过者 → 需要时执行一次自动分配 → 第二遍建批次入队 */
+  /** 触发计划：纯分配计划（taskKeys 为空）直接执行一次分配；任务计划先守卫再分配再入队 */
   private async fire(schedule: ScheduleRow): Promise<RunNowResult> {
     const result: RunNowResult = { taskKeys: [], skipped: [] }
     let keys: unknown
@@ -117,9 +120,33 @@ export class Scheduler {
     }
     const cfg = parseConfig(schedule, this.deps.logger)
     if (!cfg) return result
+    const taskKeys = keys as string[]
+    // 纯分配计划：无任务，仅定时文件随机分配 → 执行一次分配即结束（失败错过即跳过，不入队不开窗）
+    if (taskKeys.length === 0) {
+      const fa = cfg.fileAssign
+      if (!fa) {
+        this.deps.logger.warn({ schedule: schedule.name }, '纯分配计划缺少 fileAssign 配置，跳过')
+        return result
+      }
+      if (!this.deps.fileAssign) {
+        result.fileAssign = { ran: true, ok: false, error: '分配执行器未装配' }
+        this.deps.logger.warn({ schedule: schedule.name }, '纯分配计划但分配执行器未装配，跳过')
+        return result
+      }
+      try {
+        const out = await this.deps.fileAssign.run(fa)
+        result.fileAssign = { ran: true, ok: true, renamedCount: out.renamedCount }
+        this.deps.logger.info({ schedule: schedule.name, renamedCount: out.renamedCount }, '定时文件随机分配完成')
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e)
+        result.fileAssign = { ran: true, ok: false, error: err }
+        this.deps.logger.warn({ schedule: schedule.name, err }, '定时文件随机分配失败（错过即跳过）')
+      }
+      return result
+    }
     // 第一遍：任务级守卫，收集将通过的任务（分配只在有任务真正要跑时执行，避免在途/停用时白改名）
     const passing: string[] = []
-    for (const key of keys as string[]) {
+    for (const key of taskKeys) {
       const skip = async (reason: RunNowResult['skipped'][number]['reason']) => {
         this.deps.logger.warn({ schedule: schedule.name, task: key, reason }, '定时触发跳过任务')
         result.skipped.push({ taskKey: key, reason })
@@ -138,9 +165,11 @@ export class Scheduler {
     const needsAssign = !!fa && !!this.deps.fileAssign && hasFileTask
     let assignFailed = false
     let assignErr = ''
+    let assignCount: number | undefined
     if (needsAssign) {
       try {
-        await this.deps.fileAssign!.run(fa!)
+        const out = await this.deps.fileAssign!.run(fa!)
+        assignCount = out.renamedCount
         this.deps.logger.info({ schedule: schedule.name }, '上传前自动文件随机分配完成')
       } catch (e) {
         assignFailed = true
@@ -149,7 +178,16 @@ export class Scheduler {
       }
     } else if (fa && !this.deps.fileAssign && hasFileTask) {
       assignFailed = true
-      this.deps.logger.warn({ schedule: schedule.name, err: '分配执行器未装配' }, '计划配置了 fileAssign 但分配执行器未装配，跳过依赖文件的任务')
+      assignErr = '分配执行器未装配'
+      this.deps.logger.warn({ schedule: schedule.name, err: assignErr }, '计划配置了 fileAssign 但分配执行器未装配，跳过依赖文件的任务')
+    }
+    if (fa && hasFileTask) {
+      result.fileAssign = {
+        ran: true,
+        ok: !assignFailed,
+        ...(assignFailed ? { error: assignErr } : {}),
+        ...(assignCount !== undefined ? { renamedCount: assignCount } : {}),
+      }
     }
     // 第二遍：建批次入队
     for (const key of passing) {

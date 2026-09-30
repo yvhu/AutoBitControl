@@ -1,19 +1,42 @@
-import { useState } from 'react'
-import { App, Button, Card, Divider, Input, Select, Space, Table, Tag, Typography } from 'antd'
-import { useFileAssignApply, useFileAssignPreview } from './hooks'
+import { useEffect, useState } from 'react'
+import { App, Button, Card, Divider, Form, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import dayjs from 'dayjs'
+import {
+  useFileAssignApply, useFileAssignPreview, useFileAssignSchedule,
+  useSaveFileAssignSchedule, useUpdateFileAssignSchedule, useRunFileAssignSchedule,
+  buildFileAssignSchedulePayload,
+} from './hooks'
 import { buildTemplate, DEFAULT_TEMPLATE_FORM, type TemplateForm } from '../../components/name-template'
 import { NameTemplateEditor } from '../../components/name-template-editor'
+import { ScheduleFields } from '../../components/schedule-fields'
 import type { FileAssignPreview } from '../../types'
 
 export default function FileAssignPanel() {
   const { message } = App.useApp()
   const preview = useFileAssignPreview()
   const apply = useFileAssignApply()
+  const { schedule, isLoading: scheduleLoading } = useFileAssignSchedule()
+  const saveSchedule = useSaveFileAssignSchedule()
+  const updateSchedule = useUpdateFileAssignSchedule()
+  const runSchedule = useRunFileAssignSchedule()
 
   const [sourceDir, setSourceDir] = useState('')
   const [column, setColumn] = useState('文件地址')
   const [templateForm, setTemplateForm] = useState<TemplateForm>({ ...DEFAULT_TEMPLATE_FORM })
   const [plan, setPlan] = useState<FileAssignPreview | null>(null)
+  const [scheduleForm] = Form.useForm()
+
+  // 已有定时计划时回填频率表单（仅以 id 为依赖：计划每 15 秒轮询刷新会换对象引用，避免覆盖编辑中的表单）
+  useEffect(() => {
+    if (!schedule) return
+    scheduleForm.setFieldsValue({
+      mode: schedule.mode,
+      everyHours: schedule.config.everyHours,
+      weekdays: schedule.config.weekdays ?? [],
+      days: schedule.config.days ?? [],
+      times: (schedule.config.times ?? []).map((t) => dayjs(t, 'HH:mm')),
+    })
+  }, [schedule?.id])
 
   const doPreview = () => {
     if (!sourceDir.trim()) {
@@ -37,6 +60,61 @@ export default function FileAssignPanel() {
       { sourceDir: sourceDir.trim(), column, plan: plan.plan },
       { onSuccess: () => setPlan(null) },
     )
+  }
+
+  /** 校验主表单并组装分配参数（源文件夹/目标列/模板）；失败提示并返回 null */
+  const buildAssignConfig = () => {
+    if (!sourceDir.trim()) {
+      message.warning('请先填写源文件夹路径')
+      return null
+    }
+    const built = buildTemplate(templateForm)
+    if ('error' in built) {
+      message.warning(built.error)
+      return null
+    }
+    return { sourceDir: sourceDir.trim(), column, template: built.template }
+  }
+
+  /** 开关：开=无计划则按默认频率创建（参数固化），有计划则启用；关=停用（保留配置） */
+  const toggleSchedule = (checked: boolean) => {
+    if (!checked) {
+      if (schedule?.id) updateSchedule.mutate({ id: schedule.id, enabled: false })
+      return
+    }
+    const assign = buildAssignConfig()
+    if (!assign) return
+    if (schedule?.id) {
+      updateSchedule.mutate({ id: schedule.id, enabled: true })
+    } else {
+      const values = scheduleForm.getFieldsValue(true)
+      saveSchedule.mutate({
+        id: null,
+        payload: buildFileAssignSchedulePayload(
+          { mode: values.mode ?? 'daily', everyHours: values.everyHours, weekdays: values.weekdays, days: values.days, times: values.times ?? [dayjs('09:00', 'HH:mm')] },
+          assign,
+        ),
+      })
+    }
+  }
+
+  /** 保存定时配置：校验频率表单与主表单后创建/更新计划 */
+  const saveScheduleConfig = async () => {
+    const assign = buildAssignConfig()
+    if (!assign) return
+    let values
+    try {
+      values = await scheduleForm.validateFields()
+    } catch {
+      return
+    }
+    saveSchedule.mutate({
+      id: schedule?.id ?? null,
+      payload: buildFileAssignSchedulePayload(
+        { mode: values.mode, everyHours: values.everyHours, weekdays: values.weekdays, days: values.days, times: values.times },
+        assign,
+      ),
+    })
   }
 
   return (
@@ -115,6 +193,43 @@ export default function FileAssignPanel() {
             />
           </>
         )}
+
+        <Divider style={{ margin: '8px 0' }} />
+        <Space wrap size={12}>
+          <Typography.Text strong>定时执行</Typography.Text>
+          <Switch
+            checked={!!schedule?.enabled}
+            loading={scheduleLoading || saveSchedule.isPending || updateSchedule.isPending}
+            onChange={toggleSchedule}
+          />
+          <Typography.Text type="secondary">
+            到点自动分配一次（不触发任务、不开窗口），失败仅记日志、错过即跳过
+          </Typography.Text>
+        </Space>
+
+        <Form
+          form={scheduleForm}
+          layout="vertical"
+          initialValues={{ mode: 'daily', everyHours: 6, times: [dayjs('09:00', 'HH:mm')] }}
+        >
+          <ScheduleFields />
+        </Form>
+
+        <Space wrap size={12}>
+          <Button type="primary" loading={saveSchedule.isPending} onClick={saveScheduleConfig}>
+            保存定时配置
+          </Button>
+          <Button
+            loading={runSchedule.isPending}
+            disabled={!schedule || !schedule.enabled}
+            onClick={() => schedule && runSchedule.mutate(schedule.id)}
+          >
+            立即执行一次
+          </Button>
+          <Typography.Text type="secondary">
+            保存时把上方源文件夹/目标列/名称模板固化进计划；改参数后需重新保存才生效
+          </Typography.Text>
+        </Space>
       </Space>
     </Card>
   )

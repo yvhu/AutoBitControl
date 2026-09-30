@@ -291,6 +291,15 @@ describe('server API（RESTful + envelope）', () => {
       expect(miss.body.code).toBe(40406)
     })
 
+    it('PATCH 不提供 taskKeys 时 existing 幽灵 key 不触发注册校验（仅开关可正常保存）', async () => {
+      const deps = makeDeps()
+      deps.db.getSchedule.mockResolvedValue({ ...row, taskKeys: '["ghost"]' })
+      deps.db.updateSchedule.mockResolvedValue({ ...row, taskKeys: '["ghost"]', enabled: 0 })
+      const res = await request(createApp(deps as never)).patch('/api/schedules/1').send({ enabled: false })
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+    })
+
     it('DELETE /api/schedules/:id 成功与 404', async () => {
       const deps = makeDeps()
       deps.db.deleteSchedule.mockResolvedValue(true)
@@ -315,6 +324,50 @@ describe('server API（RESTful + envelope）', () => {
       const disabled = await request(createApp(deps as never)).post('/api/schedules/1/run').send({})
       expect(disabled.status).toBe(409)
       expect(disabled.body.code).toBe(40903)
+    })
+
+    it('POST /api/schedules 纯分配计划（空 taskKeys + fileAssign）创建成功', async () => {
+      const deps = makeDeps()
+      deps.db.createSchedule.mockResolvedValue({ ...row, taskKeys: '[]' })
+      const tpl = { english: { count: 2, caseMode: 'lower' }, digits: null, special: null, position: { type: 'before' } }
+      const res = await request(createApp(deps as never))
+        .post('/api/schedules')
+        .send({ name: '文件随机分配（定时）', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: tpl } }, taskKeys: [] })
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(deps.db.createSchedule).toHaveBeenCalledWith(expect.objectContaining({ name: '文件随机分配（定时）', taskKeys: '[]' }))
+    })
+
+    it('POST /api/schedules 空 taskKeys 且无 fileAssign → 400', async () => {
+      const deps = makeDeps()
+      const res = await request(createApp(deps as never)).post('/api/schedules').send({ name: 'x', mode: 'daily', config: { times: ['09:00'] }, taskKeys: [] })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe(40000)
+      expect(deps.db.createSchedule).not.toHaveBeenCalled()
+    })
+
+    it('POST /api/schedules 已存在纯分配计划时再建 → 409（40906）', async () => {
+      const deps = makeDeps()
+      const tpl = { english: { count: 2, caseMode: 'lower' }, digits: null, special: null, position: { type: 'before' } }
+      deps.db.listSchedules.mockResolvedValue([{ ...row, id: 9, taskKeys: '[]', config: JSON.stringify({ times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: tpl } }) }])
+      const res = await request(createApp(deps as never))
+        .post('/api/schedules')
+        .send({ name: 'x', mode: 'daily', config: { times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: tpl } }, taskKeys: [] })
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe(40906)
+      expect(deps.db.createSchedule).not.toHaveBeenCalled()
+    })
+
+    it('PATCH 编辑纯分配计划自身不触发唯一性拒绝', async () => {
+      const deps = makeDeps()
+      const tpl = { english: { count: 2, caseMode: 'lower' }, digits: null, special: null, position: { type: 'before' } }
+      const pureRow = { ...row, id: 1, taskKeys: '[]', config: JSON.stringify({ times: ['09:00'], fileAssign: { sourceDir: 'C:\\f', column: '文件地址', template: tpl } }) }
+      deps.db.getSchedule.mockResolvedValue(pureRow)
+      deps.db.listSchedules.mockResolvedValue([pureRow])
+      deps.db.updateSchedule.mockResolvedValue({ ...pureRow, enabled: 0 })
+      const res = await request(createApp(deps as never)).patch('/api/schedules/1').send({ enabled: false })
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
     })
   })
 

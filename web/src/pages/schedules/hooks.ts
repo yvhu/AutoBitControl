@@ -13,34 +13,8 @@ import { groupTasks } from '../tasks/hooks'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
-export type ScheduleMode = ScheduleItem['mode']
-
-/** 频率模式选项（弹窗 Segmented 与摘要徽标共用；顺序即表单展示顺序） */
-export const MODE_OPTIONS: Array<{ label: string; value: ScheduleMode }> = [
-  { label: '每 N 小时', value: 'interval' },
-  { label: '每日', value: 'daily' },
-  { label: '每周', value: 'weekly' },
-  { label: '每月', value: 'monthly' },
-]
-
-/** 模式徽标文案（未知模式回退原文） */
-export function modeLabel(mode: ScheduleMode): string {
-  return MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode
-}
-
-/** 星期选项（1=周一 … 7=周日，与后端一致） */
-export const WEEKDAY_OPTIONS = [
-  { label: '周一', value: 1 },
-  { label: '周二', value: 2 },
-  { label: '周三', value: 3 },
-  { label: '周四', value: 4 },
-  { label: '周五', value: 5 },
-  { label: '周六', value: 6 },
-  { label: '周日', value: 7 },
-]
-
-/** 几号选项（1–31） */
-export const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ label: `${i + 1} 号`, value: i + 1 }))
+import { MODE_OPTIONS, modeLabel, WEEKDAY_OPTIONS, DAY_OPTIONS, type ScheduleMode } from '../../components/schedule-fields'
+export { MODE_OPTIONS, modeLabel, WEEKDAY_OPTIONS, DAY_OPTIONS, type ScheduleMode }
 
 /** 弹窗表单值（times 为 dayjs 列表，提交时转 'HH:mm' 字符串；everyHours 可 null 与视图类型对齐） */
 export interface FormValues {
@@ -128,6 +102,14 @@ export function useRunSchedule() {
   return useMutation({
     mutationFn: runSchedule,
     onSuccess: (res) => {
+      if (res.fileAssign?.ran && res.taskKeys.length === 0) {
+        if (res.fileAssign.ok) {
+          message.success(`文件随机分配已完成：重命名 ${res.fileAssign.renamedCount ?? 0} 个文件`)
+        } else {
+          message.error(`文件随机分配失败：${res.fileAssign.error ?? '未知错误'}`)
+        }
+        return
+      }
       if (res.skipped.length > 0) {
         message.warning(`已触发 ${res.taskKeys.length} 个任务，跳过 ${res.skipped.length} 个（在途/停用）`)
       } else {

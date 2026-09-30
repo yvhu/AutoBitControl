@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -26,7 +26,7 @@ export const fetchSchedules = () => get<ScheduleItem[]>('/api/schedules')
 export const createSchedule = (body: { name: string; mode: ScheduleItem['mode']; config: ScheduleConfigInput; taskKeys: string[] }) => post<ScheduleItem>('/api/schedules', body)
 export const updateSchedule = (id: number, body: Partial<{ name: string; enabled: boolean; mode: ScheduleItem['mode']; config: ScheduleConfigInput; taskKeys: string[] }>) => patch<ScheduleItem>(`/api/schedules/${id}`, body)
 export const deleteSchedule = (id: number) => del<null>(`/api/schedules/${id}`)
-export const runSchedule = (id: number) => post<{ taskKeys: string[]; skipped: Array<{ taskKey: string; reason: string }> }>(`/api/schedules/${id}/run`, {})
+export const runSchedule = (id: number) => post<RunScheduleResult>(`/api/schedules/${id}/run`, {})
 
 // ===== 工具中心 =====
 export const fetchTools = () => get<{ tools: ToolItem[] }>('/api/tools')

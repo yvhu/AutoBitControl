@@ -149,7 +149,7 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }]),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
-    fileAssign: { run: vi.fn().mockResolvedValue(undefined) },
+    fileAssign: { run: vi.fn().mockResolvedValue({ renamedCount: 1, updatedRows: 1 }) },
     tasks: new Map([['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }]]),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     timezone: TZ2,
@@ -296,6 +296,7 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     expect(result.taskKeys).toEqual(['upload'])
     expect(deps.fileAssign.run.mock.invocationCallOrder[0]).toBeLessThan(deps.db.createBatch.mock.invocationCallOrder[0])
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'upload', '计划#1 每日签到')
+    expect(result.fileAssign).toEqual({ ran: true, ok: true, renamedCount: 1 })
   })
 
   it('分配失败 → 依赖文件任务 skipped(file-assign-failed)，其它任务照常入队', async () => {
@@ -307,6 +308,7 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
     expect(deps.logger.warn).toHaveBeenCalled()
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'plain', '计划#1 每日签到')
+    expect(result.fileAssign).toMatchObject({ ran: true, ok: false, error: '文件不足' })
   })
 
   it('分配以非 Error 值拒绝 → 依赖文件任务仍被跳过（判定不依赖 message 真值）', async () => {
@@ -330,6 +332,7 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'file-assign-failed' }])
     expect(result.taskKeys).toEqual(['plain'])
     expect(deps.logger.warn).toHaveBeenCalled()
+    expect(result.fileAssign).toMatchObject({ ran: true, ok: false, error: '分配执行器未装配' })
   })
 
   it('无 fileAssign 段 → 不执行分配', async () => {
@@ -350,5 +353,54 @@ describe('Scheduler 上传前自动文件随机分配', () => {
     const result = await new Scheduler(deps).runNow(scheduleWith(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
     expect(deps.fileAssign.run).not.toHaveBeenCalled()
     expect(result.skipped).toEqual([{ taskKey: 'upload', reason: 'in-flight' }])
+  })
+})
+
+describe('Scheduler 纯分配计划（定时文件随机分配）', () => {
+  const FA_TEMPLATE = { english: { count: 2, caseMode: 'lower' as const }, digits: null, special: null, position: { type: 'before' as const } }
+  const FA_CFG = { sourceDir: 'C:\\files', column: '文件地址', template: FA_TEMPLATE }
+  const pure = (config: string) => makeSchedule({ config, taskKeys: '[]' })
+
+  it('到点触发：执行一次分配，不入队、不建批次', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([pure(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG }))])
+    await new Scheduler(deps).tick()
+    expect(deps.fileAssign.run).toHaveBeenCalledTimes(1)
+    expect(deps.fileAssign.run).toHaveBeenCalledWith(FA_CFG)
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+    expect(deps.logger.info).toHaveBeenCalledWith({ schedule: '每日签到', renamedCount: 1 }, '定时文件随机分配完成')
+  })
+
+  it('runNow 纯分配计划成功 → fileAssign {ran:true, ok:true, renamedCount}', async () => {
+    const deps = makeDeps()
+    const result = await new Scheduler(deps).runNow(pure(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(result).toEqual({ taskKeys: [], skipped: [], fileAssign: { ran: true, ok: true, renamedCount: 1 } })
+  })
+
+  it('纯分配计划分配失败 → fileAssign ok:false 附错误并告警，不入队', async () => {
+    const deps = makeDeps()
+    deps.fileAssign.run.mockRejectedValue(new Error('文件不足'))
+    const result = await new Scheduler(deps).runNow(pure(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(result.taskKeys).toEqual([])
+    expect(result.fileAssign).toMatchObject({ ran: true, ok: false, error: '文件不足' })
+    expect(deps.logger.warn).toHaveBeenCalled()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+  })
+
+  it('taskKeys 为空且无 fileAssign → 防御性跳过并告警', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([pure('{"times":["09:00"]}')])
+    await new Scheduler(deps).tick()
+    expect(deps.fileAssign.run).not.toHaveBeenCalled()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.logger.warn).toHaveBeenCalled()
+  })
+
+  it('纯分配计划但执行器未装配 → fileAssign ok:false，error=分配执行器未装配', async () => {
+    const deps = makeDeps({ fileAssign: undefined })
+    const result = await new Scheduler(deps).runNow(pure(JSON.stringify({ times: ['09:00'], fileAssign: FA_CFG })))
+    expect(result.fileAssign).toMatchObject({ ran: true, ok: false, error: '分配执行器未装配' })
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
   })
 })

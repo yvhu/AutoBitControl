@@ -2,11 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from 'antd'
-import { buildTemplate, sampleName, useFileAssignApply } from './hooks'
+import dayjs from 'dayjs'
+import { buildTemplate, sampleName, useFileAssignApply, useUpdateFileAssignSchedule, buildFileAssignSchedulePayload } from './hooks'
 import type { FileAssignTemplate } from '../../types'
 
 vi.mock('../../api/endpoints', () => ({
   applyFileAssign: vi.fn().mockResolvedValue({ renamedCount: 2, updatedRows: 2, reloadedRows: 2 }),
+  updateSchedule: vi.fn().mockResolvedValue({}),
 }))
 
 const fixed = () => 0
@@ -79,6 +81,48 @@ describe('useFileAssignApply', () => {
     })
     result.current.mutate({ sourceDir: 'D:/x', column: '文件地址', plan: [] })
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['settings'] }))
+  })
+})
+
+describe('buildFileAssignSchedulePayload', () => {
+  const tpl: FileAssignTemplate = { english: { count: 2, caseMode: 'lower' }, digits: null, special: null, position: { type: 'before' } }
+  const assign = { sourceDir: 'C:\\files', column: '文件地址', template: tpl }
+
+  it('daily 模式：times 转 HH:mm 排序，fileAssign 固化，taskKeys 恒为空', () => {
+    const p = buildFileAssignSchedulePayload({ mode: 'daily', times: [dayjs('15:00', 'HH:mm'), dayjs('09:00', 'HH:mm')] }, assign)
+    expect(p).toEqual({
+      name: '文件随机分配（定时）',
+      mode: 'daily',
+      config: { times: ['09:00', '15:00'], fileAssign: assign },
+      taskKeys: [],
+    })
+  })
+
+  it('interval 模式：带 everyHours，无 times', () => {
+    const p = buildFileAssignSchedulePayload({ mode: 'interval', everyHours: 6 }, assign)
+    expect(p.config).toEqual({ everyHours: 6, fileAssign: assign })
+    expect(p.taskKeys).toEqual([])
+  })
+
+  it('weekly 模式：带 weekdays', () => {
+    const p = buildFileAssignSchedulePayload({ mode: 'weekly', weekdays: [1, 5], times: [dayjs('09:00', 'HH:mm')] }, assign)
+    expect(p.config).toEqual({ times: ['09:00'], weekdays: [1, 5], fileAssign: assign })
+  })
+})
+
+describe('useUpdateFileAssignSchedule', () => {
+  it('成功后失效 schedules 查询', async () => {
+    const qc = new QueryClient()
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    const { result } = renderHook(() => useUpdateFileAssignSchedule(), {
+      wrapper: ({ children }) => (
+        <App>
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        </App>
+      ),
+    })
+    result.current.mutate({ id: 1, enabled: false })
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['schedules'] }))
   })
 })
 
