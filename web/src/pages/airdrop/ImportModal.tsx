@@ -28,11 +28,12 @@ export default function ImportModal({ open, onClose, statuses }: { open: boolean
     const init: Record<string, RowState> = {}
     for (const t of tasks.data ?? []) init[t.key] = { checked: false, statusId: statuses[0]?.id, priority: 'mid' }
     setRows(init)
-  }, [open, tasks.data, statuses])
+  }, [open])
 
   const onOk = () => {
     const items: AirdropImportItem[] = []
     for (const t of tasks.data ?? []) {
+      if (boundMap.get(t.key)) continue
       const r = rows[t.key]
       if (r?.checked && r.statusId !== undefined) items.push({ taskKey: t.key, statusId: r.statusId, priority: r.priority })
     }
