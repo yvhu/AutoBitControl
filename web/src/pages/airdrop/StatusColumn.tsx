@@ -17,9 +17,10 @@ const COL_STYLE: CSSProperties = {
 }
 
 /** 看板单列：列头（名称/数量/快捷新建）+ 卡片区；dnd drop 目标 */
-export default function StatusColumn({ status, onAdd, children }: {
+export default function StatusColumn({ status, onAdd, color, children }: {
   status: AirdropStatusItem
   onAdd: () => void
+  color: string
   children: ReactNode
 }) {
   const { token } = theme.useToken()
@@ -27,7 +28,7 @@ export default function StatusColumn({ status, onAdd, children }: {
   return (
     <div ref={setNodeRef} style={{ ...COL_STYLE, background: token.colorFillQuaternary, outline: isOver ? `2px dashed ${token.colorPrimary}` : 'none' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: token.colorPrimary, flex: 'none' }} />
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flex: 'none' }} />
         <Typography.Text strong style={{ fontSize: 13.5 }}>{status.name}</Typography.Text>
         <span style={{ background: token.colorFillSecondary, color: token.colorTextSecondary, fontSize: 12, padding: '0 8px', borderRadius: 10, lineHeight: '18px' }}>{status.projectCount}</span>
         <Button type="text" size="small" icon={<PlusOutlined />} style={{ marginLeft: 'auto' }} onClick={onAdd} title="在此列新增" />

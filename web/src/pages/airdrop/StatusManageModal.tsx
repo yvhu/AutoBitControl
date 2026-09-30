@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { App, Button, Input, Modal } from 'antd'
 import { DeleteOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
 import { useCreateStatus, useDeleteStatus, useUpdateStatus } from './hooks'
+import { statusColor } from './board'
 import type { AirdropStatusItem } from '../../types'
 
 /** 管理状态列弹窗：新增/改名/删除/上下换序 */
@@ -49,7 +50,7 @@ export default function StatusManageModal({ open, statuses, onClose }: {
     <Modal open={open} title="管理状态列" onCancel={onClose} footer={null} width={480}>
       {statuses.map((s, i) => (
         <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: '1px solid #e5e9ef', borderRadius: 8, marginBottom: 8 }}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#1677ff', flex: 'none' }} />
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: statusColor(i), flex: 'none' }} />
           <Input
             value={names[s.id] ?? s.name}
             onChange={(e) => setNames((prev) => ({ ...prev, [s.id]: e.target.value }))}

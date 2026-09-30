@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react'
 import { Alert, Button, Card, Space, Typography } from 'antd'
 import { DownloadOutlined, PlusOutlined, SettingOutlined } from '@ant-design/icons'
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { groupByStatus } from './board'
+import { groupByStatus, statusColor } from './board'
 import { useAirdropProjects, useAirdropReminders, useAirdropStatuses, useUpdateProject } from './hooks'
 import ReminderBanner from './ReminderBanner'
 import StatusColumn from './StatusColumn'
@@ -78,8 +78,8 @@ export default function AirdropPage() {
       </div>
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 12 }}>
-          {statuses.data.map((s) => (
-            <StatusColumn key={s.id} status={s} onAdd={() => openCreate(s.id)}>
+          {statuses.data.map((s, i) => (
+            <StatusColumn key={s.id} status={s} color={statusColor(i)} onAdd={() => openCreate(s.id)}>
               {(grouped.get(s.id) ?? []).map((p) => (
                 <ProjectCard key={p.id} project={p} onEdit={openEdit} />
               ))}
