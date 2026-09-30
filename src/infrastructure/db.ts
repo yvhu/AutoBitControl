@@ -96,6 +96,53 @@ export interface RunRow {
   profileName: string
 }
 
+/** airdrop 优先级枚举（状态列/项目/子项共用） */
+export type AirdropPriority = 'high' | 'mid' | 'low'
+
+/** airdrop_statuses 表行：空投追踪看板的一个状态列 */
+export interface AirdropStatusRow {
+  id: number
+  name: string
+  sortOrder: number
+  createdAt: string
+}
+
+/** airdrop_projects 表行：一个空投项目条目 */
+export interface AirdropProjectRow {
+  id: number
+  name: string
+  statusId: number
+  priority: AirdropPriority
+  deadline: string | null
+  link: string | null
+  note: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** airdrop_todos 表行：项目下的待办子项 */
+export interface AirdropTodoRow {
+  id: number
+  projectId: number
+  content: string
+  /** 0/1（SQLite 无布尔） */
+  done: number
+  dueDate: string | null
+  priority: AirdropPriority
+  createdAt: string
+}
+
+/** 状态列视图（面板 GET /airdrop/statuses）：列 + 列下项目数 */
+export interface AirdropStatusView extends AirdropStatusRow {
+  projectCount: number
+}
+
+/** 项目视图（面板 GET /airdrop/projects）：项目 + 状态列名 + 子项数组 */
+export interface AirdropProjectView extends AirdropProjectRow {
+  statusName: string
+  todos: AirdropTodoRow[]
+}
+
 /** 生成"今天"的日期字符串（本地时区，非 UTC——每日签到语义按用户所在时区） */
 export function todayStr(now = new Date()): string {
   const y = now.getFullYear()
@@ -180,10 +227,42 @@ const SCHEMA = [
     http TEXT NOT NULL,
     opened_at TEXT NOT NULL
   )`,
+  // 空投追踪：状态列（看板列，可自定义）/ 项目 / 待办子项——长期台账，不参与历史清理
+  `CREATE TABLE IF NOT EXISTS airdrop_statuses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS airdrop_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    status_id INTEGER NOT NULL REFERENCES airdrop_statuses(id),
+    priority TEXT NOT NULL DEFAULT 'mid',
+    deadline TEXT,
+    link TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS airdrop_todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES airdrop_projects(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    due_date TEXT,
+    priority TEXT NOT NULL DEFAULT 'mid',
+    created_at TEXT NOT NULL
+  )`,
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
 const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
+const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
+const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
+/** 子项排序：未完成在前 → due_date 近者在前（NULL 最后）→ 优先级高在前 → 创建顺序 */
+const TODO_ORDER = `done, due_date IS NULL, due_date, CASE priority WHEN 'high' THEN 0 WHEN 'mid' THEN 1 ELSE 2 END, created_at, id`
 
 /** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
 type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
@@ -270,6 +349,14 @@ export class AppDb {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
+    // 空投追踪默认状态列种子（INSERT OR IGNORE 幂等：用户自建/改名后重启不覆盖）
+    const DEFAULT_AIRDROP_STATUSES = ['关注中', '待参与', '进行中', '已完成', '已放弃']
+    for (let i = 0; i < DEFAULT_AIRDROP_STATUSES.length; i++) {
+      await this.client.execute({
+        sql: 'INSERT OR IGNORE INTO airdrop_statuses (name, sort_order, created_at) VALUES (?, ?, ?)',
+        args: [DEFAULT_AIRDROP_STATUSES[i], i, localWallNow()],
+      })
+    }
   }
 
   close(): void {
@@ -523,6 +610,155 @@ export class AppDb {
   /** 清除窗口打开状态登记（窗口关闭或 pid 实测已死时调用） */
   async clearOpenWindow(bitbrowserId: string): Promise<void> {
     await this.exec('DELETE FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
+  }
+
+  // ===== 空投追踪 CRUD（airdrop_statuses / airdrop_projects / airdrop_todos）=====
+
+  /** 状态列清单（含项目数，按 sort_order） */
+  async listAirdropStatuses(): Promise<AirdropStatusView[]> {
+    return (await this.exec(`${SELECT_STATUS} GROUP BY s.id ORDER BY s.sort_order, s.id`)) as unknown as AirdropStatusView[]
+  }
+
+  /** 按 id 查状态列（不存在返回 null） */
+  async getAirdropStatus(id: number): Promise<AirdropStatusRow | null> {
+    const rows = await this.exec('SELECT id, name, sort_order AS sortOrder, created_at AS createdAt FROM airdrop_statuses WHERE id = ?', [id])
+    return (rows[0] as unknown as AirdropStatusRow | undefined) ?? null
+  }
+
+  /** 新增状态列（sort_order 取 max+1）；重名返回 null（路由转 400） */
+  async createAirdropStatus(name: string): Promise<AirdropStatusRow | null> {
+    const dup = await this.exec('SELECT id FROM airdrop_statuses WHERE name = ?', [name])
+    if (dup.length > 0) return null
+    const max = await this.exec('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM airdrop_statuses')
+    const rs = await this.client.execute({
+      sql: 'INSERT INTO airdrop_statuses (name, sort_order, created_at) VALUES (?, ?, ?)',
+      args: [name, Number(max[0]?.next ?? 0), localWallNow()],
+    })
+    return this.getAirdropStatus(Number(rs.lastInsertRowid))
+  }
+
+  /** 部分更新状态列（缺省字段不动）；不存在返回 null */
+  async updateAirdropStatus(id: number, patch: { name?: string; sortOrder?: number }): Promise<AirdropStatusRow | null> {
+    const current = await this.getAirdropStatus(id)
+    if (!current) return null
+    await this.exec('UPDATE airdrop_statuses SET name = ?, sort_order = ? WHERE id = ?', [patch.name ?? current.name, patch.sortOrder ?? current.sortOrder, id])
+    return this.getAirdropStatus(id)
+  }
+
+  /** 删除状态列：不存在 not_found；列下仍有项目 not_empty（路由转 409）；成功 deleted */
+  async deleteAirdropStatus(id: number): Promise<'deleted' | 'not_found' | 'not_empty'> {
+    if (!(await this.getAirdropStatus(id))) return 'not_found'
+    const cnt = await this.exec('SELECT COUNT(*) AS c FROM airdrop_projects WHERE status_id = ?', [id])
+    if (Number(cnt[0]?.c ?? 0) > 0) return 'not_empty'
+    await this.exec('DELETE FROM airdrop_statuses WHERE id = ?', [id])
+    return 'deleted'
+  }
+
+  /**
+   * 全部项目视图（含 statusName 与子项数组），已排序：
+   * 列按 sort_order → 列内按优先级权重 → deadline 近者在前（NULL 最后）→ 创建时间
+   */
+  async listAirdropProjects(): Promise<AirdropProjectView[]> {
+    const rows = await this.exec(
+      `${SELECT_PROJECT} ORDER BY s.sort_order, s.id, CASE p.priority WHEN 'high' THEN 0 WHEN 'mid' THEN 1 ELSE 2 END, p.deadline IS NULL, p.deadline, p.created_at, p.id`,
+    )
+    const todoRows = await this.exec(`${SELECT_TODO} ORDER BY ${TODO_ORDER}`)
+    const views = rows.map((r) => ({ ...r, todos: [] as AirdropTodoRow[] })) as unknown as AirdropProjectView[]
+    const byId = new Map(views.map((v) => [v.id, v]))
+    for (const t of todoRows) {
+      const v = byId.get(Number(t.projectId))
+      if (v) v.todos.push(t as unknown as AirdropTodoRow)
+    }
+    return views
+  }
+
+  /** 单个项目视图（含子项，按子项排序）；不存在返回 null */
+  async getAirdropProject(id: number): Promise<AirdropProjectView | null> {
+    const rows = await this.exec(`${SELECT_PROJECT} WHERE p.id = ?`, [id])
+    if (rows.length === 0) return null
+    const view = rows[0] as unknown as AirdropProjectView
+    view.todos = (await this.exec(`${SELECT_TODO} WHERE project_id = ? ORDER BY ${TODO_ORDER}`, [id])) as unknown as AirdropTodoRow[]
+    return view
+  }
+
+  /** 新建项目（statusId 存在性由路由校验）；返回完整视图 */
+  async createAirdropProject(input: { name: string; statusId: number; priority: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null }): Promise<AirdropProjectView> {
+    const now = localWallNow()
+    const rs = await this.client.execute({
+      sql: `INSERT INTO airdrop_projects (name, status_id, priority, deadline, link, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [input.name, input.statusId, input.priority, input.deadline ?? null, input.link ?? null, input.note ?? null, now, now],
+    })
+    return (await this.getAirdropProject(Number(rs.lastInsertRowid)))!
+  }
+
+  /**
+   * 部分更新项目（null 显式清空 deadline/link/note，undefined 不动）；
+   * statusId 流转（拖拽落列）走同一入口；不存在返回 null
+   */
+  async updateAirdropProject(id: number, patch: { name?: string; statusId?: number; priority?: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null }): Promise<AirdropProjectView | null> {
+    const current = await this.getAirdropProject(id)
+    if (!current) return null
+    await this.exec(
+      `UPDATE airdrop_projects SET name = ?, status_id = ?, priority = ?, deadline = ?, link = ?, note = ?, updated_at = ? WHERE id = ?`,
+      [
+        patch.name ?? current.name,
+        patch.statusId ?? current.statusId,
+        patch.priority ?? current.priority,
+        patch.deadline === undefined ? current.deadline : patch.deadline,
+        patch.link === undefined ? current.link : patch.link,
+        patch.note === undefined ? current.note : patch.note,
+        localWallNow(),
+        id,
+      ],
+    )
+    return this.getAirdropProject(id)
+  }
+
+  /** 删除项目并级联删子项（不依赖外键 pragma，显式删）；返回是否存在过 */
+  async deleteAirdropProject(id: number): Promise<boolean> {
+    if (!(await this.getAirdropProject(id))) return false
+    await this.exec('DELETE FROM airdrop_todos WHERE project_id = ?', [id])
+    await this.exec('DELETE FROM airdrop_projects WHERE id = ?', [id])
+    return true
+  }
+
+  /** 加子项（项目不存在返回 null）；done 恒为 0 */
+  async createAirdropTodo(projectId: number, input: { content: string; dueDate?: string | null; priority: AirdropPriority }): Promise<AirdropTodoRow | null> {
+    if (!(await this.getAirdropProject(projectId))) return null
+    const rs = await this.client.execute({
+      sql: 'INSERT INTO airdrop_todos (project_id, content, done, due_date, priority, created_at) VALUES (?, ?, 0, ?, ?, ?)',
+      args: [projectId, input.content, input.dueDate ?? null, input.priority, localWallNow()],
+    })
+    return this.getAirdropTodo(Number(rs.lastInsertRowid))
+  }
+
+  /** 按 id 查子项（不存在返回 null） */
+  async getAirdropTodo(id: number): Promise<AirdropTodoRow | null> {
+    const rows = await this.exec(`${SELECT_TODO} WHERE id = ?`, [id])
+    return (rows[0] as unknown as AirdropTodoRow | undefined) ?? null
+  }
+
+  /** 部分更新子项（勾选 done / 改 content / dueDate 传 null 清空）；不存在返回 null */
+  async updateAirdropTodo(id: number, patch: { content?: string; done?: boolean; dueDate?: string | null; priority?: AirdropPriority }): Promise<AirdropTodoRow | null> {
+    const current = await this.getAirdropTodo(id)
+    if (!current) return null
+    await this.exec(
+      `UPDATE airdrop_todos SET content = ?, done = ?, due_date = ?, priority = ? WHERE id = ?`,
+      [
+        patch.content ?? current.content,
+        patch.done === undefined ? current.done : patch.done ? 1 : 0,
+        patch.dueDate === undefined ? current.dueDate : patch.dueDate,
+        patch.priority ?? current.priority,
+        id,
+      ],
+    )
+    return this.getAirdropTodo(id)
+  }
+
+  /** 删子项；返回是否存在过 */
+  async deleteAirdropTodo(id: number): Promise<boolean> {
+    const rs = await this.client.execute({ sql: 'DELETE FROM airdrop_todos WHERE id = ?', args: [id] })
+    return Number(rs.rowsAffected) > 0
   }
 
   /**
