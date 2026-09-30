@@ -5,7 +5,7 @@
  * 路由体解析函数独立成纯逻辑，参数非法统一 400（业务码 40000）
  */
 import { Router } from 'express'
-import { ok, fail, asyncHandler } from '../http/response'
+import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import { todayStr, type AirdropPriority, type AirdropProjectRow, type AirdropTodoRow, type AppDb } from '../../infrastructure/db'
 
@@ -325,7 +325,7 @@ function parseId(raw: string | string[]): number {
  *                           daysLeft: { type: integer }
  */
 
-/** 空投追踪 REST 路由工厂（Task 4 在 app.ts 挂载到 /api/airdrop 前缀） */
+/** 空投追踪 REST 路由工厂（Task 4 在 src/server/app.ts 挂载到 /api 前缀） */
 export function airdropRouter(deps: { db: AppDb }): Router {
   const router = Router()
 
@@ -335,15 +335,9 @@ export function airdropRouter(deps: { db: AppDb }): Router {
 
   router.post('/airdrop/statuses', asyncHandler(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>
-    if (typeof body.name !== 'string' || !body.name.trim()) {
-      fail(res, 400, ERROR_CODES.INVALID_ARGUMENT, '状态名不能为空')
-      return
-    }
+    if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '状态名不能为空')
     const s = await deps.db.createAirdropStatus(body.name.trim())
-    if (!s) {
-      fail(res, 400, ERROR_CODES.INVALID_ARGUMENT, '状态名已存在')
-      return
-    }
+    if (!s) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '状态名已存在')
     ok(res, s)
   }))
 

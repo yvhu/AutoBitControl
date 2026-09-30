@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import express from 'express'
 import request from 'supertest'
-import { AppDb } from '../src/infrastructure/db'
+import { AppDb, todayStr } from '../src/infrastructure/db'
 import { airdropRouter } from '../src/server/routes/airdrop'
 import { errorHandler } from '../src/server/http/error'
 import type { Logger } from '../src/infrastructure/logger'
@@ -190,8 +190,8 @@ describe('DELETE /api/airdrop/todos/:id', () => {
 describe('GET /api/airdrop/reminders', () => {
   it('汇总项目与子项到期/过期', async () => {
     const p = await seedProject('临近项目')
-    await db.updateAirdropProject(p.id, { deadline: '2026-10-04' })
-    const t = await db.createAirdropTodo(p.id, { content: '过期子项', dueDate: '2026-09-29', priority: 'low' })
+    await db.updateAirdropProject(p.id, { deadline: todayStr(new Date(Date.now() + 5 * 86400000)) })
+    const t = await db.createAirdropTodo(p.id, { content: '过期子项', dueDate: todayStr(new Date(Date.now() - 86400000)), priority: 'low' })
     const res = await request(makeApp()).get('/api/airdrop/reminders')
     expect(res.body.code).toBe(0)
     expect(res.body.data.overdue.some((i: { id: number }) => i.id === t!.id)).toBe(true)
