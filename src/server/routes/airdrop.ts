@@ -8,6 +8,7 @@ import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import { todayStr, type AirdropPriority, type AirdropProjectRow, type AirdropTodoRow, type AppDb } from '../../infrastructure/db'
+import type { SiteTask } from '../../tasks/base'
 
 /** 提醒窗口：未来 N 天内到期计入 upcoming */
 export const REMIND_WINDOW_DAYS = 5
@@ -76,7 +77,7 @@ function parseOptionalDate(v: unknown): { ok: boolean; value: string | null } {
 }
 
 /** 校验并解析新建项目请求体；非法抛 400 */
-function parseProjectBody(body: Record<string, unknown>): { name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null } {
+function parseProjectBody(body: Record<string, unknown>): { name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null; taskKey: string | null } {
   if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '项目名称不能为空')
   if (typeof body.statusId !== 'number' || !Number.isInteger(body.statusId) || body.statusId <= 0) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'statusId 非法')
   const priority = parsePriority(body.priority ?? 'mid')
@@ -85,12 +86,13 @@ function parseProjectBody(body: Record<string, unknown>): { name: string; status
   if (!d.ok) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'deadline 格式须为 YYYY-MM-DD')
   if (body.link !== undefined && body.link !== null && typeof body.link !== 'string') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'link 须为字符串')
   if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'note 须为字符串')
-  return { name: body.name.trim(), statusId: body.statusId, priority, deadline: d.value, link: (body.link as string | null) ?? null, note: (body.note as string | null) ?? null }
+  if (body.taskKey !== undefined && body.taskKey !== null && (typeof body.taskKey !== 'string' || !body.taskKey.trim())) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKey 须为非空字符串')
+  return { name: body.name.trim(), statusId: body.statusId, priority, deadline: d.value, link: (body.link as string | null) ?? null, note: (body.note as string | null) ?? null, taskKey: (body.taskKey as string | null) ?? null }
 }
 
 /** 校验并解析项目部分更新请求体（仅校验出现的字段） */
-function parseProjectPatch(body: Record<string, unknown>): Partial<{ name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null }> {
-  const out: Partial<{ name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null }> = {}
+function parseProjectPatch(body: Record<string, unknown>): Partial<{ name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null; taskKey: string | null }> {
+  const out: Partial<{ name: string; statusId: number; priority: AirdropPriority; deadline: string | null; link: string | null; note: string | null; taskKey: string | null }> = {}
   if (body.name !== undefined) {
     if (typeof body.name !== 'string' || !body.name.trim()) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '项目名称不能为空')
     out.name = body.name.trim()
@@ -116,6 +118,10 @@ function parseProjectPatch(body: Record<string, unknown>): Partial<{ name: strin
   if (body.note !== undefined) {
     if (body.note !== null && typeof body.note !== 'string') throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'note 须为字符串')
     out.note = body.note
+  }
+  if (body.taskKey !== undefined) {
+    if (body.taskKey !== null && (typeof body.taskKey !== 'string' || !body.taskKey.trim())) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'taskKey 须为非空字符串')
+    out.taskKey = body.taskKey
   }
   return out
 }
@@ -158,6 +164,14 @@ function parseTodoPatch(body: Record<string, unknown>): Partial<{ content: strin
 function parseId(raw: string | string[]): number {
   const n = Number(raw)
   return Number.isInteger(n) && n > 0 ? n : NaN
+}
+
+/** 校验 taskKey 可绑定：任务须存在且未被其他项目绑定；非法抛 400 */
+async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteTask> }, taskKey: string, excludeProjectId?: number): Promise<void> {
+  if (!deps.tasks.has(taskKey)) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, `任务不存在: ${taskKey}`)
+  const projects = await deps.db.listAirdropProjects()
+  const holder = projects.find((p) => p.taskKey === taskKey && p.id !== excludeProjectId)
+  if (holder) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '该任务已关联其他项目')
 }
 
 /**
@@ -224,13 +238,92 @@ function parseId(raw: string | string[]): number {
  *   get:
  *     summary: 空投追踪项目清单（含子项，已按列与列内规则排序）
  *     responses:
- *       '200': { description: 项目数组 }
+ *       '200':
+ *         description: 项目数组
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       statusId: { type: integer }
+ *                       statusName: { type: string }
+ *                       priority: { type: string, enum: [high, mid, low] }
+ *                       deadline: { type: string, nullable: true }
+ *                       link: { type: string, nullable: true }
+ *                       note: { type: string, nullable: true }
+ *                       taskKey: { type: string, nullable: true }
+ *                       todos: { type: array, items: { type: object } }
  *   post:
  *     summary: 新建空投追踪项目
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               statusId: { type: integer }
+ *               priority: { type: string, enum: [high, mid, low] }
+ *               deadline: { type: string, nullable: true }
+ *               link: { type: string, nullable: true }
+ *               note: { type: string, nullable: true }
+ *               taskKey: { type: string, nullable: true }
  *     responses:
  *       '200': { description: 新项目视图 }
  *       '400': { description: 参数非法（业务码 40000） }
  *       '404': { description: 状态列不存在（业务码 40407） }
+ */
+
+/**
+ * @swagger
+ * /api/airdrop/projects/import:
+ *   post:
+ *     summary: 批量从系统任务导入空投项目
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     taskKey: { type: string }
+ *                     statusId: { type: integer }
+ *                     priority: { type: string, enum: [high, mid, low] }
+ *     responses:
+ *       '200':
+ *         description: 导入结果（单项失败不整体回滚，失败项进 failed 清单）
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     imported: { type: integer }
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           taskKey: { type: string }
+ *                           reason: { type: string }
+ *       '400': { description: 参数非法（业务码 40000） }
  */
 
 /**
@@ -240,6 +333,19 @@ function parseId(raw: string | string[]): number {
  *     summary: 部分更新项目（含拖拽流转 statusId）
  *     parameters:
  *       - { in: path, name: id, required: true, schema: { type: integer } }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               statusId: { type: integer }
+ *               priority: { type: string, enum: [high, mid, low] }
+ *               deadline: { type: string, nullable: true }
+ *               link: { type: string, nullable: true }
+ *               note: { type: string, nullable: true }
+ *               taskKey: { type: string, nullable: true, description: 绑定系统任务；null=解绑 }
  *     responses:
  *       '200': { description: 更新后的项目视图 }
  *       '400': { description: 参数非法（业务码 40000） }
@@ -327,7 +433,7 @@ function parseId(raw: string | string[]): number {
  */
 
 /** 空投追踪 REST 路由工厂（Task 4 在 src/server/app.ts 挂载到 /api 前缀） */
-export function airdropRouter(deps: { db: AppDb }): Router {
+export function airdropRouter(deps: { db: AppDb; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
 
   router.get('/airdrop/statuses', asyncHandler(async (_req, res) => {
@@ -375,9 +481,43 @@ export function airdropRouter(deps: { db: AppDb }): Router {
     ok(res, await deps.db.listAirdropProjects())
   }))
 
+  router.post('/airdrop/projects/import', asyncHandler(async (req, res) => {
+    const body = (req.body ?? {}) as { items?: unknown }
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'items 须为非空数组')
+    }
+    const failed: Array<{ taskKey: string; reason: string }> = []
+    for (const item of body.items as Array<Record<string, unknown>>) {
+      const taskKey = typeof item?.taskKey === 'string' ? item.taskKey.trim() : ''
+      if (!taskKey) {
+        failed.push({ taskKey: String(item?.taskKey ?? ''), reason: 'taskKey 须为非空字符串' })
+        continue
+      }
+      const meta = deps.tasks.get(taskKey)?.meta
+      if (!meta) {
+        failed.push({ taskKey, reason: `任务不存在: ${taskKey}` })
+        continue
+      }
+      const holder = (await deps.db.listAirdropProjects()).find((p) => p.taskKey === taskKey)
+      if (holder) {
+        failed.push({ taskKey, reason: '该任务已关联其他项目' })
+        continue
+      }
+      const statusId = Number(item?.statusId)
+      if (!Number.isInteger(statusId) || statusId <= 0 || !(await deps.db.getAirdropStatus(statusId))) {
+        failed.push({ taskKey, reason: '状态列不存在' })
+        continue
+      }
+      const priority = item?.priority === 'high' || item?.priority === 'mid' || item?.priority === 'low' ? item.priority : 'mid'
+      await deps.db.createAirdropProject({ name: meta.name, statusId, priority, link: meta.url || null, taskKey })
+    }
+    ok(res, { imported: (body.items as unknown[]).length - failed.length, failed })
+  }))
+
   router.post('/airdrop/projects', asyncHandler(async (req, res) => {
     const parsed = parseProjectBody((req.body ?? {}) as Record<string, unknown>)
     if (!(await deps.db.getAirdropStatus(parsed.statusId))) throw new HttpError(404, ERROR_CODES.AIRDROP_NOT_FOUND, '状态列不存在')
+    if (parsed.taskKey) await assertTaskKeyBindable(deps, parsed.taskKey)
     ok(res, await deps.db.createAirdropProject(parsed))
   }))
 
@@ -385,6 +525,7 @@ export function airdropRouter(deps: { db: AppDb }): Router {
     const id = parseId(req.params.id)
     const parsed = parseProjectPatch((req.body ?? {}) as Record<string, unknown>)
     if (parsed.statusId !== undefined && !(await deps.db.getAirdropStatus(parsed.statusId))) throw new HttpError(404, ERROR_CODES.AIRDROP_NOT_FOUND, '状态列不存在')
+    if (parsed.taskKey) await assertTaskKeyBindable(deps, parsed.taskKey, id)
     const p = Number.isNaN(id) ? null : await deps.db.updateAirdropProject(id, parsed)
     if (!p) throw new HttpError(404, ERROR_CODES.AIRDROP_NOT_FOUND, '项目不存在')
     ok(res, p)

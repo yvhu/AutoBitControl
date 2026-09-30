@@ -5,12 +5,17 @@ import { AppDb, todayStr } from '../src/infrastructure/db'
 import { airdropRouter } from '../src/server/routes/airdrop'
 import { errorHandler } from '../src/server/http/error'
 import type { Logger } from '../src/infrastructure/logger'
+import type { SiteTask } from '../src/tasks/base'
 
 let db: AppDb
+const fakeTasks = new Map<string, SiteTask>([
+  ['task-one', { meta: { key: 'task-one', name: '任务一', url: 'https://one.io' } } as unknown as SiteTask],
+  ['task-two', { meta: { key: 'task-two', name: '任务二', url: '' } } as unknown as SiteTask],
+])
 function makeApp() {
   const app = express()
   app.use(express.json())
-  app.use('/api', airdropRouter({ db }))
+  app.use('/api', airdropRouter({ db, tasks: fakeTasks }))
   app.use(errorHandler({ error: () => {}, warn: () => {}, info: () => {} } as unknown as Logger))
   return app
 }
@@ -205,5 +210,94 @@ describe('GET /api/airdrop/reminders', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data.overdue.some((i: { id: number }) => i.id === t!.id)).toBe(true)
     expect(res.body.data.upcoming.some((i: { id: number }) => i.id === p.id)).toBe(true)
+  })
+})
+
+describe('POST /api/airdrop/projects · taskKey', () => {
+  it('带合法 taskKey 创建成功且视图返回 taskKey', async () => {
+    const st = await db.listAirdropStatuses()
+    const res = await request(makeApp()).post('/api/airdrop/projects').send({ name: 'X', statusId: st[0].id, priority: 'mid', taskKey: 'task-one' })
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.taskKey).toBe('task-one')
+    await db.deleteAirdropProject(res.body.data.id)
+  })
+
+  it('任务不存在 → 400；重复绑定 → 400', async () => {
+    const st = await db.listAirdropStatuses()
+    const bad = await request(makeApp()).post('/api/airdrop/projects').send({ name: 'X', statusId: st[0].id, priority: 'mid', taskKey: 'ghost-task' })
+    expect(bad.status).toBe(400)
+    expect(bad.body.code).toBe(40000)
+    const y = await request(makeApp()).post('/api/airdrop/projects').send({ name: 'Y', statusId: st[0].id, priority: 'mid', taskKey: 'task-two' })
+    expect(y.body.code).toBe(0)
+    const dup = await request(makeApp()).post('/api/airdrop/projects').send({ name: 'Z', statusId: st[0].id, priority: 'mid', taskKey: 'task-two' })
+    expect(dup.status).toBe(400)
+    expect(dup.body.code).toBe(40000)
+    expect(dup.body.message).toBe('该任务已关联其他项目')
+    await db.deleteAirdropProject(y.body.data.id)
+  })
+})
+
+describe('PATCH /api/airdrop/projects/:id · taskKey', () => {
+  it('绑定成功；解绑（null）成功', async () => {
+    const p = await seedProject('绑定测试')
+    const bind = await request(makeApp()).patch(`/api/airdrop/projects/${p.id}`).send({ taskKey: 'task-two' })
+    expect(bind.body.data.taskKey).toBe('task-two')
+    const unbind = await request(makeApp()).patch(`/api/airdrop/projects/${p.id}`).send({ taskKey: null })
+    expect(unbind.body.data.taskKey).toBeNull()
+  })
+
+  it('绑定已占用任务 → 400；绑定不存在的任务 → 400', async () => {
+    const st = await db.listAirdropStatuses()
+    const holder = await db.createAirdropProject({ name: '持有者', statusId: st[0].id, priority: 'mid', taskKey: 'task-one' })
+    const p = await seedProject('绑定冲突')
+    const dup = await request(makeApp()).patch(`/api/airdrop/projects/${p.id}`).send({ taskKey: 'task-one' })
+    expect(dup.status).toBe(400)
+    expect(dup.body.code).toBe(40000)
+    expect(holder.id).toBeGreaterThan(0)
+    const ghost = await request(makeApp()).patch(`/api/airdrop/projects/${p.id}`).send({ taskKey: 'nope' })
+    expect(ghost.body.code).toBe(40000)
+    await db.deleteAirdropProject(holder.id)
+  })
+})
+
+describe('POST /api/airdrop/projects/import', () => {
+  it('全成功：导入两项（name=任务名、link=url、taskKey 写入）', async () => {
+    const st = await db.listAirdropStatuses()
+    const res = await request(makeApp())
+      .post('/api/airdrop/projects/import')
+      .send({ items: [{ taskKey: 'task-one', statusId: st[0].id, priority: 'high' }, { taskKey: 'task-two', statusId: st[1].id }] })
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.imported).toBe(2)
+    expect(res.body.data.failed).toEqual([])
+    const list = await request(makeApp()).get('/api/airdrop/projects')
+    const one = list.body.data.find((x: { taskKey: string | null }) => x.taskKey === 'task-one')
+    expect(one.name).toBe('任务一')
+    expect(one.link).toBe('https://one.io')
+    expect(one.priority).toBe('high')
+    const two = list.body.data.find((x: { taskKey: string | null }) => x.taskKey === 'task-two')
+    expect(two.link).toBeNull()
+    expect(two.priority).toBe('mid')
+    await db.deleteAirdropProject(one.id)
+    await db.deleteAirdropProject(two.id)
+  })
+
+  it('部分失败：坏项进 failed 清单不拖累好项', async () => {
+    const st = await db.listAirdropStatuses()
+    const res = await request(makeApp())
+      .post('/api/airdrop/projects/import')
+      .send({ items: [{ taskKey: 'task-one', statusId: st[0].id }, { taskKey: 'ghost', statusId: st[0].id }, { taskKey: 'task-two', statusId: 999 }] })
+    expect(res.body.data.imported).toBe(1)
+    expect(res.body.data.failed).toEqual([
+      { taskKey: 'ghost', reason: '任务不存在: ghost' },
+      { taskKey: 'task-two', reason: '状态列不存在' },
+    ])
+  })
+
+  it('items 非数组/空数组 → 400', async () => {
+    const bad = await request(makeApp()).post('/api/airdrop/projects/import').send({ items: 'x' })
+    expect(bad.body.code).toBe(40000)
+    const empty = await request(makeApp()).post('/api/airdrop/projects/import').send({ items: [] })
+    expect(empty.body.code).toBe(40000)
   })
 })

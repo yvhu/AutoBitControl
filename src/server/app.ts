@@ -79,7 +79,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, fileAssignService: deps.fileAssignService }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   api.use(captchaRouter({ captchaBalance: deps.captchaBalance }))
-  api.use(airdropRouter({ db: deps.db }))
+  api.use(airdropRouter({ db: deps.db, tasks: deps.tasks }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

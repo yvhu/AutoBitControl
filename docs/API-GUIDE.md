@@ -1141,9 +1141,10 @@ randomMicroMove(): Promise<void>
 | POST | `/api/airdrop/statuses` | 新增状态列 |
 | PATCH | `/api/airdrop/statuses/:id` | 状态列改名/换序 |
 | DELETE | `/api/airdrop/statuses/:id` | 删除状态列（非空 409） |
-| GET | `/api/airdrop/projects` | 空投项目清单（含子项，已排序） |
-| POST | `/api/airdrop/projects` | 新建项目 |
-| PATCH | `/api/airdrop/projects/:id` | 更新项目（拖拽流转 statusId） |
+| GET | `/api/airdrop/projects` | 空投项目清单（含子项与 taskKey，已排序） |
+| POST | `/api/airdrop/projects` | 新建项目（可带 taskKey 绑定系统任务） |
+| POST | `/api/airdrop/projects/import` | 从系统任务批量导入项目（返回 imported/failed，单项失败不整体回滚） |
+| PATCH | `/api/airdrop/projects/:id` | 更新项目（拖拽流转 statusId；taskKey 绑定、null=解绑） |
 | DELETE | `/api/airdrop/projects/:id` | 删除项目（级联删子项） |
 | POST | `/api/airdrop/projects/:id/todos` | 加待办子项 |
 | PATCH | `/api/airdrop/todos/:id` | 更新子项（勾选等） |
