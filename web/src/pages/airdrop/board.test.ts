@@ -4,7 +4,7 @@ import type { TodoDraft } from './board'
 import type { AirdropProjectView, AirdropReminders, AirdropTodoItem } from '../../types'
 
 const proj = (id: number, statusId: number): AirdropProjectView => ({
-  id, name: `P${id}`, statusId, priority: 'mid', deadline: null, link: null, note: null,
+  id, name: `P${id}`, statusId, priority: 'mid', deadline: null, link: null, note: null, taskKey: null,
   createdAt: 'x', updatedAt: 'x', statusName: '列', todos: [],
 })
 

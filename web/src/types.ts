@@ -129,7 +129,7 @@ export interface AirdropTodoItem {
   createdAt: string
 }
 
-/** 项目视图（含状态列名与子项数组） */
+/** 项目视图（含状态列名与子项数组；taskKey=绑定的系统任务，null=纯手动） */
 export interface AirdropProjectView {
   id: number
   name: string
@@ -138,6 +138,7 @@ export interface AirdropProjectView {
   deadline: string | null
   link: string | null
   note: string | null
+  taskKey: string | null
   createdAt: string
   updatedAt: string
   statusName: string
@@ -152,9 +153,10 @@ export interface AirdropProjectInput {
   deadline?: string | null
   link?: string | null
   note?: string | null
+  taskKey?: string | null
 }
 
-/** 项目部分更新入参（拖拽流转传 statusId） */
+/** 项目部分更新入参（拖拽流转传 statusId；taskKey null=解绑） */
 export interface AirdropProjectPatch {
   name?: string
   statusId?: number
@@ -162,6 +164,20 @@ export interface AirdropProjectPatch {
   deadline?: string | null
   link?: string | null
   note?: string | null
+  taskKey?: string | null
+}
+
+/** 批量导入项 */
+export interface AirdropImportItem {
+  taskKey: string
+  statusId: number
+  priority?: AirdropPriority
+}
+
+/** 批量导入结果 */
+export interface AirdropImportResult {
+  imported: number
+  failed: Array<{ taskKey: string; reason: string }>
 }
 
 /** 单条提醒 */

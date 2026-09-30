@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, AirdropPriority, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem } from '../types'
+import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -46,3 +46,4 @@ export const createAirdropTodo = (projectId: number, body: { content: string; du
 export const updateAirdropTodo = (id: number, body: { done?: boolean; content?: string; dueDate?: string | null; priority?: AirdropPriority }) => patch<AirdropTodoItem>(`/api/airdrop/todos/${id}`, body)
 export const deleteAirdropTodo = (id: number) => del<null>(`/api/airdrop/todos/${id}`)
 export const fetchAirdropReminders = () => get<AirdropReminders>('/api/airdrop/reminders')
+export const importAirdropProjects = (body: { items: AirdropImportItem[] }) => post<AirdropImportResult>('/api/airdrop/projects/import', body)
