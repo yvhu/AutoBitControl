@@ -7,6 +7,7 @@ import AppLayout from './layouts/AppLayout'
 import DashboardPage from './pages/dashboard'
 import ProfilesPage from './pages/profiles'
 import TasksPage from './pages/tasks'
+import AirdropPage from './pages/airdrop'
 import SchedulesPage from './pages/schedules'
 import DocsPage from './pages/docs'
 import SettingsPage from './pages/settings'
@@ -22,6 +23,7 @@ export default function App() {
             <Route index element={<DashboardPage />} />
             <Route path="profiles" element={<ProfilesPage />} />
             <Route path="tasks" element={<TasksPage />} />
+            <Route path="airdrop" element={<AirdropPage />} />
             <Route path="schedules" element={<SchedulesPage />} />
             <Route path="docs" element={<DocsPage />} />
             <Route path="settings" element={<SettingsPage />} />
