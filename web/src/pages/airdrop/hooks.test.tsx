@@ -26,7 +26,7 @@ vi.mock('../../api/endpoints', () => ({
 }))
 
 const savedView: AirdropProjectView = {
-  id: 1, name: 'X', statusId: 1, priority: 'mid', deadline: null, link: null, note: null,
+  id: 1, name: 'X', statusId: 1, priority: 'mid', deadline: null, link: null, note: null, taskKey: null,
   createdAt: 'x', updatedAt: 'x', statusName: '关注中', todos: [],
 }
 
@@ -114,7 +114,7 @@ describe('useUpdateProject', () => {
     )
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const base: AirdropProjectView = {
-      id: 1, name: 'P1', statusId: 1, priority: 'mid', deadline: null, link: null, note: null,
+      id: 1, name: 'P1', statusId: 1, priority: 'mid', deadline: null, link: null, note: null, taskKey: null,
       createdAt: 'x', updatedAt: 'x', statusName: '列', todos: [],
     }
     qc.setQueryData(['airdrop-projects'], [base, { ...base, id: 2, name: 'P2' }])
