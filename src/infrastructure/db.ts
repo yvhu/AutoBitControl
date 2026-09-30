@@ -672,6 +672,13 @@ export class AppDb {
     return views
   }
 
+  /** 提醒汇总数据源：全部项目 + 未完成且有期限的子项（数量级小全量取回，交给纯函数汇总） */
+  async listReminderSources(): Promise<{ projects: AirdropProjectRow[]; todos: AirdropTodoRow[] }> {
+    const projects = await this.exec(`SELECT id, name, status_id AS statusId, priority, deadline, link, note, created_at AS createdAt, updated_at AS updatedAt FROM airdrop_projects`)
+    const todos = await this.exec(`${SELECT_TODO} WHERE done = 0 AND due_date IS NOT NULL`)
+    return { projects: projects as unknown as AirdropProjectRow[], todos: todos as unknown as AirdropTodoRow[] }
+  }
+
   /** 单个项目视图（含子项，按子项排序）；不存在返回 null */
   async getAirdropProject(id: number): Promise<AirdropProjectView | null> {
     const rows = await this.exec(`${SELECT_PROJECT} WHERE p.id = ?`, [id])

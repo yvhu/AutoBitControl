@@ -114,3 +114,17 @@ describe('AppDb · airdrop 表', () => {
     expect(await db.deleteAirdropTodo(t!.id)).toBe(false)
   })
 })
+
+describe('AppDb · listReminderSources', () => {
+  it('返回全部项目与仅未完成且有期限的子项', async () => {
+    const st = await db.listAirdropStatuses()
+    const p = await db.createAirdropProject({ name: 'A', statusId: st[0].id, priority: 'mid', deadline: '2026-10-01' })
+    await db.createAirdropTodo(p.id, { content: '未完成有期限', dueDate: '2026-10-02', priority: 'mid' })
+    await db.createAirdropTodo(p.id, { content: '已完成', dueDate: '2026-10-03', priority: 'mid' })
+    await db.createAirdropTodo(p.id, { content: '无期限', priority: 'mid' })
+    await db.updateAirdropTodo(2, { done: true })
+    const src = await db.listReminderSources()
+    expect(src.projects).toHaveLength(1)
+    expect(src.todos.map((t) => t.content)).toEqual(['未完成有期限'])
+  })
+})
