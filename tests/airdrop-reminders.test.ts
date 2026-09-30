@@ -4,7 +4,7 @@ import type { AirdropProjectRow, AirdropTodoRow } from '../src/infrastructure/db
 
 const TODAY = '2026-09-30'
 const p = (id: number, name: string, deadline: string | null): AirdropProjectRow => ({
-  id, name, statusId: 1, priority: 'mid', deadline, link: null, note: null, createdAt: 'x', updatedAt: 'x',
+  id, name, statusId: 1, priority: 'mid', deadline, link: null, note: null, taskKey: null, createdAt: 'x', updatedAt: 'x',
 })
 const t = (id: number, content: string, dueDate: string | null, done = 0): AirdropTodoRow => ({
   id, projectId: 1, content, done, dueDate, priority: 'mid', createdAt: 'x',

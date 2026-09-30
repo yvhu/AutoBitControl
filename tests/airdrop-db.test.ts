@@ -128,3 +128,34 @@ describe('AppDb · listReminderSources', () => {
     expect(src.todos.map((t) => t.content)).toEqual(['未完成有期限'])
   })
 })
+
+describe('AppDb · airdrop_projects.task_key', () => {
+  it('create 带 taskKey 读回；不带为 null', async () => {
+    const st = await db.listAirdropStatuses()
+    const p1 = await db.createAirdropProject({ name: 'A', statusId: st[0].id, priority: 'mid', taskKey: 'inception-dachain' })
+    expect(p1.taskKey).toBe('inception-dachain')
+    const p2 = await db.createAirdropProject({ name: 'B', statusId: st[0].id, priority: 'mid' })
+    expect(p2.taskKey).toBeNull()
+  })
+
+  it('update：taskKey 绑定 / null 解绑 / undefined 不动', async () => {
+    const st = await db.listAirdropStatuses()
+    const p = await db.createAirdropProject({ name: 'A', statusId: st[0].id, priority: 'mid' })
+    const u1 = await db.updateAirdropProject(p.id, { taskKey: 'task-x' })
+    expect(u1!.taskKey).toBe('task-x')
+    const u2 = await db.updateAirdropProject(p.id, { note: '只改备注' })
+    expect(u2!.taskKey).toBe('task-x')
+    const u3 = await db.updateAirdropProject(p.id, { taskKey: null })
+    expect(u3!.taskKey).toBeNull()
+  })
+
+  it('部分唯一索引：多个 NULL 共存；同 taskKey 第二行抛约束错误', async () => {
+    const st = await db.listAirdropStatuses()
+    await db.createAirdropProject({ name: 'A', statusId: st[0].id, priority: 'mid' })
+    await db.createAirdropProject({ name: 'B', statusId: st[0].id, priority: 'mid' })
+    await db.createAirdropProject({ name: 'C', statusId: st[0].id, priority: 'mid', taskKey: 'dup-key' })
+    await expect(db.createAirdropProject({ name: 'D', statusId: st[0].id, priority: 'mid', taskKey: 'dup-key' })).rejects.toThrow()
+    const u = await db.createAirdropProject({ name: 'E', statusId: st[0].id, priority: 'mid' })
+    await expect(db.updateAirdropProject(u.id, { taskKey: 'dup-key' })).rejects.toThrow()
+  })
+})

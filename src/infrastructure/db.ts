@@ -116,6 +116,8 @@ export interface AirdropProjectRow {
   deadline: string | null
   link: string | null
   note: string | null
+  /** 绑定的系统任务 key（可空；null=纯手动追踪项目）；唯一性由部分唯一索引保证 */
+  taskKey: string | null
   createdAt: string
   updatedAt: string
 }
@@ -242,6 +244,7 @@ const SCHEMA = [
     deadline TEXT,
     link TEXT,
     note TEXT,
+    task_key TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -259,7 +262,7 @@ const SCHEMA = [
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
 const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
-const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
+const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
 /** 子项排序：未完成在前 → due_date 近者在前（NULL 最后）→ 优先级高在前 → 创建顺序 */
 const TODO_ORDER = `done, due_date IS NULL, due_date, CASE priority WHEN 'high' THEN 0 WHEN 'mid' THEN 1 ELSE 2 END, created_at, id`
@@ -357,6 +360,13 @@ export class AppDb {
         args: [DEFAULT_AIRDROP_STATUSES[i], i, localWallNow()],
       })
     }
+    // 老库补列：airdrop_projects.task_key（系统任务绑定，可空）——
+    // SQLite ALTER 无法加表级 UNIQUE，唯一性用部分唯一索引（NULL 不参与，手动项目不受限）
+    const apInfo = await this.client.execute(`PRAGMA table_info(airdrop_projects)`)
+    if (!apInfo.rows.some((r) => String(r.name) === 'task_key')) {
+      await this.client.execute(`ALTER TABLE airdrop_projects ADD COLUMN task_key TEXT`)
+    }
+    await this.client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_projects_task_key ON airdrop_projects(task_key) WHERE task_key IS NOT NULL`)
   }
 
   close(): void {
@@ -674,7 +684,7 @@ export class AppDb {
 
   /** 提醒汇总数据源：全部项目 + 未完成且有期限的子项（数量级小全量取回，交给纯函数汇总） */
   async listReminderSources(): Promise<{ projects: AirdropProjectRow[]; todos: AirdropTodoRow[] }> {
-    const projects = await this.exec(`SELECT id, name, status_id AS statusId, priority, deadline, link, note, created_at AS createdAt, updated_at AS updatedAt FROM airdrop_projects`)
+    const projects = await this.exec(`SELECT id, name, status_id AS statusId, priority, deadline, link, note, task_key AS taskKey, created_at AS createdAt, updated_at AS updatedAt FROM airdrop_projects`)
     const todos = await this.exec(`${SELECT_TODO} WHERE done = 0 AND due_date IS NOT NULL`)
     return { projects: projects as unknown as AirdropProjectRow[], todos: todos as unknown as AirdropTodoRow[] }
   }
@@ -689,24 +699,24 @@ export class AppDb {
   }
 
   /** 新建项目（statusId 存在性由路由校验）；返回完整视图 */
-  async createAirdropProject(input: { name: string; statusId: number; priority: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null }): Promise<AirdropProjectView> {
+  async createAirdropProject(input: { name: string; statusId: number; priority: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null; taskKey?: string | null }): Promise<AirdropProjectView> {
     const now = localWallNow()
     const rs = await this.client.execute({
-      sql: `INSERT INTO airdrop_projects (name, status_id, priority, deadline, link, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [input.name, input.statusId, input.priority, input.deadline ?? null, input.link ?? null, input.note ?? null, now, now],
+      sql: `INSERT INTO airdrop_projects (name, status_id, priority, deadline, link, note, task_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [input.name, input.statusId, input.priority, input.deadline ?? null, input.link ?? null, input.note ?? null, input.taskKey ?? null, now, now],
     })
     return (await this.getAirdropProject(Number(rs.lastInsertRowid)))!
   }
 
   /**
-   * 部分更新项目（null 显式清空 deadline/link/note，undefined 不动）；
+   * 部分更新项目（null 显式清空 deadline/link/note/taskKey，undefined 不动）；
    * statusId 流转（拖拽落列）走同一入口；不存在返回 null
    */
-  async updateAirdropProject(id: number, patch: { name?: string; statusId?: number; priority?: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null }): Promise<AirdropProjectView | null> {
+  async updateAirdropProject(id: number, patch: { name?: string; statusId?: number; priority?: AirdropPriority; deadline?: string | null; link?: string | null; note?: string | null; taskKey?: string | null }): Promise<AirdropProjectView | null> {
     const current = await this.getAirdropProject(id)
     if (!current) return null
     await this.exec(
-      `UPDATE airdrop_projects SET name = ?, status_id = ?, priority = ?, deadline = ?, link = ?, note = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE airdrop_projects SET name = ?, status_id = ?, priority = ?, deadline = ?, link = ?, note = ?, task_key = ?, updated_at = ? WHERE id = ?`,
       [
         patch.name ?? current.name,
         patch.statusId ?? current.statusId,
@@ -714,6 +724,7 @@ export class AppDb {
         patch.deadline === undefined ? current.deadline : patch.deadline,
         patch.link === undefined ? current.link : patch.link,
         patch.note === undefined ? current.note : patch.note,
+        patch.taskKey === undefined ? current.taskKey : patch.taskKey,
         localWallNow(),
         id,
       ],
