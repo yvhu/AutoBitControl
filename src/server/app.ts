@@ -27,6 +27,7 @@ import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
 import { toolsRouter } from './routes/tools'
 import { captchaRouter } from './routes/captcha'
+import { airdropRouter } from './routes/airdrop'
 import { notFoundHandler, errorHandler } from './http/error'
 
 // 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
@@ -78,6 +79,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, fileAssignService: deps.fileAssignService }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   api.use(captchaRouter({ captchaBalance: deps.captchaBalance }))
+  api.use(airdropRouter({ db: deps.db }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

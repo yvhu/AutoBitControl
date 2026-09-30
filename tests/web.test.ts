@@ -30,6 +30,21 @@ interface MockDeps {
     createSchedule: Mock
     updateSchedule: Mock
     deleteSchedule: Mock
+    listAirdropStatuses: Mock
+    getAirdropStatus: Mock
+    createAirdropStatus: Mock
+    updateAirdropStatus: Mock
+    deleteAirdropStatus: Mock
+    listAirdropProjects: Mock
+    getAirdropProject: Mock
+    createAirdropProject: Mock
+    updateAirdropProject: Mock
+    deleteAirdropProject: Mock
+    createAirdropTodo: Mock
+    getAirdropTodo: Mock
+    updateAirdropTodo: Mock
+    deleteAirdropTodo: Mock
+    listReminderSources: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
   scheduler: { runNow: Mock }
@@ -78,6 +93,21 @@ function makeDeps(): MockDeps {
       createSchedule: vi.fn().mockResolvedValue(null),
       updateSchedule: vi.fn().mockResolvedValue(null),
       deleteSchedule: vi.fn().mockResolvedValue(true),
+      listAirdropStatuses: vi.fn().mockResolvedValue([]),
+      getAirdropStatus: vi.fn().mockResolvedValue(null),
+      createAirdropStatus: vi.fn().mockResolvedValue(null),
+      updateAirdropStatus: vi.fn().mockResolvedValue(null),
+      deleteAirdropStatus: vi.fn().mockResolvedValue('deleted'),
+      listAirdropProjects: vi.fn().mockResolvedValue([]),
+      getAirdropProject: vi.fn().mockResolvedValue(null),
+      createAirdropProject: vi.fn().mockResolvedValue(null),
+      updateAirdropProject: vi.fn().mockResolvedValue(null),
+      deleteAirdropProject: vi.fn().mockResolvedValue(true),
+      createAirdropTodo: vi.fn().mockResolvedValue(null),
+      getAirdropTodo: vi.fn().mockResolvedValue(null),
+      updateAirdropTodo: vi.fn().mockResolvedValue(null),
+      deleteAirdropTodo: vi.fn().mockResolvedValue(true),
+      listReminderSources: vi.fn().mockResolvedValue({ projects: [], todos: [] }),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
     scheduler: { runNow: vi.fn().mockResolvedValue({ taskKeys: ['t1'], skipped: [] }) },
@@ -776,5 +806,16 @@ describe('OpenAPI 文档与统一错误码', () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/no-such')
     expect(res.status).toBe(404)
     expect(res.body.code).toBe(40400)
+  })
+})
+
+describe('空投追踪路由挂载（src/server/app.ts）', () => {
+  it('通过 createApp 能访问 GET /api/airdrop/statuses', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).get('/api/airdrop/statuses')
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(Array.isArray(res.body.data)).toBe(true)
+    expect(deps.db.listAirdropStatuses).toHaveBeenCalledTimes(1)
   })
 })
