@@ -7,9 +7,9 @@ import { App } from 'antd'
 import { HttpError } from '../../api/client'
 import {
   createAirdropProject, createAirdropStatus, createAirdropTodo, deleteAirdropProject, deleteAirdropStatus, deleteAirdropTodo,
-  fetchAirdropProjects, fetchAirdropReminders, fetchAirdropStatuses, updateAirdropProject, updateAirdropStatus, updateAirdropTodo,
+  fetchAirdropProjects, fetchAirdropReminders, fetchAirdropStatuses, fetchTasks, importAirdropProjects, updateAirdropProject, updateAirdropStatus, updateAirdropTodo,
 } from '../../api/endpoints'
-import type { AirdropPriority, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView } from '../../types'
+import type { AirdropImportItem, AirdropPriority, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView } from '../../types'
 import { diffTodos, type TodoDraft } from './board'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
@@ -134,6 +134,28 @@ export function useDeleteStatus() {
   return useMutation({
     mutationFn: (id: number) => deleteAirdropStatus(id),
     onSuccess: () => invalidateAll(qc),
+    onError: (e) => message.error(errMsg(e)),
+  })
+}
+
+/** 系统任务清单（导入弹窗与编辑弹窗关联下拉的数据源） */
+export function useTasks() {
+  return useQuery({ queryKey: ['tasks'], queryFn: fetchTasks, staleTime: 60_000 })
+}
+
+/** 从系统任务批量导入为项目（成功提示数量；部分失败列前 3 条原因） */
+export function useImportProjects() {
+  const { message } = App.useApp()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ items }: { items: AirdropImportItem[] }) => importAirdropProjects({ items }),
+    onSuccess: (res) => {
+      message.success(`已导入 ${res.imported} 个项目`)
+      if (res.failed.length > 0) {
+        message.warning(`导入失败 ${res.failed.length} 项：${res.failed.slice(0, 3).map((f) => `${f.taskKey}（${f.reason}）`).join('、')}`)
+      }
+      invalidateAll(qc)
+    },
     onError: (e) => message.error(errMsg(e)),
   })
 }

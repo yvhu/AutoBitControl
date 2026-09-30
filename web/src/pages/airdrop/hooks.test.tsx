@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from 'antd'
-import { useAirdropReminders, useSaveProject, useUpdateProject } from './hooks'
+import { useAirdropReminders, useImportProjects, useSaveProject, useTasks, useUpdateProject } from './hooks'
 import { createAirdropProject, createAirdropTodo, deleteAirdropTodo, fetchAirdropReminders, updateAirdropProject, updateAirdropTodo } from '../../api/endpoints'
 import type { AirdropProjectView, AirdropReminders } from '../../types'
 
@@ -23,6 +23,8 @@ vi.mock('../../api/endpoints', () => ({
   createAirdropStatus: vi.fn(),
   updateAirdropStatus: vi.fn(),
   deleteAirdropStatus: vi.fn(),
+  importAirdropProjects: vi.fn().mockResolvedValue({ imported: 2, failed: [] }),
+  fetchTasks: vi.fn().mockResolvedValue([{ key: 't1', name: '任务一', url: 'https://a.io' }]),
 }))
 
 const savedView: AirdropProjectView = {
@@ -138,5 +140,39 @@ describe('useUpdateProject', () => {
       expect(data?.find((p) => p.id === 1)?.statusId).toBe(1)
     })
     expect(message.error).toHaveBeenCalledWith('操作失败，请重试')
+  })
+})
+
+describe('useImportProjects', () => {
+  it('成功后提示已导入数量并失效三个查询', async () => {
+    const qc = new QueryClient()
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    const { result } = renderHook(() => useImportProjects(), {
+      wrapper: ({ children }) => (
+        <App>
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        </App>
+      ),
+    })
+    result.current.mutate({ items: [{ taskKey: 't1', statusId: 1 }] })
+    await waitFor(() => expect(invalidate).toHaveBeenCalled())
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['airdrop-statuses'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['airdrop-projects'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['airdrop-reminders'] })
+  })
+})
+
+describe('useTasks', () => {
+  it('查询成功返回任务列表', async () => {
+    const qc = new QueryClient()
+    const { result } = renderHook(() => useTasks(), {
+      wrapper: ({ children }) => (
+        <App>
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        </App>
+      ),
+    })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data?.[0].name).toBe('任务一')
   })
 })
