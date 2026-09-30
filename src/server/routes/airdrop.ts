@@ -206,6 +206,7 @@ function parseId(raw: string | string[]): number {
  *       - { in: path, name: id, required: true, schema: { type: integer } }
  *     responses:
  *       '200': { description: 更新后的列 }
+ *       '400': { description: 参数非法或重名（业务码 40000） }
  *       '404': { description: 列不存在（业务码 40407） }
  *   delete:
  *     summary: 删除状态列（列下仍有项目时拒绝）
@@ -352,6 +353,10 @@ export function airdropRouter(deps: { db: AppDb }): Router {
     if (body.sortOrder !== undefined) {
       if (typeof body.sortOrder !== 'number' || !Number.isInteger(body.sortOrder)) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'sortOrder 非法')
       patch.sortOrder = body.sortOrder
+    }
+    if (patch.name !== undefined) {
+      const all = await deps.db.listAirdropStatuses()
+      if (all.some(s => s.id !== id && s.name === patch.name)) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '状态名已存在')
     }
     const s = Number.isNaN(id) ? null : await deps.db.updateAirdropStatus(id, patch)
     if (!s) throw new HttpError(404, ERROR_CODES.AIRDROP_NOT_FOUND, '状态列不存在')

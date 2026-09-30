@@ -62,6 +62,15 @@ describe('PATCH /api/airdrop/statuses/:id', () => {
     expect(miss.status).toBe(404)
     expect(miss.body.code).toBe(40407)
   })
+
+  it('改名为已存在的列名 → 400/40000（且原列名不变）', async () => {
+    const st = await db.listAirdropStatuses()
+    const res = await request(makeApp()).patch(`/api/airdrop/statuses/${st[0].id}`).send({ name: st[1].name })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+    const after = await db.listAirdropStatuses()
+    expect(after.find((s) => s.id === st[0].id)?.name).toBe(st[0].name)
+  })
 })
 
 describe('DELETE /api/airdrop/statuses/:id', () => {
