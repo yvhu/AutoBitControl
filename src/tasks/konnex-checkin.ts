@@ -47,7 +47,7 @@ export class KonnexCheckinTask extends SiteTask {
     name: 'Konnex 签到',
     group: { key: 'konnex', name: 'Konnex' },
     url: 'https://hub.konnex.world/points',
-    sourceUrl: ['https://hub.konnex.world/points'],
+    sourceUrl: ['https://cryptorank.io/zh/drophunting/konnex-activity1071', 'https://airdrops.io/konnex/'],
     note: '每周签到（Check In Weekly，+10 KP，每周一次、每周重置）；真机核实：登录后余额小部件标签 Balance 可作登录态标记（未登录落地页是 Connect Wallet 按钮）；签到按钮为页面唯一 button:has-text("Check in")；成功判定为弹窗 h1#check-in-modal__success__heading（Check-In Succeeded!）；当周已签到时按钮消失，卡片显示 Great job! 横幅（点 Close 后变为暗态 RESETS IN 倒计时，刷新后均持久），两种状态都算成功；卡片渲染有延迟（goto 后约 1s），判定前须等待；MetaMask 弹窗「连接/确认」两步由适配器自动处理；登录分支按录屏素材编写，新窗口真机验证后复核',
     category: 'checkin',
     lastUpdated: '2026-10-07',
