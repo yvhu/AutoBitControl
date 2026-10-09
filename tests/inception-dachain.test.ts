@@ -1,48 +1,39 @@
+/**
+ * InceptionDachainTask 竞速与等待逻辑单测（注入假页面，不连真浏览器）
+ * 改写后任务经 ../api 的 race/runJs/elementState 调用，故假页面按「文案是否出现」提供 count，
+ * 并支持 runJs 的 evaluate（注入假 document 执行原函数体）与竞速轮询用的 waitForTimeout。
+ */
 import { describe, it, expect, vi } from 'vitest'
 import { InceptionDachainTask } from '../src/tasks/inception-dachain'
 import { TaskContext } from '../src/tasks/base'
 
-/** 按文案配置出现时机：delayMs < 0 表示永不出现（waitFor 超时拒绝） */
-function makeFakePage(textDelays: Record<string, number>, opts: { count?: number; visible?: boolean; bodyText?: string } = {}) {
-  const counts: Record<string, number> = {}
+/** 按文案配置是否出现；locator 恒存在且可见（供 isVisible 判定补点） */
+function makeFakePage(textPresent: Record<string, boolean>, opts: { visible?: boolean; bodyText?: string } = {}) {
+  const clicks: string[] = []
   return {
     getByText: (text: string) => ({
-      first: () => ({
-        waitFor: ({ timeout }: { timeout: number }) => new Promise<void>((resolve, reject) => {
-          const delay = textDelays[text]
-          if (delay === undefined || delay < 0) {
-            setTimeout(() => reject(new Error(`等待文案超时: ${text}`)), timeout)
-          } else {
-            setTimeout(resolve, delay)
-          }
-        }),
-      }),
+      count: async () => (textPresent[text] ? 1 : 0),
     }),
     locator: (sel: string) => ({
       first: () => ({
-        count: async () => counts[sel] ?? opts.count ?? 0,
+        count: async () => 1,
         isVisible: async () => opts.visible ?? true,
-        click: vi.fn().mockResolvedValue(undefined),
+        click: async () => { clicks.push(sel) },
       }),
     }),
-    waitForTimeout: async (ms: number) => { await new Promise(r => setTimeout(r, ms)) },
-    evaluate: async (fn: () => unknown) => fn(),
-    __bodyText: opts.bodyText ?? '',
+    waitForTimeout: async (ms: number) => { await new Promise((r) => setTimeout(r, ms)) },
+    // runJs 会把任务闭包经 page.evaluate 执行；用 new Function 注入假 document 执行原函数体
+    evaluate: async (fn: () => unknown) => {
+      const exec = new Function('document', `return (${fn.toString()})()`)
+      return exec({ body: { innerText: opts.bodyText ?? '' } })
+    },
+    clicks,
   }
 }
 
-// ctx.js 会把任务闭包经 page.evaluate 执行；假页面用 new Function 注入 fake document 执行原函数体
 function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
-  const wrapped = {
-    ...page,
-    evaluate: async (fn: () => unknown) => {
-      const body = (page as unknown as { __bodyText: string }).__bodyText
-      const exec = new Function('document', `return (${fn.toString()})()`)
-      return exec({ body: { innerText: body } })
-    },
-  }
   return new TaskContext({
-    page: wrapped as never,
+    page: page as never,
     task: new InceptionDachainTask(),
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
@@ -52,8 +43,7 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
   })
 }
 
-// 私有辅助方法经类型断言直接测试（纯竞速/等待逻辑，与页面无关）；
-// 此处仅测任务级组合，通用竞速/可见性/等待由 ctx 能力覆盖
+// 私有辅助方法经类型断言直接测试（纯竞速/等待逻辑，与页面无关）
 type TaskHelpers = {
   raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<'limit' | 'modal' | 'insufficient' | null>
   raceReveal(ctx: TaskContext, timeoutMs: number): Promise<'revealed' | 'insufficient' | 'limit' | null>
@@ -64,17 +54,17 @@ const helpers = new InceptionDachainTask() as unknown as TaskHelpers
 
 describe('InceptionDachainTask 竞速与等待逻辑', () => {
   it('raceAfterOpenFree：命中每日上限提示 → limit（任务成功）', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Daily limit reached': 100 }))
+    const ctx = makeCtx(makeFakePage({ 'Daily limit reached': true }))
     expect(await helpers.raceAfterOpenFree(ctx, 1000)).toBe('limit')
   })
 
   it('raceAfterOpenFree：弹窗出现 → modal', async () => {
-    const ctx = makeCtx(makeFakePage({ 'What is inside?': 100 }))
+    const ctx = makeCtx(makeFakePage({ 'What is inside?': true }))
     expect(await helpers.raceAfterOpenFree(ctx, 1000)).toBe('modal')
   })
 
   it('raceAfterOpenFree：余额不足 → insufficient（快速失败不空耗）', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Insufficient QE': 100 }))
+    const ctx = makeCtx(makeFakePage({ 'Insufficient QE': true }))
     expect(await helpers.raceAfterOpenFree(ctx, 1000)).toBe('insufficient')
   })
 
@@ -84,23 +74,23 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
   })
 
   it('raceReveal：任一结果文案出现 → revealed', async () => {
-    const ctx1 = makeCtx(makeFakePage({ 'You Won': 100 }))
+    const ctx1 = makeCtx(makeFakePage({ 'You Won': true }))
     expect(await helpers.raceReveal(ctx1, 1000)).toBe('revealed')
-    const ctx2 = makeCtx(makeFakePage({ 'Better luck next time': 100 }))
+    const ctx2 = makeCtx(makeFakePage({ 'Better luck next time': true }))
     expect(await helpers.raceReveal(ctx2, 1000)).toBe('revealed')
   })
 
   it('raceReveal：余额不足 → insufficient', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Insufficient QE': 100 }))
+    const ctx = makeCtx(makeFakePage({ 'Insufficient QE': true }))
     expect(await helpers.raceReveal(ctx, 1000)).toBe('insufficient')
   })
 
   it('raceReveal：弹窗内出现每日上限提示 → limit（达上限窗口弹窗无开箱结果场景）', async () => {
-    const ctx = makeCtx(makeFakePage({ 'Daily limit reached': 100 }))
+    const ctx = makeCtx(makeFakePage({ 'Daily limit reached': true }))
     expect(await helpers.raceReveal(ctx, 1000)).toBe('limit')
   })
 
-  it('raceReveal：90s 内无结果 → null（触发补点一次或失败）', async () => {
+  it('raceReveal：预算内无结果 → null（触发补点一次或失败）', async () => {
     const ctx = makeCtx(makeFakePage({}))
     expect(await helpers.raceReveal(ctx, 200)).toBeNull()
   })
@@ -115,41 +105,18 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
     expect(await helpers.dailyOpens(ctx)).toBeNull()
   })
 
-  it('revealInModal：总预算 120s（45s 无结果补点后剩余预算拉满 75s）', async () => {
+  it('revealInModal：45s 无结果补点 Open for 一次，随后用剩余预算等结果（超时返回 null）', async () => {
     vi.useFakeTimers()
     try {
-      const timeouts: number[] = []
-      const click = vi.fn().mockResolvedValue(undefined)
-      const page = {
-        getByText: () => ({
-          first: () => ({
-            waitFor: ({ timeout }: { timeout: number }) => new Promise<void>((_, reject) => {
-              timeouts.push(timeout)
-              setTimeout(() => reject(new Error(`等待文案超时`)), timeout)
-            }),
-          }),
-        }),
-        locator: () => ({
-          first: () => ({ count: async () => 1, isVisible: async () => true, click }),
-        }),
-      }
-      const ctx = new TaskContext({
-        page: page as never,
-        task: new InceptionDachainTask(),
-        profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-        cfg: {} as never,
-        logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
-        artifactsDir: '',
-        walletPasswords: {},
-      })
+      const page = makeFakePage({})
+      const ctx = makeCtx(page)
       const p = helpers.revealInModal(ctx)
-      await vi.advanceTimersByTimeAsync(45_000)
-      expect(click).toHaveBeenCalledTimes(2) // Open for 首次点击 + 45s 无结果补点
-      await vi.advanceTimersByTimeAsync(75_000)
+      // 首轮竞速 45s 后无结果 → 补点 Open for（首点 + 补点共 2 次）
+      await vi.advanceTimersByTimeAsync(46_000)
+      expect(page.clicks.filter((s) => s.includes('Open for')).length).toBe(2)
+      // 第二轮用剩余预算（约 120s - 46s）继续等，仍无结果 → 返回 null
+      await vi.advanceTimersByTimeAsync(80_000)
       expect(await p).toBeNull()
-      // 每轮竞速 4 个文案各一次 waitFor：首轮 45s，末轮剩余预算 75s
-      expect(timeouts.filter((t) => t === 45_000).length).toBe(4)
-      expect(timeouts.filter((t) => t === 75_000).length).toBe(4)
     } finally {
       vi.useRealTimers()
     }

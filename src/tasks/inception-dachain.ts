@@ -1,9 +1,10 @@
 /**
  * DAC Inception 任务：量子箱开箱（每日 5 箱）
  * 登录：Enter Inception → Get Started 弹窗点 WALLET → AppKit 归一化 → MetaMask
- * 依赖方向：仅依赖 ./base
+ * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
-import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, loginWallet, click, waitFor, race, runJs, elementState, takeScreenshot } from '../api'
 
 const LIMIT_TEXT = 'Daily limit reached' // 每日开箱上限提示
 const MODAL_TITLE = 'What is inside?' // 开箱弹窗标题
@@ -13,7 +14,6 @@ const SIDEBAR_TEXT = 'Quantum Crate' // 左侧目录栏开箱入口（也作登�
 const ENTER_TEXT = 'Enter Inception' // 落地页进入按钮（未登录时可见）
 const METAMASK_ENTRY = 'wallet-selector-io.metamask' // AppKit 钱包选择项的 testid
 
-const GET_STARTED_WAIT_MS = 45000 // 预留：等 Get Started 弹窗的预算（当前未使用）
 const CRATE_PAGE_WAIT_MS = 20000 // 点目录栏后等开箱页元素（Open Free）出现的预算
 const CRATE_PAGE_ATTEMPTS = 2 // 进入开箱页的补点次数（SPA 路由可能未生效）
 const CRATE_LOOP_MAX = 8 // 开箱循环上限（每日 5 箱，留冗余）
@@ -43,16 +43,27 @@ export class InceptionDachainTask extends SiteTask {
     concurrency: 4,
   }
 
-  login: LoginSpec = {
-    loggedIn: { text: SIDEBAR_TEXT },
-    loggedOut: ENTER_TEXT,
-    connect: `button:has-text("${ENTER_TEXT}")`,
-    entry: { kind: 'appkit', open: 'button:has-text("WALLET")', entryTestId: METAMASK_ENTRY },
-    intents: ['connect'],
+  /**
+   * 执行流程：打开任务页 → 声明式钱包登录（AppKit 归一化 MetaMask）→ 进入开箱页反复开箱。
+   * @param ctx 任务上下文
+   */
+  async run(ctx: TaskContext): Promise<void> {
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    await loginWallet(ctx, {
+      wallet: 'metamask',
+      scenario: 'appkit',
+      loggedIn: { text: SIDEBAR_TEXT },
+      loggedOut: ENTER_TEXT,
+      connect: `button:has-text("${ENTER_TEXT}")`,
+      open: 'button:has-text("WALLET")',
+      entryTestId: METAMASK_ENTRY,
+      intents: ['connect'],
+    })
+    await this.action(ctx)
   }
 
   /**
-   * 站点动作：进入开箱页 → 反复开箱直到每日上限（登录已由默认 run 完成）。
+   * 站点动作：进入开箱页 → 反复开箱直到每日上限。
    * @param ctx 任务上下文
    */
   async action(ctx: TaskContext): Promise<void> {
@@ -60,19 +71,14 @@ export class InceptionDachainTask extends SiteTask {
     await this.openCrates(ctx)
   }
 
+  /** 判断某选择器的首个匹配元素当前是否可见 */
   private async isVisible(ctx: TaskContext, selector: string): Promise<boolean> {
-    try {
-      const loc = ctx.page.locator(selector).first()
-      if ((await loc.count()) === 0) return false
-      return await loc.isVisible()
-    } catch {
-      return false
-    }
+    return (await elementState(ctx, selector)) === 'visible'
   }
 
   /** 点 Open Free 后竞速：上限提示 / 开箱弹窗 / 余额不足 */
   private raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<RaceKey | null> {
-    return ctx.race([['limit', { text: LIMIT_TEXT }], ['modal', { text: MODAL_TITLE }], ['insufficient', { text: INSUFFICIENT_TEXT }]], timeoutMs)
+    return race(ctx, [['limit', { text: LIMIT_TEXT }], ['modal', { text: MODAL_TITLE }], ['insufficient', { text: INSUFFICIENT_TEXT }]], timeoutMs)
   }
 
   /** 开箱结果竞速：结果文案任一 / 余额不足 / 弹窗内上限提示 */
@@ -82,12 +88,12 @@ export class InceptionDachainTask extends SiteTask {
       ['insufficient', { text: INSUFFICIENT_TEXT }],
       ['limit', { text: LIMIT_TEXT }],
     ]
-    return ctx.race(entries, timeoutMs)
+    return race(ctx, entries, timeoutMs)
   }
 
   /** 读页面每日开箱计数器（DAILY OPENS x/y）；解析失败返回 null */
   private async dailyOpens(ctx: TaskContext): Promise<{ opened: number; total: number } | null> {
-    return ctx.js<{ opened: number; total: number } | null>(() => {
+    return runJs<{ opened: number; total: number } | null>(ctx, () => {
       const text = (document as unknown as { body?: { innerText?: string } }).body?.innerText ?? ''
       const m = text.match(/DAILY[\s|]*OPENS[\s|]*(\d+)\s*\/\s*(\d+)/)
       return m ? { opened: Number(m[1]), total: Number(m[2]) } : null
@@ -101,19 +107,16 @@ export class InceptionDachainTask extends SiteTask {
    */
   private async finishAtLimit(ctx: TaskContext, signal: string): Promise<void> {
     ctx.log.info({ step: 'crates', window: ctx.profile.name, signal }, '每日上限已达成')
-    await ctx.safeScreenshot('dac-success')
+    await takeScreenshot(ctx, 'dac-success')
   }
 
   /** 点左侧目录栏 Quantum Crate → 等 Open Free；点击可能未生效则补点 */
   private async enterCratePage(ctx: TaskContext): Promise<void> {
     for (let attempt = 0; attempt < CRATE_PAGE_ATTEMPTS; attempt++) {
-      await ctx.page.locator(`button:has-text("${SIDEBAR_TEXT}")`).first().click()
-      try {
-        await ctx.page.getByText('Open Free', { exact: false }).first().waitFor({ state: 'visible', timeout: CRATE_PAGE_WAIT_MS })
+      await click(ctx, `button:has-text("${SIDEBAR_TEXT}")`)
+      if (await waitFor(ctx, { text: 'Open Free' }, { budgetMs: CRATE_PAGE_WAIT_MS })) {
         ctx.log.info({ step: 'crates', window: ctx.profile.name }, '进入开箱页面')
         return
-      } catch {
-        // SPA 路由未生效，补点
       }
     }
     throw new Error('点击 Quantum Crate 后未出现开箱页面（等待 Open Free 超时）')
@@ -129,7 +132,7 @@ export class InceptionDachainTask extends SiteTask {
       }
       let outcome: RaceKey | null = null
       for (let attempt = 0; attempt < OPEN_FREE_ATTEMPTS && !outcome; attempt++) {
-        await ctx.page.locator('button:has-text("Open Free")').first().click()
+        await click(ctx, 'button:has-text("Open Free")')
         outcome = await this.raceAfterOpenFree(ctx, OPEN_FREE_RACE_MS)
       }
       if (outcome === 'limit') {
@@ -146,8 +149,8 @@ export class InceptionDachainTask extends SiteTask {
       }
       if (revealed === 'insufficient') throw new Error('QE 余额不足（Insufficient QE），无法继续开箱')
       if (revealed !== 'revealed') throw new Error('等待开箱结果超时（视频/接口过慢）')
-      await ctx.page.locator('button:has-text("Close")').first().click()
-      await this.waitGoneOrHidden(ctx, `text=${MODAL_TITLE}`, MODAL_GONE_MS)
+      await click(ctx, 'button:has-text("Close")')
+      await waitFor(ctx, { gone: `text=${MODAL_TITLE}` }, { budgetMs: MODAL_GONE_MS })
       ctx.log.info({ step: 'crates', window: ctx.profile.name, opened: i + 1 }, '开箱完成')
     }
     throw new Error('开箱次数超过预期仍未出现每日上限提示')
@@ -156,21 +159,12 @@ export class InceptionDachainTask extends SiteTask {
   /** 弹窗内开箱并等结果（结果 / 余额不足 / 弹窗内上限提示 / 超时 null） */
   private async revealInModal(ctx: TaskContext): Promise<RaceKey | null> {
     const deadline = Date.now() + REVEAL_TOTAL_MS
-    await ctx.page.locator('button:has-text("Open for")').first().click()
+    await click(ctx, 'button:has-text("Open for")')
     let revealed = await this.raceReveal(ctx, REVEAL_RECLICK_AT_MS)
     if (!revealed && (await this.isVisible(ctx, 'button:has-text("Open for")'))) {
-      await ctx.page.locator('button:has-text("Open for")').first().click()
+      await click(ctx, 'button:has-text("Open for")')
     }
     if (!revealed) revealed = await this.raceReveal(ctx, Math.max(0, deadline - Date.now()))
     return revealed
-  }
-
-  /** 等元素消失或隐藏（最多 timeoutMs） */
-  private async waitGoneOrHidden(ctx: TaskContext, selector: string, timeoutMs: number): Promise<void> {
-    const end = Date.now() + timeoutMs
-    while (Date.now() < end) {
-      if (!(await this.isVisible(ctx, selector))) return
-      await ctx.page.waitForTimeout(500)
-    }
   }
 }
