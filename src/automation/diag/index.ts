@@ -3,3 +3,5 @@
  * 依赖方向：汇总本目录实现
  */
 export { StepRecorder, type StepRecord } from './recorder'
+export { collectDiagnostics, writeDiagBundle } from './bundle'
+export type { DiagBundle, CollectDiagOpts } from './bundle'
