@@ -38,6 +38,14 @@ describe('dom recoverProbe', () => {
   it('预算内不出现 → false（无错误文案时不刷新）', async () => {
     const page = makePage({}) as never
     expect(await recoverProbe(page, { text: '目标' }, log, { budgetMs: 300 })).toBe(false)
+    expect((page as never as { reload: ReturnType<typeof vi.fn> }).reload).not.toHaveBeenCalled()
+  })
+
+  it('长时间无探针且不刷新 → 触发心跳日志', async () => {
+    const beatLog = { info: vi.fn(), warn: vi.fn() }
+    const page = makePage({}) as never
+    expect(await recoverProbe(page, { text: '目标' }, beatLog as never, { budgetMs: 200, heartbeatMs: 1 })).toBe(false)
+    expect(beatLog.info).toHaveBeenCalled()
   })
 
   it('出现可恢复错误文案 → 触发刷新', async () => {
