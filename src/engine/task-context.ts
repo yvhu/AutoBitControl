@@ -90,6 +90,16 @@ export class TaskContext {
   /** 已记录步骤 */
   steps() { return this.recorder.steps() }
 
+  /** 验证码能力命名空间（Turnstile 方框 + 打码插件；旧扁平方法保留兼容） */
+  get captcha() {
+    return {
+      turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => this.clickTurnstileBox(opts),
+      visible: (selectors?: string[]) => this.turnstileVisible(selectors),
+      autoClick: (budgetMs?: number) => this.autoClickTurnstile(budgetMs),
+      waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => this.waitCaptchaPassed(opts),
+    }
+  }
+
   /** 当前页面（任务侧只读使用） */
   get page(): Page {
     return this.deps.page

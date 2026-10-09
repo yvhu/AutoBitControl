@@ -44,6 +44,16 @@ describe('TaskContext 命名空间门面', () => {
   })
 })
 
+describe('ctx.captcha 命名空间', () => {
+  it('暴露 turnstile/visible/autoClick/waitPlugin', () => {
+    const ctx = makeCtx()
+    expect(typeof ctx.captcha.turnstile).toBe('function')
+    expect(typeof ctx.captcha.visible).toBe('function')
+    expect(typeof ctx.captcha.autoClick).toBe('function')
+    expect(typeof ctx.captcha.waitPlugin).toBe('function')
+  })
+})
+
 describe('TaskContext.safeScreenshot', () => {
   it('截图失败只告警不抛错，返回空串', async () => {
     const ctx = makeCtx()
