@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os'
 import type { AddressInfo } from 'node:net'
 import { judgeFundResponse, runClaimLoop, ShelbyFaucetTask, type FundResponse } from '../src/tasks/shelby-faucet'
 import { TaskContext } from '../src/tasks/base'
-import { Humanizer } from '../src/automation/humanize'
+
+// 与生产代码保持一致的站点选择器（用于假 page 按选择器路由）
+const ADDRESS_SELECTOR = 'input[name="address"]'
+const FUND_BUTTON_SELECTOR = 'button:has-text("Fund")'
 
 /** 假响应：仅含判定所需字段 */
 function resp(body: FundResponse | null): { json: () => Promise<FundResponse | null> } {
@@ -37,24 +40,29 @@ function makeCtx(responses: Array<{ json: () => Promise<unknown> } | null>, opts
     inputValue: vi.fn().mockResolvedValue(opts.inputValue ?? '0x1'),
     fill: vi.fn().mockResolvedValue(undefined),
   }
-  const page = {
-    locator: () => ({
-      first: () => inputEl,
+  // 记录 Fund 按钮点击（替代此前的 ctx.human.click 断言）
+  const clicks: string[] = []
+  const fundButton = {
+    click: vi.fn(async () => {
+      clicks.push(FUND_BUTTON_SELECTOR)
     }),
+  }
+  const page = {
+    locator: (selector: string) => (selector === FUND_BUTTON_SELECTOR ? { first: () => fundButton } : { first: () => inputEl }),
     waitForResponse: vi.fn(() => Promise.resolve(queue.shift() ?? null)),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
   }
   const ctx = new TaskContext({
     page: page as never,
     task: { meta: { key: 'shelby-faucet', name: 'Shelby 领水', url: '' } },
-    human: { click: vi.fn().mockResolvedValue(undefined) } as never,
+    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
     artifactsDir: '',
     walletPasswords: {},
   })
-  return { ctx, log }
+  return { ctx, log, clicks }
 }
 
 describe('judgeFundResponse 判定', () => {
@@ -77,25 +85,25 @@ describe('judgeFundResponse 判定', () => {
 
 describe('runClaimLoop 领取循环', () => {
   it('全部成功 → 领满 maxClaims 次，不补点', async () => {
-    const { ctx } = makeCtx(Array(5).fill(resp(SUCCESS_BODY)))
+    const { ctx, clicks } = makeCtx(Array(5).fill(resp(SUCCESS_BODY)))
     const { claimed } = await runClaimLoop(ctx, '0x1', 5)
     expect(claimed).toBe(5)
     expect(ctx.page.waitForResponse).toHaveBeenCalledTimes(5)
-    expect(ctx.human.click).toHaveBeenCalledTimes(5)
+    expect(clicks.length).toBe(5)
   })
 
   it('响应超时 → 补点一次后成功', async () => {
-    const { ctx } = makeCtx([null, resp(SUCCESS_BODY)])
+    const { ctx, clicks } = makeCtx([null, resp(SUCCESS_BODY)])
     const { claimed } = await runClaimLoop(ctx, '0x1', 1)
     expect(claimed).toBe(1)
     expect(ctx.page.waitForResponse).toHaveBeenCalledTimes(2)
-    expect(ctx.human.click).toHaveBeenCalledTimes(2)
+    expect(clicks.length).toBe(2)
   })
 
   it('补点后仍超时 → 抛错（进失败重试）', async () => {
-    const { ctx } = makeCtx([null, null])
+    const { ctx, clicks } = makeCtx([null, null])
     await expect(runClaimLoop(ctx, '0x1', 1)).rejects.toThrow('等待 /fund 响应超时')
-    expect(ctx.human.click).toHaveBeenCalledTimes(2)
+    expect(clicks.length).toBe(2)
   })
 
   it('中途达上限 → 提前退出不抛错，claimed 为已成功次数', async () => {
@@ -127,20 +135,21 @@ describe('runClaimLoop 领取循环', () => {
 })
 
 describe('点击失败不产生孤儿 unhandledRejection', () => {
-  it('human.click 抛错 → 立即上抛且无未处理拒绝', async () => {
+  it('Fund 按钮 click 抛错 → 立即上抛且无未处理拒绝', async () => {
     const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     // 注意：waitForResponse 必须是普通函数返回裸 promise（vi.fn 会因 tinyspy 隐式挂 .then 而遮蔽 unhandledRejection）
     const page = {
-      locator: () => ({
-        first: () => ({ inputValue: vi.fn().mockResolvedValue('0x1'), fill: vi.fn().mockResolvedValue(undefined) }),
-      }),
+      locator: (selector: string) =>
+        selector === FUND_BUTTON_SELECTOR
+          ? { first: () => ({ click: () => Promise.reject(new Error('点击失败: 找不到元素 button:has-text("Fund")')) }) }
+          : { first: () => ({ inputValue: vi.fn().mockResolvedValue('0x1'), fill: vi.fn().mockResolvedValue(undefined) }) },
       waitForResponse: () => new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout 10000ms exceeded')), 50)),
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
     }
     const ctx = new TaskContext({
       page: page as never,
       task: { meta: { key: 'shelby-faucet', name: 'Shelby 领水', url: '' } },
-      human: { click: vi.fn().mockRejectedValue(new Error('点击失败: 找不到元素 button:has-text("Fund")')) } as never,
+      human: {} as never,
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       cfg: {} as never,
       logger: log as never,
@@ -222,7 +231,7 @@ describe('Shelby 领水任务集成（真实浏览器 + 本地 fixture + 路由�
       const ctx = new TaskContext({
         page,
         task,
-        human: new Humanizer(page),
+        human: {} as never,
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
