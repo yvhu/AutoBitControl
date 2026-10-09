@@ -127,7 +127,7 @@ waitResponse(ctx, match: {
   urlPart?: string                                        // 只等 URL 含此片段
   method?: string                                         // 只等此 HTTP 方法
   predicate?: (status: number, body: unknown) => boolean  // 命中条件：值/状态
-  parse?: 'json'                                          // 解析 body 为 JSON（默认返回文本）
+  parse?: 'json' | 'text'                                 // 解析 body：默认 json（与旧 waitForApi 一致），'text' 返回原文
 }, options?: { timeoutMs?: number }): Promise<{ status: number; body: unknown }>
 ```
 
