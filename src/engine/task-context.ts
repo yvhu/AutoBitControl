@@ -220,6 +220,19 @@ export class TaskContext {
   }
 
   /**
+   * 容错截图：截图失败只告警不判任务失败（站点持续动画时 CDP 截图偶发挂起，真机教训）
+   * @returns 成功返回路径；失败返回空串
+   */
+  async safeScreenshot(name: string): Promise<string> {
+    try {
+      return await this.screenshot(name)
+    } catch (e) {
+      this.log.warn({ step: 'screenshot', window: this.deps.profile.name, err: (e as Error).message }, '截图失败（不影响任务结果）')
+      return ''
+    }
+  }
+
+  /**
    * 钱包扩展就绪检查（会话级缓存）：任务登录流程前调用，扩展未加载时快速失败
    * （重试会重启浏览器窗口，扩展随之重载——真机实测重启即恢复）
    * 无 wallet 配置 / 未注入会话时跳过（脚本与测试兼容）

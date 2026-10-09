@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { TaskContext, type SiteTask, type TaskMeta } from '../src/tasks/base'
 
 class FakeTask implements SiteTask {
@@ -41,5 +41,19 @@ describe('TaskContext 命名空间门面', () => {
     const out = await ctx.step('s', async () => 7)
     expect(out).toBe(7)
     expect(ctx.steps().map((x) => x.name)).toContain('s')
+  })
+})
+
+describe('TaskContext.safeScreenshot', () => {
+  it('截图失败只告警不抛错，返回空串', async () => {
+    const ctx = makeCtx()
+    ctx.screenshot = vi.fn().mockRejectedValue(new Error('CDP 超时'))
+    await expect(ctx.safeScreenshot('x')).resolves.toBe('')
+  })
+
+  it('截图成功返回路径', async () => {
+    const ctx = makeCtx()
+    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/x.png')
+    await expect(ctx.safeScreenshot('x')).resolves.toBe('/tmp/x.png')
   })
 })
