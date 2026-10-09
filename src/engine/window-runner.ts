@@ -284,6 +284,8 @@ export class WindowRunner {
       return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: localWallNow() }), null)
     }
 
+    // TaskContext 提升到循环 try 外：失败 catch 需经它取步骤时间线采集诊断包
+    let ctx: TaskContext | null = null
     for (let attempt = startAttempt; attempt <= retryMax + 1; attempt++) {
       // 重试前页面复位：非首次尝试先清空页面（失败容错：about:blank 加载失败不影响后续）
       if (attempt > 1) {
@@ -300,7 +302,7 @@ export class WindowRunner {
         }
       }
       try {
-        const ctx = new TaskContext({
+        ctx = new TaskContext({
           page,
           task,
           profile,
@@ -323,7 +325,26 @@ export class WindowRunner {
         const status = nextStateAfterFailure(attempt, retryMax + 1, 'error')
         // 失败截图留档，供面板"查看"排障
         const shot = await page.screenshot({ path: join(artifacts, `${date}-attempt${attempt}.png`) }).then(() => join(artifacts, `${date}-attempt${attempt}.png`)).catch(() => null)
-        const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, status, { error: (e as Error).message, screenshot: shot, finishedAt: localWallNow() }), null)
+        // 失败诊断包（页面 + 步骤时间线 + 错误/状态/窗口/任务），best-effort：
+        // 采集或写盘异常只告警，绝不影响任务结果落库
+        let diagPath: string | null = null
+        if (ctx) {
+          try {
+            const { collectDiagnostics, writeDiagBundle } = await import('../automation')
+            const bundle = await collectDiagnostics({
+              page,
+              steps: ctx.steps(),
+              error: (e as Error).message,
+              status,
+              windowName: profile.name,
+              taskKey,
+            })
+            diagPath = writeDiagBundle(artifacts, `${date}-attempt${attempt}.diag`, bundle)
+          } catch (de) {
+            logger.warn({ profile: profile.name, task: taskKey, err: (de as Error).message }, '诊断包采集失败（不影响任务结果）')
+          }
+        }
+        const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, status, { error: (e as Error).message, screenshot: shot, diagPath, finishedAt: localWallNow() }), null)
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')
         if (status === 'retry_wait') {
           // 重试不占窗：退避期不 sleep，立即返回让窗口继续处理下一个任务/正常关窗；

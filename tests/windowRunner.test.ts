@@ -4,6 +4,7 @@
  * 两个 describe：基础会话编排（mock db）+ 批次透传与 pending 预写（有状态内存假库）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
@@ -121,6 +122,30 @@ describe('WindowRunner', () => {
     expect(scheduleRetry.mock.calls[0][1]).toBe('fail-task')
     expect(scheduleRetry.mock.calls[0][2]).toBe(0)
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('任务失败采集诊断包并随 run 落库 diagPath', async () => {
+    const db = makeDb()
+    const page = { ...okPage, evaluate: vi.fn().mockResolvedValue('可见文本') }
+    const task = new FailTask()
+    const runner = makeRunner({
+      db,
+      tasks: new Map([['fail-task', task]]),
+      driver: makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) }),
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
+    // 失败分支的 upsertRun 须携带 diagPath，且指向 artifacts 目录下的 .diag.json
+    const failCall = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'retry_wait')
+    expect(failCall).toBeTruthy()
+    const diagPath = failCall![5].diagPath as string
+    expect(diagPath.startsWith(artifactsDir)).toBe(true)
+    expect(diagPath.endsWith('.diag.json')).toBe(true)
+    // 诊断文件已落盘，含 steps/error/url 关键排障字段
+    expect(existsSync(diagPath)).toBe(true)
+    const bundle = JSON.parse(readFileSync(diagPath, 'utf8'))
+    expect(Array.isArray(bundle.steps)).toBe(true)
+    expect(bundle.error).toBe('boom')
+    expect(bundle.url).toBe('https://x.io')
   })
 
   it('重试会话从上次 attempts 继续并先复位页面', async () => {
