@@ -3,11 +3,12 @@
  * 站点：占位示例铸币站；url 为空、开关默认关闭，仅作调试与复制起点
  * 执行流程：打开任务页（url 为空则跳过）→ 声明式登录（Petra）→ action 填名称/符号
  *          → 下一步 → 填描述/数量 → 提交 → 等钱包确认交易 → 断言链上成功提示 → 截图
- * 设计：钱包登录声明 login；多步骤表单以「等下一步元素出现」代替固定 sleep
+ * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/fill/waitFor/confirmTransaction）
  * 时间预算：timeoutSec 300s（单任务整体超时）、retry.max 1 次 / 退避 600s、concurrency 4
  */
 import { faker } from '@faker-js/faker'
-import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, loginWallet, click, fill, waitFor, confirmTransaction, takeScreenshot } from '../api'
 
 export class MintExampleTask extends SiteTask {
   meta: TaskMeta = {
@@ -26,37 +27,44 @@ export class MintExampleTask extends SiteTask {
     concurrency: 4,
   }
 
-  // 登录声明：默认 run 会先跑 ensureLoggedIn（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
-  login: LoginSpec = {
-    loggedIn: { text: '连接钱包' }, // 占位：换成站点已登录标志
-    loggedOut: '连接钱包', // 占位：换成站点未登录标志
-    connect: 'button:has-text("连接钱包")', // 占位：换成站点连接入口
-    entry: { kind: 'direct' }, // 直连：点连接即唤起钱包扩展
+  /**
+   * 执行流程：打开任务页（url 为空则跳过）→ 声明式钱包登录 → 铸币动作。
+   * @param ctx 任务上下文
+   */
+  async run(ctx: TaskContext): Promise<void> {
+    if (this.meta.url) await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    await loginWallet(ctx, {
+      wallet: 'petra',
+      scenario: 'direct',
+      loggedIn: { text: '连接钱包' },
+      loggedOut: '连接钱包',
+      connect: 'button:has-text("连接钱包")',
+    })
+    await this.action(ctx)
   }
 
   /**
    * 站点动作：分两步填写并铸币，提交后等待钱包确认与链上结果。
-   * @param ctx 任务上下文，提供 page、wallet（confirmTx）、safeScreenshot 等
+   * @param ctx 任务上下文，提供 page/wallets/walletPasswords/walletSession/log 等
    */
   async action(ctx: TaskContext): Promise<void> {
-    const page = ctx.page
     const tokenName = faker.word.words(2)
     const tokenSymbol = tokenName.replace(/[aeiou]/gi, '').slice(0, 4).toUpperCase()
     // 第一步：代币名称与符号
-    await page.locator('input[name="name"]').fill(tokenName)
-    await page.locator('input[name="symbol"]').fill(tokenSymbol)
+    await fill(ctx, 'input[name="name"]', tokenName)
+    await fill(ctx, 'input[name="symbol"]', tokenSymbol)
     // 多步骤：点"下一步"后等第二步元素出现（用等待代替固定 sleep）
-    await page.locator('#step-next').click()
-    await page.locator('#step-2').waitFor({ state: 'visible', timeout: 10000 })
+    await click(ctx, '#step-next')
+    await waitFor(ctx, { selector: '#step-2' }, { budgetMs: 10000, assert: true })
     // 第二步：描述与数量
-    await page.locator('textarea[name="description"]').fill(faker.lorem.sentence())
-    await page.locator('input[name="amount"]').fill(String(faker.number.int({ min: 1, max: 100 })))
+    await fill(ctx, 'textarea[name="description"]', faker.lorem.sentence())
+    await fill(ctx, 'input[name="amount"]', String(faker.number.int({ min: 1, max: 100 })))
     // 提交（站点随后唤起钱包交易确认弹窗）
-    await page.locator('#mint-submit').click()
+    await click(ctx, '#mint-submit')
     // 等钱包确认交易；reclick 用于提交后按钮被重置时补点（afterMs 后再点一次）
-    await ctx.wallet.confirmTx({ reclick: { selector: '#mint-submit', afterMs: 8000 } })
+    await confirmTransaction(ctx, { reclick: { selector: '#mint-submit', afterMs: 8000 } })
     // 断言链上结果提示（宁严勿松）
-    await page.locator('.tx-success').waitFor({ state: 'visible', timeout: 30000 })
-    await ctx.safeScreenshot('mint-success')
+    await waitFor(ctx, { selector: '.tx-success' }, { budgetMs: 30000, assert: true })
+    await takeScreenshot(ctx, 'mint-success')
   }
 }
