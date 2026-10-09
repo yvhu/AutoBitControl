@@ -1,7 +1,7 @@
 /**
  * 诊断路由（server 层）：按 run id 取失败诊断包 JSON
  * 依赖方向：server → infrastructure（RunRow 类型）；getRunById 由 app 注入
- * 设计思路：只读文件、失败安全——run 不存在/无 diagPath/文件不可读统一 404（业务码 40407）
+ * 设计思路：只读文件、失败安全——run 不存在/无 diagPath/文件不可读统一 404（业务码 40408）
  */
 import { Router } from 'express'
 import { readFileSync } from 'node:fs'
@@ -22,8 +22,10 @@ import type { RunRow } from '../../infrastructure/db'
  *     responses:
  *       '200':
  *         description: 诊断包 JSON（DiagBundle）
+ *       '400':
+ *         description: runId 非法（业务码 40000）
  *       '404':
- *         description: run 不存在/无诊断/文件不可读（业务码 40407）
+ *         description: run 不存在/无诊断/文件不可读（业务码 40408）
  */
 export function diagnosticsRouter(deps: { getRunById: (id: number) => Promise<RunRow | null> }): Router {
   const router = Router()

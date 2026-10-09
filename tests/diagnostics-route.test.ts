@@ -34,22 +34,22 @@ describe('GET /api/diagnostics/:runId', () => {
     expect(res.body.data.steps).toHaveLength(1)
   })
 
-  it('无 diagPath → 404/40407', async () => {
+  it('无 diagPath → 404/40408', async () => {
     const res = await request(makeApp(async () => asRun({ id: 2, diagPath: null }))).get('/api/diagnostics/2')
     expect(res.status).toBe(404)
-    expect(res.body.code).toBe(40407)
+    expect(res.body.code).toBe(40408)
   })
 
-  it('run 不存在 → 404/40407', async () => {
+  it('run 不存在 → 404/40408', async () => {
     const res = await request(makeApp(async () => null)).get('/api/diagnostics/999')
     expect(res.status).toBe(404)
-    expect(res.body.code).toBe(40407)
+    expect(res.body.code).toBe(40408)
   })
 
-  it('diagPath 指向的文件不存在 → 404/40407', async () => {
+  it('diagPath 指向的文件不存在 → 404/40408', async () => {
     const res = await request(makeApp(async () => asRun({ id: 3, diagPath: join(dir, 'nope.diag.json') }))).get('/api/diagnostics/3')
     expect(res.status).toBe(404)
-    expect(res.body.code).toBe(40407)
+    expect(res.body.code).toBe(40408)
   })
 
   it('runId 非法 → 400/40000', async () => {
