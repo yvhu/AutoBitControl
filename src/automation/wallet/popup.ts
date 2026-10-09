@@ -6,17 +6,26 @@
  */
 import type { BrowserContext, Page } from 'patchright'
 
-/** 判断页面 URL 是否命中任一钱包弹窗模式 */
+/**
+ * 判断某个页面 URL 是否命中任一钱包弹窗模式。
+ * 逐个用模式字符串构造正则去 test 该 URL，命中其一即返回 true。
+ * @param url 待判断的页面地址
+ * @param patterns 正则字符串列表（来自适配器的 extensionUrlPatterns）
+ * @returns 是否命中任一模式
+ */
 export function matchesWalletUrl(url: string, patterns: string[]): boolean {
   return patterns.some(p => new RegExp(p).test(url))
 }
 
 /**
- * 等待钱包弹窗出现（扫描浏览器全部 context——比特浏览器部分弹窗开在别的 context）
- * 先查已打开的页面，再同时用事件监听 + 100ms 轮询兜底；超时返回 null
- * @param timeoutMs 最长等待时间（超时返回 null）
- * @returns 命中的弹窗页面，或超时 null
- * 设计权衡：settled 标记防止事件监听与轮询同时命中导致重复 resolve
+ * 等待钱包弹窗出现并返回该页面。
+ * 执行流程：先扫描浏览器全部 context（比特浏览器部分弹窗会开在别的 context，不能只看当前 context），
+ * 已存在匹配页则直接返回；否则同时挂两条兜底——监听新页面 'page' 事件，以及每 100ms 轮询一次全部页面，
+ * 二者任一命中就返回；超过 timeoutMs 仍未命中也返回（null）。settled 标记保证事件与轮询竞争时只落定一次。
+ * @param context 起始浏览器上下文（其所属浏览器的全部 context 都会被扫描）
+ * @param patterns 钱包弹窗 URL 正则列表
+ * @param timeoutMs 最长等待毫秒数，超时返回 null
+ * @returns 命中的弹窗页面；超时返回 null，由调用方决定后续
  */
 export async function waitForPopup(context: BrowserContext, patterns: string[], timeoutMs: number): Promise<Page | null> {
   const find = (): Page | undefined => {

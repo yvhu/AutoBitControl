@@ -13,6 +13,12 @@ const CONFIRM_TEXTS = ['Sign In', 'Connect', 'Approve', 'Confirm', 'Sign']
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Petra 钱包适配器：与 MetaMask 同构的四类交互（解锁/连接/签名/交易确认），但定位方式不同。
+ * Petra 弹窗没有稳定 testid，只能按按钮文案 has-text 匹配；且 getByRole 匹配不到 Sign In
+ * （其无障碍名异常），所以必须用 has-text。另一个真机事实是 Petra 不注入页面 provider，
+ * 扩展就绪判定只能靠 CDP 扩展页探测（见 types.ts 的 expectsProvider）。
+ */
 export class PetraAdapter implements WalletAdapter {
   key = 'petra'
   extensionId = 'ejjladinnckdgjemekebdpeokbikhfci'
@@ -24,9 +30,14 @@ export class PetraAdapter implements WalletAdapter {
   extensionUrlPatterns = ['chrome-extension://.*/prompt.html', 'chrome-extension://.*/index.html', 'chrome-extension://.*/popup.html']
 
   /**
-   * 解锁：轮询等密码框 → 填密码 → 点 Unlock 按钮（兜底回车）；密码框消失即解锁完成；
-   * 弹窗已解锁直显确认页（Sign In/Connect 等按钮存在）时直接返回（真机实测重登场景
-   * 弹窗可能不带解锁框）；弹窗关闭也返回
+   * 解锁 Petra 弹窗。
+   * 执行流程：最多等 45s，循环内每 500ms 检查——先看是否已直接渲染出确认按钮
+   * （Sign In/Connect 等，说明弹窗本就已解锁，重登场景常见，直接返回）；
+   * 再看密码框，出现则填入密码并点 Unlock（找不到按钮就回退按回车），
+   * 随后等密码框 detached 消失即视为解锁成功；弹窗中途关闭也返回。
+   * @param popup 钱包弹窗页
+   * @param password 解锁密码
+   * @throws 预算内密码框始终未渲染，或密码错误/解锁页迟迟不离开
    */
   async unlock(popup: PopupPage, password: string): Promise<void> {
     const deadline = Date.now() + 45000
@@ -72,7 +83,13 @@ export class PetraAdapter implements WalletAdapter {
     throw new Error('Petra 弹窗状态未出现（解锁框轮询超时未渲染）')
   }
 
-  /** 确认步：等 Sign In/Connect 等按钮出现（has-text，最多 10s） */
+  /**
+   * 轮询等待确认按钮出现。
+   * 每 500ms 一轮，按 CONFIRM_TEXTS 文案逐个用 button:has-text 定位；弹窗关闭或超时返回 null。
+   * @param popup 钱包弹窗页
+   * @param timeoutMs 最长等待毫秒数
+   * @returns 命中的确认按钮定位器；未找到返回 null
+   */
   private async waitConfirmBtn(popup: PopupPage, timeoutMs: number): Promise<ReturnType<PopupPage['locator']> | null> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -90,18 +107,22 @@ export class PetraAdapter implements WalletAdapter {
     return null
   }
 
-  /** 登录/连接授权：与私有 confirm 同构（Petra 确认页按钮一致） */
+  /** 处理「站点请求连接钱包」的弹窗：三种意图按钮布局一致，统一委托 confirm */
   async connect(popup: PopupPage): Promise<void> { await this.confirm(popup) }
 
-  /** 消息签名确认（Petra Sign In）：与私有 confirm 同构 */
+  /** 处理「站点请求消息签名」的弹窗（Petra 的 Sign In）：同样委托 confirm */
   async sign(popup: PopupPage): Promise<void> { await this.confirm(popup) }
 
-  /** 交易确认：与私有 confirm 同构 */
+  /** 处理「站点请求交易确认」的弹窗：同样委托 confirm */
   async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
 
   /**
-   * Sign In 签名确认：点确认按钮至弹窗关闭（最多 3 轮，覆盖解锁→签名等多步）；
-   * 成功判定 = 弹窗 close 事件；真机实测点 Sign In 后弹窗 1-5s 内关闭
+   * 点击确认按钮至弹窗关闭。
+   * 执行流程：先等 2s 让弹窗沉降，然后最多 3 轮——每轮等确认按钮出现并点击，
+   * 成功判定为弹窗 close 事件（真机实测点 Sign In 后弹窗 1-5s 内关闭），
+   * 若事件没来但弹窗已关闭也返回；3 轮仍未关闭则抛错。
+   * @param popup 钱包弹窗页
+   * @throws 3 轮后弹窗仍未关闭
    */
   private async confirm(popup: PopupPage): Promise<void> {
     await sleep(2000)

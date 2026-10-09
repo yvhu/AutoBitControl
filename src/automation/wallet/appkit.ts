@@ -8,7 +8,7 @@
 import { probeVisible } from '../dom'
 import type { WalletActionsDeps } from './actions'
 
-/** AppKit 归一化入参：打开按钮 + 钱包入口 testid + 可选弹窗 testid */
+/** AppKit 归一化入参：定位「打开弹窗的按钮」与「弹窗内的钱包入口」所需的三个选择器 */
 export interface AppKitEntry {
   /** 站点页面上「打开 AppKit 弹窗」的按钮（如 button:has-text("WALLET")） */
   open: string
@@ -38,16 +38,27 @@ export interface AppKitLoginOptions {
   reclickAfterMs?: number
 }
 
-/** 归一化可调参数（缺省用真机实测值） */
+/** 归一化可调参数：控制等待弹窗与把弹窗视图「拨回钱包列表」的重试节奏，缺省均为真机实测值 */
 export interface AppKitNormalizeOpts {
+  /** 打开按钮/弹窗容器可见的最长等待毫秒数（缺省 45000） */
   modalWaitMs?: number
+  /** 视图归一化最多尝试轮数（缺省 5）：每轮找不到入口就点一次「返回/全部钱包」把视图拨回列表 */
   normalizeRounds?: number
+  /** 每轮归一化后的停顿毫秒数（缺省 3000），给弹窗视图切换留时间 */
   roundSleepMs?: number
 }
 
 /**
- * 打开站点 AppKit 弹窗 → 视图归一化 → 点钱包入口（不含钱包弹窗连接，连接由调用方 runIntent 负责）
- * @throws 弹窗未出现 / 归一化轮数耗尽未找到入口
+ * 打开站点 AppKit（Reown）弹窗 → 把弹窗视图归一化到钱包列表 → 点目标钱包入口。
+ * 执行流程：先等「打开按钮」可见再点它，等弹窗容器可见；随后在 normalizeRounds 轮内循环——
+ * 若目标钱包入口已可见即命中；否则依次尝试点 header-back / all-wallets / tab-browser
+ * 把弹窗从 QR 页或收起态拨回列表，每轮停顿片刻再试；找到入口后点它。
+ * 注意：这里只负责「露出钱包入口」，真正的钱包扩展弹窗连接由调用方 runIntent 负责。
+ * 之所以做归一化，是因为 AppKit 初始视图不固定（钱包列表 / 上次钱包 QR 页 / 列表收起），直接等入口会误判失败。
+ * @param deps 任务依赖集（提供页面与 walletKey，仅用于页面操作与报错提示）
+ * @param entry 打开按钮、钱包入口 testid、弹窗容器 testid
+ * @param opts 归一化可调参数（等待时长、轮数、停顿）
+ * @throws 打开按钮/弹窗未出现；或归一化轮数耗尽仍未找到钱包入口
  */
 export async function openAppKitWallet(
   deps: WalletActionsDeps,

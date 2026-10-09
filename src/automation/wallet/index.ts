@@ -1,5 +1,8 @@
 /**
- * wallet 能力出口（automation/wallet 层）
+ * wallet 能力出口（automation/wallet 层）：把钱包适配器、注册表、弹窗等待、会话检测与登录编排汇总成统一入口。
+ * 对外主要提供：WalletRegistry/WalletAdapter/PopupPage 类型与注册表、WalletActions 动作门面、
+ * ensureLoggedIn 登录编排、waitForPopup 弹窗等待、WalletSession 扩展就绪检测、
+ * openAppKitWallet 归一化、以及 MetaMask/Petra 两个具体适配器。
  * 依赖方向：汇总本目录实现，供 engine 层统一导入
  */
 export { WalletRegistry } from './types'

@@ -20,7 +20,15 @@ type TaskLog = TaskContext['log']
 /** 普通延时（毫秒），仅用于 goto 重试退避，非拟人化操作 */
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-/** 打开任务页：最多 3 次，失败按 2-5s 随机退避重试（真机网络抖动韧性），最后一次仍失败则抛出 */
+/**
+ * 打开任务页，带网络抖动重试。
+ * 执行流程：最多 3 次调用 page.goto（45s 超时、DOMContentLoaded 即认为可用）；
+ * 失败打警告，前两次失败后随机退避 2-5s 再试，第 3 次仍失败则抛出原错误。
+ * @param page 当前任务页面
+ * @param url 目标地址
+ * @param log 日志器
+ * @throws 三次均加载失败时抛出最后一次错误
+ */
 export async function gotoWithRetry(page: TaskPage, url: string, log: TaskLog): Promise<void> {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -34,7 +42,11 @@ export async function gotoWithRetry(page: TaskPage, url: string, log: TaskLog): 
   }
 }
 
-/** 关闭当前上下文里除当前页外的所有标签页（覆盖 run 的任务可复用，清掉残留标签页） */
+/**
+ * 关闭当前浏览器上下文里除传入页面外的所有标签页，清掉上一任务/上轮留下的残留页。
+ * 逐个关闭并吞掉错误（某页已关或关不掉都不影响其余）。
+ * @param page 需要保留的当前任务页面
+ */
 export async function closeOtherTabs(page: TaskPage): Promise<void> {
   for (const p of page.context().pages()) {
     if (p === page) continue
@@ -42,15 +54,24 @@ export async function closeOtherTabs(page: TaskPage): Promise<void> {
   }
 }
 
-/** 站点任务抽象类：默认 run 提供统一骨架，子类实现 action（可覆盖 run 处理多页等特殊情况） */
+/**
+ * 站点任务抽象类：所有站点任务的公共契约。
+ * 任务 = 必填的静态元信息 meta + 可选声明式登录 login + 可选站点动作 action；
+ * 基类提供默认 run 骨架，子类一般只需声明 meta（及 login/action），复杂场景（多页等）可覆盖 run。
+ */
 export abstract class SiteTask {
+  /** 任务元信息：key/name/url/wallet/timeoutSec/retry/concurrency/enabled 等（key 全局唯一） */
   abstract meta: TaskMeta
   /** 声明式登录（可选）：配置后默认 run 自动执行 ensureLoggedIn */
   login?: LoginSpec
   /** 任务主体（可选）：登录完成后要做的站点特有动作；旧任务可继续覆盖 run */
   action?(ctx: TaskContext): Promise<void>
 
-  /** 默认骨架：清理残留标签页 → goto → 登录 → action */
+  /**
+   * 默认执行骨架：清理残留标签页 → 打开任务页（带重试）→ 执行声明式登录 → 执行站点动作。
+   * meta.url 为空时跳过导航；login/action 未配置时对应步骤跳过。
+   * @param ctx 任务上下文
+   */
   async run(ctx: TaskContext): Promise<void> {
     await closeOtherTabs(ctx.page)
     if (this.meta.url) {
