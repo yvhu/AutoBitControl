@@ -1,6 +1,6 @@
 # AutoBitControl — AI 协作者指南
 
-Web3 自动签到任务系统：比特浏览器多窗口 + 拟人化操作。Node 单进程 + Vite React 面板。所有注释/文档/commit message 用中文。
+Web3 自动签到任务系统：比特浏览器多窗口。Node 单进程 + Vite React 面板。所有注释/文档/commit message 用中文。
 
 ## 常用命令
 
@@ -39,8 +39,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）
-- `automation/`：humanize.ts（拟人操作）、captcha/turnstile.ts（自研 Cloudflare 方框拟人点击）、wallet/（types 注册表 + metamask/petra 适配器）
-- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务的 ctx 能力）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
+- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（薄门面：`ctx.page` 直用 patchright + `ctx.wallet/captcha/race/recover/step` 命名空间）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}
@@ -51,7 +51,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/concurrency） + `run(ctx)`；成功必须显式断言（ctx.clickCheckin 的 assert 等）；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/concurrency） + 可选 `login: LoginSpec`（声明式登录，`ctx.wallet.ensureLoggedIn` 执行）+ 可选 `action(ctx)`（默认 `run` 骨架：清理标签页 → `goto` 3 次重试 → `ensureLoggedIn` → `action`；多页等特殊流程可覆盖 `run`）；DOM 操作直接调 `ctx.page`（patchright），等待/恢复用 `ctx.recover`，竞速用 `ctx.race`，验证码用 `ctx.captcha.*`（仅 Turnstile 方框），截图用 `ctx.safeScreenshot`；成功必须显式断言；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
 
 **AI 帮写任务（元素清单式模板）**：用户按 `docs/API-GUIDE.md` 附录模板提交新任务时：① 筛选选择器（原始长选择器 → 稳定短选择器，优先 id/data-testid/按钮文案，多候选说明取舍）② 缺失关键信息（登录标志/成功判定/数据源列）一次性列全问题，不逐条追问、不瞎编 ③ 直接写代码（登录竞速/刷新恢复/钱包/领取循环按既有任务模式），真机闭环照常。用户给的是真值素材，不猜。
 
@@ -90,6 +90,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 1. **批量真机验证剩余窗口**：新任务/改动用 `task:run` 逐个窗口验证（`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`），覆盖剩余未验证窗口；已签到/已答题的窗口由任务逻辑自适应（幂等）。
 2. **并发上限 4**：同时最多开 4 个窗口（全局 `maxConcurrentWindows` 缺省 4 即此上限；手动并行验证时每次也最多同时跑 4 个窗口，跑完一批再下一批）。
 3. **问题自解决 + 及时暂停**：遇到问题先自行排查解决；**若长时间无法解决（最多 3 分钟）或同一问题尝试 3 次仍失败，立刻暂停通知用户人工辅助**，不要反复派自动化重跑消耗窗口/额度。
+4. **每次验证前清理残留进程、单入口执行（2026-10-09 用户明确要求）**：开始验证前先检查并结束**此前由 AI 启动但未关闭的 node 进程**（`task:run`、探针脚本、临时起的服务/后端），确认无残留再开跑；**不要同时运行多个程序**——用户手动的 dev/pm2 后端在跑时，**不要再并行起 `task:run`/第二个后端**，统一走一个执行入口（优先复用已在运行的 dev 后端 API 触发），验证结束立即停止自启进程。
+5. **只验证「尚未关闭/尚未验证」的任务**：一次只推进未验证的窗口/任务，不重跑已完成的。
 
 ## 踩坑提醒
 
