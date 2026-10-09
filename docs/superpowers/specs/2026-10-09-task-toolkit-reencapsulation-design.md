@@ -58,6 +58,7 @@ src/automation/
     index.ts
     race.ts                # 多文案/探针竞速
     recover.ts             # 刷新恢复（错误文案立即刷 + 周期刷新 + 心跳）
+    click.ts               # clickPoint(page,x,y) 坐标可信点击（验证码方框等无选择器场景）
     click-robust.ts        # 【可选】动画按钮点击兜底（真机确认原生 click 够用即可删）
 ```
 
@@ -96,6 +97,20 @@ src/automation/
 | `ctx.step` | `step(name, fn)` | 步骤记录（诊断） |
 | `ctx` | `race(entries, ms)` | 多探针竞速（patchright 缺失原语，~5 行） |
 | `ctx` | `recover(probe, opts)` | 刷新恢复（Web3 通用模式，~小助手） |
+
+## 验证码对交互层的依赖（与删拟人化的关系）
+
+验证码两条路线，删拟人化影响不同：
+
+- **打码平台插件路线**（`captcha/plugin-wait.ts` + `frame-find.ts`，如 arc-faucet）：只轮询
+  `aria-checked`，**完全不依赖拟人化**，无影响。
+- **Turnstile 方框点击**（`captcha/turnstile.ts`，如 portal-rhuna）：原调
+  `human.clickAt(x, y)` 坐标点击。**改为 `dom/click.ts` 的 `clickPoint(page, x, y)`**
+  （patchright `page.mouse.click`，原生可信输入），保留「iframe 重渲染瞬时错误重试 +
+  每次重新取盒」逻辑，功能等价；贝塞尔轨迹纯装饰，去掉不影响。
+
+结论：删拟人化不削弱验证码能力，captcha 不再依赖 `Humanizer`；方框点击是否仍能过需真机确认
+（决定因素是 ISP 住宅 IP，坐标点击本身很轻）。
 
 ## 钱包适配器契约（显式四动作）
 
