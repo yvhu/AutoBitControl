@@ -29,7 +29,8 @@ export class PortalRhunaTask extends SiteTask {
     note: '真机核实：登录用 Petra（点 Connect Wallet 直接唤起扩展弹窗 prompt.html，无站内钱包选择）；弹窗流程为输密码+Unlock → Sign In 签名；Petra 不注入页面 provider，就绪判定靠 CDP；站点间歇性报 Network Error，token 存 localStorage，刷新即恢复；领取时弹出 Turnstile 方框，点方框即完成（ISP IP 一点即过）',
     category: 'checkin',
     lastUpdated: '2026-10-09',
-    enabled: true,
+    // 官方疑似已下线该签到活动（2026-10-09 用户确认），关闭任务
+    enabled: false,
     wallet: 'petra',
     timeoutSec: 1200,
     retry: { max: 2, backoffSec: 600 },
