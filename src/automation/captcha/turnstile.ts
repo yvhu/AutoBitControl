@@ -118,6 +118,16 @@ export async function autoClickTurnstile(deps: TurnstileDeps, budgetMs = 10000):
     if (await clickTurnstileBox(deps)) return true
     await deps.page.waitForTimeout(500)
   }
-  deps.logger.info({ step: 'turnstile', budgetMs }, '预算内未检测到人机验证方框（可能免验证或方框未渲染）')
+  // 未检测到：附页面 iframe 清单辅助定位（站点若改了容器/域，日志可直接看出）
+  const iframes = await deps.page
+    .evaluate(() =>
+      Array.from(document.querySelectorAll('iframe')).map((f) => ({
+        src: (f as HTMLIFrameElement).src,
+        w: (f as HTMLElement).offsetWidth,
+        h: (f as HTMLElement).offsetHeight,
+      })),
+    )
+    .catch(() => [])
+  deps.logger.info({ step: 'turnstile', budgetMs, iframes }, '预算内未检测到人机验证方框（附页面 iframe 清单）')
   return false
 }
