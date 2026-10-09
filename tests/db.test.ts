@@ -91,6 +91,22 @@ describe('AppDb', () => {
     expect(await db.incrCircuitBreaker(p.id)).toBe(1)
   })
 
+  it('resetMeltedCircuitBreakers 归零所有 count>0 并返回数量', async () => {
+    const p = await db.upsertProfile('bb-reset-1', 'w1')
+    const q = await db.upsertProfile('bb-reset-2', 'w2')
+    await db.incrCircuitBreaker(p.id)
+    await db.incrCircuitBreaker(p.id)
+    await db.incrCircuitBreaker(q.id)
+    const n = await db.resetMeltedCircuitBreakers()
+    expect(n).toBe(2)
+    const after = (await db.listProfiles()).find((x) => x.id === p.id)
+    expect(after?.circuitBreakerCount).toBe(0)
+    const afterQ = (await db.listProfiles()).find((x) => x.id === q.id)
+    expect(afterQ?.circuitBreakerCount).toBe(0)
+    // 再次调用无可重置行，返回 0
+    expect(await db.resetMeltedCircuitBreakers()).toBe(0)
+  })
+
   it('open_windows 登记/覆盖读取/清除 roundtrip', async () => {
     expect(await db.getOpenWindow('bb-1')).toBeNull()
     await db.setOpenWindow('bb-1', '127.0.0.1:61234')

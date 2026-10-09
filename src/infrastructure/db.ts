@@ -480,6 +480,12 @@ export class AppDb {
     await this.exec('UPDATE profiles SET circuit_breaker_count = 0 WHERE id = ?', [profileId])
   }
 
+  /** 重置所有熔断计数 > 0 的窗口，返回被重置的行数 */
+  async resetMeltedCircuitBreakers(): Promise<number> {
+    const rs = await this.client.execute('UPDATE profiles SET circuit_breaker_count = 0 WHERE circuit_breaker_count > 0')
+    return Number(rs.rowsAffected ?? 0)
+  }
+
   /**
    * 幂等写入运行记录（无则插入、有则更新），单条 UPSERT 完成
    * @param patch 可选字段补丁（error/screenshot/attempts 等）

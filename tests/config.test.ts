@@ -138,4 +138,13 @@ describe('loadConfig', () => {
     expect(cfg.ai.model).toBe('m')
     expect(cfg.ai.apiBase).toBe('https://x')
   })
+
+  it('circuitBreakerResetAt 默认 23:59', () => {
+    expect(loadConfig({ rootDir: dir }).execution.circuitBreakerResetAt).toBe('23:59')
+  })
+
+  it('CIRCUIT_BREAKER_RESET_AT env 覆盖熔断重置时刻', () => {
+    const cfg = loadConfig({ rootDir: dir, env: { CIRCUIT_BREAKER_RESET_AT: '04:00' } })
+    expect(cfg.execution.circuitBreakerResetAt).toBe('04:00')
+  })
 })

@@ -30,6 +30,8 @@ export interface ExecutionConfig {
   retryMax: number
   retryBackoffSec: number
   circuitBreakerThreshold: number
+  /** 熔断每日重置时刻（本地 HH:mm，默认 23:59）：到点自动归零所有窗口的熔断计数；空字符串关闭自动重置 */
+  circuitBreakerResetAt: string
   /** 全局窗口上限：同时最多开几个窗口会话（机器资源容度；与任务级 concurrency 双闸门取更严者） */
   maxConcurrentWindows: number
 }
@@ -123,6 +125,8 @@ const defaults: AppConfig = {
     retryBackoffSec: 600,
     // 连续失败该次数后本窗口当日熔断（后续任务直接 skipped）
     circuitBreakerThreshold: 2,
+    // 熔断每日重置时刻（本地墙钟 HH:mm）：到点归零所有窗口熔断计数；"" 关闭自动重置
+    circuitBreakerResetAt: '23:59',
     // 全局窗口上限：所有任务共享的同时开窗总数封顶（默认 4；与任务级 meta.concurrency 双闸门取更严者）
     maxConcurrentWindows: 4,
   },
@@ -234,6 +238,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.AI_API_KEY) cfg.ai.apiKey = env.AI_API_KEY
   if (env.AI_API_BASE) cfg.ai.apiBase = env.AI_API_BASE
   if (env.AI_MODEL) cfg.ai.model = env.AI_MODEL
+  // 熔断每日重置时刻：CIRCUIT_BREAKER_RESET_AT 优先级高于配置文件（"" 表示关闭，配置文件用 "" 关闭）
+  if (env.CIRCUIT_BREAKER_RESET_AT) cfg.execution.circuitBreakerResetAt = env.CIRCUIT_BREAKER_RESET_AT
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]
