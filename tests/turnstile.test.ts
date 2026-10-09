@@ -27,6 +27,7 @@ function makeDeps(
     waitForTimeout: async (ms: number) => {
       await sleep(Math.min(ms, 10))
     },
+    evaluate: async () => [],
   }
   vi.mocked(clickPoint).mockImplementation((_page, x, y) => clickAt(x, y))
   return {
