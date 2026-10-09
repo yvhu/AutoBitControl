@@ -788,6 +788,78 @@ await recordStep(ctx, 'open-crate', async () => {
 
 **注意**：是运行内的时间线，排障时配合日志看；失败时框架会自动采集进诊断包。
 
+### 3.8 AI 问答（`src/api/ai.ts`）
+
+需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见 8.1）。未配置时 `askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先用 `ctx.ai` 判空再决定是否调用。
+
+#### `askAi(ctx, prompt, options?)`
+
+**用途**：问 AI 要一段文本（可带 system 提示）。
+
+**签名**：
+
+```ts
+askAi(ctx: TaskContext, prompt: string, options?: { system?: string; maxTokens?: number; timeoutMs?: number }): Promise<string>
+```
+
+**参数**
+
+| 名称 | 类型 | 必填 | 默认 | 含义 |
+| --- | --- | --- | --- | --- |
+| `prompt` | `string` | 是 | — | 用户提问内容 |
+| `options.system` | `string` | 否 | — | system 提示（约束输出格式等） |
+| `options.maxTokens` | `number` | 否 | 客户端默认（300） | 输出上限 |
+| `options.timeoutMs` | `number` | 否 | `cfg.ai.timeoutMs` | 请求超时毫秒 |
+
+**返回值**：模型输出的文本（已去首尾空格）。
+
+**示例**：
+
+```ts
+const summary = await askAi(ctx, '用一句话概括这段文本', { system: '只输出一句话' })
+```
+
+**注意**：`ctx.ai` 未注入（未接线的运行环境）时直接抛错，不静默返回空串。
+
+#### `answerQuiz(ctx, spec)`
+
+**用途**：页面选择题——读题干与选项文本 → 问 AI → 点击对应项；**解析不出答案时兜底随机点一项**（`fallback:true`，「答了就算成功」）。
+
+**签名**：
+
+```ts
+answerQuiz(ctx: TaskContext, spec: {
+  question: string | { selector: string }
+  options: { selector: string }
+  match?: 'letter' | 'index' | 'text'
+}): Promise<{ answer: string; clicked: boolean; fallback: boolean }>
+```
+
+**参数**
+
+| 名称 | 类型 | 必填 | 默认 | 含义 |
+| --- | --- | --- | --- | --- |
+| `spec.question` | `string \| { selector }` | 是 | — | 题干文本；给 `{ selector }` 时经 `getText` 读取 |
+| `spec.options.selector` | `string` | 是 | — | 选项元素选择器（全部匹配项按 DOM 顺序编号 A/B/C…） |
+| `spec.match` | `'letter' \| 'index' \| 'text'` | 否 | `'letter'` | 让 AI 返回的答案格式：字母 / 1 基序号 / 选项文本 |
+
+**返回值**：`{ answer, clicked, fallback }`——AI 原始答案、是否已点击、是否走了兜底随机。
+
+**示例**：
+
+```ts
+const { fallback } = await answerQuiz(ctx, {
+  question: '.question',
+  options: '.option',
+})
+if (fallback) ctx.log.warn('AI 未给出可用答案，已随机作答')
+```
+
+**注意**
+
+- 无匹配选项元素（`count() === 0`）时抛错，不做兜底。
+- 答案越界或无法解析（含推理模型返回空 `content`）→ 随机点击一项并返回 `fallback:true`，任务不应把 `fallback` 当失败。
+
 ---
 
 ## 4. 钱包登录场景（`wallet` × `scenario`）

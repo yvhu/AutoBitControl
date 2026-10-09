@@ -9,6 +9,7 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
 import { StepRecorder, type WalletRegistry, type WalletSession } from '../automation'
+import type { AiClient } from '../integrations/ai'
 import type { TaskRef } from './task'
 
 /** TaskContext 依赖集：由 window-runner 在开窗接管后创建并注入，api 函数通过 TaskContext 取这些运行时数据 */
@@ -33,6 +34,8 @@ export interface TaskContextDeps {
   accountRow?: Record<string, string> | null
   /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 wallet.ready 跳过） */
   walletSession?: WalletSession
+  /** AI 客户端（api/ai 的 askAi 使用；未注入时 AI 能力不可用） */
+  ai?: AiClient
 }
 
 /**
@@ -69,6 +72,11 @@ export class TaskContext {
   /** 窗口会话级钱包扩展探测（api/wallet 使用） */
   get walletSession(): WalletSession | undefined {
     return this.deps.walletSession
+  }
+
+  /** AI 客户端（api/ai 的 askAi 使用；未注入时为 undefined） */
+  get ai(): AiClient | undefined {
+    return this.deps.ai
   }
 
   /** 当前任务引用（api 使用） */

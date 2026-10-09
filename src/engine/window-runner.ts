@@ -29,6 +29,7 @@ import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
 import { WalletSession, type WalletRegistry } from '../automation'
+import { createAiClient, type AiClient } from '../integrations/ai'
 
 /** 浏览器连接抽象：测试注入假驱动，生产用 PatchrightDriver */
 export interface BrowserDriver {
@@ -67,6 +68,8 @@ export interface WindowRunnerDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
   walletPasswords: Record<string, string>
+  /** AI 客户端（透传给 TaskContext；未注入时按 cfg.ai 构建，缺 key 时调用报错） */
+  ai?: AiClient
   /**
    * 重试退避调度（不占窗口）：retry_wait 后由装配层 setTimeout 到期重新入队，
    * 当前窗口立即继续下一个任务/正常关窗；batchId 沿用原批次（重试不产生新批次）
@@ -86,7 +89,12 @@ export interface WindowRunnerDeps {
 }
 
 export class WindowRunner {
-  constructor(private deps: WindowRunnerDeps) {}
+  /** 会话共享的 AI 客户端：显式注入优先，否则按 cfg.ai 构建（api/ai 的 answerQuiz 使用） */
+  private readonly ai: AiClient
+
+  constructor(private deps: WindowRunnerDeps) {
+    this.ai = deps.ai ?? createAiClient(deps.cfg.ai)
+  }
 
   /**
    * 降级策略：任务执行中的数据库写失败不能杀死执行（写失败时任务照跑）
@@ -333,6 +341,7 @@ export class WindowRunner {
           wallets: this.deps.wallets,
           walletSession,
           accountRow,
+          ai: this.ai,
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
         // 成功截图：直接取页面截图写产物目录（TaskContext 已收敛为数据袋子，不再有 screenshot 方法）
