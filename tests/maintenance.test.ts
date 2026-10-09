@@ -22,6 +22,25 @@ describe('msUntilNext 计算到下一次 HH:mm 的毫秒', () => {
       expect(msUntilNext(bad, 'Asia/Shanghai', noon)).toBe(-1)
     }
   })
+
+  // 2026-01-01 00:30 Shanghai = 2025-12-31 16:30 UTC（验证午夜时段 hourCycle h23 修复）
+  const midnightHalf = Date.UTC(2025, 11, 31, 16, 30, 0)
+
+  it('午夜时段（now 00:30）目标 00:15：返回正差值而非负数', () => {
+    const ms = msUntilNext('00:15', 'Asia/Shanghai', midnightHalf)
+    expect(ms).toBe(23.75 * 60 * 60 * 1000)
+    expect(ms).toBeGreaterThan(0)
+  })
+
+  it('午夜时段（now 00:30）目标 00:00：返回正差值', () => {
+    const ms = msUntilNext('00:00', 'Asia/Shanghai', midnightHalf)
+    expect(ms).toBe(23.5 * 60 * 60 * 1000)
+    expect(ms).toBeGreaterThan(0)
+  })
+
+  it('午夜时段（now 00:30）目标 00:45：当天稍后为正差值', () => {
+    expect(msUntilNext('00:45', 'Asia/Shanghai', midnightHalf)).toBe(15 * 60 * 1000)
+  })
 })
 
 describe('maintenance 熔断每日重置', () => {

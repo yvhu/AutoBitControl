@@ -14,6 +14,7 @@ import type { AppDb } from '../infrastructure/db'
  * @param tz IANA 时区名（如 Asia/Shanghai）
  * @param now 当前时间戳（毫秒，测试可注入）
  * @returns 距下次触发的毫秒；hh:mm 非法返回 -1；到点/已过滚动到次日
+ * 注：使用 hourCycle: 'h23'（午夜格式化为 00:xx），避免 hour12:false 在部分运行时解析为 h24（午夜 24:xx）导致午夜时段差值为负
  */
 export function msUntilNext(hhmm: string, tz: string, now = Date.now()): number {
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm)
@@ -21,7 +22,7 @@ export function msUntilNext(hhmm: string, tz: string, now = Date.now()): number 
   const h = Number(m[1])
   const min = Number(m[2])
   if (h > 23 || min > 59) return -1
-  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const parts = Object.fromEntries(fmt.formatToParts(new Date(now)).map((p) => [p.type, p.value]))
   const curSec = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second)
   const targetSec = h * 3600 + min * 60
@@ -50,6 +51,7 @@ export function startCircuitBreakerResetSchedule(cfg: AppConfig, db: AppDb, logg
       logger.warn({ at }, 'circuitBreakerResetAt 非法，跳过一次重置排程')
       return
     }
+    // 兜底：ms 为 0 时立即（+1s 避免同 tick 递归）排程，而非跳过
     timer = setTimeout(() => {
       void (async () => {
         try {
@@ -61,7 +63,7 @@ export function startCircuitBreakerResetSchedule(cfg: AppConfig, db: AppDb, logg
           scheduleNext()
         }
       })()
-    }, ms)
+    }, ms === 0 ? 1000 : ms)
   }
   scheduleNext()
   return { stop: () => { stopped = true; if (timer) clearTimeout(timer) } }
