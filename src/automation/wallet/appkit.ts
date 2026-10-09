@@ -74,8 +74,8 @@ export async function openAppKitWallet(
     await deps.page.waitForTimeout(opts.roundSleepMs ?? 3000)
   }
   if (!found) {
-    const who = deps.walletKey ? `${deps.walletKey} ` : ''
-    throw new Error(`AppKit 弹窗未出现 ${who}钱包入口（弹窗视图异常，归一化未命中）`)
+    const who = deps.walletKey ? ` ${deps.walletKey} ` : ''
+    throw new Error(`AppKit 弹窗未出现${who}钱包入口（弹窗视图异常，归一化未命中）`)
   }
   await deps.human.click(walletEntry)
 }

@@ -217,7 +217,11 @@ export class TaskContext {
    * @returns popupFailed：钱包弹窗未出现（静默连接容忍，调用方结合登录态判定）
    */
   async openAppKitWallet(opts: AppKitLoginOptions): Promise<boolean> {
-    await runAppKitWalletLogin(this.wallet.deps, { open: opts.openSelector, entryTestId: opts.entryTestId, modalTestId: opts.modalTestId })
+    await runAppKitWalletLogin(
+      this.wallet.deps,
+      { open: opts.openSelector, entryTestId: opts.entryTestId, modalTestId: opts.modalTestId },
+      { modalWaitMs: opts.modalWaitMs, normalizeRounds: opts.normalizeRounds, roundSleepMs: opts.roundSleepMs },
+    )
     const { popupFailed } = await this.wallet.runIntent('connect', { reclick: { selector: `[data-testid="${opts.entryTestId}"]`, afterMs: opts.reclickAfterMs ?? 8000 } })
     return popupFailed
   }
