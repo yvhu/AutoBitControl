@@ -58,10 +58,13 @@ describe('WalletActions.ensureLoggedIn', () => {
     vi.mocked(openAppKitWallet).mockReset()
   })
 
-  it('已登录 → 跳过，不点连接', async () => {
-    const d = deps({ loggedInVisible: true })
+  it('已登录 → 跳过，不点连接，也不检查钱包就绪', async () => {
+    const ensureReady = vi.fn(async () => 'ready' as const)
+    const d = deps({ loggedInVisible: true, walletSession: { ensureReady } as never })
     expect((await new WalletActions(d).ensureLoggedIn(SPEC)).skipped).toBe(true)
     expect(d.clicks).toHaveLength(0)
+    // 已登录窗口无需登录，不应触碰钱包扩展就绪检查（避免慢/缺失扩展白等或误报）
+    expect(ensureReady).not.toHaveBeenCalled()
   })
 
   it('未登录 → 点连接 + 等弹窗 + 解锁 + 连接，最后 recover 等登录完成', async () => {

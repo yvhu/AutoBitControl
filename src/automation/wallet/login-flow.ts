@@ -34,9 +34,9 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
   const clickSoft = async (sel: string): Promise<void> => {
     await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
   }
-  await wallet.ready()
   const state0 = await raceState(wallet, spec, 20000)
   if (state0 === 'loggedIn') return { skipped: true }
+  await wallet.ready()
   const attempts = spec.attempts ?? 2
   const reclickAfterMs = spec.reclickAfterMs ?? 8000
   for (let round = 0; round < attempts; round++) {
