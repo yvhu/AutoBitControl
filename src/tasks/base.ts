@@ -9,7 +9,7 @@ import { TaskContext } from '../engine/task-context'
 import type { TaskMeta, LoginSpec } from '../engine/task'
 
 export { TaskContext } from '../engine/task-context'
-export type { TaskMeta } from '../engine/task'
+export type { TaskMeta, LoginSpec } from '../engine/task'
 
 /** 站点任务抽象类：默认 run 提供统一骨架，子类实现 action（可覆盖 run 处理多页等特殊情况） */
 export abstract class SiteTask {

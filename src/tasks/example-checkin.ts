@@ -1,44 +1,38 @@
-import { SiteTask, TaskContext, type TaskMeta } from './base'
+import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
 
-// 标准每日签到参考实现：登录(钱包) → 点击签到 → 断言成功
-// 新增任务从这里复制改起：先跑通流程，再逐步替换选择器
+// 标准每日签到参考实现（新范式）：登录声明 login → 站点动作 action，页面操作直调 patchright。
+// 新增任务从这里复制改起：先跑通流程，再逐步替换选择器。
 export class ExampleCheckinTask extends SiteTask {
   meta: TaskMeta = {
-    // key 全局唯一，API 与数据库都用它标识任务
     key: 'example-checkin',
-    // 面板任务页显示名
     name: '示例签到',
     group: { key: 'example', name: '示例' },
-    // 站点入口页 URL（任务从这里开始）
     url: '',
-    // 信息来源页：选择器是从哪个页面确认的，站点改版时回这里重查
     sourceUrl: '',
-    // 备注：记录站点的坑与特殊逻辑，面板任务页直接可见
     note: '示例任务：url 为空且开关默认关闭；调试时在面板任务页打开开关，或用 task:run 脚本直接跑（不受开关限制）',
-    // 分类：checkin/faucet/mint/other，面板显示对应颜色徽章
     category: 'checkin',
-    // 最后更新日期，提醒自己多久没核对过这个站点
-    lastUpdated: '2026-08-28',
-    // 默认停用：示例任务不参与日常执行，需调试时在面板打开开关或直接用 task:run 脚本
+    lastUpdated: '2026-10-09',
     enabled: false,
-    // 本任务用 MetaMask 钱包登录，loginByWallet 会按此查找适配器
     wallet: 'metamask',
-    // 单次运行超时（秒）
     timeoutSec: 180,
-    // 失败重试 2 次，每次间隔 600 秒
     retry: { max: 2, backoffSec: 600 },
     concurrency: 4,
   }
 
-  async run(ctx: TaskContext): Promise<void> {
-    // goto：打开 url，失败自动重试 3 次（2s-5s 退避）
-    await ctx.goto()
-    // loginByWallet：等站点唤起钱包弹窗 → 自动解锁（密码按钱包类型配置）→ 点连接
-    await ctx.loginByWallet()
-    // clickCheckin：拟人点击签到按钮，并断言成功后出现的元素
-    // 选择器查找：DevTools 右键按钮 → Copy → Copy selector
-    // 断言元素选成功后才出现的标志（徽章/文案），宁严勿松
-    await ctx.clickCheckin('#checkin-btn', { assert: '#checked-badge' })
-    // 更多状态判断示例见 faucet-example.ts 与 API 手册第 9 章
+  // 登录声明：默认 run 会先跑 ensureLoggedIn（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
+  login: LoginSpec = {
+    loggedIn: { text: '连接钱包' },   // 占位：换成站点已登录标志（文案或 { selector }）
+    loggedOut: '连接钱包',            // 占位：换成站点未登录标志
+    connect: 'button:has-text("连接钱包")', // 占位：换成站点连接入口
+    entry: { kind: 'direct' },
+  }
+
+  async action(ctx: TaskContext): Promise<void> {
+    const page = ctx.page // ← patchright；点击/填写/等待都用原生 API
+    // 已签到直接成功返回
+    if (await page.getByText('已签到').count() > 0) return
+    // 点签到按钮并断言成功标志（宁严勿松）
+    await page.locator('#checkin-btn').click()
+    await page.locator('#checked-badge').waitFor({ state: 'visible', timeout: 10000 })
   }
 }
