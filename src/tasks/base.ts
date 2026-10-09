@@ -11,6 +11,23 @@ import type { TaskMeta, LoginSpec } from '../engine/task'
 export { TaskContext } from '../engine/task-context'
 export type { TaskMeta, LoginSpec } from '../engine/task'
 
+/** 普通延时（毫秒），仅用于 goto 重试退避，非拟人化操作 */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** 打开任务页：最多 3 次，失败按 2-5s 随机退避重试（真机网络抖动韧性），最后一次仍失败则抛出 */
+async function gotoWithRetry(ctx: TaskContext, url: string): Promise<void> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await ctx.page.goto(url, { timeout: 45000, waitUntil: 'domcontentloaded' })
+      return
+    } catch (e) {
+      ctx.log.warn({ url, attempt }, `页面加载失败，重试 ${attempt}/3`)
+      if (attempt === 3) throw e
+      await sleep(2000 + Math.floor(Math.random() * 3000))
+    }
+  }
+}
+
 /** 站点任务抽象类：默认 run 提供统一骨架，子类实现 action（可覆盖 run 处理多页等特殊情况） */
 export abstract class SiteTask {
   abstract meta: TaskMeta
@@ -25,7 +42,7 @@ export abstract class SiteTask {
       if (p !== ctx.page) await p.close().catch(() => {})
     }
     if (this.meta.url) {
-      await ctx.page.goto(this.meta.url, { timeout: 45000, waitUntil: 'domcontentloaded' })
+      await gotoWithRetry(ctx, this.meta.url)
     }
     if (this.login) await ctx.wallet.ensureLoggedIn(this.login)
     if (this.action) await this.action(ctx)
