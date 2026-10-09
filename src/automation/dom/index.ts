@@ -4,3 +4,4 @@
  */
 export { type Probe, probeLocator, probeVisible, firstTextPresent, probeDesc } from './probe'
 export { raceProbes } from './race'
+export { recoverProbe, type RecoverOpts } from './recover'
