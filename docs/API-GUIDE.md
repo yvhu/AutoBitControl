@@ -4,7 +4,7 @@
 >
 > 站点任务的能力**全部是普通函数**，从唯一出口 `src/api/index.ts` 引入（任务里写 `import { ... } from '../api'`）。运行时数据（当前页面、日志、窗口、数据源行、任务本身）装在 `ctx` 里，作为每个函数的**第一个参数**传入。`ctx` 只有数据、没有方法。
 >
-> **签名、参数与默认值以 `src/api/{page,find,wait,wallet,captcha,data,diag}.ts` 源码为唯一真值**；源码改了、手册没跟上，以源码为准并回来同步本手册。
+> **签名、参数与默认值以 `src/api/{page,find,wait,wallet,captcha,data,diag,ai}.ts` 源码为唯一真值**；框架级配置（`config.json` / `.env`）见第 7 章；源码改了、手册没跟上，以源码为准并回来同步本手册。
 
 配套资源：
 
@@ -32,7 +32,7 @@
 
 **三句话记住怎么用：**
 
-1. 能力都是函数：`import { ... } from '../api'` 后用，**首参传 `ctx`**；`ctx` 只是数据袋子（`ctx.page`、`ctx.log`、`ctx.profile`、`ctx.accountRow`、`ctx.task`），不再有方法或命名空间。
+1. 能力都是函数：`import { ... } from '../api'` 后用，**首参传 `ctx`**；`ctx` 只是数据袋子（`ctx.page`、`ctx.log`、`ctx.profile`、`ctx.accountRow`、`ctx.task`、`ctx.ai`），不再有方法或命名空间。
 2. 任何一步抛错（`throw`）都等于「这次任务失败」，框架按 `retry` 配置自动重试，并在面板留档。
 3. 成功与否由**断言**说了算（「该出现的东西出现了没有」），而不是「点到了按钮」就算数。
 
@@ -50,7 +50,7 @@
 | 隔离世界 / 主世界 | 自动化工具默认在隔离世界看网页；站点自己注入的全局变量只能进主世界读 |
 | CDP | 浏览器调试协议；框架通过它把真事件派发给页面 |
 | 窗口 / Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 |
-| 熔断 / Circuit Breaker | 保险丝：一个窗口连续失败 N 次后当天不再跑任何任务 |
+| 熔断 / Circuit Breaker | 保险丝：一个窗口连续失败 N 次即熔断、剩余任务跳过；每日 23:59 自动重置（任一任务成功也清零） |
 | 重试 / Retry | 任务失败后自动再跑，次数与间隔可配置 |
 | 退避 / Backoff | 重试前的等待时间，给站点限流留冷却 |
 | 数据源 / DataSource | 预先准备的账号/素材 Excel（`config/accounts.xlsx`），每个窗口按行领取 |
@@ -790,7 +790,7 @@ await recordStep(ctx, 'open-crate', async () => {
 
 ### 3.8 AI 问答（`src/api/ai.ts`）
 
-需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见 8.1）。未配置时 `askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先用 `ctx.ai` 判空再决定是否调用。
+需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见第 7 章配置速查）。未配置时 `askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先用 `ctx.ai` 判空再决定是否调用。
 
 #### `askAi(ctx, prompt, options?)`
 
@@ -1070,7 +1070,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `任务 X 超时` | 单次运行超过 `timeoutSec` | 卡死；某等待超时太长 | 核对各等待超时；必要时上调 `meta.timeoutSec` 或 `execution.taskTimeoutMs` |
 | `任务已停用` | 手动触发被拒（409） | 开关关着 | 面板打开开关（立即生效） |
 | `任务未注册` | 队列有 key 但框架找不到任务 | key 拼错/没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组 |
-| `窗口熔断` | 该窗口连续失败太多，剩余任务全 skip | 前面任务终态失败把熔断计数顶到阈值 | 先修失败任务；面板「窗口」页「重置熔断」（见 6.4） |
+| `窗口熔断` | 该窗口连续失败太多，剩余任务全 skip | 前面任务终态失败把熔断计数顶到阈值 | 先修失败任务；面板「窗口」页「重置熔断」（见 6.4）；每日 23:59 也会自动重置（见第 7 章） |
 | `窗口超时` | 单窗口会话到点（默认 15 分钟） | 窗口任务太多/某任务跑太久 | 精简窗口任务；查耗时异常；上调 `execution.windowTimeoutMs` |
 | 开窗失败 | 比特窗口打不开，整轮任务全 skip | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 设置页「测试连接」；核对窗口 ID |
 | CDP 连接失败 | 窗口开了但接管失败，整轮 failed | 调试端口/内核异常 | 看日志与截图；重启比特客户端后重试 |
@@ -1092,8 +1092,9 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 6.4 熔断触发与重置
 
-- 窗口任务终态失败时 `circuitBreakerCount + 1`；计数 ≥ `execution.circuitBreakerThreshold`（默认 2）后，该窗口后续任务直接 `skipped`（窗口熔断）。
-- 重置：面板「窗口」页「重置熔断」（`POST /api/profiles/:id/breaker/reset`）；任一任务成功后自动清零。
+- 窗口任务终态失败时 `circuitBreakerCount + 1`；计数 ≥ `execution.circuitBreakerThreshold`（默认 2）后触发熔断，该窗口后续任务直接 `skipped`。
+- **自动重置**：每日 `execution.circuitBreakerResetAt`（默认 `23:59`，时区 `scheduler.timezone`）到点自动归零所有窗口的熔断计数；设为空串 `""` 关闭（见第 7 章）。
+- 其他重置途径：任一任务成功后自动清零；面板「窗口」页「重置熔断」（`POST /api/profiles/:id/breaker/reset`）。
 
 ### 6.5 截图与日志位置
 
@@ -1149,7 +1150,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 后端 `tsx src/index.ts` **无 watch**：改完任务代码必须重启 dev 才生效；重启会打断在途窗口会话，批量运行中不要重启。
 - 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（不等待错峰）；批量触发不带 body。
 - 结果核对：`GET /api/batches` 的 `stats`；每窗口今日成功数查 SQLite `runs` 表。
-- 熔断修复后可 `POST /api/profiles/:id/breaker/reset` 复位。
+- 熔断修复后可 `POST /api/profiles/:id/breaker/reset` 复位；熔断每日 23:59 也会自动重置（`execution.circuitBreakerResetAt`，见第 7 章）。
 - 任务 key 全局唯一，登记 `src/tasks/index.ts`；面板定时计划引用新 key 需手动新建计划。
 
 **7）性能参数建议（真机校准）**
@@ -1178,3 +1179,35 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 2. **Turnstile 方框点击必须走 CDP `Input.dispatchMouseEvent`**：跨域 iframe 里 `page.mouse.click` 直跳单点不生效；现 `clickPoint`（`src/automation/dom/click.ts`）用 CDP 分步移动 + 按下/抬起派发。
 3. **失败时先看诊断包、别只翻日志**：失败自动落盘 URL/页面文本/步骤/错误；Turnstile 未检测到时会额外记录页面全部 iframe 及其尺寸（`iframes:[]` 即页面当时根本没有方框），面板看板失败行点「诊断」即可查（见 6.6）。
 4. **站点侧问题要与代码问题分开**：官方下线/站点服务端渲染报错（如 `We couldn't render this page`）会导致固定失败，属站点环境，不是任务逻辑；连续失败按第 5 条停手求助，别反复重跑。
+
+---
+
+## 7. 配置速查（`config.json` / `.env`）
+
+任务代码里不需要写这些配置，它们是**框架级配置**，改完重启 `npm run dev` 生效。配置以 `src/infrastructure/config.ts` 为唯一真值，本节只做速查；真实密钥只写 `config/.env`（gitignore），示例值见 `config/.env.example`。
+
+**三层配置，后者覆盖前者**：代码默认值 → `config/config.json`（通用，已提交）→ `config/config.local.json`（本机覆盖，gitignore）→ 环境变量（`config/.env`，优先级最高）。配置文件只需写与默认不同的差异项。
+
+| 段 | 键（括号内为默认值） | 说明 |
+| --- | --- | --- |
+| `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
+| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerThreshold`（2）、`maxConcurrentWindows`（4）、**`circuitBreakerResetAt`（`"23:59"`）** | 执行引擎全局默认值（任务级可覆盖部分字段，见第 2 章）。`circuitBreakerThreshold` 是连续失败达阈值即熔断；`circuitBreakerResetAt` 是熔断**每日自动重置时刻**（本地 `HH:mm`，空串 `""` 关闭），时区沿用 `scheduler.timezone`；`maxConcurrentWindows` 是全局开窗上限（与任务级 `concurrency` 双闸门取更严者） |
+| `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
+| `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
+| `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |
+| `wallet` | `passwords`（`{}`） | 钱包解锁密码映射（key 为钱包类型）；一般用环境变量 `WALLET_PASSWORDS`（JSON）配置 |
+| `dataSource` | `path`（`config/accounts.xlsx`） | 账号/素材数据源 Excel，每个窗口按行领取 |
+| `storage` | `dbPath`、`screenshotDir`、`logDir`、`logLevel`、`logRetainDays`（7）、`dbRetainDays`（90）、`screenshotRetainDays`（90） | 本地 SQLite、截图与日志的路径与保留天数 |
+
+**环境变量覆盖**（写在 `config/.env`，优先级最高）：
+
+| 变量 | 覆盖 | 说明 |
+| --- | --- | --- |
+| `AI_API_KEY` | `ai.apiKey` | AI 接口密钥（**只进本机 `.env`，绝不提交**） |
+| `AI_API_BASE` | `ai.apiBase` | 可选：OpenAI 兼容根地址 |
+| `AI_MODEL` | `ai.model` | 可选：模型 id |
+| `CIRCUIT_BREAKER_RESET_AT` | `execution.circuitBreakerResetAt` | 可选：熔断每日重置时刻（`HH:mm`，`""` 关闭） |
+| `WALLET_PASSWORDS` | `wallet.passwords` | JSON 映射 `{"metamask":"密码","petra":"密码"}`，同类型钱包共用一个密码 |
+| `WEB_PORT` | `web.port` | 后端 API 端口（Vite 代理自动跟随） |
+| `VITE_PORT` | — | 前端 Vite 面板端口（前端也读同一份 `.env`） |
+| `BITBROWSER_API_BASE` | `bitbrowser.apiBase` | 可选：比特浏览器 API 地址 |

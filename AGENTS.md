@@ -38,7 +38,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ```
 
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
-- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）
+- `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、ai/（OpenAI 兼容客户端，默认 DeepSeek，供 AI 答题）
 - `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
 - `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（薄门面：`ctx.page` 直用 patchright + `ctx.wallet/captcha/race/recover/step` 命名空间）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
@@ -69,7 +69,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 - `docs/API-GUIDE.md` 是面板「文档」页渲染的**唯一用户手册**，以下改动必须同步它：
   - 新增/修改 TaskMeta 字段或 TaskContext 方法 → 更新第 2/3 章对应小节
-  - 新增/修改配置段或配置键 → 更新 8.1 配置表（`scheduler` 段曾因此漏同步）
+  - 新增/修改配置段或配置键 → 更新第 7 章配置速查（`scheduler` 段曾因此漏同步）
   - 新增/修改后端 API → 更新 8.3 REST 接口总表（@swagger 注解也要同步写）
   - 新增/修改面板页面或功能 → 更新 8.2 面板使用（页面数量、新页说明）及相应章节
   - 新增工具（`src/tools/`）→ 更新第 11 章工具中心
@@ -96,7 +96,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ## 踩坑提醒
 
 - 未捕获异常默认退出进程，但 CDP 会话级瞬时错误（Protocol error/session closed 等，见 src/app.ts TRANSIENT_PATTERN）只告警不退出——修 bug 时别把这类错误当致命
-- 窗口连续 2 任务失败触发当日熔断；代理失效由任务自身失败暴露（已无前置 IP 校验）
+- 窗口连续 2 任务失败触发熔断（该窗口剩余任务当日 skipped）；熔断每日 23:59 自动重置（`execution.circuitBreakerResetAt`，任一任务成功/面板手动也清零）；代理失效由任务自身失败暴露（已无前置 IP 校验）
 - 定时触发与手动触发共享在途守卫与窗口熔断：定时跑着时手动触发该任务 409；定时失败同样计入熔断（连续 2 次后该窗口当日全部 skipped，含手动）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
