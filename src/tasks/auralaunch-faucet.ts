@@ -17,6 +17,12 @@ export const INPUT_READY_RELOAD_WAIT_MS = 30000
 export const RECLICK_MAX = 1
 export const RECLICK_WAIT_MS = 5000
 
+/**
+ * 解包 tRPC 批量信封（真机 2026-10-08 核实）：
+ *   成功/失败：200 + [{result:{data:{json:{success:boolean,message:string}}}}]
+ *   限频：429 + [{error:{json:{message,code,data:{code:"TOO_MANY_REQUESTS"}}}}]
+ * 返回 success 布尔与 message；无该信封返回 null
+ */
 export function unwrapTrpcEnvelope(body: unknown): { success?: boolean; message?: string } | null {
   const items = Array.isArray(body) ? body : [body]
   for (const item of items) {
@@ -32,6 +38,10 @@ export function unwrapTrpcEnvelope(body: unknown): { success?: boolean; message?
   return null
 }
 
+/**
+ * 领水响应判定（真机 2026-10-08 核实：成功/失败都返回 200 + success 布尔，不能只看状态码）：
+ * 429 + TOO_MANY_REQUESTS = limit；信封 success:true = success；success:false = rejected；无信封按状态码兜底
+ */
 export async function judgeFaucetResponse(res: Response): Promise<'success' | 'limit' | 'rejected'> {
   const body = await res.json().catch(() => null)
   const raw = JSON.stringify(body ?? {})

@@ -4,7 +4,7 @@
  * 成功判定走 /fund 接口响应；达上限（UsageLimitExhausted）视为成功幂等收敛
  * 依赖方向：仅依赖 ./base；不连钱包
  */
-import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, closeOtherTabs, gotoWithRetry, type TaskContext, type TaskMeta } from './base'
 import type { Response } from 'patchright'
 
 const ADDRESS_SELECTOR = 'input[name="address"]'
@@ -97,20 +97,21 @@ export class ShelbyFaucetTask extends SiteTask {
 
   /** 两页流程，覆盖默认 run */
   async run(ctx: TaskContext): Promise<void> {
+    await closeOtherTabs(ctx.page)
     const address = await this.claimOnPage(ctx, this.meta.url)
-    ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'apt', claimed: address.apt }, 'APT 领水完成')
+    ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'apt', claimed: address.claimed }, 'APT 领水完成')
     const usd = await this.claimOnPage(ctx, this.usdUrl, address.addr)
-    ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'shelbyusd', claimed: usd.apt }, 'ShelbyUSD 领水完成')
+    ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'shelbyusd', claimed: usd.claimed }, 'ShelbyUSD 领水完成')
     await ctx.safeScreenshot('shelby-faucet-success')
   }
 
   /** 打开一页 → 等地址框 → 取/用地址 → 循环领取 */
-  private async claimOnPage(ctx: TaskContext, url: string, knownAddress?: string): Promise<{ addr: string; apt: number }> {
-    await ctx.page.goto(url, { timeout: 45000, waitUntil: 'domcontentloaded' })
+  private async claimOnPage(ctx: TaskContext, url: string, knownAddress?: string): Promise<{ addr: string; claimed: number }> {
+    await gotoWithRetry(ctx.page, url, ctx.log)
     await ctx.page.locator(ADDRESS_SELECTOR).first().waitFor({ state: 'visible', timeout: 20000 })
     const addr = knownAddress ?? (await ctx.account('petra钱包地址'))
     await ctx.page.locator(ADDRESS_SELECTOR).first().fill(addr)
     const { claimed } = await runClaimLoop(ctx, addr, MAX_CLAIMS_PER_RUN)
-    return { addr, apt: claimed }
+    return { addr, claimed }
   }
 }

@@ -11,20 +11,33 @@ import type { TaskMeta, LoginSpec } from '../engine/task'
 export { TaskContext } from '../engine/task-context'
 export type { TaskMeta, LoginSpec } from '../engine/task'
 
+/** 任务页面类型（复用 TaskContext 暴露的 patchright Page） */
+type TaskPage = TaskContext['page']
+/** 任务日志类型 */
+type TaskLog = TaskContext['log']
+
 /** 普通延时（毫秒），仅用于 goto 重试退避，非拟人化操作 */
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** 打开任务页：最多 3 次，失败按 2-5s 随机退避重试（真机网络抖动韧性），最后一次仍失败则抛出 */
-async function gotoWithRetry(ctx: TaskContext, url: string): Promise<void> {
+export async function gotoWithRetry(page: TaskPage, url: string, log: TaskLog): Promise<void> {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await ctx.page.goto(url, { timeout: 45000, waitUntil: 'domcontentloaded' })
+      await page.goto(url, { timeout: 45000, waitUntil: 'domcontentloaded' })
       return
     } catch (e) {
-      ctx.log.warn({ url, attempt }, `页面加载失败，重试 ${attempt}/3`)
+      log.warn({ url, attempt }, `页面加载失败，第 ${attempt}/3 次`)
       if (attempt === 3) throw e
       await sleep(2000 + Math.floor(Math.random() * 3000))
     }
+  }
+}
+
+/** 关闭当前上下文里除当前页外的所有标签页（覆盖 run 的任务可复用，清掉残留标签页） */
+export async function closeOtherTabs(page: TaskPage): Promise<void> {
+  for (const p of page.context().pages()) {
+    if (p === page) continue
+    await p.close().catch(() => {})
   }
 }
 
@@ -38,11 +51,9 @@ export abstract class SiteTask {
 
   /** 默认骨架：清理残留标签页 → goto → 登录 → action */
   async run(ctx: TaskContext): Promise<void> {
-    for (const p of ctx.page.context().pages()) {
-      if (p !== ctx.page) await p.close().catch(() => {})
-    }
+    await closeOtherTabs(ctx.page)
     if (this.meta.url) {
-      await gotoWithRetry(ctx, this.meta.url)
+      await gotoWithRetry(ctx.page, this.meta.url, ctx.log)
     }
     if (this.login) await ctx.wallet.ensureLoggedIn(this.login)
     if (this.action) await this.action(ctx)
