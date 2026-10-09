@@ -155,7 +155,7 @@ export class ShelbyExplorerTask extends SiteTask {
 
   /** 等选择器可见（刷新恢复导向：错误立即刷 + 每 30s 周期刷） */
   private async waitSelectorRecover(ctx: TaskContext, selector: string, budgetMs: number): Promise<boolean> {
-    return waitFor(ctx, { selector }, { budgetMs, refreshEveryMs: REFRESH_EVERY_MS })
+    return waitFor(ctx, { selector }, { budgetMs, refreshEveryMs: REFRESH_EVERY_MS, recoverTexts: RECOVER_TEXTS })
   }
 
   /** 等终态：上传成功 / 已上传过；错误且不在上传中才刷新 */

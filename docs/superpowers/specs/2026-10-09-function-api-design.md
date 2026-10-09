@@ -115,7 +115,7 @@ waitFor(ctx, probe: WaitProbe, options?: {
   budgetMs?: number        // 总预算，默认 10000
   assert?: boolean         // true=超时抛错；false=返回 false（默认 false）
   refreshEveryMs?: number  // >0 周期刷新（刷新恢复，原 recover 语义）
-  recoverTexts?: string[]  // 出现这些文案立即刷新（默认 RECOVER_TEXTS）
+  recoverTexts?: string[]  // 出现这些文案立即刷新（默认 []，不刷新；恢复型等待显式传 RECOVER_TEXTS）
   settleMs?: number        // 刷新后沉降，默认 5000
   heartbeatMs?: number     // 心跳日志间隔，默认 15000
 }): Promise<boolean>

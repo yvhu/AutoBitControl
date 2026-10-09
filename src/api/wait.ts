@@ -3,7 +3,7 @@
  * 依赖方向：engine 的 TaskContext 类型、infrastructure 常量
  */
 import type { TaskContext } from '../engine/task-context'
-import { DEFAULT_RELOAD_TIMEOUT_MS, RECOVER_TEXTS } from '../infrastructure/constants'
+import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 
 /** 探针（api 层公共形态）：字符串等价于「文案」；文案按存在命中、选择器按可见命中（不含 gone） */
 export type Probe = string | { text: string } | { selector: string }
@@ -44,7 +44,7 @@ export interface WaitOptions {
 export async function waitFor(ctx: TaskContext, probe: WaitProbe, options: WaitOptions = {}): Promise<boolean> {
   const budgetMs = options.budgetMs ?? 10000
   const refreshEveryMs = options.refreshEveryMs ?? 0
-  const recoverTexts = options.recoverTexts ?? RECOVER_TEXTS
+  const recoverTexts = options.recoverTexts ?? []
   const settleMs = options.settleMs ?? 5000
   const heartbeatMs = options.heartbeatMs ?? 15000
   const end = Date.now() + budgetMs
