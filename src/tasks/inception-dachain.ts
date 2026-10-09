@@ -5,24 +5,25 @@
  */
 import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
 
-const LIMIT_TEXT = 'Daily limit reached'
-const MODAL_TITLE = 'What is inside?'
-const REVEAL_TEXTS = ['You Won', 'Better luck next time']
-const INSUFFICIENT_TEXT = 'Insufficient QE'
-const SIDEBAR_TEXT = 'Quantum Crate'
-const ENTER_TEXT = 'Enter Inception'
-const METAMASK_ENTRY = 'wallet-selector-io.metamask'
+const LIMIT_TEXT = 'Daily limit reached' // 每日开箱上限提示
+const MODAL_TITLE = 'What is inside?' // 开箱弹窗标题
+const REVEAL_TEXTS = ['You Won', 'Better luck next time'] // 开箱结果文案（中奖/未中奖均算开箱完成）
+const INSUFFICIENT_TEXT = 'Insufficient QE' // 余额不足提示（无法继续开箱）
+const SIDEBAR_TEXT = 'Quantum Crate' // 左侧目录栏开箱入口（也作登录态标记）
+const ENTER_TEXT = 'Enter Inception' // 落地页进入按钮（未登录时可见）
+const METAMASK_ENTRY = 'wallet-selector-io.metamask' // AppKit 钱包选择项的 testid
 
-const GET_STARTED_WAIT_MS = 45000
-const CRATE_PAGE_WAIT_MS = 20000
-const CRATE_PAGE_ATTEMPTS = 2
-const CRATE_LOOP_MAX = 8
-const OPEN_FREE_RACE_MS = 6000
-const OPEN_FREE_ATTEMPTS = 3
-const REVEAL_TOTAL_MS = 120000
-const REVEAL_RECLICK_AT_MS = 45000
-const MODAL_GONE_MS = 10000
+const GET_STARTED_WAIT_MS = 45000 // 预留：等 Get Started 弹窗的预算（当前未使用）
+const CRATE_PAGE_WAIT_MS = 20000 // 点目录栏后等开箱页元素（Open Free）出现的预算
+const CRATE_PAGE_ATTEMPTS = 2 // 进入开箱页的补点次数（SPA 路由可能未生效）
+const CRATE_LOOP_MAX = 8 // 开箱循环上限（每日 5 箱，留冗余）
+const OPEN_FREE_RACE_MS = 6000 // 点 Open 后竞速「上限/弹窗/余额不足」的单次时间
+const OPEN_FREE_ATTEMPTS = 3 // 点 Open 的补点次数（点击可能未生效）
+const REVEAL_TOTAL_MS = 120000 // 弹窗内等开箱结果的总预算（含视频/接口）
+const REVEAL_RECLICK_AT_MS = 45000 // 到点仍未出结果则补点 Open for 的时间
+const MODAL_GONE_MS = 10000 // 点 Close 后等弹窗消失的预算
 
+/** 竞速键：登录态/落地页/上限/开箱弹窗/已开箱结果/余额不足 */
 type RaceKey = 'loggedIn' | 'landing' | 'limit' | 'modal' | 'revealed' | 'insufficient'
 
 export class InceptionDachainTask extends SiteTask {
@@ -50,6 +51,10 @@ export class InceptionDachainTask extends SiteTask {
     intents: ['connect'],
   }
 
+  /**
+   * 站点动作：进入开箱页 → 反复开箱直到每日上限（登录已由默认 run 完成）。
+   * @param ctx 任务上下文
+   */
   async action(ctx: TaskContext): Promise<void> {
     await this.enterCratePage(ctx)
     await this.openCrates(ctx)
@@ -89,6 +94,11 @@ export class InceptionDachainTask extends SiteTask {
     }).catch(() => null)
   }
 
+  /**
+   * 到达每日上限的统一收尾：记日志并截图（视为成功）。
+   * @param ctx 任务上下文
+   * @param signal 触发上限的信号来源（counter/toast/modal），仅用于日志
+   */
   private async finishAtLimit(ctx: TaskContext, signal: string): Promise<void> {
     ctx.log.info({ step: 'crates', window: ctx.profile.name, signal }, '每日上限已达成')
     await ctx.safeScreenshot('dac-success')

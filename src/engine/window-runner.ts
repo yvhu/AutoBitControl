@@ -1,10 +1,21 @@
 /**
- * 窗口执行器（engine 层）：一次完整窗口会话的编排——开窗→连接→逐个跑任务→关窗
+ * 窗口执行器（engine 层）：一次完整窗口会话的编排——开窗 → CDP 接管 → 逐个跑任务 → 关窗
  * 依赖方向：依赖 integrations/automation/infrastructure，被 app 顶层装配；不依赖 server 层
- * 设计思路：三段 try 把异常分区为不同终态——
+ *
+ * 会话正流程（runWindowTasks）：
+ *   1) 预写 pending 行（批次/错峰期面板即可见；续跑行不动，batch_id 只在此写）
+ *   2) 复用探测（reuseOpen 命中则直接取调试地址）或开窗（openWithRetry 退避重试）
+ *   3) CDP 连接（PatchrightDriver 接管首个非扩展 page）
+ *   4) 建窗口级 WalletSession → 逐任务 runTask（窗口截止时间与熔断双重守卫）
+ *   5) finally 先关 CDP 连接再关窗口（复用窗口不关）
+ *
+ * 失败分支（三段 try 把异常分区为不同终态）：
  *   开窗重试耗尽 → 全部任务 skipped（环境问题，重试无意义）
  *   CDP 连接失败 → 全部任务 failed（窗口已开但接管失败）
- *   任务执行异常 → 按状态机逐任务落状态并截图留档（不影响同窗口后续任务）
+ *   任务执行异常 → 按状态机逐任务落状态 + 截图 + 诊断包（不影响同窗口后续任务）
+ *
+ * 关键参数：cfg.execution.windowTimeoutMs（窗口级截止）、circuitBreakerThreshold（窗口级熔断阈值）、
+ *   task.meta.timeoutSec / retry.max / retry.backoffSec（任务级超时与重试，缺省回落全局 execution.*）
  */
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -94,6 +105,8 @@ export class WindowRunner {
    * 跑一个窗口的一次会话：本窗口当日所有 taskKeys 依次执行
    * 异常分区（见文件头注释）：开窗失败全部 skipped；连接失败全部 failed；
    * 熔断中的任务逐个 skipped；其余逐任务执行
+   * @param profile 目标窗口记录（含 bitbrowserId、熔断计数、名称）
+   * @param tasks 本轮要跑的任务（SessionTask：taskKey + 可选 batchId）
    * @returns 各任务本轮最终运行行（key → 行；DB 写失败降级时为 null）——
    * 内存传递供调用方（run-task 脚本等）直接取结果，避免执行后再读库的竞态
    */
@@ -242,8 +255,15 @@ export class WindowRunner {
    * 重试不占窗：retry_wait 不 sleep 占窗，交给 deps.scheduleRetry 到期后重新入队（新一轮窗口会话）；
    * 尝试计数跨会话续算（读数据库已有记录的 attempts：上一轮已跑 N 次则本次从 N+1 开始，
    * attempts=0/首次/终态重跑则从 1），保证重试上限跨会话生效、最终必达 failed；
-   * 非首次尝试先复位页面（about:blank），避免上一轮残留 DOM/事件干扰
+   * 非首次尝试先复位页面（about:blank），避免上一轮残留 DOM/事件干扰；
+   * 失败时采集失败截图 + 诊断包（限时 5s，best-effort，不影响落库）
    * 成功重置熔断计数；终态失败（failed/captcha_failed）熔断计数 +1
+   * @param profile 窗口记录
+   * @param taskKey 任务键（须已在 tasks 注册表登记）
+   * @param page 该窗口已接管的页面（同一会话内复用）
+   * @param date 当日日期串（YYYY-MM-DD，用于 run 行与产物目录）
+   * @param walletSession 窗口级钱包会话（跨任务复用）
+   * @returns 本轮最终运行行；DB 写失败降级时为 null
    */
   private async runTask(profile: ProfileRow, taskKey: string, page: Page, date: string, walletSession: WalletSession): Promise<RunRow | null> {
     const { cfg, db, logger } = this.deps

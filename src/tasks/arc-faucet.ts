@@ -6,17 +6,17 @@
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
 
 // —— 站点元素与文案（2026-09-09 SSR 核实）——
-export const ADDRESS_SELECTOR = 'input[name="address"]'
-export const NETWORK_BUTTON_SELECTOR = 'button[name="network"]'
-export const NETWORK_DISPLAY_SELECTOR = 'button[name="network"] .field-display-value'
-export const TARGET_NETWORK = 'Arc Testnet'
-export const NETWORK_OPTION_SELECTOR = '[role="listbox"] [role="option"]:has-text("Arc Testnet")'
-export const CURRENCY_RADIO_SELECTOR = 'input[name="currency"][value="USDC"]'
-export const CURRENCY_CARD_SELECTOR = '[data-testid="select-card-USDC"]'
-export const SUBMIT_SELECTOR = 'form button[type="submit"]'
-export const SUCCESS_TEXT = 'is on its way to your wallet and should appear shortly'
-export const SUBMIT_ENABLED_TIMEOUT_MS = 15000
-export const SUBMIT_RACE_MS = 30000
+export const ADDRESS_SELECTOR = 'input[name="address"]' // 收款地址输入框
+export const NETWORK_BUTTON_SELECTOR = 'button[name="network"]' // Network 下拉触发按钮
+export const NETWORK_DISPLAY_SELECTOR = 'button[name="network"] .field-display-value' // 下拉当前显示值
+export const TARGET_NETWORK = 'Arc Testnet' // 目标网络名（必须精确匹配显示文本）
+export const NETWORK_OPTION_SELECTOR = '[role="listbox"] [role="option"]:has-text("Arc Testnet")' // 下拉里的目标选项
+export const CURRENCY_RADIO_SELECTOR = 'input[name="currency"][value="USDC"]' // USDC 隐藏 radio（读选中态）
+export const CURRENCY_CARD_SELECTOR = '[data-testid="select-card-USDC"]' // USDC 可见卡片（点击选中）
+export const SUBMIT_SELECTOR = 'form button[type="submit"]' // 表单提交按钮（地址校验通过才启用）
+export const SUCCESS_TEXT = 'is on its way to your wallet and should appear shortly' // 提交成功文案
+export const SUBMIT_ENABLED_TIMEOUT_MS = 15000 // 等提交按钮启用的预算（地址校验完成）
+export const SUBMIT_RACE_MS = 30000 // 提交后等成功文案的预算
 
 /** 读取 Network 下拉当前显示值（元素缺失/读取失败返回空串） */
 export async function currentNetwork(ctx: TaskContext): Promise<string> {
@@ -50,7 +50,13 @@ export async function ensureUsdc(ctx: TaskContext): Promise<void> {
   if (!(await isUsdcChecked(ctx))) throw new Error('USDC 币种选择失败: radio 仍未选中')
 }
 
-/** 等提交按钮变为可用（地址校验通过后解除 disabled）；onPoll 用于 hydration 清空自愈 */
+/**
+ * 等提交按钮变为可用（地址校验通过后解除 disabled），轮询 500ms。
+ * @param ctx 任务上下文
+ * @param timeoutMs 等待预算，默认 SUBMIT_ENABLED_TIMEOUT_MS（15s）
+ * @param onPoll 每轮轮询后的回调，用于 hydration 清空自愈（重填被清空的地址）
+ * @throws 超时仍不可用时抛出
+ */
 export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_ENABLED_TIMEOUT_MS, onPoll?: () => Promise<void>): Promise<void> {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) {
@@ -90,19 +96,27 @@ export class ArcFaucetTask extends SiteTask {
     concurrency: 3,
   }
 
+  /**
+   * 站点动作：填地址 → 校正网络/币种 → 提交 → 等成功文案。
+   * 站点不连钱包，地址取自数据源「metamask钱包地址」列。
+   * @param ctx 任务上下文，提供 page、account（取数据源列）、safeScreenshot
+   */
   async action(ctx: TaskContext): Promise<void> {
+    // 1) 等地址输入框渲染（落地页为 SSR + hydration，可能较慢）
     await ctx.page.locator(ADDRESS_SELECTOR).first().waitFor({ state: 'visible', timeout: 20000 })
     const address = await ctx.account('metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
     await addressInput.fill(address)
+    // 2) 校正网络（Arc Testnet）与币种（USDC），已正确则不动
     await ensureNetwork(ctx)
     await ensureUsdc(ctx)
-    // 提交按钮等待 + hydration 清空自愈合并（React hydration 可晚于 6s 清空地址框）
+    // 3) 等提交按钮启用；期间做 hydration 清空自愈（React hydration 可晚于 6s 清空地址框）
     await ensureSubmitEnabled(ctx, SUBMIT_ENABLED_TIMEOUT_MS, async () => {
       if (((await addressInput.inputValue().catch(() => '')) ?? '') === '') {
         await addressInput.fill(address)
       }
     })
+    // 4) 提交并等成功文案；超时抛错走失败流程（把成功判定提到 action 内，断言明确）
     const ok = await submitAndWait(ctx)
     if (!ok) throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案`)
     await ctx.safeScreenshot('arc-faucet-success')

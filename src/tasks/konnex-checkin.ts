@@ -6,18 +6,18 @@
  */
 import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
 
-const BALANCE_TEXT = 'Balance'
-const CONNECT_WALLET_BTN = '[data-testid="connect-wallet-button"]'
-const ETHEREUM_ENTRY_TEXT = 'Connect with Ethereum'
-const METAMASK_ENTRY_TEXT = 'MetaMask'
-const CHECKIN_BTN = 'button:has-text("Check in")'
-const CHECKIN_CARD = '#loyalty-quest-root-check_in'
-const SUCCESS_TEXT = 'Check-In Succeeded!'
-const DONE_TEXT = 'Great job!'
-const RESET_TEXT = 'RESETS IN'
+const BALANCE_TEXT = 'Balance' // 登录态标记（余额小部件出现即已登录）
+const CONNECT_WALLET_BTN = '[data-testid="connect-wallet-button"]' // 未登录时的连接按钮
+const ETHEREUM_ENTRY_TEXT = 'Connect with Ethereum' // 连接弹窗内的入口文案
+const METAMASK_ENTRY_TEXT = 'MetaMask' // 钱包选择项文案
+const CHECKIN_BTN = 'button:has-text("Check in")' // 签到按钮（页面唯一）
+const CHECKIN_CARD = '#loyalty-quest-root-check_in' // 签到卡片根节点（含按钮/已签到态）
+const SUCCESS_TEXT = 'Check-In Succeeded!' // 签到成功弹窗标题
+const DONE_TEXT = 'Great job!' // 本周已签到的横幅文案
+const RESET_TEXT = 'RESETS IN' // 本周已签到的倒计时文案
 
-const CHECKIN_CARD_WAIT_MS = 45000
-const CHECKIN_SUCCESS_WAIT_MS = 30000
+const CHECKIN_CARD_WAIT_MS = 45000 // 等签到卡片渲染的预算（卡片渲染有延迟）
+const CHECKIN_SUCCESS_WAIT_MS = 30000 // 点签到后等成功弹窗/已签到态的预算
 
 export class KonnexCheckinTask extends SiteTask {
   meta: TaskMeta = {
@@ -45,11 +45,20 @@ export class KonnexCheckinTask extends SiteTask {
     intents: ['connect'],
   }
 
+  /**
+   * 站点动作：执行每周签到。登录已由默认 run 完成，这里只负责签到本身。
+   * @param ctx 任务上下文
+   */
   async action(ctx: TaskContext): Promise<void> {
     await this.checkin(ctx)
   }
 
-  /** 卡片当前是否可见 */
+  /**
+   * 判断某选择器的首个匹配元素当前是否可见（元素不存在或查询异常一律按不可见处理）。
+   * @param ctx 任务上下文
+   * @param selector CSS 选择器
+   * @returns 可见返回 true，否则 false
+   */
   private async isVisible(ctx: TaskContext, selector: string): Promise<boolean> {
     try {
       const loc = ctx.page.locator(selector).first()
@@ -60,13 +69,18 @@ export class KonnexCheckinTask extends SiteTask {
     }
   }
 
-  /** 签到：等卡片渲染 → （已签到则成功）点 Check in → 竞速成功弹窗/已签到状态 */
+  /**
+   * 签到：轮询等卡片渲染（按钮出现，或已是本周已签到态）→ 点 Check in
+   * → 竞速成功弹窗/已签到横幅 → 断言成功并截图，否则抛错。
+   * @param ctx 任务上下文
+   */
   private async checkin(ctx: TaskContext): Promise<void> {
     const deadline = Date.now() + CHECKIN_CARD_WAIT_MS
     let hasBtn = false
     while (Date.now() < deadline) {
       hasBtn = await this.isVisible(ctx, CHECKIN_BTN)
       if (hasBtn) break
+      // 按钮未出现前先判是否已签到（本周已签到则卡片无按钮，直接成功）
       if (await this.checkinDone(ctx)) {
         ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '本周已签到（卡片为已签到状态）')
         await ctx.safeScreenshot('konnex-success')
@@ -74,20 +88,26 @@ export class KonnexCheckinTask extends SiteTask {
       }
       await ctx.page.waitForTimeout(2000)
     }
+    // 等满预算既无按钮也非已签到态：站点异常或改版
     if (!hasBtn) throw new Error('签到卡片未出现（Check in 按钮与已签到状态均无；页面异常或站点改版）')
     await ctx.page.locator(CHECKIN_BTN).first().click()
+    // 竞速：成功弹窗标题 或 已签到横幅，任一即视为成功
     const outcome = await ctx.race([['success', { text: SUCCESS_TEXT }], ['done', { text: DONE_TEXT }]], CHECKIN_SUCCESS_WAIT_MS)
     if (outcome === 'success' || outcome === 'done' || (await this.checkinDone(ctx))) {
       ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '签到成功（Check-In Succeeded!）')
       await ctx.safeScreenshot('konnex-success')
       return
     }
+    // 兜底排错信息：把卡片文本与页面 h1 一并抛出，便于定位站点改版
     const card = await ctx.js<string>(() => (document.querySelector('#loyalty-quest-root-check_in')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
     const headings = await ctx.js<string>(() => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).filter(Boolean).join(' | ')).catch(() => '')
     throw new Error(`点击 Check in 后未出现成功弹窗（卡片: ${card || '无'}；h1: ${headings || '无'}；可能已签到/站点改版）`)
   }
 
-  /** 卡片是否处于已签到状态：横幅 Great job! 或暗态 RESETS IN（任一即已签到） */
+  /**
+   * 卡片是否处于已签到状态：横幅 Great job! 或暗态 RESETS IN（任一即已签到）。
+   * @param ctx 任务上下文
+   */
   private async checkinDone(ctx: TaskContext): Promise<boolean> {
     if (await this.isVisible(ctx, `${CHECKIN_CARD}:has-text("${DONE_TEXT}")`)) return true
     return this.isVisible(ctx, `${CHECKIN_CARD}:has-text("${RESET_TEXT}")`)

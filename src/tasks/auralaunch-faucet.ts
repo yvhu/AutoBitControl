@@ -6,16 +6,16 @@
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
 import type { Response } from 'patchright'
 
-export const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]'
-export const REQUEST_BTN_SELECTOR = '.flex.justify-center.items-center.gap-2:has-text("Request")'
-export const LIMIT_KEYWORDS = ['sorry, something went wrong', 'try again later', 'already claimed', 'rate limit', 'cooldown', '24 hours']
-export const SUCCESS_TEXT = 'Successfully requested funds to your wallet'
-export const FAUCET_RESPONSE_WAIT_MS = 15000
-export const UI_OUTCOME_WAIT_MS = 30000
-export const INPUT_READY_WAIT_MS = 45000
-export const INPUT_READY_RELOAD_WAIT_MS = 30000
-export const RECLICK_MAX = 1
-export const RECLICK_WAIT_MS = 5000
+export const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]' // 收款地址输入框
+export const REQUEST_BTN_SELECTOR = '.flex.justify-center.items-center.gap-2:has-text("Request")' // Request 领取按钮
+export const LIMIT_KEYWORDS = ['sorry, something went wrong', 'try again later', 'already claimed', 'rate limit', 'cooldown', '24 hours'] // 限频/已领取文案（命中即按成功幂等）
+export const SUCCESS_TEXT = 'Successfully requested funds to your wallet' // 页面成功文案
+export const FAUCET_RESPONSE_WAIT_MS = 15000 // 单次等领水请求的预算
+export const UI_OUTCOME_WAIT_MS = 30000 // 无请求时等页面成功/限频文案的预算
+export const INPUT_READY_WAIT_MS = 45000 // 首屏等地址框可用的预算
+export const INPUT_READY_RELOAD_WAIT_MS = 30000 // 刷新后等地址框可用的预算
+export const RECLICK_MAX = 1 // 未捕获请求时补点 Request 的最大次数（Turnstile token 未就绪自愈）
+export const RECLICK_WAIT_MS = 5000 // 补点前等待时间
 
 /**
  * 解包 tRPC 批量信封（真机 2026-10-08 核实）：
@@ -53,12 +53,22 @@ export async function judgeFaucetResponse(res: Response): Promise<'success' | 'l
   return 'rejected'
 }
 
+/**
+ * 注册并等待一次领水 POST 响应（请求体含目标地址以区分本窗口请求；注册即吞错，超时返回 null）。
+ * @param ctx 任务上下文
+ * @param address 目标地址（用于匹配请求体）
+ */
 export function waitFaucetResponse(ctx: TaskContext, address: string): Promise<Response | null> {
   return ctx.page
     .waitForResponse((r) => r.request().method() === 'POST' && (r.request().postData() ?? '').includes(address), { timeout: FAUCET_RESPONSE_WAIT_MS })
     .catch(() => null)
 }
 
+/**
+ * 轮询页面文案判结果（无请求可捕获时的兜底）：成功文案=success、命中任限频词=limit、超时=none。
+ * @param ctx 任务上下文
+ * @param timeoutMs 轮询预算，默认 UI_OUTCOME_WAIT_MS
+ */
 export async function waitUiOutcome(ctx: TaskContext, timeoutMs = UI_OUTCOME_WAIT_MS): Promise<'success' | 'limit' | 'none'> {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) {
@@ -71,6 +81,13 @@ export async function waitUiOutcome(ctx: TaskContext, timeoutMs = UI_OUTCOME_WAI
   return 'none'
 }
 
+/**
+ * 等地址框就绪：先按 timeoutMs 轮询；若始终不存在则刷新一次再按刷新预算轮询。
+ * 地址框存在但持续禁用是站点已领取的表现（由调用方结合限频文案判定）。
+ * @param ctx 任务上下文
+ * @param timeoutMs 首轮等待预算，默认 INPUT_READY_WAIT_MS
+ * @returns ready=出现且可用、disabled=出现但禁用、missing=两轮都不存在
+ */
 export async function waitInputReady(ctx: TaskContext, timeoutMs = INPUT_READY_WAIT_MS): Promise<'ready' | 'disabled' | 'missing'> {
   const poll = async (ms: number): Promise<'ready' | 'disabled' | null> => {
     const end = Date.now() + ms
@@ -108,9 +125,16 @@ export class AuralaunchFaucetTask extends SiteTask {
     concurrency: 3,
   }
 
+  /**
+   * 站点动作：等地址框就绪 → 读地址填入 → 点 Request 并捕获 tRPC 响应 → 判定成功/限频/拒绝。
+   * 不连钱包；限频（24h 一次）视为已领取=成功幂等。
+   * @param ctx 任务上下文，提供 page、account（取数据源列）、log、safeScreenshot
+   */
   async action(ctx: TaskContext): Promise<void> {
+    // 1) 等地址框就绪；missing=站点未渲染/改版，直接失败
     const ready = await waitInputReady(ctx)
     if (ready === 'missing') throw new Error('地址输入框未出现（页面未渲染或站点改版）')
+    // 2) 地址框存在但禁用：多为已领取（结合限频文案确认为成功幂等），否则失败并附页面文本
     if (ready === 'disabled') {
       // 逐一匹配全部限频关键词（与旧 recoverErrorText(LIMIT_KEYWORDS) 等价）
       let limitText = ''
@@ -125,12 +149,14 @@ export class AuralaunchFaucetTask extends SiteTask {
       const bodyText = await ctx.page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '')
       throw new Error(`地址输入框持续禁用且无限频提示（页面文本: ${bodyText.slice(0, 300)}）`)
     }
+    // 3) 读地址并填入；填后被框架清空则再填一次
     const address = await ctx.account('metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
     await addressInput.fill(address)
     if (((await addressInput.inputValue().catch(() => '')) ?? '') !== address) {
       await addressInput.fill(address)
     }
+    // 4) 点 Request 并捕获请求；未捕获（Turnstile token 未就绪）则等待后补点
     let resp: Response | null = null
     for (let attempt = 0; attempt <= RECLICK_MAX && !resp; attempt++) {
       const respPromise = waitFaucetResponse(ctx, address)

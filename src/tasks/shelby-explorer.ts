@@ -20,14 +20,14 @@ export const ALREADY_DONE_TEXT = 'Blob name already taken'
 const REFRESH_EVERY_MS = 30000
 
 export class ShelbyExplorerTask extends SiteTask {
-  successWaitMs = 180000
-  loginWaitMs = 120000
-  uploadEntryWaitMs = 120000
-  uploadEnabledWaitMs = 30000
-  uploadDialogWaitMs = 20000
-  walletDialogWaitMs = 45000
-  walletDialogReclickMs = 8000
-  accountBaseUrl = 'https://explorer.shelby.xyz'
+  successWaitMs = 180000 // 点 Upload 后等终态（成功/已上传）的预算
+  loginWaitMs = 120000 // 预留：等登录完成的预算（当前未使用，旧实现遗留）
+  uploadEntryWaitMs = 120000 // 账号页等 Upload Files 入口出现的预算（含刷新恢复）
+  uploadEnabledWaitMs = 30000 // 选文件后等 Upload 启用/已上传提示的预算
+  uploadDialogWaitMs = 20000 // 点 Upload Files 后等弹窗 file input 挂载的预算
+  walletDialogWaitMs = 45000 // 预留：等钱包弹窗的预算（当前未使用）
+  walletDialogReclickMs = 8000 // 预留：钱包弹窗补点间隔（当前未使用）
+  accountBaseUrl = 'https://explorer.shelby.xyz' // 账号页基址（拼接 /shelbynet/account/<地址>/blobs）
 
   meta: TaskMeta = {
     key: 'xyz-shelbynet',
@@ -55,11 +55,20 @@ export class ShelbyExplorerTask extends SiteTask {
     waitLoggedInMs: 120000,
   }
 
+  /**
+   * 站点动作：确保登录 → 进入账号页上传数据源指定的文件。
+   * @param ctx 任务上下文
+   */
   async action(ctx: TaskContext): Promise<void> {
     await this.doLoginIfNeeded(ctx)
     await this.upload(ctx)
   }
 
+  /**
+   * 判断某选择器的首个匹配元素当前是否可见（元素不存在或查询异常一律按不可见处理）。
+   * @param ctx 任务上下文
+   * @param selector CSS 选择器
+   */
   private async isVisible(ctx: TaskContext, selector: string): Promise<boolean> {
     try {
       const loc = ctx.page.locator(selector).first()
@@ -77,7 +86,11 @@ export class ShelbyExplorerTask extends SiteTask {
     await ctx.wallet.ensureLoggedIn(this.login)
   }
 
-  /** 上传流程 */
+  /**
+   * 上传流程：进账号页 → （会话失效则重登）→ 点 Upload Files 打开弹窗
+   * → 选数据源「文件地址」指定文件 → 站点查重（已上传直接成功）→ 点 Upload → 两次签名 → 等终态。
+   * @param ctx 任务上下文
+   */
   private async upload(ctx: TaskContext): Promise<void> {
     const address = await ctx.account('petra钱包地址')
     const accountUrl = `${this.accountBaseUrl}/shelbynet/account/${address}/blobs`

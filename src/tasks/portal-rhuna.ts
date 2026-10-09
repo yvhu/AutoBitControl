@@ -6,18 +6,18 @@
  */
 import { SiteTask, RECOVER_TEXTS, gotoWithRetry, type LoginSpec, type TaskContext, type TaskMeta } from './base'
 
-const HELLO_TEXT = 'Hello,'
-const CONNECT_TEXT = 'Connect Wallet'
-const START_QUESTS_TEXT = 'Start Quests'
-const CHECKIN_TEXT = 'Daily Check-in'
-const SUCCESS_TEXT = 'Quest completed successfully!'
-const PROCESSING_TEXT = 'Processing your quest...'
+const HELLO_TEXT = 'Hello,' // 登录态标记（页头问候语出现即已登录）
+const CONNECT_TEXT = 'Connect Wallet' // 未登录时的连接按钮文案
+const START_QUESTS_TEXT = 'Start Quests' // 落地页进入任务页的按钮
+const CHECKIN_TEXT = 'Daily Check-in' // 每日签到卡片文案
+const SUCCESS_TEXT = 'Quest completed successfully!' // 领取成功文案
+const PROCESSING_TEXT = 'Processing your quest...' // 领取处理中提示
 
-const CHECKIN_ROUNDS = 6
-const CLAIM_RACE_MS = 15000
-const CLAIM_RECHECK_MS = 10000
-const SUCCESS_WAIT_MS = 60000
-const DIALOG_SELECTOR = '[role="dialog"]'
+const CHECKIN_ROUNDS = 6 // 签到弹窗最大重试轮数（每轮刷新恢复）
+const CLAIM_RACE_MS = 15000 // 弹窗内竞速「完成/Claim」出现的时间
+const CLAIM_RECHECK_MS = 10000 // 点 Claim 后竞速「处理中/成功」的时间
+const SUCCESS_WAIT_MS = 60000 // Claim 后等待最终成功的总预算
+const DIALOG_SELECTOR = '[role="dialog"]' // 弹窗根节点（领取弹窗/Turnstile 容器）
 
 export class PortalRhunaTask extends SiteTask {
   meta: TaskMeta = {
@@ -44,11 +44,20 @@ export class PortalRhunaTask extends SiteTask {
     intents: ['sign'],
   }
 
+  /**
+   * 站点动作：进入 Quests 页并领取每日签到（登录已由默认 run 完成）。
+   * @param ctx 任务上下文
+   */
   async action(ctx: TaskContext): Promise<void> {
     await this.enterQuests(ctx)
     await this.checkin(ctx)
   }
 
+  /**
+   * 判断某选择器的首个匹配元素当前是否可见（元素不存在或查询异常一律按不可见处理）。
+   * @param ctx 任务上下文
+   * @param selector CSS 选择器
+   */
   private async isVisible(ctx: TaskContext, selector: string): Promise<boolean> {
     try {
       const loc = ctx.page.locator(selector).first()
@@ -59,6 +68,11 @@ export class PortalRhunaTask extends SiteTask {
     }
   }
 
+  /**
+   * 返回首个出现在页面上的文案（命中即返回，全不命中返回空串），用于识别可恢复错误。
+   * @param ctx 任务上下文
+   * @param texts 待检测文案列表（按优先级）
+   */
   private async firstTextPresent(ctx: TaskContext, texts: string[]): Promise<string> {
     for (const t of texts) {
       if ((await ctx.page.getByText(t, { exact: false }).count()) > 0) return t

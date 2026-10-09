@@ -8,8 +8,10 @@
 import { TaskContext } from '../engine/task-context'
 import type { TaskMeta, LoginSpec } from '../engine/task'
 
+// 统一再导出任务上下文类型与实例，供各任务文件从 './base' 单点引入
 export { TaskContext } from '../engine/task-context'
 export type { TaskMeta, LoginSpec } from '../engine/task'
+// 再导出可恢复错误文案表与默认刷新超时，供站点任务直接复用（如 portal-rhuna/shelby-explorer）
 export { RECOVER_TEXTS, DEFAULT_RELOAD_TIMEOUT_MS } from '../engine/task'
 
 /** 任务页面类型（复用 TaskContext 暴露的 patchright Page） */
