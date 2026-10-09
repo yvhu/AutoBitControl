@@ -10,6 +10,8 @@ export async function raceProbes<K extends string>(
   entries: Array<[K, Probe]>,
   timeoutMs: number,
 ): Promise<K | null> {
+  // 空数组时 Promise.race([]) 永不 settle，直接返回 null 防止调用方悬挂
+  if (entries.length === 0) return null
   const r = await Promise.race(
     entries.map(([k, probe]) =>
       probeLocator(page, probe)

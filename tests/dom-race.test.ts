@@ -49,4 +49,11 @@ describe('dom probe/race', () => {
     const p = page({ 'x': { never: true } }) as never
     expect(await raceProbes(p, [['x', { text: 'x' }]], 50)).toBeNull()
   })
+
+  it('raceProbes：空 entries 立即返回 null（不依赖超时）', async () => {
+    const p = page({}) as never
+    const start = Date.now()
+    expect(await raceProbes(p, [], 1000)).toBeNull()
+    expect(Date.now() - start).toBeLessThan(500)
+  })
 })
