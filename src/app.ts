@@ -15,6 +15,7 @@ import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
 import { recoverRetryTasks } from './engine/retry-recovery'
 import { Scheduler } from './engine/scheduler'
+import { startCircuitBreakerResetSchedule } from './engine/maintenance'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
 import { WalletRegistry } from './automation/wallet/types'
@@ -212,6 +213,10 @@ export async function startApp(): Promise<void> {
   })
   scheduler.start()
 
+  // 熔断每日定时重置：到点归零所有窗口熔断计数（circuitBreakerResetAt 为空则不排程）；
+  // 退出时随 shutdown 一并 stop，取消已挂定时器
+  const maintenance = startCircuitBreakerResetSchedule(cfg, db, logger)
+
   const app = createApp({
     db,
     enqueuer,
@@ -278,6 +283,7 @@ export async function startApp(): Promise<void> {
   }
   const shutdown = () => {
     scheduler.stop()
+    maintenance.stop()
     logger.info('正在关闭...')
     server.close(() => finish())
     // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）
