@@ -549,7 +549,11 @@ export class AuralaunchFaucetTask extends SiteTask {
     const ready = await waitInputReady(ctx)
     if (ready === 'missing') throw new Error('地址输入框未出现（页面未渲染或站点改版）')
     if (ready === 'disabled') {
-      const limitText = await ctx.page.getByText(LIMIT_KEYWORDS[0], { exact: false }).count() > 0 ? LIMIT_KEYWORDS[0] : ''
+      // 逐一匹配全部限频关键词（与旧 recoverErrorText(LIMIT_KEYWORDS) 等价）
+      let limitText = ''
+      for (const kw of LIMIT_KEYWORDS) {
+        if (await ctx.page.getByText(kw, { exact: false }).count() > 0) { limitText = kw; break }
+      }
       if (limitText !== '') {
         ctx.log.info({ step: 'faucet', window: ctx.profile.name, limitText }, '地址框禁用且出现限频提示，视为已领取 = 成功（重跑幂等）')
         await ctx.safeScreenshot('auralaunch-faucet-limit')
