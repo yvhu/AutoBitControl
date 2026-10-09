@@ -5,8 +5,8 @@
 import type { TaskContext } from '../engine/task-context'
 import { DEFAULT_RELOAD_TIMEOUT_MS, RECOVER_TEXTS } from '../infrastructure/constants'
 
-/** 探针（api 层公共形态）：文案（按存在命中）/ 选择器（按可见命中）二选一；不含 gone，竞速等场景只需「出现」语义 */
-export type Probe = { text: string } | { selector: string }
+/** 探针（api 层公共形态）：字符串等价于「文案」；文案按存在命中、选择器按可见命中（不含 gone） */
+export type Probe = string | { text: string } | { selector: string }
 
 /** 等待探针：在 Probe 基础上增加 gone（目标不可见或消失）；仅 waitFor 这类等待场景使用 */
 export type WaitProbe = Probe | { gone: string }
@@ -14,6 +14,7 @@ export type WaitProbe = Probe | { gone: string }
 /** 探针是否命中：文案按存在（count>0，兼容双 DOM/动画）；选择器按可见；gone 按不可见/不存在 */
 async function probeHit(ctx: TaskContext, probe: WaitProbe): Promise<boolean> {
   try {
+    if (typeof probe === 'string') return (await ctx.page.getByText(probe, { exact: false }).count()) > 0
     if ('text' in probe) return (await ctx.page.getByText(probe.text, { exact: false }).count()) > 0
     const sel = 'selector' in probe ? probe.selector : probe.gone
     const loc = ctx.page.locator(sel).first()
@@ -25,7 +26,7 @@ async function probeHit(ctx: TaskContext, probe: WaitProbe): Promise<boolean> {
     if ((await loc.count()) === 0) return true
     return !(await loc.isVisible().catch(() => false))
   } catch {
-    return 'gone' in probe
+    return typeof probe !== 'string' && 'gone' in probe
   }
 }
 

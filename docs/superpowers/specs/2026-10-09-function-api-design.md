@@ -107,10 +107,11 @@ hasText(ctx, text: string): Promise<boolean>
 ### 等待（`wait.ts`）
 
 ```ts
-type Probe = { text: string } | { selector: string } | { gone: string }
+type Probe = string | { text: string } | { selector: string }   // 字符串等价于文案探针
+type WaitProbe = Probe | { gone: string }                      // waitFor 额外支持「等消失」
 
 /** 等条件命中（文案出现 / 元素可见 / 元素消失）；可选刷新恢复；返回是否命中 */
-waitFor(ctx, probe: Probe, options?: {
+waitFor(ctx, probe: WaitProbe, options?: {
   budgetMs?: number        // 总预算，默认 10000
   assert?: boolean         // true=超时抛错；false=返回 false（默认 false）
   refreshEveryMs?: number  // >0 周期刷新（刷新恢复，原 recover 语义）
