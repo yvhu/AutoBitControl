@@ -250,7 +250,7 @@ export class TwoPageTask extends SiteTask {
 
 ## 4. TaskContext 能力地图
 
-`TaskContext`（`src/engine/task-context.ts`）是 `run(ctx)` 唯一的操作入口。**旧的一套扁平方法已全部删除**，现在统一为「访问器 + 命名空间」：
+`TaskContext`（`src/engine/task-context.ts`）是 `run(ctx)` 唯一的操作入口。**旧扁平方法已删除，仅保留 3 个 Turnstile 包装方法（`clickTurnstileBox`/`turnstileVisible`/`autoClickTurnstile`，见 §4.3），新代码请统一用 `ctx.captcha.*`**，即「访问器 + 命名空间」：
 
 | 成员 | 形态 | 用途 |
 | --- | --- | --- |
@@ -281,7 +281,7 @@ await page.getByText('已签到').count()
 await page.getByRole('button', { name: 'Claim' }).click()
 await page.getByTestId('submit').click()
 await page.locator('input[name="email"]').fill('a@b.com')
-await page.locator('textarea').type('慢速逐键输入')
+await page.locator('textarea').pressSequentially('慢速逐键输入', { delay: 80 })
 await page.keyboard.press('Enter')
 await page.mouse.click(320, 240)
 

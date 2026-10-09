@@ -47,7 +47,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 新增/修改任务
 
-权威手册是 `docs/API-GUIDE.md`（面板文档页也渲染它）——TaskMeta 字段全解、TaskContext 方法全解、常用模式/排错，写任务前先读对应章节。真机踩坑实录见 `docs/TASK-DEVELOPMENT-LESSONS.md`（登录态判定/钱包弹窗/隐藏文件上传/卡死定位等经验，写新任务前必读）。
+权威手册是 `docs/API-GUIDE.md`（面板文档页也渲染它）——TaskMeta 字段全解、TaskContext 方法全解、常用模式/排错，写任务前先读对应章节。真机踩坑实录见 `docs/API-GUIDE.md` 第 12 章（真机经验，登录态判定/钱包弹窗/隐藏文件上传/卡死定位等，写新任务前必读）。
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
@@ -73,7 +73,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
   - 新增/修改后端 API → 更新 8.3 REST 接口总表（@swagger 注解也要同步写）
   - 新增/修改面板页面或功能 → 更新 8.2 面板使用（页面数量、新页说明）及相应章节
   - 新增工具（`src/tools/`）→ 更新第 11 章工具中心
-- 真机踩坑经验 → 追加 `docs/TASK-DEVELOPMENT-LESSONS.md`
+- 真机踩坑经验 → 追加 `docs/API-GUIDE.md` 第 12 章（真机经验）
 - 设计文档仍走 `docs/superpowers/specs/`，计划走 `docs/superpowers/plans/`；但它们是**内部文档**，不能替代上述用户文档
 - 文档改动与代码同批提交，commit 用 `docs:` 前缀（中文描述）
 
@@ -100,7 +100,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec
 - 批量触发（任务页「立即触发」）与重试会话开窗前自带随机错峰（`execution.staggerMaxSec`，默认 120 秒，0 关闭）；单窗口入口（看板行级执行、task:run 脚本）不等待
-- 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/TASK-DEVELOPMENT-LESSONS.md`）
+- 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/API-GUIDE.md` 第 12 章（真机经验））
 - 双后端实例会互相踩踏（2026-09-08 事故：旧 npm start 与新 dev 并存，定时计划双触发、同窗口双 CDP 会话、领水额度打乱）。已有单实例锁 `data/app.lock`（startApp 启动取锁，PID 存活检测自动接管残留锁）；报「检测到另一个后端实例正在运行」时先杀残留进程，确认无残留再删锁文件
 - **AI 自行启动的 node 进程，用后必须关闭**：无论出于什么目的（跑测试、临时探针脚本、起服务验证等），用完立即停止，绝不能留着后台跑——否则会和用户手动启动的 dev/pm2 后端冲突（端口占用、双实例踩踏）
 - **真机调试禁止频繁开关浏览器窗口**（2026-09-09 用户明确要求）：task:run 每次开窗/关窗、失败重试会再开——验证前先想清楚再跑，减少无效重试；多轮观察复用同一次会话（探针脚本开窗后别关，观察完再关）；站点请求计数常含失败请求，反复点 Send 会消耗当日限频额度
