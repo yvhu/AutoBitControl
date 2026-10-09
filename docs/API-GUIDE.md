@@ -429,8 +429,9 @@ if (await ctx.captcha.visible()) { /* 方框仍在：验证可能未通过 */ }
 
 - 默认选择器：`div[data-turnstile-container] iframe:visible` + `iframe[src*="challenges.cloudflare.com"]:visible`；站点结构特殊时用 `opts.selectors` 覆盖。
 - 点击被浏览器拒绝（iframe 重渲染期间的 CDP 瞬时错误）会**自动重新取盒重试**（最多 `maxAttempts`，默认 3 次，间隔 1-2 秒随机；非瞬时错误直接抛）。
+- **点击实现走 CDP `Input.dispatchMouseEvent`（`clickPoint`，分步移动 + 按下/抬起）**：方框在跨域 iframe 里，`page.mouse.click` 直跳单点不生效，必须这样派发。
+- 方框能否点过取决于出口 IP（ISP 住宅 IP 通常一点即过）；点不过属 IP 问题，不是任务逻辑问题。站点自身生成 token 超时（页面报 `Turnstile token request timed out`）属站点/IP 侧，任务侧按可恢复错误刷新。
 - TaskContext 上还保留同名的扁平方法 `clickTurnstileBox` / `turnstileVisible` / `autoClickTurnstile`（命名空间就是它们的封装），新代码统一用 `ctx.captcha.*`。
-- 方框能否点过取决于出口 IP（ISP 住宅 IP 通常一点即过）；点不过属 IP 问题，不是任务逻辑问题。
 
 ### 4.4 ctx.recover 与 ctx.race
 
@@ -1123,6 +1124,13 @@ await page.locator('textarea[name="description"]').fill(faker.lorem.sentence())
 2. **「已签到」不止一种界面**：konnex 当周已签到时按钮消失，卡片先显示 "Great job!" 横幅，用户点 Close 后变暗态 "RESETS IN <倒计时>"——**两种状态都要算成功**，否则用户手动关横幅后批量运行会整批误报失败。做法：`#卡片:has-text("Great job!")` / `:has-text("RESETS IN")` 任一命中即已签到。
 3. **签到成功判定用竞速而不是单断言**：点按钮后成功弹窗与已签到横幅可能先后出现，用 `ctx.race` 两者任一命中即成功；竞速漏检再兜底查一次已签到状态。
 4. **成功截图必须容错**：站点页面有持续动画（倒计时/动态榜）时 CDP 截图会偶发 30s 超时挂起，成功截图若直接 await 会把已成功的签到误报失败（窗口 89 实测）。**成功截图一律用 `ctx.safeScreenshot`**，签到成功的唯一判定是弹窗/卡片状态。
+
+**10）2026-10-09 薄门面重构真机纪实（替换中暴露的两个回归）**
+
+1. **`ctx.recover` 文案命中必须按「存在」而非「可见」**：旧 `waitForTextRecover` 用 `count>0`；重构一度用 `.first().isVisible()`，站点双 DOM/动画态下首元素不可见即误判超时（portal-rhuna 实测：诊断包 `visibleText` 已有 "Daily Check-in"，任务却报「未出现」）。现 `{ text }` 探针按存在判定、`{ selector }` 探针按可见判定（见 4.4）。
+2. **Turnstile 方框点击必须走 CDP `Input.dispatchMouseEvent`**：跨域 iframe 里 `page.mouse.click` 直跳单点不生效；现 `clickPoint`（`src/automation/dom/click.ts`）用 CDP 分步移动 + 按下/抬起派发。
+3. **失败时先看诊断包、别只翻日志**：失败自动落盘 URL/页面文本/步骤/错误；Turnstile 未检测到时会额外记录页面全部 iframe 及其尺寸（`iframes:[]` 即页面当时根本没有方框），面板看板失败行点「诊断」即可查（见 12.6）。
+4. **站点侧问题要与代码问题分开**：官方下线/站点服务端渲染报错（如 `We couldn't render this page`）会导致固定失败，属站点环境，不是任务逻辑；连续失败按第 5 条停手求助，别反复重跑。
 
 ---
 
