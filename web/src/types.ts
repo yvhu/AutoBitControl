@@ -69,6 +69,30 @@ export interface SettingsData extends Omit<SettingsBase, 'datasource'> {
   datasource: DatasourceInfo
 }
 
+// ===== 失败诊断（手补类型：/api/diagnostics/{runId}） =====
+
+/** 诊断步骤记录（与后端 automation/diag 的 StepRecord 同构，detail 可缺省） */
+export interface DiagStep {
+  name: string
+  startMs: number
+  ms: number
+  ok: boolean
+  detail?: string
+}
+
+/** 失败诊断包（DiagBundle） */
+export interface DiagBundle {
+  taskKey: string
+  profileName: string
+  status: string
+  error: string
+  url: string
+  capturedAt: string
+  steps: DiagStep[]
+  visibleText: string
+  dialogText: string
+}
+
 // ===== 工具中心（手补类型：/api/tools 与 /api/tools/file-assign/*） =====
 
 export type ToolItem = { key: string; name: string; description: string }

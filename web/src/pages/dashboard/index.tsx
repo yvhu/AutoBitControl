@@ -5,6 +5,7 @@ import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
 import { splitBatches, batchProgress, batchTiming } from './groupBatches'
+import DiagModal from './DiagModal'
 
 const RANGE_OPTIONS = [
   { label: '今天', value: 'today' },
@@ -41,6 +42,16 @@ function TaskName({ info, fallback }: { info: { name: string; groupName: string 
   )
 }
 
+function DiagButton({ runId, screenshot }: { runId: number; screenshot: string | null }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button type="link" size="small" onClick={() => setOpen(true)}>诊断</Button>
+      <DiagModal runId={runId} open={open} onClose={() => setOpen(false)} screenshot={screenshot} />
+    </>
+  )
+}
+
 function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
   const trigger = useTriggerTask()
   return (
@@ -60,10 +71,13 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 240 }}>{e}</Typography.Text> : '—') },
         { title: '截图', dataIndex: 'screenshot', width: 80, render: (s: string | null) => (s ? <Button type="link" size="small" onClick={() => window.open(`/api/screenshots?path=${encodeURIComponent(s)}`, '_blank')}>🖼</Button> : '—') },
-        { title: '操作', width: 80, render: (_, r) => (
-          <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-            {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-          </Button>
+        { title: '操作', width: 130, render: (_, r) => (
+          <Space size={0}>
+            {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
+            <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+              {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
+            </Button>
+          </Space>
         ) },
       ]}
     />
@@ -132,10 +146,13 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         ) },
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
-        { title: '操作', width: 80, render: (_, r) => (
-          <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-            {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-          </Button>
+        { title: '操作', width: 130, render: (_, r) => (
+          <Space size={0}>
+            {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
+            <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+              {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
+            </Button>
+          </Space>
         ) },
       ]}
     />

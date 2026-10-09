@@ -1433,6 +1433,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/diagnostics/{runId}": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        /** 失败诊断包（按 run id，手补类型） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: { runId: number; };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 诊断包 JSON（DiagBundle） */
+                200: {
+                    headers: { [name: string]: unknown; };
+                    content: {
+                        "application/json": {
+                            code?: number;
+                            message?: string;
+                            data?: {
+                                taskKey?: string;
+                                profileName?: string;
+                                status?: string;
+                                error?: string;
+                                url?: string;
+                                capturedAt?: string;
+                                steps?: {
+                                    name?: string;
+                                    startMs?: number;
+                                    ms?: number;
+                                    ok?: boolean;
+                                    detail?: string;
+                                }[];
+                                visibleText?: string;
+                                dialogText?: string;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never; post?: never; delete?: never; options?: never; head?: never; patch?: never; trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
