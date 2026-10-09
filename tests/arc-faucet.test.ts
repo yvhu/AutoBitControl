@@ -363,6 +363,24 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
   })
 })
 
+describe('ArcFaucetTask run 提交后无成功文案', () => {
+  it('成功文案始终不出现 → 抛「未出现成功文案」超时', async () => {
+    // texts 为空 = getByText(SUCCESS_TEXT).count() 恒 0，submitAndWait 跑到竞速预算耗尽返回 false
+    const { ctx } = makeCtx({ ...baseState(), texts: {} })
+    // SUBMIT_RACE_MS 不可注入：沿用本文件假时钟套路，让 30s 竞速预算瞬间走完（真实时钟会让用例等足 30s）
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      now += 600
+      return now
+    })
+    try {
+      await expect(new ArcFaucetTask().run(ctx)).rejects.toThrow('未出现成功文案')
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+})
+
 describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
   let server: Server
   let baseUrl: string
