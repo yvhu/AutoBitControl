@@ -61,6 +61,12 @@ describe('api/ai answerQuiz', () => {
     expect(clicks).toEqual([1])
   })
 
+  it('默认 match 为 letter，system 提示要求输出字母', async () => {
+    const { ctx, chat } = makeQuizCtx({ texts: ['甲', '乙'], answer: 'A' })
+    await answerQuiz(ctx, { question: '题干', options: { selector: '.opt' } })
+    expect(chat.mock.calls[0][0][0]).toEqual({ role: 'system', content: expect.stringContaining('字母') })
+  })
+
   it('题干用选择器时经 getText 读取', async () => {
     const { ctx, chat } = makeQuizCtx({ texts: ['甲', '乙'], answer: 'A' })
     await answerQuiz(ctx, { question: { selector: '#q' }, options: { selector: '.opt' } })
@@ -86,17 +92,19 @@ describe('api/ai answerQuiz', () => {
   })
 
   it('match:index 按下标选择（1 基）', async () => {
-    const { ctx, clicks } = makeQuizCtx({ texts: ['甲', '乙', '丙'], answer: '3' })
+    const { ctx, clicks, chat } = makeQuizCtx({ texts: ['甲', '乙', '丙'], answer: '3' })
     const res = await answerQuiz(ctx, { question: '题干', options: { selector: '.opt' }, match: 'index' })
     expect(res).toEqual({ answer: '3', clicked: true, fallback: false })
     expect(clicks).toEqual([2])
+    expect(chat.mock.calls[0][0][0].content).toContain('序号')
   })
 
   it('match:text 按选项文本匹配', async () => {
-    const { ctx, clicks } = makeQuizCtx({ texts: ['苹果', '香蕉'], answer: '我选香蕉' })
+    const { ctx, clicks, chat } = makeQuizCtx({ texts: ['苹果', '香蕉'], answer: '我选香蕉' })
     const res = await answerQuiz(ctx, { question: '题干', options: { selector: '.opt' }, match: 'text' })
     expect(res.fallback).toBe(false)
     expect(clicks).toEqual([1])
+    expect(chat.mock.calls[0][0][0].content).toContain('文本')
   })
 
   it('无选项元素 → 抛错', async () => {

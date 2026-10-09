@@ -35,6 +35,13 @@ function parseIndex(answer: string, match: 'letter' | 'index' | 'text', optionTe
   return idx >= 0 ? idx : null
 }
 
+/** 按 match 模式生成对应的 system 提示词 */
+function quizSystemPrompt(match: 'letter' | 'index' | 'text'): string {
+  if (match === 'index') return '你是答题助手，只输出所选选项的序号数字（从 1 开始，如 1），不要解释。'
+  if (match === 'text') return '你是答题助手，只输出所选选项的完整文本，不要解释，不要加任何前缀。'
+  return '你是答题助手，只输出所选选项的字母（如 A），不要解释。'
+}
+
 /** 页面问答：读题干+选项 → 问 AI → 选并点击；解析失败兜底随机点一项（答了就算成功） */
 export async function answerQuiz(ctx: TaskContext, spec: { question: string | { selector: string }; options: { selector: string }; match?: 'letter' | 'index' | 'text' }): Promise<{ answer: string; clicked: boolean; fallback: boolean }> {
   const question = typeof spec.question === 'string' ? spec.question : await getText(ctx, spec.question.selector)
@@ -44,8 +51,9 @@ export async function answerQuiz(ctx: TaskContext, spec: { question: string | { 
   const texts: string[] = []
   for (let i = 0; i < n; i++) texts.push(((await loc.nth(i).textContent()) ?? '').trim())
   const list = texts.map((t, i) => `${String.fromCharCode(65 + i)}. ${t}`).join('\n')
-  const answer = await askAi(ctx, `${question}\n\n${list}`, { system: '你是答题助手，只输出一个选项字母（如 A），不要解释。' })
-  const idx = parseIndex(answer, spec.match ?? 'letter', texts, n)
+  const match = spec.match ?? 'letter'
+  const answer = await askAi(ctx, `${question}\n\n${list}`, { system: quizSystemPrompt(match) })
+  const idx = parseIndex(answer, match, texts, n)
   if (idx === null) {
     const rand = Math.floor(Math.random() * n)
     await loc.nth(rand).click()
