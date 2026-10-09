@@ -83,6 +83,14 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 无分号、单引号、2 空格缩进、TS 严格模式；文件头中文注释块说明模块职责与依赖方向；命名用 camelCase，文件 kebab-case；日志用 logger（中文消息，格式 `logger.info({count}, '消息')`）。commit 风格 conventional：`feat:`/`fix:`/`chore:`/`docs:` + 中文描述。
 
+## 真机验证规范（硬性执行）
+
+任务写完/改完后的真机验证，严格按以下方式执行（2026-10-09 用户明确要求，后续一律照此）：
+
+1. **批量真机验证剩余窗口**：新任务/改动用 `task:run` 逐个窗口验证（`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`），覆盖剩余未验证窗口；已签到/已答题的窗口由任务逻辑自适应（幂等）。
+2. **并发上限 4**：同时最多开 4 个窗口（全局 `maxConcurrentWindows` 缺省 4 即此上限；手动并行验证时每次也最多同时跑 4 个窗口，跑完一批再下一批）。
+3. **问题自解决 + 及时暂停**：遇到问题先自行排查解决；**若长时间无法解决（最多 3 分钟）或同一问题尝试 3 次仍失败，立刻暂停通知用户人工辅助**，不要反复派自动化重跑消耗窗口/额度。
+
 ## 踩坑提醒
 
 - 未捕获异常默认退出进程，但 CDP 会话级瞬时错误（Protocol error/session closed 等，见 src/app.ts TRANSIENT_PATTERN）只告警不退出——修 bug 时别把这类错误当致命
