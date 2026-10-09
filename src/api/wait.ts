@@ -5,11 +5,14 @@
 import type { TaskContext } from '../engine/task-context'
 import { DEFAULT_RELOAD_TIMEOUT_MS, RECOVER_TEXTS } from '../infrastructure/constants'
 
-/** 探针：文案（按存在命中）/ 选择器（按可见命中）/ gone（目标不可见或消失）三形态 */
-export type Probe = { text: string } | { selector: string } | { gone: string }
+/** 探针（api 层公共形态）：文案（按存在命中）/ 选择器（按可见命中）二选一；不含 gone，竞速等场景只需「出现」语义 */
+export type Probe = { text: string } | { selector: string }
+
+/** 等待探针：在 Probe 基础上增加 gone（目标不可见或消失）；仅 waitFor 这类等待场景使用 */
+export type WaitProbe = Probe | { gone: string }
 
 /** 探针是否命中：文案按存在（count>0，兼容双 DOM/动画）；选择器按可见；gone 按不可见/不存在 */
-async function probeHit(ctx: TaskContext, probe: Probe): Promise<boolean> {
+async function probeHit(ctx: TaskContext, probe: WaitProbe): Promise<boolean> {
   try {
     if ('text' in probe) return (await ctx.page.getByText(probe.text, { exact: false }).count()) > 0
     const sel = 'selector' in probe ? probe.selector : probe.gone
@@ -37,7 +40,7 @@ export interface WaitOptions {
 }
 
 /** 等条件命中（出现/可见/消失）；可选刷新恢复；返回是否命中；assert 时超时抛错 */
-export async function waitFor(ctx: TaskContext, probe: Probe, options: WaitOptions = {}): Promise<boolean> {
+export async function waitFor(ctx: TaskContext, probe: WaitProbe, options: WaitOptions = {}): Promise<boolean> {
   const budgetMs = options.budgetMs ?? 10000
   const refreshEveryMs = options.refreshEveryMs ?? 0
   const recoverTexts = options.recoverTexts ?? RECOVER_TEXTS

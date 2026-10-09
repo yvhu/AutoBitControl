@@ -6,8 +6,8 @@
  */
 import type { TaskContext } from '../engine/task-context'
 import { WalletActions } from '../automation'
-import type { WalletIntent, LoginProbe } from '../automation'
-import { waitFor } from './wait'
+import type { WalletIntent } from '../automation'
+import { waitFor, type Probe } from './wait'
 
 export type { WalletIntent }
 
@@ -20,10 +20,10 @@ export type WalletScenario = 'direct' | 'appkit' | 'dialog'
 interface LoginSpecBase {
   /** 钱包类型，作为 WalletActions 的 walletKey */
   wallet: WalletType
-  /** 已登录标志探针（出现即认定已登录，字符串等价于 `{ text }`） */
-  loggedIn: LoginProbe
+  /** 已登录标志探针（出现即认定已登录） */
+  loggedIn: Probe
   /** 未登录标志探针（出现即需要走登录流程） */
-  loggedOut: LoginProbe
+  loggedOut: Probe
   /** 站点「连接钱包」按钮选择器（可省略） */
   connect?: string
   /** 要依次处理的钱包意图序列，缺省 ['connect'] */

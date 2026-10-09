@@ -24,6 +24,10 @@ describe('api/wait', () => {
     const ctx = makeCtx()
     await expect(waitFor(ctx, { text: 'NO' }, { budgetMs: 200, assert: true })).rejects.toThrow()
   })
+  it('waitFor：WaitProbe 的 gone 形态——目标不存在即命中', async () => {
+    const ctx = makeCtx({ locator: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }) })
+    expect(await waitFor(ctx, { gone: '#done' }, { budgetMs: 500 })).toBe(true)
+  })
   it('race：命中键返回', async () => {
     const ctx = makeCtx({ text_visible: 'A' })
     expect(await race(ctx, [['a', { text: 'A' }], ['b', { text: 'B' }]], 500)).toBe('a')

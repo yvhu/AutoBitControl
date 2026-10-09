@@ -47,15 +47,15 @@ describe('api/wallet loginWallet', () => {
     await loginWallet(makeCtx(), {
       wallet: 'metamask',
       scenario: 'direct',
-      loggedIn: 'Connected',
-      loggedOut: 'Connect Wallet',
+      loggedIn: { text: 'Connected' },
+      loggedOut: { text: 'Connect Wallet' },
     })
     expect(mocks.ensureLoggedIn).toHaveBeenCalledTimes(1)
     const spec = mocks.ensureLoggedIn.mock.calls[0][0]
     expect(spec.entry).toEqual({ kind: 'direct' })
     expect(spec.walletEntry).toBeUndefined()
-    expect(spec.loggedIn).toBe('Connected')
-    expect(spec.loggedOut).toBe('Connect Wallet')
+    expect(spec.loggedIn).toEqual({ text: 'Connected' })
+    expect(spec.loggedOut).toEqual({ text: 'Connect Wallet' })
   })
 
   it('appkit：entry 带 open/entryTestId/modalTestId', async () => {
@@ -83,8 +83,8 @@ describe('api/wallet loginWallet', () => {
       wallet: 'metamask',
       scenario: 'appkit',
       entryTestId: 'wallet-x',
-      loggedIn: 'a',
-      loggedOut: 'b',
+      loggedIn: { text: 'a' },
+      loggedOut: { text: 'b' },
     })
     expect(mocks.ensureLoggedIn.mock.calls[0][0].entry.open).toBe('button:has-text("Connect Wallet")')
   })
@@ -95,8 +95,8 @@ describe('api/wallet loginWallet', () => {
       scenario: 'dialog',
       confirm: '#confirm',
       walletEntry: 'button:has-text("Petra")',
-      loggedIn: 'Connected',
-      loggedOut: 'Connect',
+      loggedIn: { text: 'Connected' },
+      loggedOut: { text: 'Connect' },
     })
     const spec = mocks.ensureLoggedIn.mock.calls[0][0]
     expect(spec.entry).toEqual({ kind: 'dialog', confirm: '#confirm' })
@@ -113,8 +113,8 @@ describe('api/wallet loginWallet', () => {
     await loginWallet(ctx as never, {
       wallet: 'petra',
       scenario: 'direct',
-      loggedIn: 'a',
-      loggedOut: 'b',
+      loggedIn: { text: 'a' },
+      loggedOut: { text: 'b' },
     })
     const { deps } = mocks.instances[0]
     expect(deps.walletKey).toBe('petra')
