@@ -820,6 +820,12 @@ WALLET_PASSWORDS={"metamask":"MetaMask 解锁密码","petra":"Petra 解锁密码
 | GET | `/api/docs/examples` | 示例文件清单（白名单） |
 | GET | `/api/docs/examples/:name` | 单个示例源码 |
 
+**诊断**
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/diagnostics/:runId` | 按 run id 取失败诊断包 JSON（run 不存在/无诊断/文件不可读统一 404，业务码 40408） |
+
 **工具**
 
 | 方法 | 路径 | 用途 |
@@ -1046,7 +1052,17 @@ await page.locator('textarea[name="description"]').fill(faker.lorem.sentence())
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
 - **运行状态**：`pending → running → success | failed | retry_wait → …`，`skipped` = 开窗失败/窗口超时/熔断跳过（见第 5 章）。
 
-### 12.6 真机经验（合并自原《真机踩坑录》）
+### 12.6 失败自动诊断包
+
+任务失败时（含重试前每次尝试），框架自动采集当前窗口的排障上下文并落盘，面板看板失败行点「诊断」即可查看，不必先翻日志文件。
+
+- **采集内容**：失败时的页面 URL、页面可见文本（截前 2000 字）、弹窗文本（`[role="dialog"]` 截前 1000 字）、步骤时间线（`ctx.step` 记录的每步耗时与成败）、错误信息、窗口名与任务 key；另有失败截图。
+- **落盘位置**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/<日期>-attempt<n>.diag.json`（与截图同目录，`attempt<n>` 对应第 n 次尝试）；路径记在该 run 的 `runs.diag_path`。
+- **面板入口**：看板批次明细的失败行（`status=failed`）「诊断」按钮，弹窗展示错误 / URL / 步骤时间线 / 弹窗文本 / 页面文本，并可跳转失败截图。
+- **接口**：`GET /api/diagnostics/:runId` 按 run id 返回诊断包 JSON（DiagBundle）；run 不存在、无诊断或文件不可读统一 404（业务码 `40408`）。
+- **不影响成败**：采集全程 best-effort，采集或写盘异常只告警，绝不改变任务成功/失败结果，也不计入熔断。
+
+### 12.7 真机经验（合并自原《真机踩坑录》）
 
 **1）真机核实是唯一标准，选择器先猜后验**
 
