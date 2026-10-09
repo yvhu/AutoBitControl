@@ -64,7 +64,7 @@ function makeCtx(opts: {
     respSeq: opts.respSeq ? [...opts.respSeq] : null,
     bodyText: opts.bodyText ?? '',
   }
-  const clicks = vi.fn().mockResolvedValue(undefined)
+  const clicks: string[] = []
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const page = {
     locator: (sel: string) => ({
@@ -85,6 +85,7 @@ function makeCtx(opts: {
         return {
           count: async () => (state.btnVisible ? 1 : 0),
           isVisible: async () => state.btnVisible,
+          click: vi.fn(async () => { clicks.push(sel) }),
         }
       },
     }),
@@ -104,11 +105,13 @@ function makeCtx(opts: {
     },
     reload: vi.fn().mockResolvedValue(undefined),
     evaluate: async () => state.bodyText,
+    context: () => ({ pages: () => [] as unknown[] }),
+    goto: vi.fn().mockResolvedValue(undefined),
   }
   const ctx = new TaskContext({
     page: page as never,
     task: new AuralaunchFaucetTask(),
-    human: { click: clicks } as never,
+    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
@@ -119,11 +122,8 @@ function makeCtx(opts: {
   return { ctx, clicks, log, state }
 }
 
-/** run 全流程所需引擎能力假实现（开页/断言/截图与站点判定逻辑无关） */
+/** run 全流程所需引擎能力假实现（默认 run 走假 page 的 context/goto；截图容错断言用 screenshot） */
 function stubRunCapabilities(ctx: TaskContext): void {
-  ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
-  ctx.goto = vi.fn().mockResolvedValue(undefined)
-  ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
   ctx.screenshot = vi.fn().mockResolvedValue('/tmp/x.png')
 }
 
@@ -263,8 +263,7 @@ describe('AuralaunchFaucetTask run 主流程', () => {
     stubRunCapabilities(ctx)
     await new AuralaunchFaucetTask().run(ctx)
     expect(state.fills).toEqual(['0xabc'])
-    expect(clicks).toHaveBeenCalledWith(REQUEST_BTN_SELECTOR)
-    expect(clicks).toHaveBeenCalledTimes(1)
+    expect(clicks).toEqual([REQUEST_BTN_SELECTOR])
     expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
   })
 
@@ -294,7 +293,7 @@ describe('AuralaunchFaucetTask run 主流程', () => {
     })
     stubRunCapabilities(ctx)
     await new AuralaunchFaucetTask().run(ctx)
-    expect(clicks).toHaveBeenCalledTimes(2)
+    expect(clicks).toHaveLength(2)
     expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
   }, 15000)
 
