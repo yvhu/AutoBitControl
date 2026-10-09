@@ -1,7 +1,6 @@
 /**
  * Arc 领水任务（faucet-arc）：Circle 测试网水龙头 https://faucet.circle.com/ 领取 20 testnet USDC
- * 流程（真机核实）：填地址 → 校验网络/币种 → 点 Send → 竞速成功文案/v2 挑战
- *   → v2 走浏览器插件自动解题（ctx.captcha.waitPlugin）→ 再点 Send → 成功截图
+ * 流程（真机核实）：填地址 → 校验网络/币种 → 点 Send → 等待成功文案 → 成功截图
  * 依赖方向：仅依赖 ./base（经 ctx 用能力），不再直接 import automation
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
@@ -16,10 +15,8 @@ export const CURRENCY_RADIO_SELECTOR = 'input[name="currency"][value="USDC"]'
 export const CURRENCY_CARD_SELECTOR = '[data-testid="select-card-USDC"]'
 export const SUBMIT_SELECTOR = 'form button[type="submit"]'
 export const SUCCESS_TEXT = 'is on its way to your wallet and should appear shortly'
-export const CAPTCHA_V2_TEXT = 'verify that you are not a bot'
 export const SUBMIT_ENABLED_TIMEOUT_MS = 15000
 export const SUBMIT_RACE_MS = 30000
-export const V3_SITEKEY = '6LcNs_0pAAAAAJuAAa-VQryi8XsocHubBk-YlUy2'
 
 /** 读取 Network 下拉当前显示值（元素缺失/读取失败返回空串） */
 export async function currentNetwork(ctx: TaskContext): Promise<string> {
@@ -65,26 +62,15 @@ export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_E
   throw new Error(`提交按钮 ${timeoutMs}ms 内未变为可用（地址校验未通过？）`)
 }
 
-/** 竞速等待：成功文案 / v2 挑战文案谁先出现；每 2s 补一次 DOM 挑战检测 */
-export async function waitForOutcome(ctx: TaskContext, timeoutMs: number, allowChallenge = true): Promise<'success' | 'captcha' | null> {
-  const end = Date.now() + timeoutMs
-  let lastCheck = 0
+/** 点提交并等待成功文案出现（超时返回 false） */
+async function submitAndWait(ctx: TaskContext): Promise<boolean> {
+  await ctx.page.locator(SUBMIT_SELECTOR).first().click()
+  const end = Date.now() + SUBMIT_RACE_MS
   while (Date.now() < end) {
-    if (await ctx.page.getByText(SUCCESS_TEXT, { exact: false }).count() > 0) return 'success'
-    if (allowChallenge) {
-      if (await ctx.page.getByText(CAPTCHA_V2_TEXT, { exact: false }).count() > 0) return 'captcha'
-      if (Date.now() - lastCheck >= 2000 && (await ctx.captcha.hasChallenge(V3_SITEKEY))) return 'captcha'
-      lastCheck = Date.now()
-    }
+    if ((await ctx.page.getByText(SUCCESS_TEXT, { exact: false }).count()) > 0) return true
     await ctx.page.waitForTimeout(1000)
   }
-  return null
-}
-
-/** 点提交并竞速等待结果 */
-async function submitAndWait(ctx: TaskContext, allowChallenge = true): Promise<'success' | 'captcha' | null> {
-  await ctx.page.locator(SUBMIT_SELECTOR).first().click()
-  return waitForOutcome(ctx, SUBMIT_RACE_MS, allowChallenge)
+  return false
 }
 
 /** Arc 领水任务（Circle 测试网水龙头：Arc Testnet 领取 20 testnet USDC） */
@@ -95,7 +81,7 @@ export class ArcFaucetTask extends SiteTask {
     group: { key: 'arc', name: 'Arc' },
     url: 'https://faucet.circle.com/',
     sourceUrl: 'https://faucet.circle.com/',
-    note: '真机核实（2026-09-09）：站点为 reCAPTCHA Enterprise（页面常驻 v3 sitekey 6LcNs_0p，浏览器自行生成 token）；提交被拒后动态注入 v2 挑战——人机验证走浏览器插件自动解题（ctx.captcha.waitPlugin，插件=yescaptcha 人机助手；任务侧只等 aria-checked 变绿）；不连钱包，地址取自数据源「metamask钱包地址」列；限频每资产×网络 1-2 小时（不做判定）',
+    note: '真机核实（2026-09-09）：站点为 reCAPTCHA Enterprise（页面常驻 v3 sitekey，浏览器自行生成 token，无交互）；不连钱包，地址取自数据源「metamask钱包地址」列；提交后只等成功文案（人机验证收口为仅 Turnstile 方框点击）；限频每资产×网络 1-2 小时（不做判定）',
     category: 'faucet',
     lastUpdated: '2026-10-09',
     enabled: true,
@@ -117,16 +103,8 @@ export class ArcFaucetTask extends SiteTask {
         await addressInput.fill(address)
       }
     })
-    let outcome = await submitAndWait(ctx)
-    if (outcome === 'captcha') {
-      ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '检测到 v2 挑战，等待浏览器插件自动解题')
-      const solved = await ctx.captcha.waitPlugin({ siteKeyExclude: V3_SITEKEY })
-      if (solved === 'none') throw new Error('未检测到验证码锚点 frame')
-      if (solved === 'timeout') throw new Error('等待验证码插件解题超时（检查插件 ClientKey/余额）')
-      await ensureSubmitEnabled(ctx)
-      outcome = await submitAndWait(ctx, false)
-    }
-    if (outcome !== 'success') throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案（v2 挑战也未出现）`)
+    const ok = await submitAndWait(ctx)
+    if (!ok) throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案`)
     await ctx.safeScreenshot('arc-faucet-success')
   }
 }

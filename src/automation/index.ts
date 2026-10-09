@@ -4,5 +4,6 @@
  */
 export * from './dom'
 export * from './wallet'
+export * from './captcha'
 export { StepRecorder } from './diag'
 export type { StepRecord } from './diag'

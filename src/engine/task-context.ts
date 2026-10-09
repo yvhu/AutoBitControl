@@ -19,6 +19,9 @@ import {
   recoverProbe,
   waitForPopup,
   openAppKitWallet as runAppKitWalletLogin,
+  clickTurnstileBox as runTurnstileClick,
+  autoClickTurnstile as runTurnstileAutoClick,
+  turnstileVisible as isTurnstileVisible,
   type Probe,
   type RecoverOpts,
   type WalletRegistry,
@@ -26,9 +29,6 @@ import {
   type WalletSession,
   type AppKitLoginOptions,
 } from '../automation'
-import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
-import { waitCaptchaPassed as runPluginWait } from '../automation/captcha/plugin-wait'
-import { findAnchorFrame, findChallengeFrame } from '../automation/captcha/frame-find'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 
@@ -55,9 +55,6 @@ export interface CaptchaActions {
   turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => Promise<boolean>
   visible: (selectors?: string[]) => Promise<boolean>
   autoClick: (budgetMs?: number) => Promise<boolean>
-  waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => Promise<'passed' | 'none' | 'timeout'>
-  /** 页面是否存在 reCAPTCHA 锚点/挑战 frame（排除常驻占位 sitekey） */
-  hasChallenge: (siteKeyExclude?: string) => Promise<boolean>
 }
 
 export class TaskContext {
@@ -101,18 +98,13 @@ export class TaskContext {
   /** 已记录步骤 */
   steps() { return this.recorder.steps() }
 
-  /** 验证码能力命名空间（Turnstile 方框 + 打码插件；旧扁平方法保留兼容） */
+  /** 验证码能力命名空间（仅 Turnstile 交互式方框） */
   get captcha(): CaptchaActions {
     if (!this.captchaActionsInstance) {
       this.captchaActionsInstance = {
         turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => this.clickTurnstileBox(opts),
         visible: (selectors?: string[]) => this.turnstileVisible(selectors),
         autoClick: (budgetMs?: number) => this.autoClickTurnstile(budgetMs),
-        waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => this.waitCaptchaPassed(opts),
-        /** 页面是否存在 reCAPTCHA 锚点/挑战 frame（排除常驻 v3 sitekey） */
-        hasChallenge: async (siteKeyExclude?: string): Promise<boolean> => {
-          return findAnchorFrame(this.page, siteKeyExclude) !== null || findChallengeFrame(this.page, siteKeyExclude) !== null
-        },
       }
     }
     return this.captchaActionsInstance
@@ -523,16 +515,6 @@ export class TaskContext {
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
     return runTurnstileAutoClick({ page: this.page, logger: this.turnstileLogger() }, budgetMs)
-  }
-
-  /**
-   * 等待浏览器内打码平台插件自动完成验证码解题（插件路线：平台无关，装哪家插件都一样）
-   * 官方判断方式：锚点 iframe 的 aria-checked=true（wiki 64194741，30×3s=90s）
-   * @param opts.siteKeyExclude 跳过的常驻 sitekey（页面常驻 v3 锚点排除）
-   * @returns 'passed' 通过；'none' 无锚点；'timeout' 超时（任务应抛错交重试）
-   */
-  async waitCaptchaPassed(opts?: { timeoutMs?: number; siteKeyExclude?: string }): Promise<'passed' | 'none' | 'timeout'> {
-    return runPluginWait({ page: this.page, logger: this.turnstileLogger() }, opts)
   }
 
   /**
