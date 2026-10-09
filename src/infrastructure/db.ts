@@ -84,6 +84,8 @@ export interface RunRow {
   slot: number
   /** 所属批次 id（NULL = 老数据未分批） */
   batchId: number | null
+  /** 失败诊断产物路径（NULL = 无诊断文件；失败时由框架写入） */
+  diagPath: string | null
   /** JOIN profiles 得到的窗口比特 id（行级执行用） */
   bitbrowserId: string
   status: RunStatus
@@ -196,6 +198,7 @@ const SCHEMA = [
     started_at TEXT,
     finished_at TEXT,
     batch_id INTEGER,
+    diag_path TEXT,
     UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
@@ -260,7 +263,7 @@ const SCHEMA = [
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
-const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
 const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
@@ -330,10 +333,11 @@ export class AppDb {
           screenshot TEXT,
           started_at TEXT,
           finished_at TEXT,
+          diag_path TEXT,
           UNIQUE(profile_id, task_key, date, slot)
         )`)
-        await tx.execute(`INSERT INTO runs (id, profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at)
-          SELECT id, profile_id, task_key, date, 0, status, attempts, error, screenshot, started_at, finished_at FROM runs_old`)
+        await tx.execute(`INSERT INTO runs (id, profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, diag_path)
+          SELECT id, profile_id, task_key, date, 0, status, attempts, error, screenshot, started_at, finished_at, NULL FROM runs_old`)
         await tx.execute(`DROP TABLE runs_old`)
         await tx.execute(`CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`)
         await tx.commit()
@@ -347,6 +351,11 @@ export class AppDb {
     const runsInfo2 = await this.client.execute(`PRAGMA table_info(runs)`)
     if (!runsInfo2.rows.some((r) => String(r.name) === 'batch_id')) {
       await this.client.execute(`ALTER TABLE runs ADD COLUMN batch_id INTEGER`)
+    }
+    // 老库补列：runs.diag_path（失败诊断产物路径，可空；不参与 UNIQUE，直接 ADD COLUMN 无需重建表）
+    const runsInfo3 = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo3.rows.some((r) => String(r.name) === 'diag_path')) {
+      await this.client.execute(`ALTER TABLE runs ADD COLUMN diag_path TEXT`)
     }
     // 索引放补列块外无条件幂等创建：ALTER 与建索引之间崩溃不会永久丢失索引
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
@@ -480,16 +489,17 @@ export class AppDb {
    */
   async upsertRun(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
     await this.exec(
-      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id, diag_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date, slot) DO UPDATE SET
          status = excluded.status,
          attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
          error = excluded.error,
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at),
-         batch_id = COALESCE(excluded.batch_id, runs.batch_id)`,
-      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null],
+         batch_id = COALESCE(excluded.batch_id, runs.batch_id),
+         diag_path = COALESCE(excluded.diag_path, runs.diag_path)`,
+      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null, patch.diagPath ?? null],
     )
     const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return rows[0] as unknown as RunRow
@@ -579,6 +589,12 @@ export class AppDb {
   /** 查询当日最近一轮运行记录（slot 最大的一行；无记录返回 null——重试续跑与新增轮次判定用） */
   async getLatestRun(profileId: number, taskKey: string, date: string): Promise<RunRow | null> {
     const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? ORDER BY r.slot DESC LIMIT 1`, [profileId, taskKey, date])
+    return (rows[0] as unknown as RunRow | undefined) ?? null
+  }
+
+  /** 按 run id 取值（不存在返回 null） */
+  async getRunById(id: number): Promise<RunRow | null> {
+    const rows = await this.exec(`${SELECT_RUN} WHERE r.id = ?`, [id])
     return (rows[0] as unknown as RunRow | undefined) ?? null
   }
 

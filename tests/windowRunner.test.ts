@@ -408,6 +408,7 @@ describe('批次透传与 pending 预写', () => {
           date,
           slot,
           batchId: null,
+          diagPath: null,
           bitbrowserId: 'bb-1',
           status: status as RunRow['status'],
           attempts: 0,

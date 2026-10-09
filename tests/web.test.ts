@@ -145,7 +145,7 @@ describe('server API（RESTful + envelope）', () => {
       deps.db.listBatchesForRange.mockResolvedValue([
         { id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000', stats: { total: 2, success: 1, failed: 1, captchaFailed: 0, skipped: 0, running: 0, pending: 0 } },
       ])
-      deps.db.listUnbatchedRuns.mockResolvedValue([{ id: 9, profileId: 1, taskKey: 't2', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: null, profileName: '窗口1', bitbrowserId: 'bb-1' }])
+      deps.db.listUnbatchedRuns.mockResolvedValue([{ id: 9, profileId: 1, taskKey: 't2', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: null, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' }])
       deps.db.countInFlightRuns.mockResolvedValue(3)
       const res = await request(createApp(deps as never)).get('/api/batches?range=today')
       expect(res.status).toBe(200)
@@ -182,7 +182,7 @@ describe('server API（RESTful + envelope）', () => {
     it('GET /api/batches/:id 返回批次明细并附加 durationSec/inFlight', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
-        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-09-04 09:00:00.000', finishedAt: '2026-09-04 09:01:05.000', batchId: 2, profileName: '窗口1', bitbrowserId: 'bb-1' },
+        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-09-04 09:00:00.000', finishedAt: '2026-09-04 09:01:05.000', batchId: 2, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' },
       ])
       deps.db.countInFlightRuns.mockResolvedValue(0)
       const res = await request(createApp(deps as never)).get('/api/batches/2')

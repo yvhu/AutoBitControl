@@ -31,6 +31,14 @@ describe('AppDb', () => {
     expect(list[0].screenshot).toBe('s.png')
   })
 
+  it('upsertRun 写入 diagPath 并可经 getRunById 取回', async () => {
+    const p = await db.upsertProfile('bb-diag', '窗口')
+    const row = await db.upsertRun(p.id, 'k', '2026-10-09', 0, 'failed', { error: 'e', diagPath: 'D:/x/diag.json' })
+    expect(row.diagPath).toBe('D:/x/diag.json')
+    const byId = await db.getRunById(row.id)
+    expect(byId?.diagPath).toBe('D:/x/diag.json')
+  })
+
   it('更新省略 attempts 时保留原值', async () => {
     const p = await db.upsertProfile('bb-1', 'A')
     await db.upsertRun(p.id, 't', '2026-08-28', 0, 'running', { attempts: 2 })
@@ -178,6 +186,7 @@ describe('runs 老库迁移', () => {
     const db = await AppDb.open(`file:${file}`)
     const info = await (db as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(runs)`)
     expect(info.rows.map((r) => r.name)).toContain('slot')
+    expect(info.rows.map((r) => r.name)).toContain('diag_path')
     const rows = await db.listRunsForDate('2026-08-30')
     expect(rows.length).toBe(1)
     expect(rows[0].slot).toBe(0)
@@ -318,6 +327,7 @@ describe('批次（batches）', () => {
     const legacy = await AppDb.open(`file:${file}`)
     const info = await (legacy as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(runs)`)
     expect(info.rows.map((r) => r.name)).toContain('batch_id')
+    expect(info.rows.map((r) => r.name)).toContain('diag_path')
     const b = await legacy.createBatch('bulk', 't', 'trigger-all')
     expect(b.id).toBeGreaterThan(0)
     legacy.close()
