@@ -17,8 +17,7 @@ import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
-import type { WalletRegistry } from '../automation/wallet/types'
-import { WalletSession } from '../automation/wallet/session'
+import { WalletSession, type WalletRegistry } from '../automation'
 
 /** 浏览器连接抽象：测试注入假驱动，生产用 PatchrightDriver */
 export interface BrowserDriver {
