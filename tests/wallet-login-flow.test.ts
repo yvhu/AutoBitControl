@@ -102,4 +102,18 @@ describe('WalletActions.ensureLoggedIn', () => {
     expect(openAppKitWallet).toHaveBeenCalled()
     expect(d.clicks).toContain('[data-testid="wallet-selector-io.metamask"]')
   })
+
+  it('walletEntry → 在该入口点击（软点），并作为补点选择器', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    const spec: LoginSpec = {
+      loggedIn: { text: '已登录' }, loggedOut: 'Connect Wallet',
+      connect: '#connect',
+      entry: { kind: 'dialog', confirm: '#eth' },
+      walletEntry: 'text=MetaMask',
+      attempts: 1, reclickAfterMs: 600,
+    }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    expect(d.clicks).toContain('text=MetaMask')
+  })
 })

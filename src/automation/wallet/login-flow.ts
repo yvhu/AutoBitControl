@@ -18,6 +18,8 @@ export interface LoginSpec {
     | { kind: 'direct' }
     | { kind: 'dialog'; confirm?: string }
     | { kind: 'appkit'; open: string; entryTestId: string; modalTestId?: string }
+  /** 站点弹窗内「钱包选择入口」（如 MetaMask）；在 connect/dialog/appkit 之后、等扩展弹窗之前点击，并作为补点选择器 */
+  walletEntry?: string
   intents?: WalletIntent[]
   waitLoggedInMs?: number
   recoverTexts?: string[]
@@ -48,10 +50,11 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
     if (entry?.kind === 'appkit') {
       await openAppKitWallet(deps, entry)
     }
+    if (spec.walletEntry) await clickSoft(spec.walletEntry)
     const intents = spec.intents ?? ['connect']
     const reclickSelector = entry?.kind === 'appkit'
       ? `[data-testid="${entry.entryTestId}"]`
-      : spec.connect
+      : (spec.walletEntry ?? spec.connect)
     for (const intent of intents) {
       const { popupFailed } = await wallet.runIntent(intent, reclickSelector
         ? { reclick: { selector: reclickSelector, afterMs: reclickAfterMs } }

@@ -10,6 +10,7 @@ import type { TaskMeta, LoginSpec } from '../engine/task'
 
 export { TaskContext } from '../engine/task-context'
 export type { TaskMeta, LoginSpec } from '../engine/task'
+export { RECOVER_TEXTS, DEFAULT_RELOAD_TIMEOUT_MS } from '../engine/task'
 
 /** 任务页面类型（复用 TaskContext 暴露的 patchright Page） */
 type TaskPage = TaskContext['page']

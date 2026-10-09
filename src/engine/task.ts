@@ -48,3 +48,6 @@ export const DEFAULT_TASK_CONCURRENCY = 4
 
 /** 登录声明类型再导出：tasks 层经 engine 引用，避免 tasks 直接依赖 automation */
 export type { LoginSpec } from '../automation/wallet'
+
+/** 供 tasks 层经 engine 取得运行时常量（避免 tasks 直连 infrastructure） */
+export { RECOVER_TEXTS, DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
