@@ -318,6 +318,9 @@ export class WindowRunner {
         const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
         const finishedAt = localWallNow()
         const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt }), null)
+        // 成功清空 diag_path：失败轮次残留的诊断路径不应挂在 success 行上，
+        // 否则 GET /api/diagnostics/:runId 会为成功行返回失败诊断包（best-effort，失败降级忽略）
+        await this.safeDb(() => db.clearRunDiag(profile.id, taskKey, date, slot), undefined)
         await this.safeDb(() => db.resetCircuitBreaker(profile.id), undefined)
         logger.info({ profile: profile.name, task: taskKey }, '签到成功')
         return row
@@ -331,15 +334,20 @@ export class WindowRunner {
         if (ctx) {
           try {
             const { collectDiagnostics, writeDiagBundle } = await import('../automation')
-            const bundle = await collectDiagnostics({
-              page,
-              steps: ctx.steps(),
-              error: (e as Error).message,
-              status,
-              windowName: profile.name,
-              taskKey,
-            })
-            diagPath = writeDiagBundle(artifacts, `${date}-attempt${attempt}.diag`, bundle)
+            // 采集限时：冻结渲染器上 page.evaluate 可能永不返回，
+            // race 5s 超时后放弃诊断（diagPath=null）继续落失败状态，避免拖死失败写入/窗口会话
+            const bundle = await Promise.race([
+              collectDiagnostics({
+                page,
+                steps: ctx.steps(),
+                error: (e as Error).message,
+                status,
+                windowName: profile.name,
+                taskKey,
+              }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+            ])
+            diagPath = bundle ? writeDiagBundle(artifacts, `${date}-attempt${attempt}.diag`, bundle) : null
           } catch (de) {
             logger.warn({ profile: profile.name, task: taskKey, err: (de as Error).message }, '诊断包采集失败（不影响任务结果）')
           }

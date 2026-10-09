@@ -58,6 +58,7 @@ interface MockDeps {
     dataSource: { path: string }
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
+  getRunById: Mock
   datasource: {
     summary: Mock
     reload: Mock
@@ -128,6 +129,7 @@ function makeDeps(): MockDeps {
       isOpen: vi.fn().mockResolvedValue(false),
       openPids: vi.fn().mockResolvedValue(new Set()),
     },
+    getRunById: vi.fn().mockResolvedValue(null),
     datasource: {
       summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
       reload: vi.fn().mockResolvedValue(undefined),

@@ -598,6 +598,15 @@ export class AppDb {
     return (rows[0] as unknown as RunRow | undefined) ?? null
   }
 
+  /**
+   * 清空某窗口某任务某轮次的诊断路径（成功重试后调用）：
+   * upsertRun 的 diag_path 走 COALESCE 保留旧值，失败轮次残留路径会让
+   * GET /api/diagnostics/:runId 为 success 行返回失败诊断包，故成功时显式清空
+   */
+  async clearRunDiag(profileId: number, taskKey: string, date: string, slot: number): Promise<void> {
+    await this.exec('UPDATE runs SET diag_path = NULL WHERE profile_id = ? AND task_key = ? AND date = ? AND slot = ?', [profileId, taskKey, date, slot])
+  }
+
   /** 当日下一轮序号：MAX(slot)+1（无记录返回 0） */
   async nextRunSlot(profileId: number, taskKey: string, date: string): Promise<number> {
     const rows = await this.exec(`SELECT COALESCE(MAX(slot), -1) + 1 AS nextSlot FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`, [profileId, taskKey, date])

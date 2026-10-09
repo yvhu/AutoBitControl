@@ -25,6 +25,7 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     listProfiles: vi.fn().mockResolvedValue([]),
     getLatestRun: vi.fn().mockResolvedValue(null),
     nextRunSlot: vi.fn().mockResolvedValue(0),
+    clearRunDiag: vi.fn().mockResolvedValue(undefined),
     ...over,
   } as unknown as AppDb
 }
@@ -459,6 +460,7 @@ describe('批次透传与 pending 预写', () => {
       },
       resetCircuitBreaker: async () => undefined,
       incrCircuitBreaker: async () => 0,
+      clearRunDiag: async () => undefined,
       listProfiles: async () => [] as ProfileRow[],
     }
     return db as unknown as AppDb

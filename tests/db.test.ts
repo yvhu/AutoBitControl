@@ -39,6 +39,18 @@ describe('AppDb', () => {
     expect(byId?.diagPath).toBe('D:/x/diag.json')
   })
 
+  it('clearRunDiag 清空诊断路径（成功重试后不再残留失败包）', async () => {
+    const p = await db.upsertProfile('bb-diag-clear', '窗口')
+    const row = await db.upsertRun(p.id, 'k', '2026-10-09', 0, 'failed', { error: 'e', diagPath: 'D:/x/diag.json' })
+    expect(row.diagPath).toBe('D:/x/diag.json')
+    await db.clearRunDiag(p.id, 'k', '2026-10-09', 0)
+    const after = await db.getRunById(row.id)
+    expect(after?.diagPath).toBeNull()
+    // 成功 upsert 因 COALESCE 不再写 diag_path：已被 clearRunDiag 清空后保持 null（不被旧值回填）
+    const ok = await db.upsertRun(p.id, 'k', '2026-10-09', 0, 'success', { error: null })
+    expect(ok.diagPath).toBeNull()
+  })
+
   it('更新省略 attempts 时保留原值', async () => {
     const p = await db.upsertProfile('bb-1', 'A')
     await db.upsertRun(p.id, 't', '2026-08-28', 0, 'running', { attempts: 2 })
