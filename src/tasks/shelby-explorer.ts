@@ -153,7 +153,12 @@ export class ShelbyExplorerTask extends SiteTask {
       if ((await ctx.page.getByText(SUCCESS_TEXT, { exact: false }).count()) > 0) return 'uploaded'
       if ((await ctx.page.getByText(ALREADY_DONE_TEXT, { exact: false }).count()) > 0) return 'alreadyDone'
       let errText = ''
-      for (const t of RECOVER_TEXTS) { if ((await ctx.page.getByText(t, { exact: false }).count()) > 0) { errText = t; break } }
+      for (const t of RECOVER_TEXTS) {
+        if ((await ctx.page.getByText(t, { exact: false }).count()) > 0) {
+          errText = t
+          break
+        }
+      }
       const uploading = (await ctx.page.getByText(UPLOADING_TEXT, { exact: false }).count()) > 0
       if (errText !== '' && !uploading) {
         ctx.log.info({ step: 'upload', window: ctx.profile.name, errText }, '上传等待中出现可恢复错误，刷新')

@@ -54,7 +54,8 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
     const intents = spec.intents ?? ['connect']
     const reclickSelector = entry?.kind === 'appkit'
       ? `[data-testid="${entry.entryTestId}"]`
-      : (spec.walletEntry ?? spec.connect)
+      : (spec.walletEntry
+        ?? (entry?.kind === 'dialog' && entry.confirm ? entry.confirm : spec.connect))
     for (const intent of intents) {
       const { popupFailed } = await wallet.runIntent(intent, reclickSelector
         ? { reclick: { selector: reclickSelector, afterMs: reclickAfterMs } }

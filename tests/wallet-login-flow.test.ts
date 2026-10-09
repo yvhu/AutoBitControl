@@ -119,4 +119,19 @@ describe('WalletActions.ensureLoggedIn', () => {
     await new WalletActions(d).ensureLoggedIn(spec)
     expect(d.clicks).toContain('text=MetaMask')
   })
+
+  it('dialog 入口无 walletEntry → 补点选择器用 entry.confirm（非 spec.connect）', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    const spec: LoginSpec = {
+      loggedIn: { text: '已登录' }, loggedOut: 'Connect Wallet',
+      connect: '#connect',
+      entry: { kind: 'dialog', confirm: '#dialog-connect' },
+      attempts: 1, reclickAfterMs: 600,
+    }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    // 初次点击 entry.confirm 后弹窗未出现，补点应复用 entry.confirm（共 2 次）而非 header 的 spec.connect（仅初次 1 次）
+    expect(d.clicks.filter((s) => s === '#dialog-connect')).toHaveLength(2)
+    expect(d.clicks.filter((s) => s === '#connect')).toHaveLength(1)
+  })
 })
