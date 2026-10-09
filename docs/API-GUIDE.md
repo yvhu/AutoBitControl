@@ -88,7 +88,7 @@ export class MyCheckinTask extends SiteTask {
   }
 
   async run(ctx: TaskContext): Promise<void> {
-    // 打开任务页（首屏顺带清掉残留标签页）；url 为空则跳过
+    // 打开任务页（首屏顺带清掉残留标签页）
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 声明式钱包登录：竞速判登录态 → 点连接 → 等登录完成
     await loginWallet(ctx, {
@@ -122,7 +122,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
 
-注意：`url` 为空串的任务（如三个示例）只能在面板手动触发或用 `task:run` 脚本跑；示例任务都显式写了 `enabled: false`，不参与日常执行。改完任务代码必须**重启服务**才生效（后端无 watch）。
+注意：三个示例任务用占位地址 `https://example.com/`（可直接跑通导航步骤），但都显式写了 `enabled: false`，不参与日常执行；调试时在面板手动触发或用 `task:run` 脚本跑。改完任务代码必须**重启服务**才生效（后端无 watch）。
 
 ---
 
@@ -147,7 +147,7 @@ export abstract class SiteTask {
 | --- | --- | --- | --- |
 | `key` | `string` | 无（必填） | 全局唯一标识；数据库 runs 表与面板都用它 |
 | `name` | `string` | 无（必填） | 面板任务页显示名 |
-| `url` | `string` | 无（必填，可为 `''`） | 站点入口页；`openPage()` 不传 url 时用它。空串 → 仅可手动触发（示例任务用） |
+| `url` | `string` | 无（必填，可为 `''`） | 站点入口页；`openPage()` 不传 url 时用它。空串时 `openPage()` 抛错，任务需自行处理（示例任务改用占位地址 `https://example.com/`） |
 | `sourceUrl` | `string \| string[]` | `undefined` | 信息来源页：选择器从哪个页面确认的；站点改版时回这里重查；多步骤可给多个地址 |
 | `note` | `string?` | `undefined` | 备注：站点的坑与特殊逻辑，面板任务页直接可见 |
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
@@ -168,9 +168,9 @@ meta: TaskMeta = {
   key: 'example-checkin',
   name: '示例签到',
   group: { key: 'example', name: '示例' },
-  url: '',
+  url: 'https://example.com/',
   sourceUrl: '',
-  note: '示例任务：url 为空且开关默认关闭；调试时在面板打开开关，或用 task:run 脚本直接跑（不受开关限制）',
+  note: '示例任务：url 为占位地址且开关默认关闭；调试时在面板打开开关，或用 task:run 脚本直接跑（不受开关限制）',
   category: 'checkin',
   lastUpdated: '2026-10-09',
   enabled: false,

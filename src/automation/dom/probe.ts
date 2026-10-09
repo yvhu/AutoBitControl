@@ -1,5 +1,5 @@
 /**
- * DOM 探针原语（automation/dom 层）：统一「文案 / 选择器」两种定位，供竞速与恢复复用
+ * DOM 探针原语（automation/dom 层）：统一「文案 / 选择器 / gone」定位与命中判定，供竞速、恢复与等待复用
  * 依赖方向：仅依赖 patchright，被 dom 内 race/recover 与 engine 使用
  */
 import type { Locator, Page } from 'patchright'
@@ -12,15 +12,50 @@ import type { Locator, Page } from 'patchright'
 export type Probe = { text: string } | { selector: string }
 
 /**
+ * 命中探针（等待/命中场景的扩展形态）：在 Probe 基础上增加「字符串」（等价文案）与
+ * 「gone」（目标不可见或已消失）两种形态，让命中判定与等待复用同一套结构。
+ */
+export type HitProbe = string | Probe | { gone: string }
+
+/**
  * 把探针翻译成 patchright 的 Locator（定位句柄）。
- * 执行流程：若探针带 text，走 getByText 并设 exact:false 做包含匹配（允许文案前后还有其它字符）；
- * 否则按 selector 走 locator。
+ * 执行流程：字符串或带 text 字段走 getByText 并设 exact:false 做包含匹配（允许文案前后还有其它字符）；
+ * 带 selector 或 gone 字段按其中的选择器走 locator。
  * @param page 目标页面（patchright 的 Page）
  * @param probe 待解析的探针
  * @returns 仅表达「如何查找」、尚未锁定具体元素的 Locator，调用方可继续 .first()/.waitFor() 等
  */
-export function probeLocator(page: Page, probe: Probe): Locator {
-  return 'text' in probe ? page.getByText(probe.text, { exact: false }) : page.locator(probe.selector)
+export function probeLocator(page: Page, probe: HitProbe): Locator {
+  if (typeof probe === 'string') return page.getByText(probe, { exact: false })
+  if ('text' in probe) return page.getByText(probe.text, { exact: false })
+  return page.locator('selector' in probe ? probe.selector : probe.gone)
+}
+
+/**
+ * 命中判定（探针统一入口，waitFor/race/recover 共用，单一事实源）。
+ * 执行流程：字符串或 { text } 按「存在」判定（count>0，不判可见性，兼容双 DOM/动画态）；
+ * { selector } 按「存在且可见」判定；{ gone } 按「不存在或不可见」判定。
+ * 整个过程包在 try 中——探测本身的异常不应中断流程：普通探针异常按「未命中」返回 false，
+ * 而 gone 探针「查不到元素」本就是命中，故异常时返回 true。
+ * @param page 目标页面
+ * @param probe 待探测的目标
+ * @returns 探针此刻是否命中
+ */
+export async function probeHit(page: Page, probe: HitProbe): Promise<boolean> {
+  try {
+    if (typeof probe === 'string') return (await page.getByText(probe, { exact: false }).count()) > 0
+    if ('text' in probe) return (await page.getByText(probe.text, { exact: false }).count()) > 0
+    const sel = 'selector' in probe ? probe.selector : probe.gone
+    const loc = page.locator(sel).first()
+    if ('selector' in probe) {
+      if ((await loc.count()) === 0) return false
+      return await loc.isVisible()
+    }
+    if ((await loc.count()) === 0) return true
+    return !(await loc.isVisible().catch(() => false))
+  } catch {
+    return typeof probe !== 'string' && 'gone' in probe
+  }
 }
 
 /**
@@ -42,16 +77,9 @@ export async function probeVisible(page: Page, probe: Probe): Promise<boolean> {
   }
 }
 
-/** 探针当前是否"命中"：文案按存在判定（count>0，不判可见性，兼容双 DOM/动画态）；选择器按可见判定（与旧 ctx.visible 一致） */
+/** 探针当前是否"命中"：委托 probeHit（文案按存在判定、选择器按可见判定），保持与命中内核单一事实源 */
 export async function probePresent(page: Page, probe: Probe): Promise<boolean> {
-  if ('text' in probe) {
-    try {
-      return (await page.getByText(probe.text, { exact: false }).count()) > 0
-    } catch {
-      return false
-    }
-  }
-  return probeVisible(page, probe)
+  return probeHit(page, probe)
 }
 
 /**
@@ -78,6 +106,9 @@ export async function firstTextPresent(page: Page, texts: string[]): Promise<str
  * @param probe 待描述的探针
  * @returns 可直接拼进日志/错误消息的字符串
  */
-export function probeDesc(probe: Probe): string {
-  return 'text' in probe ? `文案 ${probe.text}` : `选择器 ${probe.selector}`
+export function probeDesc(probe: HitProbe): string {
+  if (typeof probe === 'string') return `文案 ${probe}`
+  if ('text' in probe) return `文案 ${probe.text}`
+  if ('selector' in probe) return `选择器 ${probe.selector}`
+  return `消失 ${probe.gone}`
 }

@@ -1,7 +1,7 @@
 /**
  * 示例铸币任务（mint-example）：铸币（mint）参考实现（新范式）
- * 站点：占位示例铸币站；url 为空、开关默认关闭，仅作调试与复制起点
- * 执行流程：打开任务页（url 为空则跳过）→ 声明式登录（Petra）→ action 填名称/符号
+ * 站点：占位示例铸币站；url 为占位地址、开关默认关闭，仅作调试与复制起点
+ * 执行流程：打开任务页（占位 url）→ 声明式登录（Petra）→ action 填名称/符号
  *          → 下一步 → 填描述/数量 → 提交 → 等钱包确认交易 → 断言链上成功提示 → 截图
  * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/fill/waitFor/confirmTransaction）
  * 时间预算：timeoutSec 300s（单任务整体超时）、retry.max 1 次 / 退避 600s、concurrency 4
@@ -15,9 +15,9 @@ export class MintExampleTask extends SiteTask {
     key: 'mint-example',
     name: '示例铸币',
     group: { key: 'example', name: '示例' },
-    url: '',
+    url: 'https://example.com/',
     sourceUrl: '',
-    note: '示例任务：url 为空且开关默认关闭；多步骤表单站点常见"下一步"按钮无 loading 提示',
+    note: '示例任务：url 为占位地址且开关默认关闭；多步骤表单站点常见"下一步"按钮无 loading 提示',
     category: 'mint', // 任务类别：铸币
     lastUpdated: '2026-10-09',
     enabled: false,
@@ -28,11 +28,11 @@ export class MintExampleTask extends SiteTask {
   }
 
   /**
-   * 执行流程：打开任务页（url 为空则跳过）→ 声明式钱包登录 → 铸币动作。
+   * 执行流程：打开任务页（占位 url）→ 声明式钱包登录 → 铸币动作。
    * @param ctx 任务上下文
    */
   async run(ctx: TaskContext): Promise<void> {
-    if (this.meta.url) await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     await loginWallet(ctx, {
       wallet: 'petra',
       scenario: 'direct',

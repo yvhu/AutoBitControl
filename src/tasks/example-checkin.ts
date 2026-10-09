@@ -1,7 +1,7 @@
 /**
  * 示例签到任务（example-checkin）：标准每日签到参考实现（新范式）
- * 站点：占位示例站点；url 为空、开关默认关闭，仅作调试与复制起点，无真实站点
- * 执行流程：打开任务页（url 为空则跳过）→ 声明式登录（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
+ * 站点：占位示例站点；url 为占位地址、开关默认关闭，仅作调试与复制起点，无真实站点
+ * 执行流程：打开任务页（占位 url）→ 声明式登录（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
  *          → 判已签到（幂等）→ 点签到按钮 → 断言成功标志
  * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/hasText/waitFor）
  * 时间预算：timeoutSec 180s（单任务整体超时）、retry.max 2 次 / 退避 600s、concurrency 4
@@ -15,9 +15,9 @@ export class ExampleCheckinTask extends SiteTask {
     key: 'example-checkin', // 全局唯一任务键（面板/API/数据库均以此索引）
     name: '示例签到',
     group: { key: 'example', name: '示例' }, // 任务分组（面板按组展示）
-    url: '', // 落地页；为空表示无导航步骤，默认 run 跳过 goto
+    url: 'https://example.com/', // 落地页（占位：可运行示例；复制后替换为真实站点）
     sourceUrl: '', // 任务来源说明链接（面板展示用）
-    note: '示例任务：url 为空且开关默认关闭；调试时在面板任务页打开开关，或用 task:run 脚本直接跑（不受开关限制）',
+    note: '示例任务：url 为占位地址且开关默认关闭；调试时在面板任务页打开开关，或用 task:run 脚本直接跑（不受开关限制）',
     category: 'checkin', // 任务类别：签到
     lastUpdated: '2026-10-09',
     enabled: false, // 默认关闭：示例任务不参与定时/批量触发
@@ -29,11 +29,11 @@ export class ExampleCheckinTask extends SiteTask {
 
   /**
    * 执行流程：打开任务页 → 声明式钱包登录 → 判已签到（幂等）→ 点签到 → 断言成功标志。
-   * url 为空表示无导航步骤（仅示例占位）。
+   * url 为占位地址（示例可直接运行）。
    * @param ctx 任务上下文（page/log/task 等运行时数据）
    */
   async run(ctx: TaskContext): Promise<void> {
-    if (this.meta.url) await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 登录：竞速判登录态 → 点连接 → 签名/确认 → 等登录完成（占位选择器，复制后替换）
     await loginWallet(ctx, {
       wallet: 'metamask',

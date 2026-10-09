@@ -54,5 +54,6 @@ export async function pressKey(ctx: TaskContext, key: string): Promise<void> {
 
 /** 主世界执行 JS 并返回结果（读站点注入的全局变量必须用主世界） */
 export async function runJs<T>(ctx: TaskContext, fn: () => T): Promise<T> {
+  // patchright 的 evaluate(pageFunction, arg, world, isFunction)：undefined=不传参，{}=默认上下文，false=主世界（同旧 ctx.js）
   return ctx.page.evaluate(fn, undefined, {}, false) as Promise<T>
 }

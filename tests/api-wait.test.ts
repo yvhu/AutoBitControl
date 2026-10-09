@@ -28,6 +28,22 @@ describe('api/wait', () => {
     const ctx = makeCtx({ locator: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }) })
     expect(await waitFor(ctx, { gone: '#done' }, { budgetMs: 500 })).toBe(true)
   })
+  it('waitFor：选择器可见即命中', async () => {
+    const ctx = makeCtx()
+    expect(await waitFor(ctx, { selector: '#ok' }, { budgetMs: 500 })).toBe(true)
+  })
+  it('waitFor：出现可恢复错误文案时刷新页面（reload 分支）', async () => {
+    let recovered = false
+    const reload = vi.fn(async () => { recovered = true })
+    const getByText = (t: string) => ({
+      count: async () => (t === 'OK' && recovered ? 1 : t === '出错了' ? 1 : 0),
+      first() { return this },
+      waitFor: async () => {},
+    })
+    const ctx = makeCtx({ reload, getByText })
+    expect(await waitFor(ctx, { text: 'OK' }, { budgetMs: 5000, recoverTexts: ['出错了'], settleMs: 0 })).toBe(true)
+    expect(reload).toHaveBeenCalled()
+  })
   it('race：命中键返回', async () => {
     const ctx = makeCtx({ text_visible: 'A' })
     expect(await race(ctx, [['a', { text: 'A' }], ['b', { text: 'B' }]], 500)).toBe('a')

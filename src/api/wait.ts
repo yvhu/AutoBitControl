@@ -1,34 +1,16 @@
 /**
  * 等待能力函数（api 层）：条件等待 / 多探针竞速 / 接口响应等待
- * 依赖方向：engine 的 TaskContext 类型、infrastructure 常量
+ * 依赖方向：engine 的 TaskContext 类型、automation 的探针命中内核、infrastructure 常量
  */
 import type { TaskContext } from '../engine/task-context'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
+import { firstTextPresent, probeDesc, probeHit } from '../automation'
 
 /** 探针（api 层公共形态）：字符串等价于「文案」；文案按存在命中、选择器按可见命中（不含 gone） */
 export type Probe = string | { text: string } | { selector: string }
 
 /** 等待探针：在 Probe 基础上增加 gone（目标不可见或消失）；仅 waitFor 这类等待场景使用 */
 export type WaitProbe = Probe | { gone: string }
-
-/** 探针是否命中：文案按存在（count>0，兼容双 DOM/动画）；选择器按可见；gone 按不可见/不存在 */
-async function probeHit(ctx: TaskContext, probe: WaitProbe): Promise<boolean> {
-  try {
-    if (typeof probe === 'string') return (await ctx.page.getByText(probe, { exact: false }).count()) > 0
-    if ('text' in probe) return (await ctx.page.getByText(probe.text, { exact: false }).count()) > 0
-    const sel = 'selector' in probe ? probe.selector : probe.gone
-    const loc = ctx.page.locator(sel).first()
-    if ('selector' in probe) {
-      if ((await loc.count()) === 0) return false
-      return await loc.isVisible()
-    }
-    // gone
-    if ((await loc.count()) === 0) return true
-    return !(await loc.isVisible().catch(() => false))
-  } catch {
-    return typeof probe !== 'string' && 'gone' in probe
-  }
-}
 
 /** 等待可调参数：预算 / 超时断言 / 周期刷新 / 错误文案 / 沉降 / 心跳 */
 export interface WaitOptions {
@@ -51,11 +33,8 @@ export async function waitFor(ctx: TaskContext, probe: WaitProbe, options: WaitO
   let lastRefresh = Date.now()
   let lastBeat = Date.now()
   while (Date.now() < end) {
-    if (await probeHit(ctx, probe)) return true
-    let errText = ''
-    for (const t of recoverTexts) {
-      if ((await ctx.page.getByText(t, { exact: false }).count().catch(() => 0)) > 0) { errText = t; break }
-    }
+    if (await probeHit(ctx.page, probe)) return true
+    const errText = await firstTextPresent(ctx.page, recoverTexts)
     const stale = refreshEveryMs > 0 && Date.now() - lastRefresh >= refreshEveryMs
     if (errText !== '' || stale) {
       ctx.log.info({ step: 'recover', errText, url: ctx.page.url() }, '刷新页面恢复（错误提示或周期刷新）')
@@ -66,7 +45,7 @@ export async function waitFor(ctx: TaskContext, probe: WaitProbe, options: WaitO
     }
     if (Date.now() - lastBeat >= heartbeatMs) {
       lastBeat = Date.now()
-      ctx.log.info({ step: 'wait', waitedMs: budgetMs - (end - Date.now()), url: ctx.page.url() }, '仍在等待条件命中')
+      ctx.log.info({ step: 'wait', probe: probeDesc(probe), waitedMs: budgetMs - (end - Date.now()), url: ctx.page.url() }, '仍在等待条件命中')
     }
     await ctx.page.waitForTimeout(3000)
   }
@@ -80,7 +59,7 @@ export async function race<K extends string>(ctx: TaskContext, entries: Array<[K
   const r = await Promise.race(entries.map(async ([k, probe]) => {
     const end = Date.now() + timeoutMs
     while (Date.now() < end) {
-      if (await probeHit(ctx, probe)) return k
+      if (await probeHit(ctx.page, probe)) return k
       await ctx.page.waitForTimeout(800)
     }
     return null
