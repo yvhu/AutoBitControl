@@ -18,7 +18,6 @@ import {
   ensureUsdc,
   ensureSubmitEnabled,
   waitForOutcome,
-  detectV2Challenge,
   V3_SITEKEY,
   ArcFaucetTask,
   SUCCESS_TEXT,
@@ -32,7 +31,6 @@ import {
   ADDRESS_SELECTOR,
 } from '../src/tasks/arc-faucet'
 import { TaskContext } from '../src/tasks/base'
-import { Humanizer } from '../src/automation/humanize'
 
 /** 每个选择器的假元素（count 恒 1 的通用形态；需要可变行为的测试直接改 state 或替换字段） */
 interface FakeElem {
@@ -41,6 +39,10 @@ interface FakeElem {
   isChecked: () => Promise<boolean>
   isEnabled: () => Promise<boolean>
   fill: ReturnType<typeof vi.fn>
+  /** patchright 直调点击（任务经 page.locator(sel).first().click()） */
+  click: ReturnType<typeof vi.fn>
+  /** 等待元素可见（仅地址输入框实现；action 等它） */
+  waitFor?: ReturnType<typeof vi.fn>
   /** 输入框当前值（仅地址输入框实现；缺省无此能力） */
   inputValue?: () => Promise<string>
 }
@@ -58,7 +60,7 @@ interface FakeState {
   displayCount?: number
   /** USDC radio 元素数量（缺省 1；0 模拟元素缺失） */
   usdcRadioCount?: number
-  /** v2 挑战是否已渲染（detectV2Challenge 经 page.frames 假实现读取；缺省 false） */
+  /** v2 挑战是否已渲染（ctx.captcha.hasChallenge 经 page.frames 假实现读取；缺省 false） */
   v2Challenge?: boolean
   /** 提交按钮 isEnabled 读取钩子（证明 ensureSubmitEnabled 被调） */
   onSubmitEnabledCheck?: () => void
@@ -66,14 +68,15 @@ interface FakeState {
 
 /** 构造注入假依赖的 TaskContext：locator 按选择器路由到假元素，未注册选择器 count=0 */
 function makeCtx(state: FakeState) {
-  const clicks = vi.fn().mockResolvedValue(undefined)
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  const noopClick = () => vi.fn().mockResolvedValue(undefined)
   const blank: FakeElem = {
     count: async () => 0,
     textContent: async () => null,
     isChecked: async () => false,
     isEnabled: async () => false,
     fill: vi.fn(),
+    click: noopClick(),
   }
   /** 地址输入框 fill mock（暴露给测试覆写行为：模拟 React 未就绪首填不生效等） */
   const addressFill = vi.fn().mockImplementation(async (v: string) => {
@@ -86,6 +89,8 @@ function makeCtx(state: FakeState) {
       isChecked: async () => false,
       isEnabled: async () => true,
       fill: addressFill,
+      click: noopClick(),
+      waitFor: vi.fn().mockResolvedValue(undefined),
       inputValue: async () => state.addressValue,
     },
     [NETWORK_DISPLAY_SELECTOR]: {
@@ -94,6 +99,7 @@ function makeCtx(state: FakeState) {
       isChecked: async () => false,
       isEnabled: async () => true,
       fill: vi.fn(),
+      click: noopClick(),
     },
     [CURRENCY_RADIO_SELECTOR]: {
       count: async () => state.usdcRadioCount ?? 1,
@@ -101,6 +107,7 @@ function makeCtx(state: FakeState) {
       isChecked: async () => state.usdcChecked,
       isEnabled: async () => true,
       fill: vi.fn(),
+      click: noopClick(),
     },
     [NETWORK_OPTION_SELECTOR]: {
       count: async () => state.optionCount,
@@ -108,6 +115,23 @@ function makeCtx(state: FakeState) {
       isChecked: async () => false,
       isEnabled: async () => true,
       fill: vi.fn(),
+      click: noopClick(),
+    },
+    [NETWORK_BUTTON_SELECTOR]: {
+      count: async () => 1,
+      textContent: async () => null,
+      isChecked: async () => false,
+      isEnabled: async () => true,
+      fill: vi.fn(),
+      click: noopClick(),
+    },
+    [CURRENCY_CARD_SELECTOR]: {
+      count: async () => 1,
+      textContent: async () => null,
+      isChecked: async () => false,
+      isEnabled: async () => true,
+      fill: vi.fn(),
+      click: noopClick(),
     },
     [SUBMIT_SELECTOR]: {
       count: async () => 1,
@@ -118,6 +142,7 @@ function makeCtx(state: FakeState) {
         return state.submitEnabled
       },
       fill: vi.fn(),
+      click: noopClick(),
     },
   }
   const page = {
@@ -126,8 +151,11 @@ function makeCtx(state: FakeState) {
     }),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     getByText: (t: string) => ({ count: async () => (state.texts[t] ? 1 : 0) }),
-    // findAnchorFrame/findChallengeFrame 的 frames 假实现：v2Challenge=true 时返回一个 v2 锚点 frame
-    // （URL 含 recaptcha/enterprise/anchor 且 sitekey ≠ 常驻 v3），否则空数组
+    // 默认 run 用 context().pages() 清理残留标签页（空数组即无残留），goto 打开 meta.url
+    context: () => ({ pages: () => [] }),
+    goto: vi.fn().mockResolvedValue(undefined),
+    // ctx.captcha.hasChallenge → findAnchorFrame/findChallengeFrame 的 frames 假实现：
+    // v2Challenge=true 时返回一个 v2 锚点 frame（URL 含 recaptcha/enterprise/anchor 且 sitekey ≠ 常驻 v3），否则空数组
     frames: () =>
       state.v2Challenge
         ? [{ url: () => 'https://www.google.com/recaptcha/enterprise/anchor?k=6LcCqC8sAAAAAHGuWXnlpxcEYJD3lE_EFLebNnve' }]
@@ -136,7 +164,7 @@ function makeCtx(state: FakeState) {
   const ctx = new TaskContext({
     page: page as never,
     task: { meta: { key: 'faucet-arc', name: 'Arc 领水', url: 'https://faucet.circle.com/' } },
-    human: { click: clicks } as never,
+    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
@@ -144,7 +172,7 @@ function makeCtx(state: FakeState) {
     walletPasswords: {},
     accountRow: { metamask钱包地址: '0xabc' },
   })
-  return { ctx, clicks, log, addressFill, page }
+  return { ctx, elems, log, addressFill, page }
 }
 
 const baseState = (): FakeState => ({ network: 'Arc Testnet', usdcChecked: true, submitEnabled: true, optionCount: 1, texts: {}, addressValue: '0xabc' })
@@ -185,22 +213,20 @@ describe('isUsdcChecked 币种选中读取', () => {
 
 describe('ensureNetwork 网络确保', () => {
   it('已是 Arc Testnet → 不点击任何元素', async () => {
-    const { ctx, clicks } = makeCtx(baseState())
+    const { ctx, elems } = makeCtx(baseState())
     await ensureNetwork(ctx)
-    expect(clicks).not.toHaveBeenCalled()
+    expect(elems[NETWORK_BUTTON_SELECTOR].click).not.toHaveBeenCalled()
+    expect(elems[NETWORK_OPTION_SELECTOR].click).not.toHaveBeenCalled()
   })
 
   it('非默认网络 → 点触发按钮与目标选项各一次，二次校验通过', async () => {
     const state = { ...baseState(), network: 'Ethereum Sepolia' }
-    const { ctx, clicks } = makeCtx(state)
+    const { ctx, elems } = makeCtx(state)
     // 模拟点选后页面更新显示值（默认假点击不改变页面，此测试覆写为「点击生效」）
-    clicks.mockImplementation((sel: string) => {
-      if (sel === NETWORK_OPTION_SELECTOR) state.network = 'Arc Testnet'
-    })
+    elems[NETWORK_OPTION_SELECTOR].click.mockImplementation(async () => { state.network = 'Arc Testnet' })
     await ensureNetwork(ctx)
-    expect(clicks).toHaveBeenNthCalledWith(1, NETWORK_BUTTON_SELECTOR)
-    expect(clicks).toHaveBeenNthCalledWith(2, NETWORK_OPTION_SELECTOR)
-    expect(clicks).toHaveBeenCalledTimes(2)
+    expect(elems[NETWORK_BUTTON_SELECTOR].click).toHaveBeenCalledTimes(1)
+    expect(elems[NETWORK_OPTION_SELECTOR].click).toHaveBeenCalledTimes(1)
   })
 
   it('下拉无目标选项 → 抛错', async () => {
@@ -218,21 +244,18 @@ describe('ensureNetwork 网络确保', () => {
 
 describe('ensureUsdc 币种确保', () => {
   it('已选中 USDC → 不点击', async () => {
-    const { ctx, clicks } = makeCtx(baseState())
+    const { ctx, elems } = makeCtx(baseState())
     await ensureUsdc(ctx)
-    expect(clicks).not.toHaveBeenCalled()
+    expect(elems[CURRENCY_CARD_SELECTOR].click).not.toHaveBeenCalled()
   })
 
   it('未选中 → 点 USDC 卡片一次', async () => {
     const state = { ...baseState(), usdcChecked: false }
-    const { ctx, clicks } = makeCtx(state)
+    const { ctx, elems } = makeCtx(state)
     // 模拟点卡片后 radio 选中（默认假点击不改变页面，此测试覆写为「点击生效」）
-    clicks.mockImplementation((sel: string) => {
-      if (sel === CURRENCY_CARD_SELECTOR) state.usdcChecked = true
-    })
+    elems[CURRENCY_CARD_SELECTOR].click.mockImplementation(async () => { state.usdcChecked = true })
     await ensureUsdc(ctx)
-    expect(clicks).toHaveBeenCalledWith(CURRENCY_CARD_SELECTOR)
-    expect(clicks).toHaveBeenCalledTimes(1)
+    expect(elems[CURRENCY_CARD_SELECTOR].click).toHaveBeenCalledTimes(1)
   })
 
   it('点卡片后仍未选中 → 抛错', async () => {
@@ -285,15 +308,15 @@ describe('waitForOutcome 竞速等待', () => {
   })
 })
 
-describe('detectV2Challenge 挑战检测', () => {
+describe('挑战检测（ctx.captcha.hasChallenge）', () => {
   it('无挑战 → false', async () => {
     const { ctx } = makeCtx({ ...baseState(), v2Challenge: false })
-    expect(await detectV2Challenge(ctx)).toBe(false)
+    expect(await ctx.captcha.hasChallenge(V3_SITEKEY)).toBe(false)
   })
 
   it('存在 v2 anchor（k≠v3 sitekey）→ true', async () => {
     const { ctx } = makeCtx({ ...baseState(), v2Challenge: true })
-    expect(await detectV2Challenge(ctx)).toBe(true)
+    expect(await ctx.captcha.hasChallenge(V3_SITEKEY)).toBe(true)
   })
 
   it('常驻 v3 sitekey 契约', () => {
@@ -320,7 +343,7 @@ describe('ArcFaucetTask 元信息', () => {
 describe('ArcFaucetTask run 地址重填自愈', () => {
   it('首跑提交按钮未启用且输入框为空 → 重填后按钮启用 → 成功（fill ≥ 2 次）', async () => {
     const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
-    const { ctx, clicks, addressFill } = makeCtx(state)
+    const { ctx, elems, addressFill } = makeCtx(state)
     // 首次 fill 模拟站点 React 未就绪：input 事件无人监听 → 值不保留、按钮不启用；之后 fill 正常生效
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
@@ -329,10 +352,7 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
       state.addressValue = v
       state.submitEnabled = true
     })
-    // run 全流程所需引擎能力假实现（开页/断言/截图与站点自愈逻辑无关）
-    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
-    ctx.goto = vi.fn().mockResolvedValue(undefined)
-    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
+    // 默认 run 开页走 page.context()/page.goto（makeCtx 已给假实现）；截图与站点自愈逻辑无关，仅需存根
     ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     // 假时钟：ensureSubmitEnabled 每轮 15s 预算瞬间走完（真实时钟会让首轮超时等足 15s）
     let now = Date.now()
@@ -347,7 +367,7 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
     }
     expect(fills).toBeGreaterThanOrEqual(2)
     expect(addressFill).toHaveBeenCalledTimes(2)
-    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
     expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })
 })
@@ -355,7 +375,7 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
 describe('ArcFaucetTask run 地址快速自愈', () => {
   it('fill 后输入框值被清空 → ensureSubmitEnabled 轮询检测到空框立即重填 → 按钮启用 → 成功（fill 共 2 次）', async () => {
     const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
-    const { ctx, clicks, addressFill, page } = makeCtx(state)
+    const { ctx, elems, addressFill, page } = makeCtx(state)
     // 首次 fill 模拟 React hydration 重渲染清空：值不保留；轮询自愈重填第二次才生效并启用按钮
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
@@ -367,9 +387,6 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
     // 提交按钮 isEnabled 读取计数：ensureSubmitEnabled 内部轮询读取它
     let submitEnabledChecks = 0
     state.onSubmitEnabledCheck = () => { submitEnabledChecks++ }
-    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
-    ctx.goto = vi.fn().mockResolvedValue(undefined)
-    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
     ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     await new ArcFaucetTask().run(ctx)
     expect(fills).toBe(2)
@@ -377,13 +394,13 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
     // 自愈已并入按钮轮询：以 500ms 间隔检测（fake waitForTimeout 即时 resolve，不耗真实时间）
     expect(page.waitForTimeout).toHaveBeenCalledWith(500)
     expect(submitEnabledChecks).toBeGreaterThanOrEqual(1)
-    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
     expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })
 
   it('ensureSubmitEnabled 轮询期间地址框被清空 2 次均重填，最终按钮可用成功（fill ≥ 3 次）', async () => {
     const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
-    const { ctx, clicks, addressFill } = makeCtx(state)
+    const { ctx, elems, addressFill } = makeCtx(state)
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
       fills++
@@ -396,14 +413,11 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
       if (enabledChecks <= 2) state.addressValue = ''
       else state.submitEnabled = true
     }
-    ctx.closeOtherTabs = vi.fn().mockResolvedValue(undefined)
-    ctx.goto = vi.fn().mockResolvedValue(undefined)
-    ctx.assertVisible = vi.fn().mockResolvedValue(undefined)
     ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     await new ArcFaucetTask().run(ctx)
     // 首填 + 轮询中 2 次重填（每次清空都被发现并重填，直到按钮可用）
     expect(fills).toBeGreaterThanOrEqual(3)
-    expect(clicks).toHaveBeenCalledWith(SUBMIT_SELECTOR)
+    expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
     expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
   })
 })
@@ -452,7 +466,7 @@ setTimeout(function () {
     return new TaskContext({
       page,
       task,
-      human: new Humanizer(page),
+      human: {} as never,
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       cfg: {} as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
@@ -487,7 +501,7 @@ setTimeout(function () {
       task.meta.url = baseUrl + '/?mode=v2'
       const ctx = makeBrowserCtx(page, task)
       await task.run(ctx)
-      expect(await detectV2Challenge(ctx)).toBe(true)
+      expect(await ctx.captcha.hasChallenge(V3_SITEKEY)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {
       await browser.close()
@@ -502,7 +516,7 @@ setTimeout(function () {
       task.meta.url = baseUrl + '/?mode=challenge'
       const ctx = makeBrowserCtx(page, task)
       await task.run(ctx)
-      expect(await detectV2Challenge(ctx)).toBe(true)
+      expect(await ctx.captcha.hasChallenge(V3_SITEKEY)).toBe(true)
       expect(await page.getByText('on its way').count()).toBe(1)
     } finally {
       await browser.close()
