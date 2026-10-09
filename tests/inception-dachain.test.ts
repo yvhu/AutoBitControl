@@ -22,6 +22,7 @@ function makeFakePage(textDelays: Record<string, number>, opts: { count?: number
       first: () => ({
         count: async () => counts[sel] ?? opts.count ?? 0,
         isVisible: async () => opts.visible ?? true,
+        click: vi.fn().mockResolvedValue(undefined),
       }),
     }),
     waitForTimeout: async (ms: number) => { await new Promise(r => setTimeout(r, ms)) },
@@ -119,6 +120,7 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
     vi.useFakeTimers()
     try {
       const timeouts: number[] = []
+      const click = vi.fn().mockResolvedValue(undefined)
       const page = {
         getByText: () => ({
           first: () => ({
@@ -129,14 +131,13 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
           }),
         }),
         locator: () => ({
-          first: () => ({ count: async () => 1, isVisible: async () => true }),
+          first: () => ({ count: async () => 1, isVisible: async () => true, click }),
         }),
       }
-      const click = vi.fn().mockResolvedValue(undefined)
       const ctx = new TaskContext({
         page: page as never,
         task: new InceptionDachainTask(),
-        human: { click } as never,
+        human: {} as never,
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
