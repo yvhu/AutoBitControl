@@ -29,6 +29,9 @@ export interface LoginSpec {
 export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Promise<{ skipped: boolean }> {
   const deps = wallet.deps
   const { page } = deps
+  const clickSoft = async (sel: string): Promise<void> => {
+    await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
+  }
   await wallet.ready()
   const state0 = await raceState(wallet, spec, 20000)
   if (state0 === 'loggedIn') return { skipped: true }
@@ -39,9 +42,9 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
       await page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
       await page.waitForTimeout(5000)
     }
-    if (spec.connect) await deps.human.click(spec.connect).catch(() => {})
+    if (spec.connect) await clickSoft(spec.connect)
     const entry = spec.entry
-    if (entry?.kind === 'dialog' && entry.confirm) await deps.human.click(entry.confirm).catch(() => {})
+    if (entry?.kind === 'dialog' && entry.confirm) await clickSoft(entry.confirm)
     if (entry?.kind === 'appkit') {
       await openAppKitWallet(deps, entry)
     }

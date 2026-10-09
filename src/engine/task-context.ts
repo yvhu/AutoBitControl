@@ -65,7 +65,6 @@ export class TaskContext {
         walletPasswords: this.deps.walletPasswords,
         walletSession: this.deps.walletSession,
         log: this.log,
-        human: { click: (s: string) => this.human.click(s) },
         recover: (probe: Probe, opts: RecoverOpts) => this.recover(probe, opts),
       })
     }

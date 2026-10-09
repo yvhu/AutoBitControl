@@ -18,7 +18,6 @@ export interface WalletActionsDeps {
   walletPasswords: Record<string, string>
   walletSession?: WalletSession
   log: Logger
-  human: { click(selector: string): Promise<void> }
   recover(probe: Probe, opts: RecoverOpts): Promise<boolean>
 }
 
@@ -58,7 +57,7 @@ export class WalletActions {
         ])
         if (r === 'popup') { appeared = true; break }
       }
-      if (!appeared) await this.deps.human.click(opts.reclick.selector).catch(() => {})
+      if (!appeared) await this.deps.page.locator(opts.reclick.selector).first().click({ timeout: 5000 }).catch(() => {})
     }
     const popup = (await popupPromise) as PopupPage | null
     if (!popup) return { popupFailed: true }

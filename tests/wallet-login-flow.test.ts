@@ -35,7 +35,7 @@ function deps(over: Partial<WalletActionsDeps> & { loggedInVisible?: boolean } =
         const visible = t === '已登录' ? loggedIn : t === 'Connect Wallet' ? !loggedIn : false
         return { first() { return this }, count: async () => (visible ? 1 : 0), isVisible: async () => visible, waitFor: async () => { if (!visible) throw new Error('未可见') } }
       },
-      locator: (sel: string) => ({ first() { return this }, count: async () => 0, isVisible: async () => false, waitFor: async () => {} }),
+      locator: (sel: string) => ({ first() { return this }, click: async () => { clicks.push(sel) }, count: async () => 0, isVisible: async () => false, waitFor: async () => {} }),
       waitForTimeout: async () => {},
       reload: async () => {},
       url: () => 'https://x/',
@@ -44,7 +44,6 @@ function deps(over: Partial<WalletActionsDeps> & { loggedInVisible?: boolean } =
     wallets: reg,
     walletPasswords: { metamask: 'pw' },
     log: { info: vi.fn(), warn: vi.fn() } as never,
-    human: { click: vi.fn(async (s: string) => { clicks.push(s) }) },
     recover: vi.fn(async () => true),
     ...over,
   }
@@ -62,7 +61,7 @@ describe('WalletActions.ensureLoggedIn', () => {
   it('已登录 → 跳过，不点连接', async () => {
     const d = deps({ loggedInVisible: true })
     expect((await new WalletActions(d).ensureLoggedIn(SPEC)).skipped).toBe(true)
-    expect(d.human.click).not.toHaveBeenCalled()
+    expect(d.clicks).toHaveLength(0)
   })
 
   it('未登录 → 点连接 + 等弹窗 + 解锁 + 连接，最后 recover 等登录完成', async () => {

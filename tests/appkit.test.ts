@@ -12,7 +12,7 @@ const WALLET_SEL = `[data-testid="${ENTRY.entryTestId}"]`
 
 /**
  * 假 WalletActionsDeps：可见集合控制入口/归一化按钮可见性；
- * 归一化点击在 human.click 内模拟效果（点后入口出现）；page.locator().first().waitFor 供弹窗等待
+ * 归一化点击在 page.locator().click 内模拟效果（点后入口出现）；page.locator().first().waitFor 供弹窗等待
  */
 function makeDeps() {
   const visibleSel = new Set<string>()
@@ -27,6 +27,7 @@ function makeDeps() {
     const loc = {
       first: () => loc,
       waitFor,
+      click: () => click(sel),
       count: async () => (visibleSel.has(sel) ? 1 : 0),
       isVisible: async () => visibleSel.has(sel),
     }
@@ -35,7 +36,6 @@ function makeDeps() {
   const deps = {
     page: { locator: (sel: string) => makeLocator(sel), waitForTimeout },
     walletKey: 'metamask',
-    human: { click },
   } as unknown as WalletActionsDeps
   return {
     deps,
@@ -51,7 +51,7 @@ function makeCtxWithWallet(deps: WalletActionsDeps, runIntent: (intent: string, 
   const ctx = new TaskContext({
     page: deps.page,
     task: { meta: { key: 'fake', name: '假任务', url: '', wallet: 'metamask' } },
-    human: deps.human,
+    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {},
     logger: { info: () => {}, warn: () => {}, error: () => {} },

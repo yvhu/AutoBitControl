@@ -54,7 +54,8 @@ export async function openAppKitWallet(
   entry: AppKitEntry,
   opts: AppKitNormalizeOpts = {},
 ): Promise<void> {
-  await deps.human.click(entry.open)
+  const click = (sel: string) => deps.page.locator(sel).first().click({ timeout: 5000 })
+  await click(entry.open)
   const modalSel = `[data-testid="${entry.modalTestId ?? 'w3m-modal-card'}"]`
   await deps.page.locator(modalSel).first().waitFor({ state: 'visible', timeout: opts.modalWaitMs ?? 45000 })
   const walletEntry = `[data-testid="${entry.entryTestId}"]`
@@ -65,11 +66,11 @@ export async function openAppKitWallet(
       break
     }
     if (await probeVisible(deps.page, { selector: '[data-testid="header-back"]' })) {
-      await deps.human.click('[data-testid="header-back"]')
+      await click('[data-testid="header-back"]').catch(() => {})
     } else if (await probeVisible(deps.page, { selector: '[data-testid="all-wallets"]' })) {
-      await deps.human.click('[data-testid="all-wallets"]')
+      await click('[data-testid="all-wallets"]').catch(() => {})
     } else if (await probeVisible(deps.page, { selector: '[data-testid="tab-browser"]' })) {
-      await deps.human.click('[data-testid="tab-browser"]')
+      await click('[data-testid="tab-browser"]').catch(() => {})
     }
     await deps.page.waitForTimeout(opts.roundSleepMs ?? 3000)
   }
@@ -77,5 +78,5 @@ export async function openAppKitWallet(
     const who = deps.walletKey ? ` ${deps.walletKey} ` : ''
     throw new Error(`AppKit 弹窗未出现${who}钱包入口（弹窗视图异常，归一化未命中）`)
   }
-  await deps.human.click(walletEntry)
+  await click(walletEntry)
 }
