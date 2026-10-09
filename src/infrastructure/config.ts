@@ -238,8 +238,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.AI_API_KEY) cfg.ai.apiKey = env.AI_API_KEY
   if (env.AI_API_BASE) cfg.ai.apiBase = env.AI_API_BASE
   if (env.AI_MODEL) cfg.ai.model = env.AI_MODEL
-  // 熔断每日重置时刻：CIRCUIT_BREAKER_RESET_AT 优先级高于配置文件（"" 表示关闭，配置文件用 "" 关闭）
-  if (env.CIRCUIT_BREAKER_RESET_AT) cfg.execution.circuitBreakerResetAt = env.CIRCUIT_BREAKER_RESET_AT
+  // 熔断每日重置时刻：CIRCUIT_BREAKER_RESET_AT 优先级高于配置文件（空串可显式关闭自动重置，与配置文件 "" 语义一致）
+  if (env.CIRCUIT_BREAKER_RESET_AT !== undefined) cfg.execution.circuitBreakerResetAt = env.CIRCUIT_BREAKER_RESET_AT
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]

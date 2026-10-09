@@ -22,7 +22,13 @@ export function msUntilNext(hhmm: string, tz: string, now = Date.now()): number 
   const h = Number(m[1])
   const min = Number(m[2])
   if (h > 23 || min > 59) return -1
-  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  // tz 非法（Intl 构造抛 RangeError）时降级返回 -1：启动排程只告警不崩，避免坏配置炸掉进程
+  let fmt: Intl.DateTimeFormat
+  try {
+    fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  } catch {
+    return -1
+  }
   const parts = Object.fromEntries(fmt.formatToParts(new Date(now)).map((p) => [p.type, p.value]))
   const curSec = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second)
   const targetSec = h * 3600 + min * 60

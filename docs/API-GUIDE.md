@@ -790,7 +790,7 @@ await recordStep(ctx, 'open-crate', async () => {
 
 ### 3.8 AI 问答（`src/api/ai.ts`）
 
-需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见第 7 章配置速查）。未配置时 `askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先用 `ctx.ai` 判空再决定是否调用。
+需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见第 7 章配置速查）。未配置时 `ctx.ai` 为 `undefined`，`askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先判空 `ctx.ai` 再决定是否调用。
 
 #### `askAi(ctx, prompt, options?)`
 
@@ -811,7 +811,7 @@ askAi(ctx: TaskContext, prompt: string, options?: { system?: string; maxTokens?:
 | `options.maxTokens` | `number` | 否 | 客户端默认（300） | 输出上限 |
 | `options.timeoutMs` | `number` | 否 | `cfg.ai.timeoutMs` | 请求超时毫秒 |
 
-**返回值**：模型输出的文本（已去首尾空格）。
+**返回值**：模型输出的文本（由 AI 客户端去除首尾空格）。
 
 **示例**：
 
@@ -819,7 +819,7 @@ askAi(ctx: TaskContext, prompt: string, options?: { system?: string; maxTokens?:
 const summary = await askAi(ctx, '用一句话概括这段文本', { system: '只输出一句话' })
 ```
 
-**注意**：`ctx.ai` 未注入（未接线的运行环境）时直接抛错，不静默返回空串。
+**注意**：`ctx.ai` 仅在配置了 `AI_API_KEY` 时注入；未配置时为 `undefined`，`askAi` 直接抛错，不静默返回空串。
 
 #### `answerQuiz(ctx, spec)`
 

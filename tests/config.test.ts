@@ -147,4 +147,9 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir, env: { CIRCUIT_BREAKER_RESET_AT: '04:00' } })
     expect(cfg.execution.circuitBreakerResetAt).toBe('04:00')
   })
+
+  it('CIRCUIT_BREAKER_RESET_AT 空串 env 可显式关闭自动重置', () => {
+    const cfg = loadConfig({ rootDir: dir, env: { CIRCUIT_BREAKER_RESET_AT: '' } })
+    expect(cfg.execution.circuitBreakerResetAt).toBe('')
+  })
 })

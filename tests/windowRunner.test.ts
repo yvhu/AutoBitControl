@@ -58,6 +58,7 @@ const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
 const cfg = {
   bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
   execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 60000 },
+  ai: { apiKey: '' },
 } as never
 const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
@@ -312,6 +313,7 @@ describe('WindowRunner', () => {
     const cfgZero = {
       bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
       execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 0 },
+      ai: { apiKey: '' },
     } as never
     const runner = new WindowRunner({ cfg: cfgZero, db, bitbrowser: bitbrowser as never, driver: makeDriver(), tasks: new Map([['ok-task', ok1], ['ok2', ok2]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }, { taskKey: 'ok2' }])

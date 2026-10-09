@@ -68,7 +68,7 @@ export interface WindowRunnerDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
   walletPasswords: Record<string, string>
-  /** AI 客户端（透传给 TaskContext；未注入时按 cfg.ai 构建，缺 key 时调用报错） */
+  /** AI 客户端（透传给 TaskContext；未注入时仅当 cfg.ai.apiKey 非空才构建，缺 key 时为 undefined） */
   ai?: AiClient
   /**
    * 重试退避调度（不占窗口）：retry_wait 后由装配层 setTimeout 到期重新入队，
@@ -89,11 +89,11 @@ export interface WindowRunnerDeps {
 }
 
 export class WindowRunner {
-  /** 会话共享的 AI 客户端：显式注入优先，否则按 cfg.ai 构建（api/ai 的 answerQuiz 使用） */
-  private readonly ai: AiClient
+  /** 会话共享的 AI 客户端：显式注入优先；否则仅当 cfg.ai.apiKey 非空才构建（缺 key 时为 undefined，便于任务侧判空） */
+  private readonly ai: AiClient | undefined
 
   constructor(private deps: WindowRunnerDeps) {
-    this.ai = deps.ai ?? createAiClient(deps.cfg.ai)
+    this.ai = deps.ai ?? (deps.cfg.ai.apiKey ? createAiClient(deps.cfg.ai) : undefined)
   }
 
   /**

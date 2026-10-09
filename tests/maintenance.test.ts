@@ -23,6 +23,11 @@ describe('msUntilNext 计算到下一次 HH:mm 的毫秒', () => {
     }
   })
 
+  it('非法时区不抛错，降级返回 -1', () => {
+    expect(() => msUntilNext('12:30', 'Not/AZone', noon)).not.toThrow()
+    expect(msUntilNext('12:30', 'Not/AZone', noon)).toBe(-1)
+  })
+
   // 2026-01-01 00:30 Shanghai = 2025-12-31 16:30 UTC（验证午夜时段 hourCycle h23 修复）
   const midnightHalf = Date.UTC(2025, 11, 31, 16, 30, 0)
 

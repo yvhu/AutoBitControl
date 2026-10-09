@@ -48,8 +48,8 @@ async function main(): Promise<void> {
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
-  // AI 客户端：供任务经 ctx.ai / api/ai 问答（缺 AI_API_KEY 时调用报错）
-  const ai = createAiClient(cfg.ai)
+  // AI 客户端：仅在配置 AI_API_KEY 时构建（供任务经 ctx.ai / api/ai 问答）；未配置则不注入，ctx.ai 为 undefined
+  const ai = cfg.ai.apiKey ? createAiClient(cfg.ai) : undefined
   let runner!: WindowRunner
   // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后 scheduleRetry 重跑）沿用同一批次
   let lastBatchId: number | null = null
