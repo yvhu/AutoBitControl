@@ -1,9 +1,10 @@
 /**
  * AuraLaunch 领水任务（auralaunch-faucet）：Caldera LiteForge 测试网水龙头
  * 地址取自数据源「metamask钱包地址」直填（不连钱包）；领取走 tRPC，限频=已领取=成功幂等
- * 依赖方向：仅依赖 ./base
+ * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, click, getAccount, hasText, runJs, takeScreenshot } from '../api'
 import type { Response } from 'patchright'
 
 export const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]' // 收款地址输入框
@@ -126,11 +127,13 @@ export class AuralaunchFaucetTask extends SiteTask {
   }
 
   /**
-   * 站点动作：等地址框就绪 → 读地址填入 → 点 Request 并捕获 tRPC 响应 → 判定成功/限频/拒绝。
+   * 站点动作：打开落地页 → 等地址框就绪 → 读地址填入 → 点 Request 并捕获 tRPC 响应 → 判定成功/限频/拒绝。
    * 不连钱包；限频（24h 一次）视为已领取=成功幂等。
-   * @param ctx 任务上下文，提供 page、account（取数据源列）、log、safeScreenshot
+   * @param ctx 任务上下文（page/log/accountRow 等运行时数据）
    */
-  async action(ctx: TaskContext): Promise<void> {
+  async run(ctx: TaskContext): Promise<void> {
+    // 0) 打开落地页并清掉残留标签页
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 1) 等地址框就绪；missing=站点未渲染/改版，直接失败
     const ready = await waitInputReady(ctx)
     if (ready === 'missing') throw new Error('地址输入框未出现（页面未渲染或站点改版）')
@@ -139,18 +142,18 @@ export class AuralaunchFaucetTask extends SiteTask {
       // 逐一匹配全部限频关键词（与旧 recoverErrorText(LIMIT_KEYWORDS) 等价）
       let limitText = ''
       for (const kw of LIMIT_KEYWORDS) {
-        if (await ctx.page.getByText(kw, { exact: false }).count() > 0) { limitText = kw; break }
+        if (await hasText(ctx, kw)) { limitText = kw; break }
       }
       if (limitText !== '') {
         ctx.log.info({ step: 'faucet', window: ctx.profile.name, limitText }, '地址框禁用且出现限频提示，视为已领取 = 成功（重跑幂等）')
-        await ctx.safeScreenshot('auralaunch-faucet-limit')
+        await takeScreenshot(ctx, 'auralaunch-faucet-limit')
         return
       }
-      const bodyText = await ctx.page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '')
+      const bodyText = await runJs(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
       throw new Error(`地址输入框持续禁用且无限频提示（页面文本: ${bodyText.slice(0, 300)}）`)
     }
     // 3) 读地址并填入；填后被框架清空则再填一次
-    const address = await ctx.account('metamask钱包地址')
+    const address = await getAccount(ctx, 'metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
     await addressInput.fill(address)
     if (((await addressInput.inputValue().catch(() => '')) ?? '') !== address) {
@@ -160,7 +163,7 @@ export class AuralaunchFaucetTask extends SiteTask {
     let resp: Response | null = null
     for (let attempt = 0; attempt <= RECLICK_MAX && !resp; attempt++) {
       const respPromise = waitFaucetResponse(ctx, address)
-      await ctx.page.locator(REQUEST_BTN_SELECTOR).first().click()
+      await click(ctx, REQUEST_BTN_SELECTOR)
       resp = await respPromise
       if (!resp && attempt < RECLICK_MAX) {
         ctx.log.warn({ step: 'faucet', window: ctx.profile.name, attempt: attempt + 1 }, '点击 Request 后未捕获领水请求（Turnstile 未就绪？），等待后补点')
@@ -171,12 +174,12 @@ export class AuralaunchFaucetTask extends SiteTask {
       const verdict = await judgeFaucetResponse(resp)
       if (verdict === 'success') {
         ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '领水成功（tRPC success:true）')
-        await ctx.safeScreenshot('auralaunch-faucet-success')
+        await takeScreenshot(ctx, 'auralaunch-faucet-success')
         return
       }
       if (verdict === 'limit') {
         ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '已达当日领取上限（24h 限频），视为已领取 = 成功（重跑幂等）')
-        await ctx.safeScreenshot('auralaunch-faucet-limit')
+        await takeScreenshot(ctx, 'auralaunch-faucet-limit')
         return
       }
       const envelope = unwrapTrpcEnvelope(await resp.json().catch(() => null))
@@ -193,7 +196,7 @@ export class AuralaunchFaucetTask extends SiteTask {
       await ctx.safeScreenshot('auralaunch-faucet-limit')
       return
     }
-    const bodyText = await ctx.page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '')
+    const bodyText = await runJs(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
     throw new Error(`点击 Request 后未出现成功/限频信号（页面文本: ${bodyText.slice(0, 300)}）`)
   }
 }

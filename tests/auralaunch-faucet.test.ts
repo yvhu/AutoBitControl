@@ -107,6 +107,8 @@ function makeCtx(opts: {
     evaluate: async () => state.bodyText,
     context: () => ({ pages: () => [] as unknown[] }),
     goto: vi.fn().mockResolvedValue(undefined),
+    // api takeScreenshot 走 page.screenshot
+    screenshot: vi.fn().mockResolvedValue(undefined),
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -121,9 +123,9 @@ function makeCtx(opts: {
   return { ctx, clicks, log, state }
 }
 
-/** run 全流程所需引擎能力假实现（默认 run 走假 page 的 context/goto；截图容错断言用 screenshot） */
+/** run 全流程所需引擎能力假实现（默认 run 走假 page 的 context/goto；截图断言走 page.screenshot） */
 function stubRunCapabilities(ctx: TaskContext): void {
-  ctx.screenshot = vi.fn().mockResolvedValue('/tmp/x.png')
+  ;(ctx.page as unknown as { screenshot: ReturnType<typeof vi.fn> }).screenshot = vi.fn().mockResolvedValue('/tmp/x.png')
 }
 
 describe('unwrapTrpcEnvelope 信封解包', () => {
@@ -263,7 +265,7 @@ describe('AuralaunchFaucetTask run 主流程', () => {
     await new AuralaunchFaucetTask().run(ctx)
     expect(state.fills).toEqual(['0xabc'])
     expect(clicks).toEqual([REQUEST_BTN_SELECTOR])
-    expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
+    expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-success.png') }))
   })
 
   it('429 限频信封 → 视为已领取=成功（重跑幂等；真机 TOO_MANY_REQUESTS）', async () => {
@@ -293,21 +295,21 @@ describe('AuralaunchFaucetTask run 主流程', () => {
     stubRunCapabilities(ctx)
     await new AuralaunchFaucetTask().run(ctx)
     expect(clicks).toHaveLength(2)
-    expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
+    expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-success.png') }))
   }, 15000)
 
   it('未捕获响应 + 成功文案 → 成功（UI 兜底 success）', async () => {
     const { ctx } = makeCtx({ texts: { 'Successfully requested funds to your wallet': true } })
     stubRunCapabilities(ctx)
     await expect(new AuralaunchFaucetTask().run(ctx)).resolves.toBeUndefined()
-    expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
+    expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-success.png') }))
   }, 15000)
 
   it('未捕获响应 + 限频文案 → 已领取=成功（UI 兜底 limit，截图带 limit 后缀）', async () => {
     const { ctx } = makeCtx({ texts: { 'sorry, something went wrong': true } })
     stubRunCapabilities(ctx)
     await expect(new AuralaunchFaucetTask().run(ctx)).resolves.toBeUndefined()
-    expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-limit')
+    expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-limit.png') }))
   }, 15000)
 
   it('未捕获响应 + 无任何信号 → 抛错（带页面文本辅助排障）', async () => {
@@ -330,7 +332,7 @@ describe('AuralaunchFaucetTask run 主流程', () => {
     await new AuralaunchFaucetTask().run(ctx)
     expect(state.fillAttempts).toBe(2)
     expect(state.fills).toEqual(['0xabc'])
-    expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-success')
+    expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-success.png') }))
   })
 
   it('地址框禁用且页面出现限频提示 → 已领取=成功（真机：窗口99 已领后 disabled）', async () => {
@@ -341,7 +343,7 @@ describe('AuralaunchFaucetTask run 主流程', () => {
       const assertion = expect(new AuralaunchFaucetTask().run(ctx)).resolves.toBeUndefined()
       await vi.advanceTimersByTimeAsync(46_000)
       await assertion
-      expect(ctx.screenshot).toHaveBeenCalledWith('auralaunch-faucet-limit')
+      expect(ctx.page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('auralaunch-faucet-limit.png') }))
     } finally {
       vi.useRealTimers()
     }
