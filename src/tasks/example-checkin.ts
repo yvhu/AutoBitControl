@@ -2,12 +2,13 @@
  * 示例签到任务（example-checkin）：标准每日签到参考实现（新范式）
  * 站点：占位示例站点；url 为空、开关默认关闭，仅作调试与复制起点，无真实站点
  * 执行流程：打开任务页（url 为空则跳过）→ 声明式登录（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
- *          → action 判已签到 → 点签到按钮 → 断言成功标志
- * 设计：登录声明 login → 站点动作 action，页面操作直调 patchright（经 ctx.page）
+ *          → 判已签到（幂等）→ 点签到按钮 → 断言成功标志
+ * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/hasText/waitFor）
  * 时间预算：timeoutSec 180s（单任务整体超时）、retry.max 2 次 / 退避 600s、concurrency 4
  * 新增任务从这里复制改起：先跑通流程，再逐步替换选择器
  */
-import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, loginWallet, click, hasText, waitFor } from '../api'
 
 export class ExampleCheckinTask extends SiteTask {
   meta: TaskMeta = {
@@ -26,24 +27,25 @@ export class ExampleCheckinTask extends SiteTask {
     concurrency: 4, // 任务级并发上限（与全局 maxConcurrentWindows 取更严者）
   }
 
-  // 登录声明：默认 run 会先跑 ensureLoggedIn（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
-  login: LoginSpec = {
-    loggedIn: { text: '已连接' },     // 占位：换成站点已登录标志（文案或 { selector }）
-    loggedOut: '连接钱包',            // 占位：换成站点未登录标志
-    connect: 'button:has-text("连接钱包")', // 占位：换成站点连接入口
-    entry: { kind: 'direct' },
-  }
-
   /**
-   * 站点动作：签到。默认 run 在登录完成（或无需登录）后调用。
-   * @param ctx 任务上下文，提供 page（patchright 页面）、account/log/safeScreenshot 等能力
+   * 执行流程：打开任务页 → 声明式钱包登录 → 判已签到（幂等）→ 点签到 → 断言成功标志。
+   * url 为空表示无导航步骤（仅示例占位）。
+   * @param ctx 任务上下文（page/log/task 等运行时数据）
    */
-  async action(ctx: TaskContext): Promise<void> {
-    const page = ctx.page // ← patchright；点击/填写/等待都用原生 API
+  async run(ctx: TaskContext): Promise<void> {
+    if (this.meta.url) await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    // 登录：竞速判登录态 → 点连接 → 签名/确认 → 等登录完成（占位选择器，复制后替换）
+    await loginWallet(ctx, {
+      wallet: 'metamask',
+      scenario: 'direct',
+      loggedIn: { text: '已连接' },
+      loggedOut: '连接钱包',
+      connect: 'button:has-text("连接钱包")',
+    })
     // 已签到直接成功返回（幂等：重复触发不报错）
-    if (await page.getByText('已签到').count() > 0) return
+    if (await hasText(ctx, '已签到')) return
     // 点签到按钮并断言成功标志（宁严勿松：必须显式等到成功元素才判成功）
-    await page.locator('#checkin-btn').click()
-    await page.locator('#checked-badge').waitFor({ state: 'visible', timeout: 10000 })
+    await click(ctx, '#checkin-btn')
+    await waitFor(ctx, { selector: '#checked-badge' }, { assert: true, budgetMs: 10000 })
   }
 }
