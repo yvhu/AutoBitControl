@@ -69,8 +69,8 @@ export class TaskContext {
   /** @param deps 运行时依赖集（页面、任务、窗口、配置、日志、产物目录、钱包相关等） */
   constructor(private deps: TaskContextDeps) {}
 
-  /** 本任务的步骤记录器（step() 写入，steps() 读出） */
-  private recorder = new StepRecorder()
+  /** 本任务的步骤记录器（step() 写入，steps() 读出；api/diag 经 recorder getter 读取） */
+  private recorderInstance = new StepRecorder()
   /** 钱包动作门面懒加载实例（首次访问 wallet 时创建） */
   private walletActionsInstance: WalletActions | null = null
   /** 验证码能力懒加载实例（首次访问 captcha 时创建） */
@@ -125,11 +125,11 @@ export class TaskContext {
    * @throws fn 抛出的错误（记录后重抛）
    */
   async step<T>(name: string, fn: () => Promise<T>): Promise<T> {
-    return this.recorder.run(name, fn, this.log)
+    return this.recorderInstance.run(name, fn, this.log)
   }
 
   /** 取本任务已记录的步骤时间线（浅拷贝） */
-  steps() { return this.recorder.steps() }
+  steps() { return this.recorderInstance.steps() }
 
   /**
    * 验证码能力命名空间（懒加载，仅 Turnstile 交互式方框）。
@@ -156,6 +156,24 @@ export class TaskContext {
   get log(): Logger {
     return this.deps.logger
   }
+
+  /** 钱包适配器注册表（api/wallet 使用） */
+  get wallets(): WalletRegistry | undefined { return this.deps.wallets }
+
+  /** 钱包解锁密码映射（api/wallet 使用） */
+  get walletPasswords(): Record<string, string> { return this.deps.walletPasswords }
+
+  /** 窗口会话级钱包扩展探测（api/wallet 使用） */
+  get walletSession(): WalletSession | undefined { return this.deps.walletSession }
+
+  /** 当前任务引用（api 使用） */
+  get task(): TaskRef { return this.deps.task }
+
+  /** 截图产物目录（api/data 使用） */
+  get artifactsDir(): string { return this.deps.artifactsDir }
+
+  /** 步骤记录器（api/diag 使用） */
+  get recorder(): StepRecorder { return this.recorderInstance }
 
   /** 当前窗口记录（profiles 表行，含 ID/名称等；熔断计数等也基于它） */
   get profile(): ProfileRow {
