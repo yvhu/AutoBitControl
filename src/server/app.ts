@@ -27,6 +27,7 @@ import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
 import { toolsRouter } from './routes/tools'
 import { airdropRouter } from './routes/airdrop'
+import { diagnosticsRouter } from './routes/diagnostics'
 import { notFoundHandler, errorHandler } from './http/error'
 
 // 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
@@ -53,6 +54,8 @@ export interface ServerDeps {
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 文件随机分配服务（面板工具路由与计划自动分配共用单实例） */
   fileAssignService: import('../tools/file-assign/applier').FileAssignService
+  /** 按 run id 取运行行（诊断路由读 diagPath；app.ts 注入 db.getRunById） */
+  getRunById(id: number): Promise<import('../infrastructure/db').RunRow | null>
 }
 
 /**
@@ -76,6 +79,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, fileAssignService: deps.fileAssignService }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   api.use(airdropRouter({ db: deps.db, tasks: deps.tasks }))
+  api.use(diagnosticsRouter({ getRunById: deps.getRunById }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

@@ -229,6 +229,7 @@ export async function startApp(): Promise<void> {
       path: cfg.dataSource.path,
     },
     fileAssignService,
+    getRunById: (id) => db.getRunById(id),
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {
