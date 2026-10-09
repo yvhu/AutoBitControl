@@ -52,6 +52,33 @@ describe('ctx.captcha 命名空间', () => {
     expect(typeof ctx.captcha.autoClick).toBe('function')
     expect(typeof ctx.captcha.waitPlugin).toBe('function')
   })
+
+  it('门面方法委托到扁平方法并转发返回结果', async () => {
+    const ctx = makeCtx()
+    const clickTurnstileBox = vi.fn().mockResolvedValue(true)
+    const turnstileVisible = vi.fn().mockResolvedValue(false)
+    const autoClickTurnstile = vi.fn().mockResolvedValue(true)
+    const waitCaptchaPassed = vi.fn().mockResolvedValue('passed')
+    ctx.clickTurnstileBox = clickTurnstileBox
+    ctx.turnstileVisible = turnstileVisible
+    ctx.autoClickTurnstile = autoClickTurnstile
+    ctx.waitCaptchaPassed = waitCaptchaPassed
+
+    await expect(ctx.captcha.turnstile()).resolves.toBe(true)
+    await expect(ctx.captcha.visible()).resolves.toBe(false)
+    await expect(ctx.captcha.autoClick()).resolves.toBe(true)
+    await expect(ctx.captcha.waitPlugin()).resolves.toBe('passed')
+
+    expect(clickTurnstileBox).toHaveBeenCalledTimes(1)
+    expect(turnstileVisible).toHaveBeenCalledTimes(1)
+    expect(autoClickTurnstile).toHaveBeenCalledTimes(1)
+    expect(waitCaptchaPassed).toHaveBeenCalledTimes(1)
+  })
+
+  it('重复访问返回同一缓存实例', () => {
+    const ctx = makeCtx()
+    expect(ctx.captcha).toBe(ctx.captcha)
+  })
 })
 
 describe('TaskContext.safeScreenshot', () => {

@@ -49,11 +49,20 @@ export interface TaskContextDeps {
   walletSession?: WalletSession
 }
 
+/** 验证码能力命名空间（get captcha 返回值） */
+export interface CaptchaActions {
+  turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => Promise<boolean>
+  visible: (selectors?: string[]) => Promise<boolean>
+  autoClick: (budgetMs?: number) => Promise<boolean>
+  waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => Promise<'passed' | 'none' | 'timeout'>
+}
+
 export class TaskContext {
   constructor(private deps: TaskContextDeps) {}
 
   private recorder = new StepRecorder()
   private walletActionsInstance: WalletActions | null = null
+  private captchaActionsInstance: CaptchaActions | null = null
 
   /** 钱包动作命名空间（ready/login/sign/confirmTx/ensureLoggedIn） */
   get wallet(): WalletActions {
@@ -90,13 +99,16 @@ export class TaskContext {
   steps() { return this.recorder.steps() }
 
   /** 验证码能力命名空间（Turnstile 方框 + 打码插件；旧扁平方法保留兼容） */
-  get captcha() {
-    return {
-      turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => this.clickTurnstileBox(opts),
-      visible: (selectors?: string[]) => this.turnstileVisible(selectors),
-      autoClick: (budgetMs?: number) => this.autoClickTurnstile(budgetMs),
-      waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => this.waitCaptchaPassed(opts),
+  get captcha(): CaptchaActions {
+    if (!this.captchaActionsInstance) {
+      this.captchaActionsInstance = {
+        turnstile: (opts?: { selectors?: string[]; maxAttempts?: number }) => this.clickTurnstileBox(opts),
+        visible: (selectors?: string[]) => this.turnstileVisible(selectors),
+        autoClick: (budgetMs?: number) => this.autoClickTurnstile(budgetMs),
+        waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => this.waitCaptchaPassed(opts),
+      }
     }
+    return this.captchaActionsInstance
   }
 
   /** 当前页面（任务侧只读使用） */

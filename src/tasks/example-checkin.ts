@@ -21,7 +21,7 @@ export class ExampleCheckinTask extends SiteTask {
 
   // 登录声明：默认 run 会先跑 ensureLoggedIn（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
   login: LoginSpec = {
-    loggedIn: { text: '连接钱包' },   // 占位：换成站点已登录标志（文案或 { selector }）
+    loggedIn: { text: '已连接' },     // 占位：换成站点已登录标志（文案或 { selector }）
     loggedOut: '连接钱包',            // 占位：换成站点未登录标志
     connect: 'button:has-text("连接钱包")', // 占位：换成站点连接入口
     entry: { kind: 'direct' },
