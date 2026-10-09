@@ -12,6 +12,7 @@ import { todayStr, type AppDb, type ProfileRow, type RunRow } from '../src/infra
 import { TaskContext, type SiteTask } from '../src/tasks/base'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
+import { WalletActions } from '../src/automation/wallet/actions'
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
   return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0, ...over }
@@ -88,10 +89,21 @@ class FailTask implements SiteTask {
   run = vi.fn().mockRejectedValue(new Error('boom'))
 }
 
-/** 钱包探针任务 fixture：run 内调用 wallet.ready，验证 WalletSession 注入链路 */
+/** 钱包探针任务 fixture：run 内经 ctx 字段装配 WalletActions 并 ready，验证 WalletSession 注入链路（TaskContext 已无 wallet 命名空间） */
 class WalletProbeTask implements SiteTask {
   meta = { key: 'wallet-probe', name: 'WP', url: 'https://x.io', wallet: 'metamask' }
-  run = vi.fn(async (ctx: TaskContext) => { await ctx.wallet.ready() })
+  run = vi.fn(async (ctx: TaskContext) => {
+    const actions = new WalletActions({
+      page: ctx.page,
+      walletKey: ctx.task.meta.wallet,
+      wallets: ctx.wallets,
+      walletPasswords: ctx.walletPasswords,
+      walletSession: ctx.walletSession,
+      log: ctx.log,
+      recover: async () => false,
+    })
+    await actions.ready()
+  })
 }
 
 /** 提取 upsertRun 调用序列的状态列 */

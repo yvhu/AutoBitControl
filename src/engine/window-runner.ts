@@ -335,7 +335,9 @@ export class WindowRunner {
           accountRow,
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
-        const shot = await ctx.screenshot(`${date}-success`).catch(() => null)
+        // 成功截图：直接取页面截图写产物目录（TaskContext 已收敛为数据袋子，不再有 screenshot 方法）
+        const successShot = join(artifacts, `${date}-success.png`)
+        const shot = await page.screenshot({ path: successShot }).then(() => successShot).catch(() => null)
         const finishedAt = localWallNow()
         const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt }), null)
         // 成功清空 diag_path：失败轮次残留的诊断路径不应挂在 success 行上，
@@ -359,7 +361,7 @@ export class WindowRunner {
             const bundle = await Promise.race([
               collectDiagnostics({
                 page,
-                steps: ctx.steps(),
+                steps: ctx.recorder.steps(),
                 error: (e as Error).message,
                 status,
                 windowName: profile.name,

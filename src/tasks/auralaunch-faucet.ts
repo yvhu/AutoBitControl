@@ -188,12 +188,12 @@ export class AuralaunchFaucetTask extends SiteTask {
     const outcome = await waitUiOutcome(ctx)
     if (outcome === 'success') {
       ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '领水成功（页面成功文案）')
-      await ctx.safeScreenshot('auralaunch-faucet-success')
+      await takeScreenshot(ctx, 'auralaunch-faucet-success')
       return
     }
     if (outcome === 'limit') {
       ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '页面出现限频提示，视为已领取 = 成功（重跑幂等）')
-      await ctx.safeScreenshot('auralaunch-faucet-limit')
+      await takeScreenshot(ctx, 'auralaunch-faucet-limit')
       return
     }
     const bodyText = await runJs(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
