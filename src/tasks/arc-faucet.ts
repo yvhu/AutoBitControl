@@ -1,9 +1,10 @@
 /**
  * Arc 领水任务（faucet-arc）：Circle 测试网水龙头 https://faucet.circle.com/ 领取 20 testnet USDC
  * 流程（真机核实）：填地址 → 校验网络/币种 → 点 Send → 等待成功文案 → 成功截图
- * 依赖方向：仅依赖 ./base（经 ctx 用能力），不再直接 import automation
+ * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数），不再直接 import automation
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, click, fill, getAccount, waitFor, takeScreenshot } from '../api'
 
 // —— 站点元素与文案（2026-09-09 SSR 核实）——
 export const ADDRESS_SELECTOR = 'input[name="address"]' // 收款地址输入框
@@ -35,10 +36,10 @@ export async function isUsdcChecked(ctx: TaskContext): Promise<boolean> {
 /** 确保 Network = Arc Testnet：已是则不动；否则打开下拉点选目标选项并二次校验 */
 export async function ensureNetwork(ctx: TaskContext): Promise<void> {
   if ((await currentNetwork(ctx)) === TARGET_NETWORK) return
-  await ctx.page.locator(NETWORK_BUTTON_SELECTOR).first().click()
+  await click(ctx, NETWORK_BUTTON_SELECTOR)
   const opt = ctx.page.locator(NETWORK_OPTION_SELECTOR).first()
   if ((await opt.count()) === 0) throw new Error(`Network 下拉未找到选项: ${TARGET_NETWORK}`)
-  await ctx.page.locator(NETWORK_OPTION_SELECTOR).first().click()
+  await click(ctx, NETWORK_OPTION_SELECTOR)
   const now = await currentNetwork(ctx)
   if (now !== TARGET_NETWORK) throw new Error(`Network 选择失败: 当前显示 ${now || '(空)'}，期望 ${TARGET_NETWORK}`)
 }
@@ -46,7 +47,7 @@ export async function ensureNetwork(ctx: TaskContext): Promise<void> {
 /** 确保币种 = USDC：已选中则不动；否则点卡片并二次校验 */
 export async function ensureUsdc(ctx: TaskContext): Promise<void> {
   if (await isUsdcChecked(ctx)) return
-  await ctx.page.locator(CURRENCY_CARD_SELECTOR).first().click()
+  await click(ctx, CURRENCY_CARD_SELECTOR)
   if (!(await isUsdcChecked(ctx))) throw new Error('USDC 币种选择失败: radio 仍未选中')
 }
 
@@ -68,15 +69,13 @@ export async function ensureSubmitEnabled(ctx: TaskContext, timeoutMs = SUBMIT_E
   throw new Error(`提交按钮 ${timeoutMs}ms 内未变为可用（地址校验未通过？）`)
 }
 
-/** 点提交并等待成功文案出现（超时返回 false） */
+/**
+ * 点提交并等待成功文案出现（超时返回 false）。
+ * 用 api 的 waitFor 文案探针轮询（recoverTexts 置空 = 纯轮询，避免误触发刷新），与旧 getByText 即时判定等价。
+ */
 async function submitAndWait(ctx: TaskContext): Promise<boolean> {
-  await ctx.page.locator(SUBMIT_SELECTOR).first().click()
-  const end = Date.now() + SUBMIT_RACE_MS
-  while (Date.now() < end) {
-    if ((await ctx.page.getByText(SUCCESS_TEXT, { exact: false }).count()) > 0) return true
-    await ctx.page.waitForTimeout(1000)
-  }
-  return false
+  await click(ctx, SUBMIT_SELECTOR)
+  return waitFor(ctx, { text: SUCCESS_TEXT }, { budgetMs: SUBMIT_RACE_MS, recoverTexts: [] })
 }
 
 /** Arc 领水任务（Circle 测试网水龙头：Arc Testnet 领取 20 testnet USDC） */
@@ -99,14 +98,16 @@ export class ArcFaucetTask extends SiteTask {
   /**
    * 站点动作：填地址 → 校正网络/币种 → 提交 → 等成功文案。
    * 站点不连钱包，地址取自数据源「metamask钱包地址」列。
-   * @param ctx 任务上下文，提供 page、account（取数据源列）、safeScreenshot
+   * @param ctx 任务上下文（page/log/accountRow 等运行时数据）
    */
-  async action(ctx: TaskContext): Promise<void> {
+  async run(ctx: TaskContext): Promise<void> {
+    // 0) 打开落地页并清掉残留标签页
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 1) 等地址输入框渲染（落地页为 SSR + hydration，可能较慢）
-    await ctx.page.locator(ADDRESS_SELECTOR).first().waitFor({ state: 'visible', timeout: 20000 })
-    const address = await ctx.account('metamask钱包地址')
+    await waitFor(ctx, { selector: ADDRESS_SELECTOR }, { assert: true, budgetMs: 20000 })
+    const address = await getAccount(ctx, 'metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
-    await addressInput.fill(address)
+    await fill(ctx, ADDRESS_SELECTOR, address)
     // 2) 校正网络（Arc Testnet）与币种（USDC），已正确则不动
     await ensureNetwork(ctx)
     await ensureUsdc(ctx)
@@ -119,6 +120,6 @@ export class ArcFaucetTask extends SiteTask {
     // 4) 提交并等成功文案；超时抛错走失败流程（把成功判定提到 action 内，断言明确）
     const ok = await submitAndWait(ctx)
     if (!ok) throw new Error(`提交后 ${SUBMIT_RACE_MS}ms 内未出现成功文案`)
-    await ctx.safeScreenshot('arc-faucet-success')
+    await takeScreenshot(ctx, 'arc-faucet-success')
   }
 }

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'patchright'
 import type { Page } from 'patchright'
 import { createServer, type Server } from 'node:http'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { AddressInfo } from 'node:net'
@@ -40,6 +40,8 @@ interface FakeElem {
   click: ReturnType<typeof vi.fn>
   /** 等待元素可见（仅地址输入框实现；action 等它） */
   waitFor?: ReturnType<typeof vi.fn>
+  /** 元素可见性（api waitFor 选择器探针读取；仅地址输入框实现） */
+  isVisible?: () => Promise<boolean>
   /** 输入框当前值（仅地址输入框实现；缺省无此能力） */
   inputValue?: () => Promise<string>
 }
@@ -86,6 +88,7 @@ function makeCtx(state: FakeState) {
       fill: addressFill,
       click: noopClick(),
       waitFor: vi.fn().mockResolvedValue(undefined),
+      isVisible: async () => true,
       inputValue: async () => state.addressValue,
     },
     [NETWORK_DISPLAY_SELECTOR]: {
@@ -149,6 +152,9 @@ function makeCtx(state: FakeState) {
     // 默认 run 用 context().pages() 清理残留标签页（空数组即无残留），goto 打开 meta.url
     context: () => ({ pages: () => [] }),
     goto: vi.fn().mockResolvedValue(undefined),
+    // api waitFor 心跳日志读 page.url()；takeScreenshot 走 page.screenshot
+    url: () => 'https://faucet.circle.com/',
+    screenshot: vi.fn().mockResolvedValue(undefined),
   }
   const ctx = new TaskContext({
     page: page as never,
@@ -156,7 +162,8 @@ function makeCtx(state: FakeState) {
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
-    artifactsDir: '',
+    // api takeScreenshot 会 mkdir 产物目录；用真实临时目录避免空串 mkdir 抛错
+    artifactsDir: mkdtempSync(join(tmpdir(), 'arc-faucet-unit-')),
     walletPasswords: {},
     accountRow: { metamask钱包地址: '0xabc' },
   })
@@ -284,7 +291,7 @@ describe('ArcFaucetTask 元信息', () => {
 describe('ArcFaucetTask run 地址重填自愈', () => {
   it('首跑提交按钮未启用且输入框为空 → 重填后按钮启用 → 成功（fill ≥ 2 次）', async () => {
     const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
-    const { ctx, elems, addressFill } = makeCtx(state)
+    const { ctx, elems, addressFill, page } = makeCtx(state)
     // 首次 fill 模拟站点 React 未就绪：input 事件无人监听 → 值不保留、按钮不启用；之后 fill 正常生效
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
@@ -293,8 +300,6 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
       state.addressValue = v
       state.submitEnabled = true
     })
-    // 默认 run 开页走 page.context()/page.goto（makeCtx 已给假实现）；截图与站点自愈逻辑无关，仅需存根
-    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     // 假时钟：ensureSubmitEnabled 每轮 15s 预算瞬间走完（真实时钟会让首轮超时等足 15s）
     let now = Date.now()
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
@@ -309,7 +314,7 @@ describe('ArcFaucetTask run 地址重填自愈', () => {
     expect(fills).toBeGreaterThanOrEqual(2)
     expect(addressFill).toHaveBeenCalledTimes(2)
     expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
-    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
+    expect(page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('arc-faucet-success.png') }))
   })
 })
 
@@ -328,7 +333,6 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
     // 提交按钮 isEnabled 读取计数：ensureSubmitEnabled 内部轮询读取它
     let submitEnabledChecks = 0
     state.onSubmitEnabledCheck = () => { submitEnabledChecks++ }
-    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     await new ArcFaucetTask().run(ctx)
     expect(fills).toBe(2)
     expect(addressFill).toHaveBeenCalledTimes(2)
@@ -336,12 +340,12 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
     expect(page.waitForTimeout).toHaveBeenCalledWith(500)
     expect(submitEnabledChecks).toBeGreaterThanOrEqual(1)
     expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
-    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
+    expect(page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('arc-faucet-success.png') }))
   })
 
   it('ensureSubmitEnabled 轮询期间地址框被清空 2 次均重填，最终按钮可用成功（fill ≥ 3 次）', async () => {
     const state = { ...baseState(), submitEnabled: false, addressValue: '', texts: { [SUCCESS_TEXT]: true } }
-    const { ctx, elems, addressFill } = makeCtx(state)
+    const { ctx, elems, addressFill, page } = makeCtx(state)
     let fills = 0
     addressFill.mockImplementation(async (v: string) => {
       fills++
@@ -354,12 +358,11 @@ describe('ArcFaucetTask run 地址快速自愈', () => {
       if (enabledChecks <= 2) state.addressValue = ''
       else state.submitEnabled = true
     }
-    ctx.screenshot = vi.fn().mockResolvedValue('/tmp/arc.png')
     await new ArcFaucetTask().run(ctx)
     // 首填 + 轮询中 2 次重填（每次清空都被发现并重填，直到按钮可用）
     expect(fills).toBeGreaterThanOrEqual(3)
     expect(elems[SUBMIT_SELECTOR].click).toHaveBeenCalled()
-    expect(ctx.screenshot).toHaveBeenCalledWith('arc-faucet-success')
+    expect(page.screenshot).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('arc-faucet-success.png') }))
   })
 })
 
