@@ -122,4 +122,20 @@ describe('loadConfig', () => {
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({ scheduler: { timezone: 'UTC' } }))
     expect(loadConfig({ rootDir: dir }).scheduler.timezone).toBe('UTC')
   })
+
+  it('ai 段默认值正确', () => {
+    const cfg = loadConfig({ rootDir: dir })
+    expect(cfg.ai.provider).toBe('openai-compatible')
+    expect(cfg.ai.apiBase).toBe('https://api.deepseek.com')
+    expect(cfg.ai.model).toBe('deepseek-flash')
+    expect(cfg.ai.apiKey).toBe('')
+    expect(cfg.ai.timeoutMs).toBe(30000)
+  })
+
+  it('环境变量覆盖 ai', () => {
+    const cfg = loadConfig({ rootDir: dir, env: { AI_API_KEY: 'k', AI_MODEL: 'm', AI_API_BASE: 'https://x' } })
+    expect(cfg.ai.apiKey).toBe('k')
+    expect(cfg.ai.model).toBe('m')
+    expect(cfg.ai.apiBase).toBe('https://x')
+  })
 })

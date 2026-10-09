@@ -74,6 +74,20 @@ export interface SchedulerConfig {
   timezone: string
 }
 
+/** AI 能力配置：OpenAI 兼容接口（默认 DeepSeek），供 AI 答题等能力调用 */
+export interface AiConfig {
+  /** provider 标识（当前仅 OpenAI 兼容） */
+  provider: string
+  /** OpenAI 兼容 API 根地址（如 https://api.deepseek.com） */
+  apiBase: string
+  /** 模型 id（如 deepseek-flash） */
+  model: string
+  /** API Key（来自 AI_API_KEY，仅本机 .env） */
+  apiKey: string
+  /** 请求超时毫秒 */
+  timeoutMs: number
+}
+
 /** 全应用配置聚合 */
 export interface AppConfig {
   bitbrowser: BitBrowserConfig
@@ -83,6 +97,7 @@ export interface AppConfig {
   wallet: WalletConfig
   dataSource: DataSourceConfig
   scheduler: SchedulerConfig
+  ai: AiConfig
 }
 
 // 项目根目录（src 上两级），用于解析数据目录与读取 config/ 下的配置
@@ -131,6 +146,14 @@ const defaults: AppConfig = {
   dataSource: { path: join(DEFAULT_ROOT, 'config', 'accounts.xlsx') },
   // 定时任务固定时区：配置与展示统一按此时区（Asia/Shanghai 无 DST，一般无需改动）
   scheduler: { timezone: 'Asia/Shanghai' },
+  // AI 能力：默认走 OpenAI 兼容接口（DeepSeek），apiKey 不落默认值，由 AI_API_KEY/.env 提供
+  ai: {
+    provider: 'openai-compatible',
+    apiBase: 'https://api.deepseek.com',
+    model: 'deepseek-flash',
+    apiKey: '',
+    timeoutMs: 30000,
+  },
 }
 
 /** 判定普通对象（非数组/非 null），作为递归合并的终止条件 */
@@ -207,6 +230,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
       cfg.wallet.parseError = true
     }
   }
+  // AI 能力密钥与模型：AI_API_KEY/AI_API_BASE/AI_MODEL 优先级高于配置文件（密钥只走本机 .env）
+  if (env.AI_API_KEY) cfg.ai.apiKey = env.AI_API_KEY
+  if (env.AI_API_BASE) cfg.ai.apiBase = env.AI_API_BASE
+  if (env.AI_MODEL) cfg.ai.model = env.AI_MODEL
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]
