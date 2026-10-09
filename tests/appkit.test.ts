@@ -68,6 +68,8 @@ describe('openAppKitWallet 归一化', () => {
     setVisible(WALLET_SEL, true)
     await openAppKitWallet(deps, ENTRY)
     expect(click).toHaveBeenCalledWith(ENTRY.open)
+    // 先等打开控件渲染就绪，再等弹窗出现（两次 waitFor）
+    expect(waitFor).toHaveBeenCalledTimes(2)
     expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 45000 })
     expect(click).toHaveBeenCalledWith(WALLET_SEL)
   })

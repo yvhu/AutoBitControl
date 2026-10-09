@@ -34,6 +34,11 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
   const clickSoft = async (sel: string): Promise<void> => {
     await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
   }
+  // 慢渲染容忍：先等控件可见再点，等不到也照点（软失败不阻断），避免弹窗/钱包列表晚渲染时单击落空
+  const clickWhenReady = async (sel: string, timeoutMs: number): Promise<void> => {
+    await deps.page.locator(sel).first().waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {})
+    await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
+  }
   const state0 = await raceState(wallet, spec, 20000)
   if (state0 === 'loggedIn') return { skipped: true }
   await wallet.ready()
@@ -46,11 +51,11 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
     }
     if (spec.connect) await clickSoft(spec.connect)
     const entry = spec.entry
-    if (entry?.kind === 'dialog' && entry.confirm) await clickSoft(entry.confirm)
+    if (entry?.kind === 'dialog' && entry.confirm) await clickWhenReady(entry.confirm, 45000)
     if (entry?.kind === 'appkit') {
       await openAppKitWallet(deps, entry)
     }
-    if (spec.walletEntry) await clickSoft(spec.walletEntry)
+    if (spec.walletEntry) await clickWhenReady(spec.walletEntry, 45000)
     const intents = spec.intents ?? ['connect']
     const reclickSelector = entry?.kind === 'appkit'
       ? `[data-testid="${entry.entryTestId}"]`

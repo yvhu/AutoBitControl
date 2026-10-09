@@ -55,7 +55,10 @@ export async function openAppKitWallet(
   opts: AppKitNormalizeOpts = {},
 ): Promise<void> {
   const click = (sel: string) => deps.page.locator(sel).first().click({ timeout: 5000 })
-  await click(entry.open)
+  // 入口控件可能晚于站点初始渲染出现，先等可见再点，避免 5s 单击落空（不重试）
+  const openSel = entry.open
+  await deps.page.locator(openSel).first().waitFor({ state: 'visible', timeout: opts.modalWaitMs ?? 45000 })
+  await deps.page.locator(openSel).first().click({ timeout: 5000 })
   const modalSel = `[data-testid="${entry.modalTestId ?? 'w3m-modal-card'}"]`
   await deps.page.locator(modalSel).first().waitFor({ state: 'visible', timeout: opts.modalWaitMs ?? 45000 })
   const walletEntry = `[data-testid="${entry.entryTestId}"]`

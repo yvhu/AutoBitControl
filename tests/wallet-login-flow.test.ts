@@ -22,20 +22,22 @@ function adapter(over: Record<string, unknown> = {}) {
 }
 
 /** 登录态竞速：loggedInVisible 控制已登录文案是否可见 */
-function deps(over: Partial<WalletActionsDeps> & { loggedInVisible?: boolean } = {}): WalletActionsDeps & { clicks: string[] } {
+function deps(over: Partial<WalletActionsDeps> & { loggedInVisible?: boolean } = {}): WalletActionsDeps & { clicks: string[]; waits: Array<{ sel: string; timeout?: number }> } {
   const clicks: string[] = []
+  const waits: Array<{ sel: string; timeout?: number }> = []
   let loggedIn = over.loggedInVisible ?? false
   const reg = new WalletRegistry()
   reg.register(adapter() as never)
-  const base: WalletActionsDeps & { clicks: string[] } = {
+  const base: WalletActionsDeps & { clicks: string[]; waits: Array<{ sel: string; timeout?: number }> } = {
     clicks,
+    waits,
     page: {
       context: () => ({}),
       getByText: (t: string) => {
         const visible = t === '已登录' ? loggedIn : t === 'Connect Wallet' ? !loggedIn : false
         return { first() { return this }, count: async () => (visible ? 1 : 0), isVisible: async () => visible, waitFor: async () => { if (!visible) throw new Error('未可见') } }
       },
-      locator: (sel: string) => ({ first() { return this }, click: async () => { clicks.push(sel) }, count: async () => 0, isVisible: async () => false, waitFor: async () => {} }),
+      locator: (sel: string) => ({ first() { return this }, click: async () => { clicks.push(sel) }, count: async () => 0, isVisible: async () => false, waitFor: async (o?: { timeout?: number }) => { waits.push({ sel, timeout: o?.timeout }) } }),
       waitForTimeout: async () => {},
       reload: async () => {},
       url: () => 'https://x/',
@@ -133,5 +135,43 @@ describe('WalletActions.ensureLoggedIn', () => {
     // 初次点击 entry.confirm 后弹窗未出现，补点应复用 entry.confirm（共 2 次）而非 header 的 spec.connect（仅初次 1 次）
     expect(d.clicks.filter((s) => s === '#dialog-connect')).toHaveLength(2)
     expect(d.clicks.filter((s) => s === '#connect')).toHaveLength(1)
+  })
+
+  it('入口/确认控件点击前先等可见（45000ms），慢渲染不落空', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    const spec: LoginSpec = {
+      loggedIn: { text: '已登录' }, loggedOut: 'Connect Wallet',
+      connect: '#connect',
+      entry: { kind: 'dialog', confirm: '#dialog-connect' },
+      walletEntry: 'text=MetaMask',
+      attempts: 1, reclickAfterMs: 600,
+    }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    expect(d.waits).toContainEqual({ sel: '#dialog-connect', timeout: 45000 })
+    expect(d.waits).toContainEqual({ sel: 'text=MetaMask', timeout: 45000 })
+  })
+
+  it('入口控件等待超时（waitFor 抛错）仍会点击，不阻断流程', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    // 覆盖 locator.waitFor 使其总是拒绝，模拟控件渲染迟到/超时
+    ;(d.page as unknown as { locator: (s: string) => unknown }).locator = (sel: string) => ({
+      first() { return this },
+      click: async () => { d.clicks.push(sel) },
+      count: async () => 0,
+      isVisible: async () => false,
+      waitFor: async () => { throw new Error('等待超时') },
+    })
+    const spec: LoginSpec = {
+      loggedIn: { text: '已登录' }, loggedOut: 'Connect Wallet',
+      connect: '#connect',
+      entry: { kind: 'dialog', confirm: '#dialog-connect' },
+      walletEntry: 'text=MetaMask',
+      attempts: 1, reclickAfterMs: 600,
+    }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    expect(d.clicks).toContain('#dialog-connect')
+    expect(d.clicks).toContain('text=MetaMask')
   })
 })
