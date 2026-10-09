@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { clickTurnstileBox, autoClickTurnstile, turnstileBox, turnstileVisible } from '../src/automation/captcha/turnstile'
+import { clickPoint } from '../src/automation/dom'
+
+vi.mock('../src/automation/dom', () => ({ clickPoint: vi.fn() }))
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -7,7 +10,7 @@ const BOX = { x: 933, y: 510, width: 60, height: 50 }
 
 const transientErr = () => new Error('cdpSession.send: Protocol error (Input.dispatchMouseEvent): Invalid parameters')
 
-/** 假依赖：boundingBox 依次取 boxes；clickAt 可配置抛错序列；等待缩放加速 */
+/** 假依赖：boundingBox 依次取 boxes；clickPoint 可配置抛错序列；等待缩放加速 */
 function makeDeps(
   boxes: Array<{ x: number; y: number; width: number; height: number } | null>,
   clickAt: ReturnType<typeof vi.fn>,
@@ -25,8 +28,9 @@ function makeDeps(
       await sleep(Math.min(ms, 10))
     },
   }
+  vi.mocked(clickPoint).mockImplementation((_page, x, y) => clickAt(x, y))
   return {
-    deps: { page: page as never, human: { clickAt } as never, logger: log as never },
+    deps: { page: page as never, logger: log as never },
     page,
   }
 }

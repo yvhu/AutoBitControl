@@ -1,6 +1,6 @@
 /**
- * Turnstile 交互式人机验证方框（automation 层）：检测方框 iframe 并拟人点击
- * 依赖方向：依赖 infrastructure 常量与 humanize 类型，被 engine/task-context 委托
+ * Turnstile 交互式人机验证方框（automation 层）：检测方框 iframe 并坐标点击
+ * 依赖方向：依赖 infrastructure 常量与 dom/clickPoint，被 engine/task-context 委托
  * 设计思路：interaction-only Turnstile（真机实测 ISP IP 一点即过）点方框即完成验证——
  *   点击后 iframe 重渲染期间 CDP 派发会被浏览器拒绝（Invalid parameters），
  *   瞬时错误最多重试 TURNSTILE_CLICK_MAX 次、每次重新取盒（不用旧坐标点已移动的 iframe）
@@ -8,7 +8,7 @@
 import type { Page } from 'patchright'
 import type { Logger } from '../../infrastructure/logger'
 import { CDP_TRANSIENT_PATTERN } from '../../infrastructure/constants'
-import type { Humanizer } from '../humanize'
+import { clickPoint } from '../dom'
 
 /** 默认方框 iframe 选择器：站点容器优先，兜底任意可见挑战 iframe */
 export const TURNSTILE_FRAME_SEL = ['div[data-turnstile-container] iframe:visible', 'iframe[src*="challenges.cloudflare.com"]:visible']
@@ -25,7 +25,6 @@ export interface TurnstileBox {
 
 export interface TurnstileDeps {
   page: Page
-  human: Humanizer
   /** 日志器：模块内消息为通用措辞，窗口名等上下文由调用方包装注入 */
   logger: Pick<Logger, 'info' | 'warn'>
 }
@@ -52,7 +51,7 @@ export async function turnstileVisible(page: Page, selectors: string[] = TURNSTI
 }
 
 /**
- * 检测到方框即拟人点击（方框在 iframe 左侧中部）：
+ * 检测到方框即坐标点击（方框在 iframe 左侧中部）：
  * 瞬时失败（CDP 协议错误）重试；非瞬时错误（找不到元素等）不重试直接抛
  * @returns 执行了点击 true / 方框未出现 false
  */
@@ -67,7 +66,7 @@ export async function clickTurnstileBox(deps: TurnstileDeps, opts: { selectors?:
     const y = box.y + box.height / 2
     deps.logger.info({ step: 'turnstile', x: Math.round(x), y: Math.round(y), attempt }, '检测到人机验证方框，拟人点击')
     try {
-      await deps.human.clickAt(x, y)
+      await clickPoint(deps.page, x, y)
       return true
     } catch (e) {
       lastErr = e as Error

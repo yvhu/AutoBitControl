@@ -417,7 +417,7 @@ export class TaskContext {
    * @returns 执行了点击 true / 方框未出现 false
    */
   async clickTurnstileBox(opts?: { selectors?: string[]; maxAttempts?: number }): Promise<boolean> {
-    return runTurnstileClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, opts)
+    return runTurnstileClick({ page: this.page, logger: this.turnstileLogger() }, opts)
   }
 
   /** Turnstile 方框当前是否可见（轻量检查，低频追踪用） */
@@ -427,7 +427,7 @@ export class TaskContext {
 
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
-    return runTurnstileAutoClick({ page: this.page, human: this.human, logger: this.turnstileLogger() }, budgetMs)
+    return runTurnstileAutoClick({ page: this.page, logger: this.turnstileLogger() }, budgetMs)
   }
 
   /**
