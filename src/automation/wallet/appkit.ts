@@ -18,7 +18,7 @@ export interface AppKitEntry {
   modalTestId?: string
 }
 
-/** 旧 TaskContext.openAppKitWallet 兼容入参（保持 ctx 公开签名向后兼容） */
+/** AppKit 登录入参（对应 login-flow.ts 的 ensureLoggedIn 展开 entry 后传入 openAppKitWallet 的形状） */
 export interface AppKitLoginOptions {
   /** 钱包类型（与 WalletAdapter.key 对应，弹窗连接时取适配器） */
   walletKey: string

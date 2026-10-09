@@ -32,8 +32,6 @@ export interface ExecutionConfig {
   circuitBreakerThreshold: number
   /** 全局窗口上限：同时最多开几个窗口会话（机器资源容度；与任务级 concurrency 双闸门取更严者） */
   maxConcurrentWindows: number
-  /** 拟人化交互延迟区间（点击前犹豫的随机停顿范围） */
-  humanize: { minDelayMs: number; maxDelayMs: number }
 }
 
 /** Web 面板监听配置 */
@@ -112,8 +110,6 @@ const defaults: AppConfig = {
     circuitBreakerThreshold: 2,
     // 全局窗口上限：所有任务共享的同时开窗总数封顶（默认 4；与任务级 meta.concurrency 双闸门取更严者）
     maxConcurrentWindows: 4,
-    // 拟人点击前犹豫的随机停顿区间：太短像脚本，太长拖慢整体节奏
-    humanize: { minDelayMs: 800, maxDelayMs: 3000 },
   },
   // 仅监听本机：面板不对外网暴露
   web: { host: '127.0.0.1', port: 3000 },

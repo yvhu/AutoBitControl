@@ -53,7 +53,7 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
 }
 
 // 私有辅助方法经类型断言直接测试（纯竞速/等待逻辑，与页面无关）；
-// 通用竞速/可见性/消失等待已下沉 ctx（见 task-context-generic.test.ts），此处仅测任务级组合
+// 此处仅测任务级组合，通用竞速/可见性/等待由 ctx 能力覆盖
 type TaskHelpers = {
   raceAfterOpenFree(ctx: TaskContext, timeoutMs: number): Promise<'limit' | 'modal' | 'insufficient' | null>
   raceReveal(ctx: TaskContext, timeoutMs: number): Promise<'revealed' | 'insufficient' | 'limit' | null>
