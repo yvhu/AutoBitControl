@@ -4,7 +4,7 @@
  * 站点 token 存 localStorage，全程刷新恢复导向
  * 依赖方向：仅依赖 ./base（常量 RECOVER_TEXTS 经 base 取）
  */
-import { SiteTask, RECOVER_TEXTS, type LoginSpec, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, RECOVER_TEXTS, gotoWithRetry, type LoginSpec, type TaskContext, type TaskMeta } from './base'
 
 const HELLO_TEXT = 'Hello,'
 const CONNECT_TEXT = 'Connect Wallet'
@@ -13,7 +13,6 @@ const CHECKIN_TEXT = 'Daily Check-in'
 const SUCCESS_TEXT = 'Quest completed successfully!'
 const PROCESSING_TEXT = 'Processing your quest...'
 
-const HELLO_WAIT_MS = 60000
 const CHECKIN_ROUNDS = 6
 const CLAIM_RACE_MS = 15000
 const CLAIM_RECHECK_MS = 10000
@@ -74,7 +73,7 @@ export class PortalRhunaTask extends SiteTask {
       await ctx.page.locator(startBtn).first().click()
       if (await ctx.recover({ text: CHECKIN_TEXT }, { budgetMs: 60000, refreshEveryMs: 25000, recoverTexts: RECOVER_TEXTS })) return
     }
-    await ctx.page.goto('https://portal.rhuna.io/quests', { timeout: 45000, waitUntil: 'domcontentloaded' })
+    await gotoWithRetry(ctx.page, 'https://portal.rhuna.io/quests', ctx.log)
     if (await ctx.recover({ text: CHECKIN_TEXT }, { budgetMs: 60000, refreshEveryMs: 25000, recoverTexts: RECOVER_TEXTS })) return
     throw new Error('Quests 页未出现 Daily Check-in（页面或网络异常）')
   }
