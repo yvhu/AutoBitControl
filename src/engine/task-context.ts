@@ -28,6 +28,7 @@ import {
 } from '../automation'
 import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
 import { waitCaptchaPassed as runPluginWait } from '../automation/captcha/plugin-wait'
+import { findAnchorFrame, findChallengeFrame } from '../automation/captcha/frame-find'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 
@@ -55,6 +56,8 @@ export interface CaptchaActions {
   visible: (selectors?: string[]) => Promise<boolean>
   autoClick: (budgetMs?: number) => Promise<boolean>
   waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => Promise<'passed' | 'none' | 'timeout'>
+  /** 页面是否存在 reCAPTCHA 锚点/挑战 frame（排除常驻占位 sitekey） */
+  hasChallenge: (siteKeyExclude?: string) => Promise<boolean>
 }
 
 export class TaskContext {
@@ -106,6 +109,10 @@ export class TaskContext {
         visible: (selectors?: string[]) => this.turnstileVisible(selectors),
         autoClick: (budgetMs?: number) => this.autoClickTurnstile(budgetMs),
         waitPlugin: (opts?: { timeoutMs?: number; siteKeyExclude?: string }) => this.waitCaptchaPassed(opts),
+        /** 页面是否存在 reCAPTCHA 锚点/挑战 frame（排除常驻 v3 sitekey） */
+        hasChallenge: async (siteKeyExclude?: string): Promise<boolean> => {
+          return findAnchorFrame(this.page, siteKeyExclude) !== null || findChallengeFrame(this.page, siteKeyExclude) !== null
+        },
       }
     }
     return this.captchaActionsInstance

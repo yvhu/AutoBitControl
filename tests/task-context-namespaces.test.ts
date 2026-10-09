@@ -79,6 +79,12 @@ describe('ctx.captcha 命名空间', () => {
     const ctx = makeCtx()
     expect(ctx.captcha).toBe(ctx.captcha)
   })
+
+  it('captcha.hasChallenge 委托 frame 查找（无 frame → false）', async () => {
+    const ctx = makeCtx()
+    ;(ctx.page as unknown as { frames: () => unknown[] }).frames = () => []
+    await expect(ctx.captcha.hasChallenge('6LcV3')).resolves.toBe(false)
+  })
 })
 
 describe('TaskContext.safeScreenshot', () => {
