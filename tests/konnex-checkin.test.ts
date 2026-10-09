@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { KonnexCheckinTask } from '../src/tasks/konnex-checkin'
 import { TaskContext } from '../src/tasks/base'
 
-/** 可配置假页面：textDelay 为 null 表示永不出现（100ms 后拒绝，避免抢在出现项之前赢得竞速） */
+/** 可配置假页面：textDelay 为 null 表示永不出现（否则视为已出现） */
 function makeFakePage(opts: {
   btnVisible: boolean
   bannerVisible: boolean
@@ -17,9 +17,9 @@ function makeFakePage(opts: {
   screenshotFails?: boolean
 }) {
   const clicks: string[] = []
-  const textDelays: Record<string, number | null> = {
-    'Check-In Succeeded!': opts.successTextDelay,
-    'Great job!': opts.doneTextDelay,
+  const textAppeared: Record<string, boolean> = {
+    'Check-In Succeeded!': opts.successTextDelay !== null,
+    'Great job!': opts.doneTextDelay !== null,
   }
   const isVisible = async (sel: string): Promise<boolean> => {
     if (sel.includes('Great job!')) return opts.bannerVisible
@@ -36,13 +36,7 @@ function makeFakePage(opts: {
       }),
     }),
     getByText: (text: string) => ({
-      first: () => ({
-        waitFor: () => {
-          const delay = textDelays[text]
-          if (delay === undefined || delay === null) return new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`等待文案超时: ${text}`)), 100))
-          return Promise.resolve()
-        },
-      }),
+      count: async () => (textAppeared[text] ? 1 : 0),
     }),
     waitForTimeout: async (ms: number) => { await new Promise((r) => setTimeout(r, ms)) },
     evaluate: async (fn: () => unknown) => {
@@ -95,8 +89,15 @@ describe('KonnexCheckinTask 签到逻辑', () => {
   })
 
   it('checkin：点击后弹窗/横幅均未出现但卡片进入 RESETS IN 暗态 → 算成功', async () => {
-    const ctx = makeCtx(makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: true, successTextDelay: null, doneTextDelay: null }))
-    await expect(helpers.checkin(ctx)).resolves.toBeUndefined()
+    vi.useFakeTimers()
+    try {
+      const ctx = makeCtx(makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: true, successTextDelay: null, doneTextDelay: null }))
+      const assertion = expect(helpers.checkin(ctx)).resolves.toBeUndefined()
+      await vi.advanceTimersByTimeAsync(31_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('checkin：按钮不存在且卡片显示 Great job! 横幅（当周已签到）→ 完成不点击', async () => {
@@ -126,9 +127,18 @@ describe('KonnexCheckinTask 签到逻辑', () => {
   })
 
   it('checkin：点击后均未出现 → 抛错并带卡片/h1 内容辅助排障', async () => {
-    const ctx = makeCtx(makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: false, successTextDelay: null, doneTextDelay: null, cardText: 'Check In (Weekly)Close', headings: 'Some Modal' }))
-    await expect(helpers.checkin(ctx)).rejects.toThrow('点击 Check in 后未出现成功弹窗')
-    await expect(helpers.checkin(ctx)).rejects.toThrow('Check In (Weekly)Close')
+    vi.useFakeTimers()
+    try {
+      const ctx = makeCtx(makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: false, successTextDelay: null, doneTextDelay: null, cardText: 'Check In (Weekly)Close', headings: 'Some Modal' }))
+      let err: Error | undefined
+      const done = helpers.checkin(ctx).catch((e) => { err = e as Error })
+      await vi.advanceTimersByTimeAsync(31_000)
+      await done
+      expect(err?.message).toContain('点击 Check in 后未出现成功弹窗')
+      expect(err?.message).toContain('Check In (Weekly)Close')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('meta：key/url/钱包/分类正确', () => {

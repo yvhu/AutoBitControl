@@ -2,9 +2,10 @@
  * Konnex 签到任务：Check In (Weekly) 每周签到（+10 KP，每周一次）
  * 登录：Connect Wallet → 弹窗「Connect with Ethereum」→ 选 MetaMask → 钱包弹窗确认
  * 已签到两种卡片状态（Great job! 横幅 / RESETS IN 倒计时）都算成功
- * 依赖方向：仅依赖 ./base
+ * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
-import { SiteTask, type LoginSpec, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, loginWallet, race, runJs, takeScreenshot } from '../api'
 
 const BALANCE_TEXT = 'Balance' // 登录态标记（余额小部件出现即已登录）
 const CONNECT_WALLET_BTN = '[data-testid="connect-wallet-button"]' // 未登录时的连接按钮
@@ -36,20 +37,22 @@ export class KonnexCheckinTask extends SiteTask {
     concurrency: 4,
   }
 
-  login: LoginSpec = {
-    loggedIn: { text: BALANCE_TEXT },
-    loggedOut: 'Connect Wallet',
-    connect: CONNECT_WALLET_BTN,
-    entry: { kind: 'dialog', confirm: `text=${ETHEREUM_ENTRY_TEXT}` },
-    walletEntry: `text=${METAMASK_ENTRY_TEXT}`,
-    intents: ['connect'],
-  }
-
   /**
-   * 站点动作：执行每周签到。登录已由默认 run 完成，这里只负责签到本身。
+   * 执行流程：打开任务页 → 声明式钱包登录（登录态竞速 → 开对话框选 MetaMask → 确认）→ 签到。
    * @param ctx 任务上下文
    */
-  async action(ctx: TaskContext): Promise<void> {
+  async run(ctx: TaskContext): Promise<void> {
+    await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+    await loginWallet(ctx, {
+      wallet: 'metamask',
+      scenario: 'dialog',
+      confirm: `text=${ETHEREUM_ENTRY_TEXT}`,
+      walletEntry: `text=${METAMASK_ENTRY_TEXT}`,
+      connect: CONNECT_WALLET_BTN,
+      loggedIn: { text: BALANCE_TEXT },
+      loggedOut: 'Connect Wallet',
+      intents: ['connect'],
+    })
     await this.checkin(ctx)
   }
 
@@ -83,7 +86,7 @@ export class KonnexCheckinTask extends SiteTask {
       // 按钮未出现前先判是否已签到（本周已签到则卡片无按钮，直接成功）
       if (await this.checkinDone(ctx)) {
         ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '本周已签到（卡片为已签到状态）')
-        await ctx.safeScreenshot('konnex-success')
+        await takeScreenshot(ctx, 'konnex-success')
         return
       }
       await ctx.page.waitForTimeout(2000)
@@ -92,15 +95,15 @@ export class KonnexCheckinTask extends SiteTask {
     if (!hasBtn) throw new Error('签到卡片未出现（Check in 按钮与已签到状态均无；页面异常或站点改版）')
     await ctx.page.locator(CHECKIN_BTN).first().click()
     // 竞速：成功弹窗标题 或 已签到横幅，任一即视为成功
-    const outcome = await ctx.race([['success', { text: SUCCESS_TEXT }], ['done', { text: DONE_TEXT }]], CHECKIN_SUCCESS_WAIT_MS)
+    const outcome = await race(ctx, [['success', { text: SUCCESS_TEXT }], ['done', { text: DONE_TEXT }]], CHECKIN_SUCCESS_WAIT_MS)
     if (outcome === 'success' || outcome === 'done' || (await this.checkinDone(ctx))) {
       ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '签到成功（Check-In Succeeded!）')
-      await ctx.safeScreenshot('konnex-success')
+      await takeScreenshot(ctx, 'konnex-success')
       return
     }
     // 兜底排错信息：把卡片文本与页面 h1 一并抛出，便于定位站点改版
-    const card = await ctx.js<string>(() => (document.querySelector('#loyalty-quest-root-check_in')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
-    const headings = await ctx.js<string>(() => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).filter(Boolean).join(' | ')).catch(() => '')
+    const card = await runJs(ctx, () => (document.querySelector('#loyalty-quest-root-check_in')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
+    const headings = await runJs(ctx, () => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).filter(Boolean).join(' | ')).catch(() => '')
     throw new Error(`点击 Check in 后未出现成功弹窗（卡片: ${card || '无'}；h1: ${headings || '无'}；可能已签到/站点改版）`)
   }
 
