@@ -16,6 +16,7 @@ function makeFakePage(opts: {
   headings?: string
   screenshotFails?: boolean
 }) {
+  const clicks: string[] = []
   const textDelays: Record<string, number | null> = {
     'Check-In Succeeded!': opts.successTextDelay,
     'Great job!': opts.doneTextDelay,
@@ -26,10 +27,12 @@ function makeFakePage(opts: {
     return opts.btnVisible
   }
   return {
+    clicks,
     locator: (sel: string) => ({
       first: () => ({
         count: async () => ((await isVisible(sel)) ? 1 : 0),
         isVisible: () => isVisible(sel),
+        click: vi.fn(async () => { clicks.push(sel) }),
       }),
     }),
     getByText: (text: string) => ({
@@ -60,7 +63,7 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
   return new TaskContext({
     page: page as never,
     task: new KonnexCheckinTask(),
-    human: { click: vi.fn().mockResolvedValue(undefined) } as never,
+    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
@@ -76,9 +79,10 @@ const helpers = new KonnexCheckinTask() as unknown as {
 
 describe('KonnexCheckinTask 签到逻辑', () => {
   it('checkin：点击后成功弹窗出现 → 完成', async () => {
-    const ctx = makeCtx(makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: false, successTextDelay: 0, doneTextDelay: null }))
+    const page = makeFakePage({ btnVisible: true, bannerVisible: false, resetVisible: false, successTextDelay: 0, doneTextDelay: null })
+    const ctx = makeCtx(page)
     await expect(helpers.checkin(ctx)).resolves.toBeUndefined()
-    expect(ctx.human.click).toHaveBeenCalledWith('button:has-text("Check in")')
+    expect(page.clicks).toContain('button:has-text("Check in")')
   })
 
   it('checkin：成功截图超时失败 → 任务仍成功（真机实测：站点动画导致 CDP 截图挂起）', async () => {
@@ -97,15 +101,17 @@ describe('KonnexCheckinTask 签到逻辑', () => {
   })
 
   it('checkin：按钮不存在且卡片显示 Great job! 横幅（当周已签到）→ 完成不点击', async () => {
-    const ctx = makeCtx(makeFakePage({ btnVisible: false, bannerVisible: true, resetVisible: false, successTextDelay: null, doneTextDelay: null }))
+    const page = makeFakePage({ btnVisible: false, bannerVisible: true, resetVisible: false, successTextDelay: null, doneTextDelay: null })
+    const ctx = makeCtx(page)
     await expect(helpers.checkin(ctx)).resolves.toBeUndefined()
-    expect(ctx.human.click).not.toHaveBeenCalled()
+    expect(page.clicks).toHaveLength(0)
   })
 
   it('checkin：按钮不存在且卡片显示 RESETS IN 暗态（横幅已被关闭）→ 完成不点击', async () => {
-    const ctx = makeCtx(makeFakePage({ btnVisible: false, bannerVisible: false, resetVisible: true, successTextDelay: null, doneTextDelay: null }))
+    const page = makeFakePage({ btnVisible: false, bannerVisible: false, resetVisible: true, successTextDelay: null, doneTextDelay: null })
+    const ctx = makeCtx(page)
     await expect(helpers.checkin(ctx)).resolves.toBeUndefined()
-    expect(ctx.human.click).not.toHaveBeenCalled()
+    expect(page.clicks).toHaveLength(0)
   })
 
   it('checkin：按钮与已签到状态均不出现 → 等满预算后抛错', async () => {
