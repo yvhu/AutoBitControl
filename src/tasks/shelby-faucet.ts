@@ -2,9 +2,10 @@
  * Shelby 文档站领水任务（合并版）：一次开窗领取 APT 与 ShelbyUSD 各最多 5 次
  * 两页流程：APT 页 → 填地址 → 循环领取 → USD 页 → 填地址 → 循环领取
  * 成功判定走 /fund 接口响应；达上限（UsageLimitExhausted）视为成功幂等收敛
- * 依赖方向：仅依赖 ./base；不连钱包
+ * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）；不连钱包
  */
-import { SiteTask, closeOtherTabs, gotoWithRetry, type TaskContext, type TaskMeta } from './base'
+import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, click, fill, getAccount, waitFor, takeScreenshot } from '../api'
 import type { Response } from 'patchright'
 
 const ADDRESS_SELECTOR = 'input[name="address"]' // 收款地址输入框（APT 页与 USD 页一致）
@@ -56,11 +57,11 @@ export async function runClaimLoop(ctx: TaskContext, address: string, maxClaims:
   for (let i = 0; i < maxClaims; i++) {
     const input = ctx.page.locator(ADDRESS_SELECTOR).first()
     const current = await input.inputValue().catch(() => '')
-    if (current === '') await input.fill(address)
+    if (current === '') await fill(ctx, ADDRESS_SELECTOR, address)
     let res: Response | null = null
     for (let attempt = 0; attempt <= RECLICK_MAX; attempt++) {
       const respPromise = waitFundResponse(ctx)
-      await ctx.page.locator(FUND_BUTTON_SELECTOR).first().click()
+      await click(ctx, FUND_BUTTON_SELECTOR)
       res = await respPromise
       if (res) break
       ctx.log.warn({ step: 'fund', window: ctx.profile.name, claim: i + 1, attempt: attempt + 1 }, '等待 /fund 响应超时，拟人补点重试')
@@ -108,14 +109,13 @@ export class ShelbyFaucetTask extends SiteTask {
    * @param ctx 任务上下文
    */
   async run(ctx: TaskContext): Promise<void> {
-    await closeOtherTabs(ctx.page)
-    // APT 页首次领取：地址在此读取（第二页复用），第二参数省略
-    const address = await this.claimOnPage(ctx, this.meta.url)
+    // APT 页首次领取：开页并清残留标签页；地址在此读取（第二页复用）
+    const address = await this.claimOnPage(ctx, this.meta.url, undefined, true)
     ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'apt', claimed: address.claimed }, 'APT 领水完成')
     // USD 页复用 APT 页读到的同一地址，避免重复读数据源
     const usd = await this.claimOnPage(ctx, this.usdUrl, address.addr)
     ctx.log.info({ step: 'fund', window: ctx.profile.name, asset: 'shelbyusd', claimed: usd.claimed }, 'ShelbyUSD 领水完成')
-    await ctx.safeScreenshot('shelby-faucet-success')
+    await takeScreenshot(ctx, 'shelby-faucet-success')
   }
 
   /**
@@ -123,13 +123,14 @@ export class ShelbyFaucetTask extends SiteTask {
    * @param ctx 任务上下文
    * @param url 该币种文档页地址
    * @param knownAddress 已读到的地址（第二页复用传入）；省略时从数据源「petra钱包地址」读取
+   * @param closeOtherTabs 是否在开页时清掉残留标签页（仅首个页面置 true）
    * @returns addr=使用的地址、claimed=本页成功领取次数
    */
-  private async claimOnPage(ctx: TaskContext, url: string, knownAddress?: string): Promise<{ addr: string; claimed: number }> {
-    await gotoWithRetry(ctx.page, url, ctx.log)
-    await ctx.page.locator(ADDRESS_SELECTOR).first().waitFor({ state: 'visible', timeout: 20000 })
-    const addr = knownAddress ?? (await ctx.account('petra钱包地址'))
-    await ctx.page.locator(ADDRESS_SELECTOR).first().fill(addr)
+  private async claimOnPage(ctx: TaskContext, url: string, knownAddress?: string, closeOtherTabs = false): Promise<{ addr: string; claimed: number }> {
+    await openPage(ctx, url, { closeOtherTabs })
+    await waitFor(ctx, { selector: ADDRESS_SELECTOR }, { assert: true, budgetMs: 20000 })
+    const addr = knownAddress ?? (await getAccount(ctx, 'petra钱包地址'))
+    await fill(ctx, ADDRESS_SELECTOR, addr)
     const { claimed } = await runClaimLoop(ctx, addr, MAX_CLAIMS_PER_RUN)
     return { addr, claimed }
   }
