@@ -1098,7 +1098,6 @@ randomMicroMove(): Promise<void>
 | `storage` | `logLevel`、`prettyColorize`、`logRetainDays`、`screenshotDir`、`logDir`、`dbPath`、`dbRetainDays` | `logLevel` 控制日志级别（默认 `info`）；`prettyColorize` 控制终端日志颜色（缺省时按终端能力自动检测）；`logRetainDays` 控制历史日志文件保留天数（默认 7，保留最近 N 天，启动时与滚动时均清理）；`screenshotDir`/`logDir` 是截图与日志的存放位置。`dbPath` 是本地 SQLite 库文件路径（默认 `data/app.db`，已 gitignore）；`dbRetainDays`（默认 90）控制 runs/batches 保留天数，超期行启动时清理。 |
 | `dataSource` | `path` | 账号数据源 Excel 路径（默认 `config/accounts.xlsx`，相对路径按项目根解析）。第一行表头、每行一个窗口的数据；有「窗口」列时按窗口 ID（推荐，见[第 9 章「数据源与 faker」](#数据源与-faker)）/窗口名精确匹配行，无「窗口」列时按窗口列表顺序取第 i 行。文件不存在仅告警，任务可用 faker 兜底（见[第 9 章「数据源与 faker」](#数据源与-faker)）。**该文件含真实账号，已被 .gitignore 排除**（参照 `config/accounts.example.xlsx` 填写） |
 | `scheduler` | `timezone` | 定时任务时区（IANA 名称，默认 `Asia/Shanghai`）：面板显示与到点判断统一按此时区的墙上时钟 |
-| `captcha` | `provider`、`yescaptcha.apiBase`、`yescaptcha.clientKey` | 打码平台配置（插件路线，见[第 12 章](#12-验证码浏览器插件路线)）：`provider` 选平台（当前 `yescaptcha`，未来平台并列新增字段）；`yescaptcha` 是平台专属段（API 地址与密钥）。环境变量 `CAPTCHA_CLIENT_KEY` 可覆盖 clientKey；未配置 Key 时面板余额显示「未配置」，任务侧插件无 Key 无法解题 |
 
 ### 8.2 面板使用
 
@@ -1137,7 +1136,6 @@ randomMicroMove(): Promise<void>
 | POST | `/api/profiles/batch` | 批量窗口操作（action=open/close/resetBreaker + ids，逐项汇总成功/失败） |
 | POST | `/api/bitbrowser/test` | 比特浏览器连接测试 |
 | POST | `/api/bitbrowser/sync` | 同步比特窗口列表入库 |
-| GET | `/api/captcha/balance` | 打码平台余额（未配置 clientKey 或查询失败时 configured=false；platform 为平台标识如 yescaptcha，1000 点 = ¥1） |
 | GET | `/api/settings` | 公开只读设置（不含密钥）＋ 数据源状态 |
 | POST | `/api/datasource/reload` | 重载数据源 Excel |
 | GET | `/api/screenshots` | 取截图文件 |
@@ -1625,6 +1623,6 @@ AI 拿到这段会筛出稳定选择器（如 `button:has-text("Claim")`），�
 ### 注意事项
 
 1. **插件识别耗时**：官方口径 10-80s，`waitCaptchaPassed` 默认等 90s；多窗口并发时插件可能内部排队，必要时调大 `timeoutMs`
-2. **余额**：插件消耗平台点数（与 API 同账号）；插件 key 失效/余额不足的表现 = 永远超时，看面板余额（`GET /api/captcha/balance`）与插件弹窗
+2. **余额**：插件消耗平台点数（与 API 同账号）；插件 key 失效/余额不足的表现 = 永远超时，看插件弹窗内的余额提示
 3. **站点风控**：插件默认向页面注入工作状态 flag（可在插件高级设置关闭，若被检测）
 4. **失败语义**：插件解不出 → `'timeout'` → 普通失败重试换窗口；不存在「打码平台调用失败」终态（无 API 调用可言）

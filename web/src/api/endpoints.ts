@@ -15,7 +15,6 @@ export const batchProfiles = (action: ProfileBatchAction, ids: number[]) =>
   post<ProfileBatchResult>('/api/profiles/batch', { action, ids })
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})
 export const syncProfiles = () => post<{ count: number }>('/api/bitbrowser/sync', {})
-export const fetchBalance = () => get<{ configured: boolean; points: number; yuan: number; platform: string }>('/api/captcha/balance')
 export const fetchSettings = () => get<SettingsData>('/api/settings')
 export const reloadDatasource = () => post<DatasourceInfo>('/api/datasource/reload', {})
 export const fetchGuide = () => get<{ content: string }>('/api/docs/guide')

@@ -26,7 +26,6 @@ import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
 import { toolsRouter } from './routes/tools'
-import { captchaRouter } from './routes/captcha'
 import { airdropRouter } from './routes/airdrop'
 import { notFoundHandler, errorHandler } from './http/error'
 
@@ -54,8 +53,6 @@ export interface ServerDeps {
   datasource: { summary(): { rows: number; columns: string[] }; reload(): Promise<void>; available: boolean; error: string; path: string }
   /** 文件随机分配服务（面板工具路由与计划自动分配共用单实例） */
   fileAssignService: import('../tools/file-assign/applier').FileAssignService
-  /** 打码平台余额查询（未配置/查询失败返回 null，路由统一走 configured:false 分支） */
-  captchaBalance: () => Promise<{ points: number; platform: string } | null>
 }
 
 /**
@@ -78,7 +75,6 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(settingsRouter({ cfg: deps.cfg, version: APP_VERSION, datasource: deps.datasource }))
   api.use(toolsRouter({ xlsxPath: deps.cfg.dataSource.path, datasource: deps.datasource, fileAssignService: deps.fileAssignService }))
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
-  api.use(captchaRouter({ captchaBalance: deps.captchaBalance }))
   api.use(airdropRouter({ db: deps.db, tasks: deps.tasks }))
   app.use('/api', api)
 
