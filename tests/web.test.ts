@@ -750,7 +750,7 @@ describe('server API（RESTful + envelope）', () => {
   it('GET /api/docs/guide 返回手册 markdown', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/docs/guide')
     expect(res.body.code).toBe(0)
-    expect(res.body.data.content).toContain('# AutoBitControl API 使用手册')
+    expect(res.body.data.content).toContain('# AutoBitControl 函数手册')
   })
 
   it('GET /api/docs/examples 返回示例清单', async () => {
