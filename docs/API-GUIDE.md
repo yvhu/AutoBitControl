@@ -851,7 +851,7 @@ WALLET_PASSWORDS={"metamask":"MetaMask 解锁密码","petra":"Petra 解锁密码
 
 - MetaMask `unlock`：45 秒轮询预算，三态判定——解锁框出现则填密码（`unlock-password`）→ 点 `unlock-submit` → 等解锁页消失；连接确认按钮已出现视为已解锁直接返回；弹窗关闭返回。解锁页未离开抛 `MetaMask 解锁失败（密码错误或解锁页未离开）`。
 - Petra `unlock`：45 秒轮询预算——已直显确认页（Sign In/Connect 等按钮存在）直接返回；密码框出现则填密码 → 点 `Unlock`（has-text 定位，无按钮时兜底回车）→ 等密码框消失。
-- `ensureConnected`：先 2 秒沉降等 UI 渲染，再最多 3 轮。MetaMask：每轮先查解锁框（存在且未配置密码立即抛 `MetaMask 已锁定且未配置解锁密码`）→ 轮询确认按钮（testid 候选 `confirm-btn`/`confirm-footer-button`/`permissions-connect-button`/`signature-request-sign-button` + 角色名中英文正则兜底，10 秒）→ 点击 → 等 `close` 事件或连接页消失（15 秒）。Petra：用 has-text 找 `Sign In`/`Connect` 等按钮（**getByRole 匹配不到 Sign In 按钮**——Petra UI 无障碍名异常，真机实测）→ 点击 → 等 `close` 事件。
+- `connect` / `sign` / `confirmTx`（三动作，按钮同构的钱包共用同一确认实现）：先 2 秒沉降等 UI 渲染，再最多 3 轮。MetaMask：每轮先查解锁框（存在且未配置密码立即抛 `MetaMask 已锁定且未配置解锁密码`）→ 轮询确认按钮（testid 候选 `confirm-btn`/`confirm-footer-button`/`permissions-connect-button`/`signature-request-sign-button` + 角色名中英文正则兜底，10 秒）→ 点击 → 等 `close` 事件或连接页消失（15 秒）。Petra：用 has-text 找 `Sign In`/`Connect` 等按钮（**getByRole 匹配不到 Sign In 按钮**——Petra UI 无障碍名异常，真机实测）→ 点击 → 等 `close` 事件。
 
 ### 新增钱包适配器步骤
 
@@ -873,7 +873,11 @@ export class PhantomAdapter implements WalletAdapter {
     await popup.waitForEvent('close', { timeout: 15000 })
   }
 
-  async ensureConnected(popup: PopupPage): Promise<void> {
+  async connect(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+  async sign(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+  async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  private async confirm(popup: PopupPage): Promise<void> {
     for (let i = 0; i < 3; i++) {
       const btn = popup.getByRole('button', { name: /connect|confirm|approve/i })
       await btn.first().click({ timeout: 8000 })

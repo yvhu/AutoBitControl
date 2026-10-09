@@ -231,7 +231,7 @@ export class TaskContext {
     if (unlockPassword && adapter.unlock) {
       await adapter.unlock(popup, unlockPassword)
     }
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
   }
 
   /** 页面上是否出现某文案（模糊匹配，任务里做状态判断） */

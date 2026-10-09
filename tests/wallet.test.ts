@@ -170,7 +170,7 @@ describe('MetaMaskAdapter 连接确认', () => {
       getByRole: () => makeLocator({ count: async () => 0 }),
       waitForEvent: async () => {},
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     expect(clicks).toBe(1)
   })
 
@@ -185,7 +185,7 @@ describe('MetaMaskAdapter 连接确认', () => {
       },
       waitForEvent: async () => { throw new Error('close 事件永不触发') },
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     // 守卫语义：detached 判定前必须先 count 确认连接页存在（守卫被绕过时 count 不被调用，用例失败）
     expect(cpCounts).toBeGreaterThan(0)
   })
@@ -196,11 +196,11 @@ describe('MetaMaskAdapter 连接确认', () => {
       getByTestId: () => makeLocator({ count: async () => 0 }),
       getByRole: () => makeLocator({ count: async () => 0 }),
     })
-    await expect(adapter.ensureConnected(popup)).rejects.toThrow(/连接确认未完成/)
+    await expect(adapter.connect(popup)).rejects.toThrow(/连接确认未完成/)
   })
 })
 
-describe('ensureConnected 重试循环', () => {
+describe('connect 重试循环', () => {
   it('testid 确认按钮：弹窗未关闭时多次点击直到关闭', async () => {
     const adapter = new MetaMaskAdapter()
     let clicks = 0
@@ -215,7 +215,7 @@ describe('ensureConnected 重试循环', () => {
         if (closes < 2) throw new Error('未关闭')
       },
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     expect(clicks).toBe(2)
   })
 
@@ -228,7 +228,7 @@ describe('ensureConnected 重试循环', () => {
       getByRole: () => makeLocator({ count: async () => 1, click: async () => { roleClicks++ } }),
       waitForEvent: async () => {},
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     expect(roleClicks).toBeGreaterThan(0)
   })
 
@@ -241,13 +241,13 @@ describe('ensureConnected 重试循环', () => {
         : makeLocator({ count: async () => 0, waitFor: async () => { throw new Error('连接页未消失') } }),
       waitForEvent: async () => { throw new Error('永不关闭') },
     })
-    await expect(adapter.ensureConnected(popup)).rejects.toThrow(/连接确认未完成/)
+    await expect(adapter.connect(popup)).rejects.toThrow(/连接确认未完成/)
     expect(clicks).toBe(3)
   })
 })
 
 describe('MetaMaskAdapter', () => {
-  it('ensureConnected 点击确认按钮', async () => {
+  it('connect 点击确认按钮', async () => {
     const clicked = { count: 0 }
     const adapter = new MetaMaskAdapter()
     const popup = makePopup({
@@ -256,13 +256,13 @@ describe('MetaMaskAdapter', () => {
         : makeLocator({ count: async () => 0 }),
       waitForEvent: async () => {},
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     expect(clicked.count).toBeGreaterThan(0)
   })
 })
 
 describe('PetraAdapter', () => {
-  it('ensureConnected 按文案定位并点击连接按钮（has-text，不依赖 getByRole）', async () => {
+  it('connect 按文案定位并点击连接按钮（has-text，不依赖 getByRole）', async () => {
     const clicked = { count: 0 }
     const adapter = new PetraAdapter()
     const popup = makePopup({
@@ -271,7 +271,7 @@ describe('PetraAdapter', () => {
       locator: () => makeLocator({ count: async () => 1, click: async () => { clicked.count++ } }),
       waitForEvent: async () => {},
     })
-    await adapter.ensureConnected(popup)
+    await adapter.connect(popup)
     expect(clicked.count).toBeGreaterThan(0)
   })
 })

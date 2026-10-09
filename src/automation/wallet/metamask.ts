@@ -1,5 +1,5 @@
 /**
- * MetaMask 钱包适配器（automation 层）：解锁 + 连接确认
+ * MetaMask 钱包适配器（automation 层）：解锁 + 连接/签名/交易确认
  * 依赖方向：仅依赖 ./types，经 WalletRegistry 注册后供任务侧按 key 使用
  * 设计思路：全部用官方 data-testid 定位（与 UI 语言无关——实测中文版 MetaMask
  * 按钮文案为「登录/连接/取消」，英文正则匹配不到）；
@@ -69,6 +69,15 @@ export class MetaMaskAdapter implements WalletAdapter {
     throw new Error('MetaMask 弹窗状态未出现（解锁框/连接确认轮询超时均未渲染）')
   }
 
+  /** 登录/连接授权：与私有 confirm 同构（按钮布局一致） */
+  async connect(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /** 消息签名确认：与私有 confirm 同构 */
+  async sign(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /** 交易确认：与私有 confirm 同构 */
+  async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
   /**
    * 连接确认：先等确认按钮渲染（testid 候选 → 角色名回退），点击后成功判定 =
    * 弹窗 close 事件 或 连接页「先存在后消失」（比特浏览器后台/最小化时 close 事件不可靠）；
@@ -79,7 +88,7 @@ export class MetaMaskAdapter implements WalletAdapter {
    * 弹窗不关闭），入场先等 2s，点击后的关闭判定放宽到 15s（MetaMask 处理连接请求可能较慢）
    * @throws 钱包锁定未配密码 / 3 轮后仍未完成
    */
-  async ensureConnected(popup: PopupPage): Promise<void> {
+  private async confirm(popup: PopupPage): Promise<void> {
     // 弹窗 UI 沉降：等初始渲染完成再开始交互，避免点击落在未挂载完成的界面上被吞掉
     await sleep(2000)
     for (let i = 0; i < 3; i++) {

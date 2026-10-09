@@ -39,7 +39,9 @@ const adapter: WalletAdapter = {
   extensionId: 'nkbihfbeogaeaoehlefnkodbefgpgknn',
   probePath: 'home.html',
   providerFlag: 'isMetaMask',
-  ensureConnected: async () => {},
+  connect: async () => {},
+  sign: async () => {},
+  confirmTx: async () => {},
 }
 
 describe('WalletSession', () => {

@@ -1,7 +1,7 @@
 /**
  * 钱包适配器类型层（automation 层）：钱包插件的统一接口与注册表
  * 依赖方向：纯类型 + Map 实现，无运行时依赖；被 engine/window-runner、task-context 依赖
- * 设计思路：各钱包只实现 unlock/ensureConnected 两个动作，
+ * 设计思路：各钱包只实现 unlock + 三确认动作（connect/sign/confirmTx），
  * 任务侧只按 key 取适配器，不感知插件 UI 差异（新增钱包只需新写一个适配器文件并注册）
  */
 
@@ -45,7 +45,12 @@ export interface WalletAdapter {
   /** 该钱包是否注入页面 provider：false 时跳过 provider 轮询，仅 CDP 扩展页探测判定就绪（Petra 实测不注入 window.petra） */
   expectsProvider?: boolean
   unlock?(popup: PopupPage, password: string): Promise<void>
-  ensureConnected(popup: PopupPage): Promise<void>
+  /** 登录/连接授权（站点请求连接钱包） */
+  connect(popup: PopupPage): Promise<void>
+  /** 消息签名（站点请求 signMessage，如 Petra Sign In） */
+  sign(popup: PopupPage): Promise<void>
+  /** 交易确认（站点请求发送/授权交易，如 Approve、register_blobs） */
+  confirmTx(popup: PopupPage): Promise<void>
 }
 
 /** 钱包适配器注册表：按 key 存储与查找（app 启动时注册所有适配器） */

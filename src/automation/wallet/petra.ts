@@ -32,7 +32,7 @@ export class PetraAdapter implements WalletAdapter {
     const deadline = Date.now() + 45000
     while (Date.now() < deadline) {
       if (popup.isClosed?.()) return
-      // 已解锁直显确认页：跳过解锁（交给 ensureConnected 点确认）
+      // 已解锁直显确认页：跳过解锁（交给 connect 点确认）
       for (const text of CONFIRM_TEXTS) {
         try {
           if (((await popup.locator(`button:has-text("${text}")`).first().count?.()) ?? 0) > 0) return
@@ -90,11 +90,20 @@ export class PetraAdapter implements WalletAdapter {
     return null
   }
 
+  /** 登录/连接授权：与私有 confirm 同构（Petra 确认页按钮一致） */
+  async connect(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /** 消息签名确认（Petra Sign In）：与私有 confirm 同构 */
+  async sign(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /** 交易确认：与私有 confirm 同构 */
+  async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
   /**
    * Sign In 签名确认：点确认按钮至弹窗关闭（最多 3 轮，覆盖解锁→签名等多步）；
    * 成功判定 = 弹窗 close 事件；真机实测点 Sign In 后弹窗 1-5s 内关闭
    */
-  async ensureConnected(popup: PopupPage): Promise<void> {
+  private async confirm(popup: PopupPage): Promise<void> {
     await sleep(2000)
     for (let i = 0; i < 3; i++) {
       if (popup.isClosed?.()) return

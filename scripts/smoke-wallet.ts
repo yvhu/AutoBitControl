@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     }
     logger.info({ url: popup.url() }, '检测到钱包弹窗，尝试自动确认')
     // 页面对象转成适配器期望的缩小接口（真实运行中由 waitForPopup 直出）
-    await adapter.ensureConnected(popup as unknown as PopupPage)
+    await adapter.connect(popup as unknown as PopupPage)
     logger.info('钱包弹窗处理完成')
   } finally {
     await client.closeBrowser(profileId).catch(() => {})
