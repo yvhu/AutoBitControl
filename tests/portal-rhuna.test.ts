@@ -27,6 +27,14 @@ function makeCtx() {
   return { ctx, log }
 }
 
+/** 用自定义 captcha 命名空间替换实例 getter（只测 tryClickTurnstile 容错分支） */
+function stubCaptcha(ctx: TaskContext, turnstile: ReturnType<typeof vi.fn>): void {
+  Object.defineProperty(ctx, 'captcha', {
+    value: { turnstile },
+    configurable: true,
+  })
+}
+
 // 私有辅助方法经类型断言直接测试（纯容错分支逻辑，与页面无关）
 type PortalHelpers = {
   tryClickTurnstile(ctx: TaskContext): Promise<'clicked' | 'absent' | 'rejected'>
@@ -36,28 +44,28 @@ const helpers = new PortalRhunaTask() as unknown as PortalHelpers
 describe('PortalRhunaTask 验证方框点击容错', () => {
   it('点击成功 → clicked', async () => {
     const { ctx } = makeCtx()
-    ctx.clickTurnstileBox = vi.fn().mockResolvedValue(true)
+    stubCaptcha(ctx, vi.fn().mockResolvedValue(true))
     expect(await helpers.tryClickTurnstile(ctx)).toBe('clicked')
   })
 
   it('方框未出现 → absent（无点击、无报错）', async () => {
     const { ctx } = makeCtx()
-    ctx.clickTurnstileBox = vi.fn().mockResolvedValue(false)
+    stubCaptcha(ctx, vi.fn().mockResolvedValue(false))
     expect(await helpers.tryClickTurnstile(ctx)).toBe('absent')
   })
 
   it('瞬时 CDP 拒绝（重试耗尽）→ rejected 不抛错，记警告日志', async () => {
     const { ctx, log } = makeCtx()
-    ctx.clickTurnstileBox = vi.fn().mockRejectedValue(new Error(CDP_REJECTED_ERR))
+    stubCaptcha(ctx, vi.fn().mockRejectedValue(new Error(CDP_REJECTED_ERR)))
     expect(await helpers.tryClickTurnstile(ctx)).toBe('rejected')
     expect(log.warn).toHaveBeenCalledTimes(1)
     expect(log.warn.mock.calls[0][0]).toMatchObject({ step: 'turnstile', window: '窗口1' })
-    expect(log.warn.mock.calls[0][0].err).toContain('Protocol error')
+    expect((log.warn.mock.calls[0][0] as { err: string }).err).toContain('Protocol error')
   })
 
   it('非瞬时错误 → 直接上抛（不吞错）', async () => {
     const { ctx } = makeCtx()
-    ctx.clickTurnstileBox = vi.fn().mockRejectedValue(new Error('点击失败: 找不到元素 iframe'))
+    stubCaptcha(ctx, vi.fn().mockRejectedValue(new Error('点击失败: 找不到元素 iframe')))
     await expect(helpers.tryClickTurnstile(ctx)).rejects.toThrow('找不到元素')
   })
 })
