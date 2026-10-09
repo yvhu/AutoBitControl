@@ -1,7 +1,7 @@
 /**
  * 任务上下文（engine 层）：任务编写者唯一接触的运行环境接口
  * 依赖方向：依赖 automation/integrations/infrastructure，被 tasks 层依赖
- * 设计思路：把页面/拟人/钱包/截图封装成语义化方法，
+ * 设计思路：把页面/钱包/截图/验证码封装成语义化命名空间，
  * 任务代码不直接碰 patchright 细节（选择器查找等见 docs/API-GUIDE.md）
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -11,32 +11,25 @@ import type { Page } from 'patchright'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
-import { Humanizer } from '../automation/humanize'
 import {
   WalletActions,
   StepRecorder,
   raceProbes,
   recoverProbe,
-  waitForPopup,
-  openAppKitWallet as runAppKitWalletLogin,
   clickTurnstileBox as runTurnstileClick,
   autoClickTurnstile as runTurnstileAutoClick,
   turnstileVisible as isTurnstileVisible,
   type Probe,
   type RecoverOpts,
   type WalletRegistry,
-  type PopupPage,
   type WalletSession,
-  type AppKitLoginOptions,
 } from '../automation'
-import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
 
 /** TaskContext 依赖集（window-runner 创建并注入） */
 export interface TaskContextDeps {
   page: Page
   task: TaskRef
-  human: Humanizer
   profile: ProfileRow
   cfg: AppConfig
   logger: Logger
@@ -46,7 +39,7 @@ export interface TaskContextDeps {
   wallets?: WalletRegistry
   /** 当前窗口在数据源中的行（列名 -> 值）；无映射为 null（任务可用 faker 兜底） */
   accountRow?: Record<string, string> | null
-  /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 ensureWalletReady 跳过） */
+  /** 窗口会话级钱包扩展检测（window-runner 每轮会话创建注入；未注入时 wallet.ready 跳过） */
   walletSession?: WalletSession
 }
 
@@ -120,11 +113,6 @@ export class TaskContext {
     return this.deps.logger
   }
 
-  /** 拟人操作器（移动/点击/键入统一走它） */
-  get human(): Humanizer {
-    return this.deps.human
-  }
-
   /** 当前窗口记录（熔断计数等） */
   get profile(): ProfileRow {
     return this.deps.profile
@@ -168,69 +156,6 @@ export class TaskContext {
     await loc.setInputFiles(value)
   }
 
-  /**
-   * 关闭当前浏览器上下文中的其它标签页（保留当前页）
-   * 任务开始前调用：清掉上一次会话残留的标签页，再从干净状态打开任务网址
-   */
-  async closeOtherTabs(): Promise<void> {
-    for (const p of this.page.context().pages()) {
-      if (p === this.page) continue
-      await p.close().catch(() => {})
-    }
-  }
-
-  /**
-   * 打开任务页面（默认 meta.url，可覆盖）
-   * @throws 无 url 配置；3 次重试（2-5s 随机退避）后仍失败抛出最后一次错误
-   */
-  async goto(url?: string): Promise<void> {
-    const target = url ?? this.deps.task.meta.url
-    if (!target) throw new Error('任务未配置 url')
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await this.page.goto(target, { timeout: 45000, waitUntil: 'domcontentloaded' })
-        await Humanizer.sleep(800, 3000)
-        return
-      } catch (e) {
-        this.deps.logger.warn({ url: target, attempt }, `页面加载失败，重试 ${attempt}/3`)
-        if (attempt === 3) throw e
-        await Humanizer.sleep(2000, 5000)
-      }
-    }
-  }
-
-  /**
-   * 拟人点击签到按钮，可选断言后续元素出现
-   * @param opts.assert 成功后应出现的标志元素（徽章/成功文案），宁严勿松
-   * @param opts.assertTimeoutMs 断言超时（默认 10s）
-   * @throws 断言超时抛错（任务失败进入重试）
-   */
-  async clickCheckin(selector: string, opts: { assert?: string; assertTimeoutMs?: number } = {}): Promise<void> {
-    await this.human.click(selector)
-    if (opts.assert) {
-      await this.assertVisible(opts.assert, opts.assertTimeoutMs ?? 10000)
-    }
-  }
-
-  /** 等待元素可见；超时抛错（失败原因带上选择器便于排障） */
-  async assertVisible(selector: string, timeoutMs = 10000): Promise<void> {
-    try {
-      await this.page.locator(selector).first().waitFor({ state: 'visible', timeout: timeoutMs })
-    } catch {
-      throw new Error(`断言超时: 元素 ${selector} 未出现`)
-    }
-  }
-
-  /** 拟人键入文本（邮箱/数量等表单字段） */
-  async typeInto(selector: string, text: string): Promise<void> {
-    await this.human.type(selector, text)
-  }
-
-  /** 按键（单键如 'Enter'/'Escape'/'Tab'，或组合键如 'Control+A'/'Shift+Tab'，用加号连接；纯键盘操作，往输入框打字请用 typeInto） */
-  async pressKey(key: string): Promise<void> {
-    await this.page.keyboard.press(key)
-  }
-
   /** 截图存到产物目录，返回文件绝对路径（面板按路径取图） */
   async screenshot(name: string): Promise<string> {
     mkdirSync(this.deps.artifactsDir, { recursive: true })
@@ -253,235 +178,11 @@ export class TaskContext {
   }
 
   /**
-   * 钱包扩展就绪检查（会话级缓存）：任务登录流程前调用，扩展未加载时快速失败
-   * （重试会重启浏览器窗口，扩展随之重载——真机实测重启即恢复）
-   * 无 wallet 配置 / 未注入会话时跳过（脚本与测试兼容）
-   * @throws 钱包注册表未注入 / 该类型钱包扩展未加载
-   */
-  async ensureWalletReady(): Promise<void> {
-    const walletKey = this.deps.task.meta.wallet
-    if (!walletKey) return
-    const session = this.deps.walletSession
-    if (!session) return
-    if (!this.deps.wallets) throw new Error('钱包注册表未注入')
-    const adapter = this.deps.wallets.get(walletKey)
-    const state = await session.ensureReady(walletKey, adapter)
-    if (state === 'missing') {
-      throw new Error(`窗口 ${walletKey} 钱包扩展未加载（重试将重启浏览器窗口）`)
-    }
-  }
-
-  /**
-   * AppKit 钱包登录（站点页内 AppKit 弹窗打开 + 视图归一化 + 入口点击 + 钱包弹窗连接）
-   * 真机实测：AppKit 初始视图不固定，此封装集中处理归一化与补点
-   * @returns popupFailed：钱包弹窗未出现（静默连接容忍，调用方结合登录态判定）
-   */
-  async openAppKitWallet(opts: AppKitLoginOptions): Promise<boolean> {
-    await runAppKitWalletLogin(
-      this.wallet.deps,
-      { open: opts.openSelector, entryTestId: opts.entryTestId, modalTestId: opts.modalTestId },
-      { modalWaitMs: opts.modalWaitMs, normalizeRounds: opts.normalizeRounds, roundSleepMs: opts.roundSleepMs },
-    )
-    const { popupFailed } = await this.wallet.runIntent('connect', { reclick: { selector: `[data-testid="${opts.entryTestId}"]`, afterMs: opts.reclickAfterMs ?? 8000 } })
-    return popupFailed
-  }
-
-  /**
-   * 钱包登录全流程：等钱包弹窗 → 有密码则解锁 → 点连接确认
-   * 弹窗等待 60s：多窗口并发高负载下弹窗出现可超过 30s（真机实测），且静默连接时
-   * 弹窗永不出现由任务侧容忍（不影响最终登录判定）
-   * @param opts.reclick 可选补点：弹窗 afterMs 内未出现时再点一次触发按钮
-   *   （AppKit 动画未稳定时首次点击可能不注册；已触发的弹窗被聚焦而非重复打开，安全）
-   * @throws 任务未配置 wallet / 钱包注册表未注入 / 弹窗 60s 内未出现
-   */
-  async loginByWallet(opts: { reclick?: { selector: string; afterMs: number } } = {}): Promise<void> {
-    const walletKey = this.deps.task.meta.wallet
-    if (!walletKey) throw new Error('任务未配置钱包')
-    if (!this.deps.wallets) throw new Error('钱包注册表未注入')
-    const adapter = this.deps.wallets.get(walletKey)
-    const popupPromise = waitForPopup(this.page.context(), adapter.extensionUrlPatterns, 60000)
-    if (opts.reclick) {
-      const start = Date.now()
-      let appeared = false
-      while (Date.now() - start < opts.reclick.afterMs) {
-        const r = await Promise.race([
-          popupPromise.then(() => 'popup' as const).catch(() => 'timeout' as const),
-          new Promise<'tick'>(resolve => setTimeout(() => resolve('tick'), 500)),
-        ])
-        if (r === 'popup') { appeared = true; break }
-      }
-      if (!appeared) await this.human.click(opts.reclick.selector).catch(() => {})
-    }
-    const popup = (await popupPromise) as PopupPage | null
-    if (!popup) throw new Error('钱包弹窗未出现')
-    const unlockPassword = this.deps.walletPasswords[walletKey]
-    if (unlockPassword && adapter.unlock) {
-      await adapter.unlock(popup, unlockPassword)
-    }
-    await adapter.connect(popup)
-  }
-
-  /** 页面上是否出现某文案（模糊匹配，任务里做状态判断） */
-  async textPresent(text: string): Promise<boolean> {
-    const count = await this.page.getByText(text, { exact: false }).count()
-    return count > 0
-  }
-
-  /** 当前 URL 是否包含某片段（判断登录跳转结果用） */
-  async urlIncludes(part: string): Promise<boolean> {
-    return this.page.url().includes(part)
-  }
-
-  /**
-   * 等待文案出现在页面（区别于 textPresent 的即时判断，这里会持续等到出现）
-   * @throws 超时抛 `等待文案超时: <text>`
-   */
-  async waitForText(text: string, timeoutMs = 10000): Promise<void> {
-    try {
-      await this.page.getByText(text, { exact: false }).first().waitFor({ state: 'visible', timeout: timeoutMs })
-    } catch {
-      throw new Error(`等待文案超时: ${text}`)
-    }
-  }
-
-  /**
-   * 等待匹配 url 片段的网络响应并解析 JSON（解析失败返回 null）
-   * @returns 响应体 JSON；非 JSON 响应返回 null
-   * @throws 超时抛 `等待接口超时: <urlPart>（<原始错误>）`
-   */
-  async waitForApi(urlPart: string, timeoutMs = 10000): Promise<unknown> {
-    try {
-      const res = await this.page.waitForResponse(r => r.url().includes(urlPart), { timeout: timeoutMs })
-      return await res.json().catch(() => null)
-    } catch (e) {
-      throw new Error(`等待接口超时: ${urlPart}（${(e as Error).message}）`)
-    }
-  }
-
-  /**
-   * 等待当前 URL 包含某片段（跳转等待，hash 变化同样有效）
-   * @throws 超时抛 `等待跳转超时: <part>`
-   */
-  async waitForUrl(part: string, timeoutMs = 10000): Promise<void> {
-    try {
-      await this.page.waitForURL((u) => u.href.includes(part), { timeout: timeoutMs })
-    } catch {
-      throw new Error(`等待跳转超时: ${part}`)
-    }
-  }
-
-  /**
    * 在页面主世界执行 JS 并返回结果（自动处理 patchright 隔离世界参数）
    * 读站点全局状态（window 上的变量）必须用主世界——默认隔离世界看不到站点注入的全局变量
    */
   async js<T>(fn: () => T): Promise<T> {
     return this.page.evaluate(fn, undefined, {}, false) as Promise<T>
-  }
-
-  /**
-   * 等待元素消失（如 loading 遮罩）；元素从未出现视为已消失
-   * @throws 超时抛 `元素未消失: <selector>`
-   */
-  async waitForGone(selector: string, timeoutMs = 10000): Promise<void> {
-    try {
-      await this.page.locator(selector).first().waitFor({ state: 'detached', timeout: timeoutMs })
-    } catch {
-      throw new Error(`元素未消失: ${selector}`)
-    }
-  }
-
-  /** 多文案竞速：任一出现返回其键，都等不到返回 null（通用竞速等待） */
-  async raceTexts<K extends string>(entries: Array<[K, string]>, timeoutMs: number): Promise<K | null> {
-    const r = await Promise.race(entries.map(([k, text]) => this.waitForText(text, timeoutMs).then(() => k).catch(() => null)))
-    return r ?? null
-  }
-
-  /** 元素是否可见（任何异常按不可见处理） */
-  async visible(selector: string): Promise<boolean> {
-    try {
-      const loc = this.page.locator(selector).first()
-      if ((await loc.count()) === 0) return false
-      return await loc.isVisible()
-    } catch {
-      return false
-    }
-  }
-
-  /** 等元素消失或隐藏（元素从未出现视为已消失；最多 timeoutMs） */
-  async waitGoneOrHidden(selector: string, timeoutMs: number): Promise<void> {
-    const end = Date.now() + timeoutMs
-    while (Date.now() < end) {
-      try {
-        const loc = this.page.locator(selector).first()
-        if ((await loc.count()) === 0) return
-        if (!(await loc.isVisible().catch(() => false))) return
-      } catch {
-        return
-      }
-      await this.page.waitForTimeout(500)
-    }
-  }
-
-  /**
-   * 等文案出现 + 刷新兜底：先被动等 passiveMs，再最多 rounds 轮刷新（每轮等 roundWaitMs）
-   * @returns 出现 true / 全部超时 false
-   */
-  async waitForTextWithReloads(
-    text: string,
-    opts: { passiveMs: number; rounds?: number; roundWaitMs?: number; reloadTimeoutMs?: number },
-  ): Promise<boolean> {
-    const waitFor = async (ms: number): Promise<boolean> => {
-      const end = Date.now() + ms
-      while (Date.now() < end) {
-        if (await this.textPresent(text)) return true
-        await this.page.waitForTimeout(5000)
-      }
-      return false
-    }
-    if (await waitFor(opts.passiveMs)) return true
-    for (let round = 0; round < (opts.rounds ?? 0); round++) {
-      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-      if (await waitFor(opts.roundWaitMs ?? 30000)) return true
-    }
-    return false
-  }
-
-  /** 当前页面命中的可恢复错误文案（任一命中即返回；无则空串，日志排障用） */
-  async recoverErrorText(texts: string[]): Promise<string> {
-    for (const t of texts) {
-      if (await this.textPresent(t)) return t
-    }
-    return ''
-  }
-
-  /**
-   * 等文案出现（刷新恢复导向）：页面出现可恢复错误文案立即刷新；
-   * 配置 refreshEveryMs 时即使无错误也按周期主动刷新（站点 token 存 localStorage 的场景：
-   * 页面 JS 状态坏了刷新即恢复，多数"卡住"场景刷新解决）
-   * @returns 预算内文案出现 true / 超时 false
-   */
-  async waitForTextRecover(
-    text: string,
-    opts: { budgetMs: number; refreshEveryMs?: number; recoverTexts?: string[]; reloadTimeoutMs?: number; settleMs?: number },
-  ): Promise<boolean> {
-    const reloadTimeoutMs = opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS
-    const settleMs = opts.settleMs ?? 5000
-    const end = Date.now() + opts.budgetMs
-    let lastRefresh = Date.now()
-    while (Date.now() < end) {
-      if (await this.textPresent(text)) return true
-      const stale = (opts.refreshEveryMs ?? 0) > 0 && Date.now() - lastRefresh >= (opts.refreshEveryMs as number)
-      const errText = await this.recoverErrorText(opts.recoverTexts ?? [])
-      if (stale || errText !== '') {
-        this.log.info({ step: 'recover', window: this.deps.profile.name, errText }, '刷新页面恢复（错误提示或周期刷新）')
-        await this.page.reload({ timeout: reloadTimeoutMs, waitUntil: 'domcontentloaded' }).catch(() => {})
-        await this.page.waitForTimeout(settleMs)
-        lastRefresh = Date.now()
-        continue
-      }
-      await this.page.waitForTimeout(3000)
-    }
-    return false
   }
 
   /** Turnstile 模块日志包装：注入窗口名（模块消息为通用措辞）；兼容单参字符串与对象+消息两种调用形态 */
@@ -515,68 +216,5 @@ export class TaskContext {
   /** 等 Turnstile 方框出现并点击（方框在触发动作后 1-3s 渲染，最多等 budgetMs） */
   async autoClickTurnstile(budgetMs = 10000): Promise<boolean> {
     return runTurnstileAutoClick({ page: this.page, logger: this.turnstileLogger() }, budgetMs)
-  }
-
-  /**
-   * 登录状态竞速判定：已登录文案 / 未登录文案谁先出现；都不出现则刷新重试
-   * （已登录窗口误入登录分支时，仪表盘永远不出现未登录文案——假报网络异常的根因修复）
-   * @throws 多轮刷新后两者均未出现
-   */
-  async detectPageState(opts: {
-    loggedInText: string
-    landingText: string
-    waitMs: number
-    rounds?: number
-    roundWaitMs?: number
-    reloadTimeoutMs?: number
-  }): Promise<'loggedIn' | 'landing'> {
-    const race = async (ms: number): Promise<'loggedIn' | 'landing' | null> =>
-      this.raceTexts([['loggedIn', opts.loggedInText], ['landing', opts.landingText]], ms)
-    let state = await race(opts.waitMs)
-    for (let i = 0; i < (opts.rounds ?? 10) && !state; i++) {
-      await this.page.reload({ timeout: opts.reloadTimeoutMs ?? DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-      state = await race(opts.roundWaitMs ?? 15000)
-    }
-    if (!state) throw new Error(`多次刷新后仍未出现 ${opts.loggedInText} 或 ${opts.landingText}（网络异常）`)
-    return state
-  }
-
-  /**
-   * 关闭页面弹窗/遮罩（公告、通知、引导层等挡路弹窗）
-   * 策略按顺序尝试：候选关闭按钮 → 点遮罩空白处 → 按 Esc；
-   * 每次尝试后若配置了 gone 则快速验证是否已消失，最终用完整超时兜底验证
-   * @param opts.close 关闭按钮候选选择器（依次尝试，存在才点）
-   * @param opts.mask 遮罩层选择器（点击其左上角内侧空白区域，避开居中弹窗主体）
-   * @param opts.gone 弹窗容器选择器，用于验证关闭成功（不传则只尝试不验证）
-   * @param opts.timeoutMs 最终验证超时（默认 10000）
-   */
-  async closeModal(opts: { close?: string[]; mask?: string; gone?: string; timeoutMs?: number } = {}): Promise<void> {
-    const goneSel = opts.gone
-    const attempts: Array<() => Promise<void>> = []
-    for (const sel of opts.close ?? []) {
-      attempts.push(async () => {
-        if (await this.page.locator(sel).first().count() > 0) await this.human.click(sel)
-      })
-    }
-    const maskSel = opts.mask
-    if (maskSel) {
-      attempts.push(async () => {
-        const box = await this.page.locator(maskSel).first().boundingBox()
-        if (box) await this.human.clickAt(box.x + 12, box.y + 12)
-      })
-    }
-    attempts.push(async () => { await this.page.keyboard.press('Escape') })
-    for (const attempt of attempts) {
-      try {
-        await attempt()
-      } catch {
-        // 单策略失败（按钮存在但不可点等）不阻断回退链，继续下一个策略
-      }
-      if (!goneSel) continue
-      const gone = await this.waitForGone(goneSel, 600).then(() => true).catch(() => false)
-      if (gone) return
-    }
-    if (!goneSel) return
-    if (goneSel) await this.waitForGone(goneSel, opts.timeoutMs ?? 10000)
   }
 }

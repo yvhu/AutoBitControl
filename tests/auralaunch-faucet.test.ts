@@ -111,7 +111,6 @@ function makeCtx(opts: {
   const ctx = new TaskContext({
     page: page as never,
     task: new AuralaunchFaucetTask(),
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,

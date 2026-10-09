@@ -44,7 +44,6 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
   return new TaskContext({
     page: wrapped as never,
     task: new InceptionDachainTask(),
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
@@ -137,7 +136,6 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
       const ctx = new TaskContext({
         page: page as never,
         task: new InceptionDachainTask(),
-        human: {} as never,
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,

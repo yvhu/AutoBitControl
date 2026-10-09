@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
 import { openAppKitWallet, type AppKitEntry, type WalletActionsDeps } from '../src/automation/wallet'
-import { TaskContext } from '../src/engine/task-context'
 
 const ENTRY: AppKitEntry = {
   open: 'button:has-text("WALLET")',
@@ -44,22 +43,6 @@ function makeDeps() {
     waitForTimeout,
     setVisible: (sel: string, v: boolean) => (v ? visibleSel.add(sel) : visibleSel.delete(sel)),
   }
-}
-
-/** 造一个只暴露 wallet 的 TaskContext（shadow 掉 getter），用于验证 ctx.openAppKitWallet 透传 */
-function makeCtxWithWallet(deps: WalletActionsDeps, runIntent: (intent: string, opts: unknown) => Promise<{ popupFailed: boolean }>): TaskContext {
-  const ctx = new TaskContext({
-    page: deps.page,
-    task: { meta: { key: 'fake', name: '假任务', url: '', wallet: 'metamask' } },
-    human: {} as never,
-    profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
-    cfg: {},
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
-    artifactsDir: '',
-    walletPasswords: {},
-  } as never)
-  Object.defineProperty(ctx, 'wallet', { value: { deps, runIntent } })
-  return ctx
 }
 
 describe('openAppKitWallet 归一化', () => {
@@ -116,26 +99,5 @@ describe('openAppKitWallet 归一化', () => {
     expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 99 })
     expect(waitForTimeout).toHaveBeenCalledTimes(3)
     expect(waitForTimeout).toHaveBeenCalledWith(11)
-  })
-})
-
-describe('ctx.openAppKitWallet 透传归一化参数', () => {
-  it('将 modalWaitMs/normalizeRounds/roundSleepMs 透传到 openAppKitWallet', async () => {
-    const { deps, waitFor, waitForTimeout } = makeDeps()
-    const runIntent = vi.fn(async () => ({ popupFailed: false }))
-    const ctx = makeCtxWithWallet(deps, runIntent)
-    await expect(
-      ctx.openAppKitWallet({
-        walletKey: 'metamask',
-        openSelector: ENTRY.open,
-        entryTestId: ENTRY.entryTestId,
-        modalWaitMs: 123,
-        normalizeRounds: 2,
-        roundSleepMs: 45,
-      }),
-    ).rejects.toThrow('AppKit 弹窗未出现')
-    expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 123 })
-    expect(waitForTimeout).toHaveBeenCalledTimes(2)
-    expect(waitForTimeout).toHaveBeenCalledWith(45)
   })
 })

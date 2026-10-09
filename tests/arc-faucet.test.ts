@@ -153,7 +153,6 @@ function makeCtx(state: FakeState) {
   const ctx = new TaskContext({
     page: page as never,
     task: { meta: { key: 'faucet-arc', name: 'Arc 领水', url: 'https://faucet.circle.com/' } },
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
@@ -386,7 +385,6 @@ describe('Arc 领水任务集成（真实浏览器 + 本地 fixture）', () => {
     return new TaskContext({
       page,
       task,
-      human: {} as never,
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       cfg: {} as never,
       logger: { info: () => {}, warn: () => {}, error: () => {} } as never,

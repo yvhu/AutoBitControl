@@ -86,10 +86,10 @@ class FailTask implements SiteTask {
   run = vi.fn().mockRejectedValue(new Error('boom'))
 }
 
-/** 钱包探针任务 fixture：run 内调用 ensureWalletReady，验证 WalletSession 注入链路 */
+/** 钱包探针任务 fixture：run 内调用 wallet.ready，验证 WalletSession 注入链路 */
 class WalletProbeTask implements SiteTask {
   meta = { key: 'wallet-probe', name: 'WP', url: 'https://x.io', wallet: 'metamask' }
-  run = vi.fn(async (ctx: TaskContext) => { await ctx.ensureWalletReady() })
+  run = vi.fn(async (ctx: TaskContext) => { await ctx.wallet.ready() })
 }
 
 /** 提取 upsertRun 调用序列的状态列 */

@@ -55,7 +55,6 @@ function makeCtx(responses: Array<{ json: () => Promise<unknown> } | null>, opts
   const ctx = new TaskContext({
     page: page as never,
     task: { meta: { key: 'shelby-faucet', name: 'Shelby 领水', url: '' } },
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
@@ -149,7 +148,6 @@ describe('点击失败不产生孤儿 unhandledRejection', () => {
     const ctx = new TaskContext({
       page: page as never,
       task: { meta: { key: 'shelby-faucet', name: 'Shelby 领水', url: '' } },
-      human: {} as never,
       profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       cfg: {} as never,
       logger: log as never,
@@ -231,7 +229,6 @@ describe('Shelby 领水任务集成（真实浏览器 + 本地 fixture + 路由�
       const ctx = new TaskContext({
         page,
         task,
-        human: {} as never,
         profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,

@@ -17,7 +17,6 @@ function makeCtx(): TaskContext {
       url: () => '',
     } as never,
     task: new FakeTask(),
-    human: { click: async () => {} } as never,
     profile: { id: 1, bitbrowserId: 'bb', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,

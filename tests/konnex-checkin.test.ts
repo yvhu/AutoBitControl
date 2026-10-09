@@ -63,7 +63,6 @@ function makeCtx(page: ReturnType<typeof makeFakePage>): TaskContext {
   return new TaskContext({
     page: page as never,
     task: new KonnexCheckinTask(),
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,

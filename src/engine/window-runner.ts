@@ -14,7 +14,6 @@ import type { Logger } from '../infrastructure/logger'
 import { AppDb, todayStr, localWallNow, type ProfileRow, type RunRow } from '../infrastructure/db'
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
-import { Humanizer } from '../automation/humanize'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
@@ -305,7 +304,6 @@ export class WindowRunner {
         const ctx = new TaskContext({
           page,
           task,
-          human: new Humanizer(page, this.deps.cfg.execution.humanize),
           profile,
           cfg: this.deps.cfg,
           logger,

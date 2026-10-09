@@ -17,7 +17,6 @@ function makeCtx() {
   const ctx = new TaskContext({
     page: {} as never,
     task: new PortalRhunaTask(),
-    human: {} as never,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
     logger: log as never,
