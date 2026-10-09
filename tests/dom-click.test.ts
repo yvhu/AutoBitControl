@@ -2,10 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { clickPoint } from '../src/automation/dom'
 
 describe('dom clickPoint', () => {
-  it('用 patchright 原生 mouse.click 在坐标派发可信点击', async () => {
-    const click = vi.fn(async () => {})
-    const page = { mouse: { click } } as never
+  it('经 CDP Input.dispatchMouseEvent 在坐标派发按下/抬起', async () => {
+    const send = vi.fn(async (method: string, params: Record<string, unknown>) => ({ method, params }))
+    const detach = vi.fn(async () => {})
+    const page = { context: () => ({ newCDPSession: async () => ({ send, detach }) }) } as never
     await clickPoint(page, 12, 34)
-    expect(click).toHaveBeenCalledWith(12, 34)
+    const pressed = send.mock.calls.find((c) => c[1].type === 'mousePressed')
+    expect(pressed?.[1]).toMatchObject({ x: 12, y: 34 })
+    expect(send.mock.calls.some((c) => c[1].type === 'mouseReleased')).toBe(true)
+    expect(detach).toHaveBeenCalled()
   })
 })
