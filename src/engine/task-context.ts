@@ -12,12 +12,20 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
 import { Humanizer } from '../automation/humanize'
-import { WalletActions, openAppKitWallet as runAppKitWalletLogin } from '../automation/wallet'
-import type { AppKitLoginOptions } from '../automation/wallet'
-import { recoverProbe } from '../automation/dom'
-import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
-import type { WalletSession } from '../automation/wallet/session'
-import { waitForPopup } from '../automation/wallet/popup'
+import {
+  WalletActions,
+  StepRecorder,
+  raceProbes,
+  recoverProbe,
+  waitForPopup,
+  openAppKitWallet as runAppKitWalletLogin,
+  type Probe,
+  type RecoverOpts,
+  type WalletRegistry,
+  type PopupPage,
+  type WalletSession,
+  type AppKitLoginOptions,
+} from '../automation'
 import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnstileAutoClick, turnstileVisible as isTurnstileVisible } from '../automation/captcha/turnstile'
 import { waitCaptchaPassed as runPluginWait } from '../automation/captcha/plugin-wait'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
@@ -44,9 +52,10 @@ export interface TaskContextDeps {
 export class TaskContext {
   constructor(private deps: TaskContextDeps) {}
 
+  private recorder = new StepRecorder()
   private walletActionsInstance: WalletActions | null = null
 
-  /** 钱包动作命名空间（ready/login/sign/confirmTx/runIntent/ensureLoggedIn，惰性构造复用） */
+  /** 钱包动作命名空间（ready/login/sign/confirmTx/ensureLoggedIn） */
   get wallet(): WalletActions {
     if (!this.walletActionsInstance) {
       this.walletActionsInstance = new WalletActions({
@@ -57,11 +66,29 @@ export class TaskContext {
         walletSession: this.deps.walletSession,
         log: this.log,
         human: { click: (s: string) => this.human.click(s) },
-        recover: (probe, opts) => recoverProbe(this.page, probe, this.log, opts),
+        recover: (probe: Probe, opts: RecoverOpts) => this.recover(probe, opts),
       })
     }
     return this.walletActionsInstance
   }
+
+  /** 多探针竞速 */
+  async race<K extends string>(entries: Array<[K, Probe]>, timeoutMs: number): Promise<K | null> {
+    return raceProbes(this.page, entries, timeoutMs)
+  }
+
+  /** 刷新恢复等待（错误文案立即刷 + 周期刷 + 心跳） */
+  async recover(probe: Probe, opts: RecoverOpts): Promise<boolean> {
+    return recoverProbe(this.page, probe, this.log, opts)
+  }
+
+  /** 记录任务步骤（诊断时间线） */
+  async step<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    return this.recorder.run(name, fn, this.log)
+  }
+
+  /** 已记录步骤 */
+  steps() { return this.recorder.steps() }
 
   /** 当前页面（任务侧只读使用） */
   get page(): Page {
