@@ -119,7 +119,7 @@ export class ShelbyExplorerTask extends SiteTask {
     const state = await this.detectHeaderState(ctx)
     if (state === 'landing') {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '未登录，进入 Petra 登录流程')
-      await this.login(ctx)
+      await this.doLogin(ctx)
     } else {
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '已登录（会话有效），跳过登录')
     }
@@ -153,7 +153,7 @@ export class ShelbyExplorerTask extends SiteTask {
    * 真机核实：本窗口扩展已授权，点 Connect 后静默连接（无钱包弹窗）——弹窗未出现不视为失败；
    * 登录结果以 header 0x 地址为准
    */
-  private async login(ctx: TaskContext): Promise<void> {
+  private async doLogin(ctx: TaskContext): Promise<void> {
     await ctx.ensureWalletReady()
     await ctx.human.click(CONNECT_SELECTOR)
     // 等站内钱包弹窗（真机批量实测：高并发/慢代理下渲染可 >30s）：
@@ -193,7 +193,7 @@ export class ShelbyExplorerTask extends SiteTask {
     if (!(await this.waitForSelectorRecover(ctx, UPLOAD_FILES_SELECTOR, this.uploadEntryWaitMs))) {
       // 会话恢复失败（首次连接/扩展重启）：在账号页上重新登录后重等
       ctx.log.info({ step: 'login', window: ctx.profile.name }, '账号页会话未恢复，重新登录')
-      await this.login(ctx)
+      await this.doLogin(ctx)
       await ctx.goto(accountUrl)
       if (!(await this.waitForSelectorRecover(ctx, UPLOAD_FILES_SELECTOR, this.uploadEntryWaitMs))) {
         throw new Error('账号页未出现 Upload Files（页面改版或登录态未恢复）')

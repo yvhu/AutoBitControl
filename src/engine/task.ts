@@ -45,3 +45,6 @@ export interface TaskRef {
 
 /** 任务级并发缺省值：meta.concurrency 未写时生效 */
 export const DEFAULT_TASK_CONCURRENCY = 4
+
+/** 登录声明类型再导出：tasks 层经 engine 引用，避免 tasks 直接依赖 automation */
+export type { LoginSpec } from '../automation/wallet'
