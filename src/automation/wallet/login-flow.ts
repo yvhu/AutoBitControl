@@ -46,9 +46,12 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
       await openAppKitWallet(deps, entry)
     }
     const intents = spec.intents ?? ['connect']
+    const reclickSelector = entry?.kind === 'appkit'
+      ? `[data-testid="${entry.entryTestId}"]`
+      : spec.connect
     for (const intent of intents) {
-      const { popupFailed } = await wallet.runIntent(intent, spec.connect
-        ? { reclick: { selector: spec.connect, afterMs: reclickAfterMs } }
+      const { popupFailed } = await wallet.runIntent(intent, reclickSelector
+        ? { reclick: { selector: reclickSelector, afterMs: reclickAfterMs } }
         : undefined)
       if (popupFailed) deps.log.info({ step: 'login' }, '钱包弹窗未出现（可能静默连接），以登录态判定')
     }

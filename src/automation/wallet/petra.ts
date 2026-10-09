@@ -1,5 +1,5 @@
 /**
- * Petra 钱包适配器（automation 层）：解锁 + Sign In 签名确认
+ * Petra 钱包适配器（automation 层）：解锁 unlock + 连接 connect / 签名 sign / 交易确认 confirmTx
  * 依赖方向：仅依赖 ./types，经 WalletRegistry 注册后供任务侧按 key 使用
  * 设计思路：真机核实（2026-09-02，portal.rhuna.io）——Petra 弹窗为 prompt.html：
  *   锁屏页（输密码 + Unlock）→ Sign In Request 页（Cancel / Sign In，Aptos signMessage）；

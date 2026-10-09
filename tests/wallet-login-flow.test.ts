@@ -5,6 +5,9 @@ import { WalletRegistry } from '../src/automation/wallet/types'
 vi.mock('../src/automation/wallet/popup', () => ({ waitForPopup: vi.fn() }))
 import { waitForPopup } from '../src/automation/wallet/popup'
 
+vi.mock('../src/automation/wallet/appkit', () => ({ openAppKitWallet: vi.fn() }))
+import { openAppKitWallet } from '../src/automation/wallet/appkit'
+
 function adapter(over: Record<string, unknown> = {}) {
   return {
     key: 'metamask',
@@ -51,7 +54,10 @@ function deps(over: Partial<WalletActionsDeps> & { loggedInVisible?: boolean } =
 const SPEC: LoginSpec = { loggedIn: { text: '已登录' }, loggedOut: 'Connect Wallet', connect: 'button:has-text("Connect Wallet")', entry: { kind: 'direct' } }
 
 describe('WalletActions.ensureLoggedIn', () => {
-  beforeEach(() => vi.mocked(waitForPopup).mockReset())
+  beforeEach(() => {
+    vi.mocked(waitForPopup).mockReset()
+    vi.mocked(openAppKitWallet).mockReset()
+  })
 
   it('已登录 → 跳过，不点连接', async () => {
     const d = deps({ loggedInVisible: true })
@@ -70,7 +76,31 @@ describe('WalletActions.ensureLoggedIn', () => {
   it('弹窗未出现 → 静默连接容忍（不抛错），仍走 recover', async () => {
     vi.mocked(waitForPopup).mockResolvedValue(null)
     const d = deps()
-    await expect(new WalletActions(d).ensureLoggedIn(SPEC)).resolves.toBeDefined()
+    await expect(new WalletActions(d).ensureLoggedIn({ ...SPEC, attempts: 1, reclickAfterMs: 600 })).resolves.toBeDefined()
     expect(d.recover).toHaveBeenCalled()
+  })
+
+  it('waitForPopup 超时返回 null 不当作弹窗出现 → 仍按 reclickAfterMs 补点', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    const spec: LoginSpec = { ...SPEC, attempts: 1, reclickAfterMs: 600 }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    // 初次点击 spec.connect 后弹窗未出现，应按补点选择器再点一次（bug：null 被误判为弹窗，补点被跳过只剩 1 次）
+    expect(d.clicks.filter((s) => s === spec.connect)).toHaveLength(2)
+  })
+
+  it('appkit 入口 → 补点选择器用钱包入口 testid（非 spec.connect）', async () => {
+    vi.mocked(waitForPopup).mockResolvedValue(null)
+    const d = deps()
+    const spec: LoginSpec = {
+      loggedIn: { text: '已登录' },
+      loggedOut: 'Connect Wallet',
+      entry: { kind: 'appkit', open: 'button.open', entryTestId: 'wallet-selector-io.metamask' },
+      attempts: 1,
+      reclickAfterMs: 600,
+    }
+    await new WalletActions(d).ensureLoggedIn(spec)
+    expect(openAppKitWallet).toHaveBeenCalled()
+    expect(d.clicks).toContain('[data-testid="wallet-selector-io.metamask"]')
   })
 })

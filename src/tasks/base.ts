@@ -2,8 +2,8 @@
  * 任务基类（tasks 层）：所有站点任务的抽象契约与类型再导出
  * 依赖方向：对 engine 做 type-only import（Global Constraints 明确允许该例外），
  * 被 server/app 以 SiteTask 类型引用
- * 设计思路：任务 = 静态元信息 meta + 单一执行入口 run(ctx)；
- * 新增站点只需新建文件实现两者并在 index.ts 登记
+ * 设计思路：任务 = 静态元信息 meta + 可选声明式登录 login + 可选站点动作 action，
+ * 基类默认 run 提供统一骨架；新增站点只需新建文件定义 meta（及 login/action）并在 index.ts 登记
  */
 import { TaskContext } from '../engine/task-context'
 import type { TaskMeta, LoginSpec } from '../engine/task'

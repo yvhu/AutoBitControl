@@ -53,7 +53,7 @@ export class WalletActions {
       let appeared = false
       while (Date.now() - start < opts.reclick.afterMs) {
         const r = await Promise.race([
-          popupPromise.then(() => 'popup' as const).catch(() => 'timeout' as const),
+          popupPromise.then((p): 'popup' | 'timeout' => (p ? 'popup' : 'timeout')).catch(() => 'timeout' as const),
           new Promise<'tick'>((resolve) => setTimeout(() => resolve('tick'), 500)),
         ])
         if (r === 'popup') { appeared = true; break }

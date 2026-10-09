@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { probeLocator, probeVisible, raceProbes, type Probe } from '../src/automation/dom'
+import { probeLocator, probeVisible, raceProbes } from '../src/automation/dom'
 
 /** 假 locator：按 visible/count 配置行为 */
 function locator(opts: { count?: number; visible?: boolean; waitDelayMs?: number; never?: boolean }) {

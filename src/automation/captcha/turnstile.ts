@@ -64,7 +64,7 @@ export async function clickTurnstileBox(deps: TurnstileDeps, opts: { selectors?:
     if (!box) return false
     const x = box.x + Math.min(30, box.width * 0.4)
     const y = box.y + box.height / 2
-    deps.logger.info({ step: 'turnstile', x: Math.round(x), y: Math.round(y), attempt }, '检测到人机验证方框，拟人点击')
+    deps.logger.info({ step: 'turnstile', x: Math.round(x), y: Math.round(y), attempt }, '检测到人机验证方框，坐标点击')
     try {
       await clickPoint(deps.page, x, y)
       return true
