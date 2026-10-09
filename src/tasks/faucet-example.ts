@@ -8,6 +8,7 @@
  */
 import { faker } from '@faker-js/faker'
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
+import { openPage, click, fill, hasText, waitFor, takeScreenshot } from '../api'
 
 export class FaucetExampleTask extends SiteTask {
   meta: TaskMeta = {
@@ -27,21 +28,21 @@ export class FaucetExampleTask extends SiteTask {
   }
 
   /**
-   * 站点动作：领水。默认 run 直接调用（无登录步骤）。
-   * @param ctx 任务上下文，提供 page、accountRow（数据源行）、safeScreenshot 等
+   * 站点动作：领水（不连钱包，无登录步骤）。
+   * @param ctx 任务上下文（page/log/accountRow 等运行时数据）
    */
-  async action(ctx: TaskContext): Promise<void> {
-    const page = ctx.page
+  async run(ctx: TaskContext): Promise<void> {
+    if (this.meta.url) await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 已领过 → 直接成功（幂等：24h 限领，重跑不算失败）
-    if (await page.getByText('已领取').count() > 0) return
+    if (await hasText(ctx, '已领取')) return
     // 维护中 → 抛错进失败流程（面板可看截图/日志）
-    if (await page.getByText('维护中').count() > 0) throw new Error('水龙头维护中')
+    if (await hasText(ctx, '维护中')) throw new Error('水龙头维护中')
     // 邮箱：数据源「邮箱」列优先、无则 faker 随机兜底
     const email = ctx.accountRow?.['邮箱'] || faker.internet.email()
-    await page.locator('input[name="email"]').fill(email)
+    await fill(ctx, 'input[name="email"]', email)
     // 领取 + 断言成功文案（等不到即抛错，走失败流程）
-    await page.locator('#claim-btn').click()
-    await page.locator('.success-toast').waitFor({ state: 'visible', timeout: 10000 })
-    await ctx.safeScreenshot('faucet-success')
+    await click(ctx, '#claim-btn')
+    await waitFor(ctx, { selector: '.success-toast' }, { assert: true, budgetMs: 10000 })
+    await takeScreenshot(ctx, 'faucet-success')
   }
 }
