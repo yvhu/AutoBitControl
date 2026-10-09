@@ -12,6 +12,9 @@ import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { ProfileRow } from '../infrastructure/db'
 import { Humanizer } from '../automation/humanize'
+import { WalletActions, openAppKitWallet as runAppKitWalletLogin } from '../automation/wallet'
+import type { AppKitLoginOptions } from '../automation/wallet'
+import { recoverProbe } from '../automation/dom'
 import type { WalletRegistry, PopupPage } from '../automation/wallet/types'
 import type { WalletSession } from '../automation/wallet/session'
 import { waitForPopup } from '../automation/wallet/popup'
@@ -19,7 +22,6 @@ import { clickTurnstileBox as runTurnstileClick, autoClickTurnstile as runTurnst
 import { waitCaptchaPassed as runPluginWait } from '../automation/captcha/plugin-wait'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import type { TaskRef } from './task'
-import { openAppKitWallet as runAppKitLogin, type AppKitLoginOptions } from './appkit'
 
 /** TaskContext 依赖集（window-runner 创建并注入） */
 export interface TaskContextDeps {
@@ -41,6 +43,25 @@ export interface TaskContextDeps {
 
 export class TaskContext {
   constructor(private deps: TaskContextDeps) {}
+
+  private walletActionsInstance: WalletActions | null = null
+
+  /** 钱包动作命名空间（ready/login/sign/confirmTx/runIntent/ensureLoggedIn，惰性构造复用） */
+  get wallet(): WalletActions {
+    if (!this.walletActionsInstance) {
+      this.walletActionsInstance = new WalletActions({
+        page: this.page,
+        walletKey: this.deps.task.meta.wallet,
+        wallets: this.deps.wallets,
+        walletPasswords: this.deps.walletPasswords,
+        walletSession: this.deps.walletSession,
+        log: this.log,
+        human: { click: (s: string) => this.human.click(s) },
+        recover: (probe, opts) => recoverProbe(this.page, probe, this.log, opts),
+      })
+    }
+    return this.walletActionsInstance
+  }
 
   /** 当前页面（任务侧只读使用） */
   get page(): Page {
@@ -196,7 +217,9 @@ export class TaskContext {
    * @returns popupFailed：钱包弹窗未出现（静默连接容忍，调用方结合登录态判定）
    */
   async openAppKitWallet(opts: AppKitLoginOptions): Promise<boolean> {
-    return runAppKitLogin(this, opts)
+    await runAppKitWalletLogin(this.wallet.deps, { open: opts.openSelector, entryTestId: opts.entryTestId, modalTestId: opts.modalTestId })
+    const { popupFailed } = await this.wallet.runIntent('connect', { reclick: { selector: `[data-testid="${opts.entryTestId}"]`, afterMs: opts.reclickAfterMs ?? 8000 } })
+    return popupFailed
   }
 
   /**

@@ -1,10 +1,11 @@
 /**
  * 登录编排（automation/wallet 层）：竞速判登录态 → 点连接入口 → 露出钱包入口 → 按 intents 处理弹窗 → 等登录完成
  * 真机沉淀：静默连接容忍、AppKit 视图归一化、弹窗慢补点、token localStorage 刷新恢复
- * 依赖方向：依赖 ./actions、../dom、./appkit（运行时按需 import）
+ * 依赖方向：依赖 ./actions、../dom、./appkit（静态导入，无运行时环）
  */
+import { openAppKitWallet } from './appkit'
 import type { Probe } from '../dom'
-import type { WalletActions, WalletActionsDeps, WalletIntent } from './actions'
+import type { WalletActions, WalletIntent } from './actions'
 
 /** 探针简写：字符串等价于 `{ text }`（设计示例与测试用 `loggedOut: 'Connect Wallet'`） */
 export type LoginProbe = Probe | string
@@ -42,8 +43,7 @@ export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Pr
     const entry = spec.entry
     if (entry?.kind === 'dialog' && entry.confirm) await deps.human.click(entry.confirm).catch(() => {})
     if (entry?.kind === 'appkit') {
-      const appkit = await loadAppKit()
-      await appkit.openAppKitWallet(deps, entry)
+      await openAppKitWallet(deps, entry)
     }
     const intents = spec.intents ?? ['connect']
     for (const intent of intents) {
@@ -74,15 +74,4 @@ async function raceState(wallet: WalletActions, spec: LoginSpec, timeoutMs: numb
   const deps = wallet.deps
   const { raceProbes } = await import('../dom')
   return raceProbes(deps.page, [['loggedIn', toProbe(spec.loggedIn)], ['loggedOut', toProbe(spec.loggedOut)]], timeoutMs) as Promise<'loggedIn' | 'loggedOut' | null>
-}
-
-/**
- * AppKit 归一化模块（automation/wallet/appkit.ts）由 Task 7 落地；
- * 此处用运行时变量 specifier 按需加载，避免本任务对尚未创建的文件产生静态依赖。
- */
-async function loadAppKit(): Promise<{
-  openAppKitWallet(deps: WalletActionsDeps, entry: { open: string; entryTestId: string; modalTestId?: string }): Promise<void>
-}> {
-  const specifier = './appkit'
-  return import(/* @vite-ignore */ specifier)
 }

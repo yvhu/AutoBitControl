@@ -1,72 +1,91 @@
 import { describe, it, expect, vi } from 'vitest'
-import { openAppKitWallet, type AppKitLoginOptions } from '../src/engine/appkit'
+import { openAppKitWallet, type AppKitEntry, type WalletActionsDeps } from '../src/automation/wallet'
 
-const OPTS: AppKitLoginOptions = {
-  walletKey: 'metamask',
-  openSelector: 'button:has-text("WALLET")',
+const ENTRY: AppKitEntry = {
+  open: 'button:has-text("WALLET")',
   entryTestId: 'wallet-selector-io.metamask',
 }
 
-/** 假 ctx：visible 按可见集合判定；归一化点击记录在 human.click */
-function makeCtx(over: Partial<Record<'visible', (sel: string) => boolean>> = {}) {
+const MODAL_SEL = '[data-testid="w3m-modal-card"]'
+const WALLET_SEL = `[data-testid="${ENTRY.entryTestId}"]`
+
+/**
+ * 假 WalletActionsDeps：可见集合控制入口/归一化按钮可见性；
+ * 归一化点击在 human.click 内模拟效果（点后入口出现）；page.locator().first().waitFor 供弹窗等待
+ */
+function makeDeps() {
   const visibleSel = new Set<string>()
-  const visible = over.visible ?? ((sel: string) => visibleSel.has(sel))
   const click = vi.fn(async (sel: string) => {
-    // 模拟归一化点击的效果：点 header-back → 入口出现
-    if (sel === '[data-testid="header-back"]') visibleSel.add(`[data-testid="${OPTS.entryTestId}"]`)
-    if (sel === '[data-testid="all-wallets"]') visibleSel.add(`[data-testid="${OPTS.entryTestId}"]`)
-    if (sel === '[data-testid="tab-browser"]') visibleSel.add(`[data-testid="${OPTS.entryTestId}"]`)
+    if (sel === '[data-testid="header-back"]') visibleSel.add(WALLET_SEL)
+    if (sel === '[data-testid="all-wallets"]') visibleSel.add(WALLET_SEL)
+    if (sel === '[data-testid="tab-browser"]') visibleSel.add(WALLET_SEL)
   })
-  const ctx = {
-    human: { click },
-    assertVisible: vi.fn().mockResolvedValue(undefined),
-    visible: vi.fn(async (sel: string) => visible(sel)),
-    page: { waitForTimeout: vi.fn().mockResolvedValue(undefined) },
-    loginByWallet: vi.fn().mockResolvedValue(undefined),
+  const waitFor = vi.fn(async () => {})
+  const makeLocator = (sel: string) => {
+    const loc = {
+      first: () => loc,
+      waitFor,
+      count: async () => (visibleSel.has(sel) ? 1 : 0),
+      isVisible: async () => visibleSel.has(sel),
+    }
+    return loc
   }
-  return { ctx: ctx as never, click, visibleSel, setVisible: (sel: string, v: boolean) => (v ? visibleSel.add(sel) : visibleSel.delete(sel)) }
+  const deps = {
+    page: { locator: (sel: string) => makeLocator(sel), waitForTimeout: vi.fn(async () => {}) },
+    walletKey: 'metamask',
+    human: { click },
+  } as unknown as WalletActionsDeps
+  return {
+    deps,
+    click,
+    waitFor,
+    setVisible: (sel: string, v: boolean) => (v ? visibleSel.add(sel) : visibleSel.delete(sel)),
+  }
 }
 
-describe('openAppKitWallet 登录封装', () => {
-  it('入口直接可见 → 点击入口 + 弹窗连接，返回 false', async () => {
-    const { ctx, click, setVisible } = makeCtx()
-    setVisible(`[data-testid="${OPTS.entryTestId}"]`, true)
-    expect(await openAppKitWallet(ctx, OPTS)).toBe(false)
-    expect(click).toHaveBeenCalledWith(OPTS.openSelector)
-    expect(click).toHaveBeenCalledWith(`[data-testid="${OPTS.entryTestId}"]`)
-    expect((ctx as never as { loginByWallet: ReturnType<typeof vi.fn> }).loginByWallet).toHaveBeenCalledWith({ reclick: { selector: `[data-testid="${OPTS.entryTestId}"]`, afterMs: 8000 } })
+describe('openAppKitWallet 归一化', () => {
+  it('先点打开按钮 + 等弹窗，入口直接可见 → 点入口', async () => {
+    const { deps, click, waitFor, setVisible } = makeDeps()
+    setVisible(WALLET_SEL, true)
+    await openAppKitWallet(deps, ENTRY)
+    expect(click).toHaveBeenCalledWith(ENTRY.open)
+    expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 45000 })
+    expect(click).toHaveBeenCalledWith(WALLET_SEL)
   })
 
   it('QR 视图（header-back）→ 回退后命中入口', async () => {
-    const { ctx, setVisible } = makeCtx()
+    const { deps, click, setVisible } = makeDeps()
     setVisible('[data-testid="header-back"]', true)
-    expect(await openAppKitWallet(ctx, OPTS)).toBe(false)
+    await openAppKitWallet(deps, ENTRY)
+    expect(click).toHaveBeenCalledWith('[data-testid="header-back"]')
+    expect(click).toHaveBeenCalledWith(WALLET_SEL)
   })
 
   it('列表收起（all-wallets）→ 展开后命中入口', async () => {
-    const { ctx, setVisible } = makeCtx()
+    const { deps, click, setVisible } = makeDeps()
     setVisible('[data-testid="all-wallets"]', true)
-    expect(await openAppKitWallet(ctx, OPTS)).toBe(false)
+    await openAppKitWallet(deps, ENTRY)
+    expect(click).toHaveBeenCalledWith('[data-testid="all-wallets"]')
+    expect(click).toHaveBeenCalledWith(WALLET_SEL)
   })
 
   it('tab-browser 切换 → 命中入口', async () => {
-    const { ctx, setVisible } = makeCtx()
+    const { deps, click, setVisible } = makeDeps()
     setVisible('[data-testid="tab-browser"]', true)
-    expect(await openAppKitWallet(ctx, OPTS)).toBe(false)
+    await openAppKitWallet(deps, ENTRY)
+    expect(click).toHaveBeenCalledWith('[data-testid="tab-browser"]')
+    expect(click).toHaveBeenCalledWith(WALLET_SEL)
   })
 
-  it('归一化轮数耗尽仍未命中 → 抛错', async () => {
-    const { ctx } = makeCtx()
-    await expect(openAppKitWallet(ctx, OPTS)).rejects.toThrow('AppKit 弹窗未出现 metamask 钱包入口')
+  it('归一化轮数耗尽仍未命中 → 抛错（含钱包 key）', async () => {
+    const { deps } = makeDeps()
+    await expect(openAppKitWallet(deps, ENTRY)).rejects.toThrow('AppKit 弹窗未出现 metamask 钱包入口')
   })
 
-  it('钱包弹窗未出现 → 返回 true（静默连接容忍）；其它错误继续抛出', async () => {
-    const { ctx, setVisible } = makeCtx()
-    setVisible(`[data-testid="${OPTS.entryTestId}"]`, true)
-    const { loginByWallet } = ctx as never as { loginByWallet: ReturnType<typeof vi.fn> }
-    loginByWallet.mockRejectedValueOnce(new Error('钱包弹窗未出现'))
-    expect(await openAppKitWallet(ctx, OPTS)).toBe(true)
-    loginByWallet.mockRejectedValueOnce(new Error('其它错误'))
-    await expect(openAppKitWallet(ctx, OPTS)).rejects.toThrow('其它错误')
+  it('未命中时不点入口（只点打开按钮）', async () => {
+    const { deps, click } = makeDeps()
+    await expect(openAppKitWallet(deps, ENTRY)).rejects.toThrow()
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(click).toHaveBeenCalledWith(ENTRY.open)
   })
 })
