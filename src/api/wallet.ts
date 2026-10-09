@@ -1,8 +1,9 @@
 /**
- * 钱包登录函数（api 层）：按 wallet 类型 + scenario 场景自适应完成登录
+ * 钱包函数（api 层）：登录（loginWallet）与单次动作（signMessage/confirmTransaction）
  * 依赖方向：engine 的 TaskContext 类型、automation barrel（WalletActions 与登录相关类型）
  * 设计思路：把「wallet + scenario」声明映射为 automation 的 LoginSpec（entry/walletEntry），
- * 复用 automation/wallet 的 ensureLoggedIn 编排，任务侧只需描述登录标志与站点入口形态。
+ * 复用 automation/wallet 的 ensureLoggedIn 编排；登录之外的签名/交易确认动作，
+ * 直接从任务配置的钱包（ctx.task.meta.wallet）装配 WalletActions 后转发 sign/confirmTx。
  */
 import type { TaskContext } from '../engine/task-context'
 import { WalletActions } from '../automation'
@@ -93,4 +94,46 @@ export async function loginWallet(ctx: TaskContext, spec: LoginSpec): Promise<vo
     attempts: spec.attempts,
     reclickAfterMs: spec.reclickAfterMs,
   })
+}
+
+/** 单次钱包动作的可选参数 */
+export interface WalletActionOptions {
+  /** 补点配置：等 afterMs 毫秒弹窗仍未出现，就点一下 selector 重新触发（应对慢渲染/点击落空） */
+  reclick?: { selector: string; afterMs: number }
+}
+
+/**
+ * 从 ctx 装配 WalletActions（与 loginWallet 同构）。
+ * walletKey 取任务配置的钱包 ctx.task.meta.wallet——这些动作作用于该任务的钱包。
+ */
+function buildWalletActions(ctx: TaskContext): WalletActions {
+  return new WalletActions({
+    page: ctx.page,
+    walletKey: ctx.task.meta.wallet,
+    wallets: ctx.wallets,
+    walletPasswords: ctx.walletPasswords,
+    walletSession: ctx.walletSession,
+    log: ctx.log,
+    recover: (probe, opts) => waitFor(ctx, probe, { ...opts }),
+  })
+}
+
+/**
+ * 等一次钱包弹窗并完成消息签名。
+ * @param ctx 任务上下文（提供 page/wallets/walletPasswords/walletSession/log 与 recover）
+ * @param options 补点参数（弹窗慢渲染/点击落空时重新触发）
+ * @returns popupFailed：弹窗未出现时为 true，调用方按业务态判定
+ */
+export async function signMessage(ctx: TaskContext, options: WalletActionOptions = {}): Promise<{ popupFailed: boolean }> {
+  return buildWalletActions(ctx).sign(options)
+}
+
+/**
+ * 等一次钱包弹窗并确认交易。
+ * @param ctx 任务上下文（提供 page/wallets/walletPasswords/walletSession/log 与 recover）
+ * @param options 补点参数（弹窗慢渲染/点击落空时重新触发）
+ * @returns popupFailed：弹窗未出现时为 true，调用方按业务态判定
+ */
+export async function confirmTransaction(ctx: TaskContext, options: WalletActionOptions = {}): Promise<{ popupFailed: boolean }> {
+  return buildWalletActions(ctx).confirmTx(options)
 }

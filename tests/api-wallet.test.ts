@@ -7,9 +7,11 @@ interface CapturedSpec {
   loggedOut?: unknown
 }
 
-// 捕获自动化层 WalletActions 的实例与 ensureLoggedIn 调用，用于断言 api 层的映射
+// 捕获自动化层 WalletActions 的实例与各动作调用，用于断言 api 层的映射
 const mocks = vi.hoisted(() => ({
   ensureLoggedIn: vi.fn(async (_spec: CapturedSpec) => ({ skipped: false })),
+  sign: vi.fn(async () => ({ popupFailed: false })),
+  confirmTx: vi.fn(async () => ({ popupFailed: false })),
   instances: [] as Array<{ deps: Record<string, unknown> }>,
 }))
 
@@ -21,15 +23,18 @@ vi.mock('../src/automation/wallet', () => ({
       mocks.instances.push(this)
     }
     ensureLoggedIn = mocks.ensureLoggedIn
+    sign = mocks.sign
+    confirmTx = mocks.confirmTx
   },
 }))
 
-import { loginWallet } from '../src/api'
+import { loginWallet, signMessage, confirmTransaction } from '../src/api'
 
-function makeCtx() {
+function makeCtx(taskWallet = 'metamask') {
   const wallets = { get: () => ({}) }
   return {
     page: {},
+    task: { meta: { wallet: taskWallet } },
     wallets,
     walletPasswords: { metamask: 'pw' },
     walletSession: {},
@@ -123,5 +128,35 @@ describe('api/wallet loginWallet', () => {
     expect(deps.walletSession).toBe(ctx.walletSession)
     expect(deps.log).toBe(ctx.log)
     expect(typeof deps.recover).toBe('function')
+  })
+})
+
+describe('api/wallet 动作函数', () => {
+  beforeEach(() => {
+    mocks.sign.mockClear()
+    mocks.confirmTx.mockClear()
+    mocks.instances.length = 0
+  })
+
+  it('signMessage：用任务钱包装配 WalletActions，以 options 调 sign 并透传 popupFailed', async () => {
+    mocks.sign.mockResolvedValueOnce({ popupFailed: true })
+    const res = await signMessage(makeCtx('petra'), { reclick: { selector: '#send', afterMs: 5000 } })
+    expect(mocks.instances[0].deps.walletKey).toBe('petra')
+    expect(mocks.sign).toHaveBeenCalledTimes(1)
+    expect(mocks.sign).toHaveBeenCalledWith({ reclick: { selector: '#send', afterMs: 5000 } })
+    expect(res).toEqual({ popupFailed: true })
+  })
+
+  it('signMessage：无 options 时以空对象调用', async () => {
+    await signMessage(makeCtx())
+    expect(mocks.sign).toHaveBeenCalledWith({})
+  })
+
+  it('confirmTransaction：以 options 调 confirmTx 并透传 popupFailed', async () => {
+    mocks.confirmTx.mockResolvedValueOnce({ popupFailed: true })
+    const res = await confirmTransaction(makeCtx('petra'), { reclick: { selector: '#confirm', afterMs: 3000 } })
+    expect(mocks.confirmTx).toHaveBeenCalledTimes(1)
+    expect(mocks.confirmTx).toHaveBeenCalledWith({ reclick: { selector: '#confirm', afterMs: 3000 } })
+    expect(res).toEqual({ popupFailed: true })
   })
 })
