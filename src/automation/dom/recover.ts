@@ -6,7 +6,7 @@
 import type { Page } from 'patchright'
 import type { Logger } from '../../infrastructure/logger'
 import { DEFAULT_RELOAD_TIMEOUT_MS, RECOVER_TEXTS } from '../../infrastructure/constants'
-import { firstTextPresent, probeDesc, probeVisible, type Probe } from './probe'
+import { firstTextPresent, probeDesc, probePresent, type Probe } from './probe'
 
 /**
  * 刷新恢复等待的可调参数。核心思想：不无限硬等，而是在等待期间主动刷新页面来摆脱
@@ -46,7 +46,7 @@ export async function recoverProbe(page: Page, probe: Probe, log: Logger, opts: 
   let lastRefresh = Date.now()
   let lastBeat = Date.now()
   while (Date.now() < end) {
-    if (await probeVisible(page, probe)) return true
+    if (await probePresent(page, probe)) return true
     const errText = await firstTextPresent(page, recoverTexts)
     const stale = (opts.refreshEveryMs ?? 0) > 0 && Date.now() - lastRefresh >= (opts.refreshEveryMs as number)
     if (errText !== '' || stale) {

@@ -42,6 +42,18 @@ export async function probeVisible(page: Page, probe: Probe): Promise<boolean> {
   }
 }
 
+/** 探针当前是否"命中"：文案按存在判定（count>0，不判可见性，兼容双 DOM/动画态）；选择器按可见判定（与旧 ctx.visible 一致） */
+export async function probePresent(page: Page, probe: Probe): Promise<boolean> {
+  if ('text' in probe) {
+    try {
+      return (await page.getByText(probe.text, { exact: false }).count()) > 0
+    } catch {
+      return false
+    }
+  }
+  return probeVisible(page, probe)
+}
+
 /**
  * 在页面里依次查找一组文案，返回第一个「出现」的文案。
  * 执行流程：逐个对每条文案调用 getByText(...).count()，命中数大于 0 即视为出现并立即返回；

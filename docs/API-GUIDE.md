@@ -437,6 +437,7 @@ if (await ctx.captcha.visible()) { /* 方框仍在：验证可能未通过 */ }
 **`ctx.recover(probe, opts)`**（刷新恢复等待，`src/automation/dom/recover.ts`）：
 
 - **是什么**：等 `probe` 出现；期间页面出现可恢复错误文案**立即刷新**；配置 `refreshEveryMs` 时周期主动刷新；每 `heartbeatMs` 输出心跳日志。预算内出现返回 `true`，超时返回 `false`（**不抛错**）。
+- **命中判定**：`{ text }` 探针按**存在**判定（`count>0`，不判可见性，兼容双 DOM/动画态）；`{ selector }` 探针按**可见**判定（需 `isVisible()`）——与旧 `waitForTextRecover`/`waitForSelectorRecover` 语义一致。
 - **什么时候用**：站点 token 存 `localStorage`、页面 JS 状态坏了刷新即恢复的场景（Web3 站点普遍模式）——登录完成等待、页面跳转等待、慢渲染等待。
 - **怎么用**：
 

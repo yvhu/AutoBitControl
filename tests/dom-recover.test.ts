@@ -59,4 +59,21 @@ describe('dom recoverProbe', () => {
     await recoverProbe(page, { text: '目标' }, log, { budgetMs: 600, refreshEveryMs: 100 })
     expect((page as never as { reload: ReturnType<typeof vi.fn> }).reload).toHaveBeenCalled()
   })
+
+  it('文案存在但首个元素不可见（双 DOM/动画态）→ 按存在判定命中 true，不刷新', async () => {
+    const reload = vi.fn(async () => {})
+    const page = {
+      getByText: (t: string) => ({
+        first() { return this },
+        count: async () => (t === 'Daily Check-in' ? 1 : 0),
+        isVisible: async () => false,
+      }),
+      locator: () => ({ first() { return this }, count: async () => 0, isVisible: async () => false }),
+      waitForTimeout: vi.fn(async () => {}),
+      reload,
+      url: () => 'https://x.test/',
+    } as never
+    expect(await recoverProbe(page, { text: 'Daily Check-in' }, log, { budgetMs: 300 })).toBe(true)
+    expect(reload).not.toHaveBeenCalled()
+  })
 })
