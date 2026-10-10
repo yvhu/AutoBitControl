@@ -5,7 +5,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, RECOVER_TEXTS, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, waitFor, elementState, countElements, hasText, getAccount, uploadFile, takeScreenshot, signMessage } from '../api'
+import { openPage, loginWallet, click, waitFor, elementState, hasText, getAccount, uploadFile, takeScreenshot, signMessage } from '../api'
 
 const ADDRESS_SELECTOR = 'header button:has-text("0x")'
 const CONNECT_SELECTOR = 'header button:has-text("Connect Wallet")'
@@ -147,7 +147,7 @@ export class ShelbyExplorerTask extends SiteTask {
   private async waitAttached(ctx: TaskContext, selector: string, budgetMs: number): Promise<boolean> {
     const end = Date.now() + budgetMs
     while (Date.now() < end) {
-      if ((await countElements(ctx, selector)) > 0) return true
+      if ((await elementState(ctx, selector)) !== 'absent') return true
       await ctx.page.waitForTimeout(1000)
     }
     return false

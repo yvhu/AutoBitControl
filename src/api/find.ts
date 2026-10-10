@@ -15,15 +15,6 @@ export async function elementState(ctx: TaskContext, selector: string): Promise<
   }
 }
 
-/** 命中元素数量（异常按 0） */
-export async function countElements(ctx: TaskContext, selector: string): Promise<number> {
-  try {
-    return await ctx.page.locator(selector).count()
-  } catch {
-    return 0
-  }
-}
-
 /** 取元素文本（首元素，去首尾空格；取不到返回空串） */
 export async function getText(ctx: TaskContext, selector: string): Promise<string> {
   try {

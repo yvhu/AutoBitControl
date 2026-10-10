@@ -365,20 +365,6 @@ if ((await elementState(ctx, ADDRESS_SELECTOR)) === 'visible') return // 已登�
 
 **注意**：是即时快照，不做等待；要等它出现用 `waitFor`。
 
-#### `countElements(ctx, selector)`
-
-**用途**：命中元素数量（即时）。**签名**：`countElements(ctx, selector): Promise<number>`。
-
-**参数**
-
-| 名称 | 类型 | 必填 | 默认 | 含义 |
-| --- | --- | --- | --- | --- |
-| `selector` | `string` | 是 | — | 元素选择器 |
-
-**示例**：`if ((await countElements(ctx, '.success-toast')) > 0) return`
-
-**注意**：异常按 `0` 处理；也常用于等**隐藏**元素挂载（如 `display:none` 的 file input）。
-
 #### `getText(ctx, selector)`
 
 **用途**：取元素文本（首个匹配，去首尾空格；取不到返回空串）。
@@ -541,7 +527,7 @@ ctx.log.info({ status }, '领取接口命中')
 - 要在**点击前**先注册等待（先 `const p = waitResponse(...)`，再点，再 `await p`），否则可能错过响应。
 - `predicate` 不满足时抛错；想自己判 body，省略 `predicate` 拿返回值即可。
 
-### 3.4 钱包（`src/api/wallet.ts`）
+### 3.4 钱包动作（`src/api/wallet.ts`）
 
 #### `loginWallet(ctx, spec)`
 
@@ -731,7 +717,7 @@ await uploadFile(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // 本�
 **注意**
 
 - URL 下载失败抛 `图片下载失败: <url> (HTTP <状态码>)`；临时文件落在系统临时目录 `abc-uploads/`。
-- 内部用 `setInputFiles`，不弹系统文件框，对 `display:none` 的隐藏 input 也可用（隐藏 input 用 `countElements` > 0 判挂载，别用可见性等待）。
+- 内部用 `setInputFiles`，不弹系统文件框，对 `display:none` 的隐藏 input 也可用（隐藏 input 用 `elementState(...) !== 'absent'` 判挂载，别用可见性等待）。
 
 #### `takeScreenshot(ctx, name)`
 
@@ -1134,7 +1120,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 **4）文件上传两个坑**
 
-1. **隐藏 file input**：`display:none` 的 input 不能用可见性等待，用挂载判定（`countElements(...) > 0` 轮询）；`uploadFile` / `setInputFiles` 对隐藏 input 可用。
+1. **隐藏 file input**：`display:none` 的 input 不能用可见性等待，用挂载判定（`elementState(...) !== 'absent'` 轮询）；`uploadFile` / `setInputFiles` 对隐藏 input 可用。
 2. **一次性文件（blob 名查重）**：站点可能在选文件后立即查重——已上传的文件弹窗直接报错（如 `Blob name already taken`）且提交按钮**永不启用**。必须把该错误文案短路视为「已上传=成功」（幂等收敛），不能等按钮启用、更不能当失败重试。
 
 **5）任务卡死：先看日志，别盲目重跑（最重要）**
