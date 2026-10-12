@@ -153,7 +153,6 @@ export abstract class SiteTask {
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `group` | `{ key: string; name: string }?` | `undefined` | 空投分组：同一空投的多个任务写相同的 key+name，面板按组折叠展示 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-10-09'`） |
-| `deprecated` | `boolean?` | `false` | `true` → 面板置灰显示「已失效」 |
 | `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` 时手动触发接口 409。面板开关写入本地库 `task_states` 覆盖，立即生效、重启保留 |
 | `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`）；`loginWallet`/`signMessage`/`confirmTransaction` 按此查找适配器 |
 | `timeoutSec` | `number?` | 180 | 单次运行超时（秒）；缺省取全局 `execution.taskTimeoutMs / 1000` |

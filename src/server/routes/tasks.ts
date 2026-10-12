@@ -47,7 +47,6 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                           key: { type: string }
  *                           name: { type: string }
  *                       lastUpdated: { type: string, nullable: true }
- *                       deprecated: { type: boolean }
  *                       enabled: { type: boolean }
  *                       inFlight: { type: boolean, description: '是否有在途 run（当天 pending/running/retry_wait 或排队中的窗口会话）' }
  *                       wallet: { type: string, nullable: true }
@@ -157,7 +156,6 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         category: m.category ?? null,
         group: m.group ?? null,
         lastUpdated: m.lastUpdated ?? null,
-        deprecated: m.deprecated ?? false,
         enabled: await deps.db.getTaskEnabled(m.key, m.enabled ?? true),
         inFlight: (await deps.db.countInFlightRuns(m.key, todayStr())) > 0 || deps.enqueuer.hasTaskInFlight(m.key),
         wallet: m.wallet ?? null,

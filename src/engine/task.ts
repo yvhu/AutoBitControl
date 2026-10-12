@@ -8,7 +8,6 @@
 /**
  * 任务元信息：
  * key 全局唯一（API/数据库/面板都用它标识）；
- * deprecated 标记失效任务（面板置灰）；
  * url 为空表示文档示例（仅手动触发）
  */
 export interface TaskMeta {
@@ -23,7 +22,6 @@ export interface TaskMeta {
   /** 空投分组：同一空投的多个任务（领水/签到/部署…）写相同的 key+name，面板按组折叠展示；key 全局唯一 */
   group?: { key: string; name: string }
   lastUpdated?: string
-  deprecated?: boolean
   /** 任务开关（纯代码开关）：false 时手动触发接口 409；面板开关可运行时覆盖 */
   enabled?: boolean
   /** 登录用钱包的 key（对应 WalletRegistry 注册表） */

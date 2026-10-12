@@ -472,7 +472,6 @@ export interface paths {
                                 note?: string | null;
                                 category?: string | null;
                                 lastUpdated?: string | null;
-                                deprecated?: boolean;
                                 enabled?: boolean;
                                 inFlight?: boolean;
                                 wallet?: string | null;

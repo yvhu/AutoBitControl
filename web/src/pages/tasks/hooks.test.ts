@@ -111,3 +111,34 @@ describe('toggleKey', () => {
     expect(toggleKey(['a', 'b', 'c'], 'b')).toEqual(['a', 'c'])
   })
 })
+
+import { taskBucket, bucketTasks } from './hooks'
+
+describe('taskBucket', () => {
+  const t = (enabled: boolean | undefined) => ({ key: 'k', enabled }) as unknown as TaskMetaView
+  it('enabled: false → disabled', () => {
+    expect(taskBucket(t(false))).toBe('disabled')
+  })
+  it('enabled: true → enabled', () => {
+    expect(taskBucket(t(true))).toBe('enabled')
+  })
+  it('enabled 缺省（undefined）→ enabled', () => {
+    expect(taskBucket(t(undefined))).toBe('enabled')
+  })
+})
+
+describe('bucketTasks', () => {
+  it('保序分桶', () => {
+    const tasks = [
+      { key: 'a', enabled: true },
+      { key: 'b', enabled: false },
+      { key: 'c', enabled: true },
+    ] as unknown as TaskMetaView[]
+    const b = bucketTasks(tasks)
+    expect(b.enabled.map((x) => x.key)).toEqual(['a', 'c'])
+    expect(b.disabled.map((x) => x.key)).toEqual(['b'])
+  })
+  it('空输入 → 两桶皆空', () => {
+    expect(bucketTasks([])).toEqual({ enabled: [], disabled: [] })
+  })
+})

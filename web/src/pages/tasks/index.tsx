@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Row, Space, Spin, Switch, Tag, Typography, theme } from 'antd'
+import { Button, Card, Col, Empty, Row, Space, Spin, Switch, Tabs, Tag, Typography, theme } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
 import type { TaskMetaView } from '../../types'
 import {
+  bucketTasks,
   categoryColor,
   categoryLabel,
   groupColor,
@@ -31,7 +32,7 @@ const NOTE_CLAMP: CSSProperties = {
 function TaskCard({ task }: { task: TaskMetaView }) {
   const setEnabled = useSetTaskEnabled()
   const trigger = useTriggerTask()
-  const dimmed = task.deprecated || task.enabled === false
+  const dimmed = task.enabled === false
   const [noteExpanded, setNoteExpanded] = useState(false)
   const noteRef = useRef<HTMLSpanElement>(null)
   const [noteOverflow, setNoteOverflow] = useState(false)
@@ -51,7 +52,6 @@ function TaskCard({ task }: { task: TaskMetaView }) {
             <Typography.Text strong>{task.name}</Typography.Text>
             <Typography.Text type="secondary">{task.key}</Typography.Text>
             <Tag color={categoryColor(task.category)}>{categoryLabel(task.category)}</Tag>
-            {task.deprecated && <Tag color="default">已失效</Tag>}
             {task.enabled === false && <Tag color="default">已停用</Tag>}
           </Space>
           <div style={{ marginTop: 6, fontSize: 12 }}>
@@ -136,9 +136,48 @@ function GroupCard({ group, color, open, onToggle }: { group: TaskGroup; color: 
   )
 }
 
+/** 单个状态 Tab 内的任务列表：按站点分组折叠；展开态各 Tab 独立 */
+function GroupedTaskList({ tasks }: { tasks: TaskMetaView[] }) {
+  const [openKeys, setOpenKeys] = useState<string[]>([])
+
+  if (tasks.length === 0) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该状态下暂无任务" />
+  }
+
+  const groups = groupTasks(tasks)
+  const flat = groups.length === 1 && groups[0].key === ''
+  if (flat) {
+    return (
+      <Row gutter={[12, 12]} align="stretch">
+        {tasks.map((t) => (
+          <Col key={t.key} xs={24} xl={12}>
+            <TaskCard task={t} />
+          </Col>
+        ))}
+      </Row>
+    )
+  }
+
+  const allOpen = groups.every((g) => openKeys.includes(g.key))
+  return (
+    <Space direction="vertical" size={8} style={{ display: 'flex' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Typography.Text>任务分组</Typography.Text>
+        <Space size={8} style={{ marginLeft: 'auto' }}>
+          <Button size="small" disabled={allOpen} onClick={() => setOpenKeys(groups.map((g) => g.key))}>全部展开</Button>
+          <Button size="small" disabled={openKeys.length === 0} onClick={() => setOpenKeys([])}>全部收起</Button>
+        </Space>
+      </div>
+      {groups.map((g, i) => (
+        <GroupCard key={g.key} group={g} color={groupColor(g.key, i)} open={openKeys.includes(g.key)} onToggle={() => setOpenKeys((keys) => toggleKey(keys, g.key))} />
+      ))}
+    </Space>
+  )
+}
+
 export default function TasksPage() {
   const tasks = useTasks()
-  const [openKeys, setOpenKeys] = useState<string[]>([])
+  const [activeKey, setActiveKey] = useState<'enabled' | 'disabled'>('enabled')
 
   if (tasks.isPending) {
     return (
@@ -158,34 +197,18 @@ export default function TasksPage() {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务" />
   }
 
-  const groups = groupTasks(tasks.data)
-  const flat = groups.length === 1 && groups[0].key === ''
-  const allOpen = groups.length > 0 && groups.every((g) => openKeys.includes(g.key))
+  const buckets = bucketTasks(tasks.data)
 
   return (
     <Space direction="vertical" size={8} style={{ display: 'flex' }}>
-      {flat ? (
-        <Row gutter={[12, 12]} align="stretch">
-          {tasks.data.map((t) => (
-            <Col key={t.key} xs={24} xl={12}>
-              <TaskCard task={t} />
-            </Col>
-          ))}
-        </Row>
-      ) : (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <Typography.Text>任务分组</Typography.Text>
-            <Space size={8} style={{ marginLeft: 'auto' }}>
-              <Button size="small" disabled={allOpen} onClick={() => setOpenKeys(groups.map((g) => g.key))}>全部展开</Button>
-              <Button size="small" disabled={openKeys.length === 0} onClick={() => setOpenKeys([])}>全部收起</Button>
-            </Space>
-          </div>
-          {groups.map((g, i) => (
-            <GroupCard key={g.key} group={g} color={groupColor(g.key, i)} open={openKeys.includes(g.key)} onToggle={() => setOpenKeys((keys) => toggleKey(keys, g.key))} />
-          ))}
-        </>
-      )}
+      <Tabs
+        activeKey={activeKey}
+        onChange={(k) => setActiveKey(k as 'enabled' | 'disabled')}
+        items={[
+          { key: 'enabled', label: `已启用 ${buckets.enabled.length}`, children: <GroupedTaskList tasks={buckets.enabled} /> },
+          { key: 'disabled', label: `已停用 ${buckets.disabled.length}`, children: <GroupedTaskList tasks={buckets.disabled} /> },
+        ]}
+      />
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         → 任务定义在代码（src/tasks），开关与触发在此页管理
       </Typography.Text>

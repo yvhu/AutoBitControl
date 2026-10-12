@@ -58,6 +58,21 @@ export function groupTasks(tasks: TaskMetaView[]): TaskGroup[] {
   return ungrouped ? [...groups.filter((g) => g.key !== ''), ungrouped] : groups
 }
 
+/** 任务状态桶：显式 enabled:false 视为停用，其余（含 undefined）视为启用 */
+export type TaskBucket = 'enabled' | 'disabled'
+
+/** 判定任务属于哪个状态桶 */
+export function taskBucket(t: TaskMetaView): TaskBucket {
+  return t.enabled === false ? 'disabled' : 'enabled'
+}
+
+/** 按状态保序分桶（供任务页状态 Tab） */
+export function bucketTasks(tasks: TaskMetaView[]): Record<TaskBucket, TaskMetaView[]> {
+  const out: Record<TaskBucket, TaskMetaView[]> = { enabled: [], disabled: [] }
+  for (const t of tasks) out[taskBucket(t)].push(t)
+  return out
+}
+
 /** 分组图标配色：已知分组固定色（与面板 mockup 一致），未知分组按出现顺序回退 */
 export const GROUP_COLOR_MAP: Record<string, string> = {
   shelby: '#1677FF',
