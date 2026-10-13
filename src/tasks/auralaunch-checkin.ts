@@ -52,4 +52,3 @@ export class AuralaunchCheckinTask extends SiteTask {
 
 
 //点击skip提示信息: You've skipped the quiz for the day and missed 2,150 points!
-// API_BASE这些先使用  deepseek V4 flash吧，API key: sk-b3078f5391ee42089bb1dd37e319e6d9
