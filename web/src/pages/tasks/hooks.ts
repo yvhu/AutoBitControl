@@ -127,3 +127,16 @@ export function useTriggerTask() {
     onError: (e) => message.error(errMsg(e)),
   })
 }
+
+export function useTestTask() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, profileIds }: { key: string; profileIds: string[] }) => triggerTask(key, { profileIds }),
+    onSuccess: (_res, { profileIds }) => {
+      message.success(`已提交 ${profileIds.length} 个窗口执行`)
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+    onError: (e) => message.error(errMsg(e)),
+  })
+}

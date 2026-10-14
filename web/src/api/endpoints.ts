@@ -6,7 +6,9 @@ export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batch
 export const fetchDiagnostics = (runId: number) => get<DiagBundle>(`/api/diagnostics/${runId}`)
 export const fetchTasks = () => get<TaskMetaView[]>('/api/tasks')
 export const fetchProfiles = () => get<ProfileRow[]>('/api/profiles')
-export const triggerTask = (key: string, bitbrowserId?: string) => post<{ scope: string }>(`/api/tasks/${encodeURIComponent(key)}/trigger`, bitbrowserId ? { bitbrowserId } : {})
+export type TriggerScope = 'single' | 'all' | 'selected'
+export const triggerTask = (key: string, opts: { bitbrowserId?: string; profileIds?: string[] } = {}) =>
+  post<{ scope: TriggerScope }>(`/api/tasks/${encodeURIComponent(key)}/trigger`, opts)
 export const setTaskEnabled = (key: string, enabled: boolean) => patch<{ key: string; enabled: boolean }>(`/api/tasks/${encodeURIComponent(key)}`, { enabled })
 export const openProfile = (id: number) => post<{ already: boolean }>(`/api/profiles/${id}/open`, {})
 export const closeProfile = (id: number) => post<null>(`/api/profiles/${id}/close`, {})

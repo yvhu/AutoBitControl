@@ -2,7 +2,7 @@
  * 任务路由（server 层）：任务列表与手动触发
  * 依赖方向：依赖 engine/infrastructure；被 app 装配
  * 设计思路：GET 返回 meta 全字段（缺省字段补 null 保证前端取值的稳定性）；
- * POST trigger 支持单窗口（bitbrowserId）或全部启用窗口两种范围
+ * POST trigger 支持单窗口（bitbrowserId）、手选窗口列表（profileIds）或全部启用窗口三种范围
  */
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
@@ -121,6 +121,10 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *               bitbrowserId:
  *                 type: string
  *                 description: 指定窗口 id（缺省跑全部启用窗口）
+ *               profileIds:
+ *                 type: array
+ *                 items: { type: string }
+ *                 description: 指定窗口 id 列表（测试入口，手选启用窗口；语义同批量触发，走错峰与并发闸门）
  *     responses:
  *       '200':
  *         description: 入队成功
@@ -134,7 +138,7 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                 data:
  *                   type: object
  *                   properties:
- *                     scope: { type: string, enum: [single, all] }
+ *                     scope: { type: string, enum: [single, all, selected] }
  *       '404':
  *         description: 任务或窗口不存在（业务码 40401/40402）
  *       '409':
@@ -179,7 +183,31 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if (!deps.tasks.has(key)) throw new HttpError(404, ERROR_CODES.TASK_NOT_FOUND, `任务不存在: ${key}`)
     if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, ERROR_CODES.TASK_DISABLED, '任务已停用')
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
-    const body = (req.body ?? {}) as { bitbrowserId?: string }
+    const body = (req.body ?? {}) as { bitbrowserId?: string; profileIds?: unknown }
+    // 指定窗口列表：测试入口（手选若干启用窗口；语义等同批量触发，走错峰 + 双闸门）
+    if (body.profileIds !== undefined) {
+      if (!Array.isArray(body.profileIds) || body.profileIds.length === 0 || !body.profileIds.every((id) => typeof id === 'string' && id !== '')) {
+        throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'profileIds 必须为非空字符串数组')
+      }
+      const ids = [...new Set(body.profileIds as string[])]
+      const allProfiles = await deps.db.listProfiles(false)
+      const selected: ProfileRow[] = []
+      for (const id of ids) {
+        const p = allProfiles.find((x: ProfileRow) => x.bitbrowserId === id)
+        if (!p) throw new HttpError(404, ERROR_CODES.PROFILE_NOT_FOUND, `窗口不存在: ${id}`)
+        if (p.enabled !== 1) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, `窗口未启用: ${id}`)
+        selected.push(p)
+      }
+      const busy: string[] = []
+      for (const p of selected) {
+        if ((await deps.db.countInFlightRuns(key, todayStr(), p.id)) > 0 || deps.enqueuer.hasTaskInFlight(key, p.id)) busy.push(p.bitbrowserId)
+      }
+      if (busy.length > 0) throw new HttpError(409, ERROR_CODES.TASK_RUNNING, `以下窗口任务执行中，请等待结束再触发: ${busy.join(', ')}`)
+      const batch = await deps.db.createBatch('bulk', key, 'trigger-test')
+      for (const p of selected) deps.enqueuer.enqueue(p, key, { batchId: batch.id })
+      ok(res, { scope: 'selected' })
+      return
+    }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）
     if (body.bitbrowserId) {
       const profile = (await deps.db.listProfiles(false)).find((p: ProfileRow) => p.bitbrowserId === body.bitbrowserId)

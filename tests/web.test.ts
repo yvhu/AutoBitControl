@@ -453,6 +453,74 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
+  it('多窗口测试触发：选中窗口入队不走 immediate，批次 source=trigger-test', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([
+      { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1', 'bb-2'] })
+    expect(res.status).toBe(200)
+    expect(res.body.data).toEqual({ scope: 'selected' })
+    expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-test')
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(2)
+    expect(deps.enqueuer.enqueue.mock.calls[0][0].bitbrowserId).toBe('bb-1')
+    expect(deps.enqueuer.enqueue.mock.calls[1][0].bitbrowserId).toBe('bb-2')
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88 })
+  })
+
+  it('多窗口测试触发：重复 id 去重', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }])
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1', 'bb-1'] })
+    expect(res.status).toBe(200)
+    expect(res.body.data).toEqual({ scope: 'selected' })
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('多窗口测试触发：空数组 400', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: [] })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('多窗口测试触发：未知窗口 404', async () => {
+    const deps = makeDeps()
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['nope'] })
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe(40402)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('多窗口测试触发：未启用窗口 400', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 0, circuitBreakerCount: 0 }])
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1'] })
+    expect(res.status).toBe(400)
+    expect(res.body.code).toBe(40000)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('多窗口测试触发：选中窗口在途 409', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }])
+    deps.db.countInFlightRuns.mockImplementation((_k: string, _d: string, pid?: number) => Promise.resolve(pid === 1 ? 1 : 0))
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1'] })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe(40902)
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('多窗口测试触发：任务停用 409', async () => {
+    const deps = makeDeps()
+    deps.db.getTaskEnabled.mockResolvedValue(false)
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1'] })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe(40901)
+  })
+
   it('GET /api/tasks 附加 inFlight（DB 在途与队列在途任一命中）', async () => {
     const deps = makeDeps()
     deps.db.countInFlightRuns.mockResolvedValue(2)

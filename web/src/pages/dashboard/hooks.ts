@@ -31,9 +31,10 @@ export function useTriggerTask() {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ key, bitbrowserId }: { key: string; bitbrowserId?: string }) => triggerTask(key, bitbrowserId),
+    mutationFn: ({ key, bitbrowserId }: { key: string; bitbrowserId?: string }) => triggerTask(key, { bitbrowserId }),
     onSuccess: (res) => {
-      message.success(res.scope === 'single' ? '已提交执行' : '已提交全部启用窗口执行')
+      const labels = { single: '已提交执行', selected: '已提交选中窗口执行', all: '已提交全部启用窗口执行' } as const
+      message.success(labels[res.scope])
       queryClient.invalidateQueries({ queryKey: ['batches'] })
     },
     onError: (e) => message.error(errMsg(e)),

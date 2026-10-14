@@ -596,6 +596,8 @@ export interface paths {
                     "application/json": {
                         /** @description 指定窗口 id（缺省跑全部启用窗口） */
                         bitbrowserId?: string;
+                        /** @description 指定窗口 id 列表（测试入口，手选启用窗口） */
+                        profileIds?: string[];
                     };
                 };
             };
@@ -613,7 +615,7 @@ export interface paths {
                             message?: string;
                             data?: {
                                 /** @enum {string} */
-                                scope?: "single" | "all";
+                                scope?: "single" | "all" | "selected";
                             };
                         };
                     };

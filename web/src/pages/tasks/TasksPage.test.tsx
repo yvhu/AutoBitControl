@@ -14,6 +14,7 @@ vi.mock('../../api/endpoints', () => ({
   fetchTasks: vi.fn(),
   setTaskEnabled: vi.fn(),
   triggerTask: vi.fn(),
+  fetchProfiles: vi.fn(),
 }))
 
 const tasks = [

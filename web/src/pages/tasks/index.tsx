@@ -11,9 +11,11 @@ import {
   toggleKey,
   useSetTaskEnabled,
   useTasks,
+  useTestTask,
   useTriggerTask,
   type TaskGroup,
 } from './hooks'
+import TestWindowModal from './TestWindowModal'
 
 const WALLET_ICON: Record<string, string> = { metamask: '🦊', petra: '🐍' }
 
@@ -32,6 +34,8 @@ const NOTE_CLAMP: CSSProperties = {
 function TaskCard({ task }: { task: TaskMetaView }) {
   const setEnabled = useSetTaskEnabled()
   const trigger = useTriggerTask()
+  const test = useTestTask()
+  const [testOpen, setTestOpen] = useState(false)
   const dimmed = task.enabled === false
   const [noteExpanded, setNoteExpanded] = useState(false)
   const noteRef = useRef<HTMLSpanElement>(null)
@@ -105,8 +109,20 @@ function TaskCard({ task }: { task: TaskMetaView }) {
               {triggerButton(task.inFlight).label}
             </Button>
           )}
+          {task.enabled && (
+            <Button size="small" onClick={() => setTestOpen(true)}>
+              测试
+            </Button>
+          )}
         </Space>
       </div>
+      <TestWindowModal
+        open={testOpen}
+        taskName={task.name}
+        submitting={test.isPending}
+        onCancel={() => setTestOpen(false)}
+        onSubmit={(profileIds) => test.mutate({ key: task.key, profileIds }, { onSuccess: () => setTestOpen(false) })}
+      />
     </Card>
   )
 }
