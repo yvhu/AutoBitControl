@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { todayStr, type RunRow } from '../src/infrastructure/db'
 import { recoverRetryTasks } from '../src/engine/retry-recovery'
+import { CancelRegistry } from '../src/engine/cancel-registry'
 
 function makeRetryRow(over: Partial<RunRow> = {}): RunRow {
   const date = todayStr()
@@ -63,6 +64,20 @@ describe('recoverRetryTasks', () => {
     await vi.runAllTimersAsync()
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
     expect(deps.enqueuer.enqueue.mock.calls[0][1]).toBe('t')
+  })
+
+  it('重试到期时已被停止：跳过入队并清理标记', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-02 10:00:00'))
+    const row = makeRetryRow({ finishedAt: '2026-09-02 08:00:00.000' })
+    const reg = new CancelRegistry()
+    reg.request(1, 't')
+    const deps = { ...makeDeps([row], { status: 'retry_wait', slot: 0 } as Partial<RunRow>), cancelRegistry: reg }
+    const count = await recoverRetryTasks(deps as never)
+    expect(count).toBe(1)
+    await vi.runAllTimersAsync()
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+    expect(reg.isCancelled(1, 't')).toBe(false)
   })
 
   it('崩溃残留 running 行：结算 failed 并重新入队（自愈）', async () => {

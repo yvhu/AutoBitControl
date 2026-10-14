@@ -47,6 +47,7 @@ interface MockDeps {
     listReminderSources: Mock
   }
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
+  stopper: { stop: Mock }
   scheduler: { runNow: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number; group?: { key: string; name: string } } }>
   cfg: {
@@ -111,6 +112,7 @@ function makeDeps(): MockDeps {
       listReminderSources: vi.fn().mockResolvedValue({ projects: [], todos: [] }),
     },
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
+    stopper: { stop: vi.fn().mockResolvedValue(true) },
     scheduler: { runNow: vi.fn().mockResolvedValue({ taskKeys: ['t1'], skipped: [] }) },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask' } }]]),
     cfg: {
@@ -207,6 +209,46 @@ describe('server API（RESTful + envelope）', () => {
       const res = await request(createApp(deps as never)).get('/api/batches/999')
       expect(res.status).toBe(404)
       expect(res.body.code).toBe(40405)
+    })
+
+    it('POST /api/batches/:id/stop 停该批次非终态行并计数', async () => {
+      const deps = makeDeps()
+      deps.db.getBatch.mockResolvedValue({ id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' })
+      deps.db.listRunsForBatch.mockResolvedValue([
+        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: 2, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' },
+        { id: 2, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 1, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: 2, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' },
+      ])
+      const res = await request(createApp(deps as never)).post('/api/batches/2/stop').send({})
+      expect(res.status).toBe(200)
+      expect(res.body.data).toEqual({ stopped: 1 })
+      expect(deps.stopper.stop).toHaveBeenCalledTimes(1)
+      expect(deps.stopper.stop).toHaveBeenCalledWith(1, 't1')
+    })
+
+    it('POST /api/batches/:id/stop 批次不存在 404', async () => {
+      const deps = makeDeps()
+      deps.db.getBatch.mockResolvedValue(null)
+      const res = await request(createApp(deps as never)).post('/api/batches/999/stop').send({})
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe(40405)
+    })
+
+    it('POST /api/runs/:id/stop 停单行', async () => {
+      const deps = makeDeps()
+      deps.getRunById = vi.fn().mockResolvedValue({ id: 7, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'running', attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: 2, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' })
+      deps.stopper.stop.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/runs/7/stop').send({})
+      expect(res.status).toBe(200)
+      expect(res.body.data).toEqual({ stopped: true })
+      expect(deps.stopper.stop).toHaveBeenCalledWith(1, 't1')
+    })
+
+    it('POST /api/runs/:id/stop 不存在 404（40409）', async () => {
+      const deps = makeDeps()
+      deps.getRunById = vi.fn().mockResolvedValue(null)
+      const res = await request(createApp(deps as never)).post('/api/runs/999/stop').send({})
+      expect(res.status).toBe(404)
+      expect(res.body.code).toBe(40409)
     })
   })
 

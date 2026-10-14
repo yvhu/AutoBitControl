@@ -37,10 +37,12 @@ export class AuralaunchCheckinTask extends SiteTask {
     // 登录：竞速判登录态 → 点连接 → 签名/确认 → 等登录完成（占位选择器，复制后替换）
     await loginWallet(ctx, {
       wallet: 'metamask',
-      scenario: 'direct',
-      loggedIn: { text: '已连接' },
-      loggedOut: '连接钱包',
-      connect: 'button:has-text("连接钱包")',
+      scenario: 'dialog',
+      loggedIn: { text: '0x' },
+      loggedOut: 'Connect Wallet',
+      connect: 'button.connect-wallet-button',
+      walletEntry: '[data-testid="rk-wallet-option-metaMask"]',
+      intents: ['connect'],
     })
     // 已签到直接成功返回（幂等：重复触发不报错）
     // if (await hasText(ctx, '已签到')) return

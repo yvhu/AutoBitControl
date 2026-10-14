@@ -13,6 +13,8 @@ import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
+import { CancelRegistry } from './engine/cancel-registry'
+import { createTaskStopper } from './engine/task-stopper'
 import { recoverRetryTasks } from './engine/retry-recovery'
 import { Scheduler } from './engine/scheduler'
 import { startCircuitBreakerResetSchedule } from './engine/maintenance'
@@ -154,6 +156,8 @@ export async function startApp(): Promise<void> {
   // enqueuer 后置声明：runner 的 scheduleRetry 闭包引用它（重试到期重新入队），
   // 二者互相依赖（enqueuer 需要 runner），先声明变量再在下方赋值
   let enqueuer!: CoalescingEnqueuer
+  // 取消标记注册表：进程内「已请求停止」标记，runner / 重试回调 / 停止器共用
+  const cancelRegistry = new CancelRegistry()
   const runner = new WindowRunner({
     cfg,
     db,
@@ -164,6 +168,8 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
+    // 取消标记：会话开始前过滤「已请求停止」任务，runTask catch 消费（落 skipped 不重试）
+    cancelRegistry,
     // 窗口复用探测：open_windows 表有登记（面板打开/task:run 登记）即复用该窗口，
     // 本轮会话不重新开窗、结束后不关窗。此处不做 pid 校验（校验在 route/task:run 打开时登记、
     // 关闭时清除）；若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
@@ -184,6 +190,11 @@ export async function startApp(): Promise<void> {
       setTimeout(() => {
         void (async () => {
           try {
+            if (cancelRegistry.isCancelled(profile.id, taskKey)) {
+              cancelRegistry.clear(profile.id, taskKey)
+              logger.info({ task: taskKey }, '重试到期但已请求停止，跳过重试')
+              return
+            }
             const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
             if (p) enqueuer.enqueue(p, taskKey, { batchId })
           } catch (e) {
@@ -217,6 +228,16 @@ export async function startApp(): Promise<void> {
   // 退出时随 shutdown 一并 stop，取消已挂定时器
   const maintenance = startCircuitBreakerResetSchedule(cfg, db, logger)
 
+  // 任务停止器：批次级/行级停止路由调用（置标记 + 结算 skipped + 关窗 + 清开窗登记）
+  const stopper = createTaskStopper({
+    db,
+    registry: cancelRegistry,
+    logger,
+    closeBrowser: (id) => bitbrowser.closeBrowser(id),
+    getOpenWindow: (id) => db.getOpenWindow(id),
+    clearOpenWindow: (id) => db.clearOpenWindow(id),
+  })
+
   const app = createApp({
     db,
     enqueuer,
@@ -235,6 +256,7 @@ export async function startApp(): Promise<void> {
     },
     fileAssignService,
     getRunById: (id) => db.getRunById(id),
+    stopper,
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {
@@ -244,7 +266,7 @@ export async function startApp(): Promise<void> {
   // 重试恢复：重试定时器是内存态，进程重启后丢失会让 retry_wait 行孤儿化（当天任务永不完成）——
   // 启动时扫描当日 retry_wait 行：退避已到期的立即重新入队，未到期的重新挂定时器（与 scheduleRetry 同语义）；
   // 已被后续轮次取代的陈旧行结算为 failed，避免每次重启重复执行
-  void recoverRetryTasks({ db, tasks, enqueuer, logger, retryBackoffSec: cfg.execution.retryBackoffSec }).catch((e) => {
+  void recoverRetryTasks({ db, tasks, enqueuer, logger, retryBackoffSec: cfg.execution.retryBackoffSec, cancelRegistry }).catch((e) => {
     logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
   })
 

@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
+import { CancelRegistry } from '../src/engine/cancel-registry'
 import { todayStr, type AppDb, type ProfileRow, type RunRow } from '../src/infrastructure/db'
 import { TaskContext, type SiteTask } from '../src/tasks/base'
 import { WalletRegistry } from '../src/automation/wallet/types'
@@ -64,11 +65,11 @@ const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
 const scheduleRetry = vi.fn()
 
-function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>; wallets?: WalletRegistry }) {
+function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>; wallets?: WalletRegistry; cancelRegistry?: CancelRegistry; bitbrowser?: unknown }) {
   return new WindowRunner({
     cfg: over.cfgOver ?? cfg,
     db: over.db ?? makeDb(),
-    bitbrowser: bitbrowser as never,
+    bitbrowser: (over.bitbrowser ?? bitbrowser) as never,
     driver: over.driver ?? makeDriver(),
     tasks: over.tasks ?? new Map([['ok-task', new OkTask()]]),
     wallets: over.wallets ?? (null as never),
@@ -77,6 +78,7 @@ function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<stri
     walletPasswords,
     scheduleRetry,
     reuseOpen: over.reuseOpen,
+    cancelRegistry: over.cancelRegistry,
   })
 }
 
@@ -416,6 +418,67 @@ describe('WindowRunner', () => {
     expect(calls.map(c => c[4])).toEqual(['pending', 'running', 'retry_wait'])
     expect(String(calls[2][5].error)).toContain('钱包扩展未加载')
     expect(task.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('会话开始前已请求停止：不开窗、不跑任务、不重试', async () => {
+    const db = makeDb()
+    const task = new OkTask()
+    const reg = new CancelRegistry()
+    reg.request(1, 'ok-task')
+    const runner = makeRunner({ db, tasks: new Map([['ok-task', task]]), cancelRegistry: reg })
+    const results = await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(task.run).not.toHaveBeenCalled()
+    expect(scheduleRetry).not.toHaveBeenCalled()
+    expect(results.get('ok-task')).toBeNull()
+  })
+
+  it('运行中被停止（关窗打断）：落 skipped、不重试、不计熔断', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    class AbortTask implements SiteTask {
+      meta = { key: 'abort-task', name: 'A', url: 'https://x.io' }
+      run = vi.fn(async () => {
+        reg.request(1, 'abort-task')
+        throw new Error('Target closed')
+      })
+    }
+    const runner = makeRunner({
+      db,
+      tasks: new Map([['abort-task', new AbortTask()]]),
+      cancelRegistry: reg,
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'abort-task' }])
+    expect(statuses(db)).toContain('skipped')
+    expect(scheduleRetry).not.toHaveBeenCalled()
+    expect(db.incrCircuitBreaker).not.toHaveBeenCalled()
+    expect(reg.isCancelled(1, 'abort-task')).toBe(false)
+  })
+
+  it('停止落在开窗阶段（开窗失败）：标记被终端结算清理，不残留', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    const bb2 = {
+      openBrowser: vi.fn(async () => { reg.request(1, 'ok-task'); throw new Error('open boom') }),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      listBrowsers: vi.fn().mockResolvedValue([]),
+    }
+    const runner = makeRunner({ db, bitbrowser: bb2 as never, tasks: new Map([['ok-task', new OkTask()]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(reg.isCancelled(1, 'ok-task')).toBe(false)
+  })
+
+  it('停止落在成功路径：任务正常结束仍清理取消标记', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    class SuccessFlagTask implements SiteTask {
+      meta = { key: 'ok-task', name: 'OK', url: 'https://x.io' }
+      run = vi.fn(async () => { reg.request(1, 'ok-task') })
+    }
+    const runner = makeRunner({ db, tasks: new Map([['ok-task', new SuccessFlagTask()]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(reg.isCancelled(1, 'ok-task')).toBe(false)
+    expect(statuses(db)).toContain('success')
   })
 })
 

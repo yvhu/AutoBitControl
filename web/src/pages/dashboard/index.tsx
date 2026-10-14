@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
-import { useBatches, useBatchDetail, useTasks, useTriggerTask, buildTaskInfo, type TaskInfoMap } from './hooks'
+import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
 import { splitBatches, batchProgress, batchTiming } from './groupBatches'
 import DiagModal from './DiagModal'
@@ -54,6 +54,7 @@ function DiagButton({ runId, screenshot }: { runId: number; screenshot: string |
 
 function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
   const trigger = useTriggerTask()
+  const stop = useStopRun()
   return (
     <Table<RunRow>
       size="small"
@@ -74,9 +75,15 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
         { title: '操作', width: 130, render: (_, r) => (
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
-            <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-              {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-            </Button>
+            {r.inFlight ? (
+              <Button type="link" size="small" danger loading={stop.isPending && stop.variables === r.id} onClick={() => stop.mutate(r.id)}>
+                停止
+              </Button>
+            ) : (
+              <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+                {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
+              </Button>
+            )}
           </Space>
         ) },
       ]}
@@ -87,6 +94,7 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
 function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInfo: TaskInfoMap; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const detail = useBatchDetail(open ? batch.id : null)
+  const stop = useStopBatch()
   const { done, pct } = batchProgress(batch)
   const timing = batchTiming(batch)
   const stats = batch.stats
@@ -103,6 +111,19 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
         <Tag color={KIND_TAG[batch.kind].color}>{KIND_TAG[batch.kind].label}</Tag>
         <span style={{ fontWeight: 600 }}><TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /></span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
+        {batchInFlight(batch) && (
+          <Button
+            size="small"
+            danger
+            loading={stop.isPending && stop.variables === batch.id}
+            onClick={(e) => {
+              e.stopPropagation()
+              stop.mutate(batch.id)
+            }}
+          >
+            停止
+          </Button>
+        )}
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
           {timing.finished && timing.durationSec != null
             ? `${formatDateTime(batch.lastFinishedAt!)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
@@ -130,6 +151,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
 function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskInfoMap }) {
   const detail = useBatchDetail(batch.id)
   const trigger = useTriggerTask()
+  const stop = useStopRun()
   return (
     <Table<RunRow>
       size="small"
@@ -149,9 +171,15 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         { title: '操作', width: 130, render: (_, r) => (
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
-            <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId || r.inFlight} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-              {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-            </Button>
+            {r.inFlight ? (
+              <Button type="link" size="small" danger loading={stop.isPending && stop.variables === r.id} onClick={() => stop.mutate(r.id)}>
+                停止
+              </Button>
+            ) : (
+              <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
+                {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
+              </Button>
+            )}
           </Space>
         ) },
       ]}

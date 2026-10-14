@@ -28,6 +28,7 @@ import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { TaskContext } from './task-context'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
+import type { CancelRegistry } from './cancel-registry'
 import { WalletSession, type WalletRegistry } from '../automation'
 import { createAiClient, type AiClient } from '../integrations/ai'
 
@@ -81,6 +82,11 @@ export interface WindowRunnerDeps {
    */
   accountResolver?: (profile: ProfileRow) => Promise<Record<string, string> | null>
   /**
+   * 取消标记注册表（app 装配注入）：会话开始前消费「已请求停止」的任务（跳过、不开窗），
+   * 任务失败 catch 时消费（落 skipped「手动停止」，不重试、不计熔断）；未注入时行为不变
+   */
+  cancelRegistry?: CancelRegistry
+  /**
    * 窗口复用探测（app 层装配注入）：已登记打开状态（open_windows 表）且调用方实测存活时
    * 返回该窗口调试地址——本轮会话直接复用（不重新开窗、结束后也不关窗）；
    * 返回 null 走正常开窗/关窗流程。未注入时行为不变（恒不开窗复用）
@@ -122,10 +128,22 @@ export class WindowRunner {
     const { cfg, db, bitbrowser, logger } = this.deps
     const date = todayStr()
     const results = new Map<string, RunRow | null>()
+    // 会话开始前消费取消标记：已请求停止的任务不跑（错峰/排队中的会话也不开窗、直接结束）
+    const runTasks: SessionTask[] = []
+    for (const t of tasks) {
+      if (this.deps.cancelRegistry?.isCancelled(profile.id, t.taskKey)) {
+        this.deps.cancelRegistry.clear(profile.id, t.taskKey)
+        results.set(t.taskKey, await this.safeDb(() => this.deps.db.getLatestRun(profile.id, t.taskKey, date), null))
+        logger.info({ profile: profile.name, task: t.taskKey }, '任务启动前已被停止，跳过')
+        continue
+      }
+      runTasks.push(t)
+    }
+    if (runTasks.length === 0) return results
     // 预写 pending：新轮次任务落「待执行」行（批次看板在错峰/开窗期间即可见）；
     // 续跑行（retry_wait 等非终态）不动——重试沿用原行与批次；
     // batch_id 只在此写入，后续 upsert 一律不传（ON CONFLICT COALESCE 保留）
-    for (const t of tasks) {
+    for (const t of runTasks) {
       const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, t.taskKey, date), null)
       const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
       if (existing && !terminal) continue
@@ -146,7 +164,7 @@ export class WindowRunner {
         open = await this.openWithRetry(profile.bitbrowserId)
       }
     } catch (e) {
-      for (const t of tasks) {
+      for (const t of runTasks) {
         const row = await this.settleWindowSkip(profile, t.taskKey, date, 'skipped', `开窗失败: ${(e as Error).message}`)
         results.set(t.taskKey, row)
       }
@@ -160,7 +178,7 @@ export class WindowRunner {
       try {
         connected = await this.deps.driver.connect(`http://${open.http}`)
       } catch (e) {
-        for (const t of tasks) {
+        for (const t of runTasks) {
           const row = await this.settleWindowSkip(profile, t.taskKey, date, 'failed', `CDP 连接失败: ${(e as Error).message}`)
           results.set(t.taskKey, row)
         }
@@ -174,10 +192,10 @@ export class WindowRunner {
       // 第三段（循环内）：逐任务执行，失败只影响当前任务
       // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证并发槽位不被长时间占用）
       const deadline = Date.now() + cfg.execution.windowTimeoutMs
-      for (let i = 0; i < tasks.length; i++) {
-        const key = tasks[i].taskKey
+      for (let i = 0; i < runTasks.length; i++) {
+        const key = runTasks[i].taskKey
         if (Date.now() >= deadline) {
-          for (const rest of tasks.slice(i)) {
+          for (const rest of runTasks.slice(i)) {
             const row = await this.settleWindowSkip(profile, rest.taskKey, date, 'skipped', '窗口超时')
             results.set(rest.taskKey, row)
           }
@@ -247,6 +265,8 @@ export class WindowRunner {
    * 不结算会留下孤儿 retry_wait 行，每次进程重启都会被重试恢复扫描重新入队重复执行
    */
   private async settleWindowSkip(profile: ProfileRow, taskKey: string, date: string, status: 'skipped' | 'failed', error: string): Promise<RunRow | null> {
+    // 终端结算即排空取消标记：避免停止标记残留，误跳过该 (窗口, 任务) 的下一次合法触发
+    this.deps.cancelRegistry?.clear(profile.id, taskKey)
     const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, taskKey, date), null)
     const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
     // 非终态行（retry_wait 待续跑 / 预写 pending）直接结算该行——沿用 slot 与 batch_id
@@ -344,6 +364,8 @@ export class WindowRunner {
           ai: this.ai,
         })
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
+        // 任务正常结束同样清理取消标记（任务一次运行以任意终态收尾即排空，防止残留误伤下一次合法触发）
+        this.deps.cancelRegistry?.clear(profile.id, taskKey)
         // 成功截图：直接取页面截图写产物目录（TaskContext 已收敛为数据袋子，不再有 screenshot 方法）
         const successShot = join(artifacts, `${date}-success.png`)
         const shot = await page.screenshot({ path: successShot }).then(() => successShot).catch(() => null)
@@ -356,6 +378,13 @@ export class WindowRunner {
         logger.info({ profile: profile.name, task: taskKey }, '签到成功')
         return row
       } catch (e) {
+        // 已请求停止（关窗打断等）：落 skipped（手动停止），不重试、不计熔断、不采诊断
+        if (this.deps.cancelRegistry?.isCancelled(profile.id, taskKey)) {
+          this.deps.cancelRegistry.clear(profile.id, taskKey)
+          const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'skipped', { error: '手动停止', finishedAt: localWallNow() }), null)
+          logger.info({ profile: profile.name, task: taskKey }, '任务被手动停止')
+          return row
+        }
         const status = nextStateAfterFailure(attempt, retryMax + 1, 'error')
         // 失败截图留档，供面板"查看"排障
         const shot = await page.screenshot({ path: join(artifacts, `${date}-attempt${attempt}.png`) }).then(() => join(artifacts, `${date}-attempt${attempt}.png`)).catch(() => null)

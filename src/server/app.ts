@@ -13,6 +13,7 @@ import type { AppDb } from '../infrastructure/db'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
 import type { CoalescingEnqueuer } from '../engine/queue'
+import type { TaskStopper } from '../engine/task-stopper'
 import type { SiteTask } from '../tasks/base'
 import type { ScheduleRow } from '../infrastructure/db'
 import type { RunNowResult } from '../engine/scheduler'
@@ -56,6 +57,8 @@ export interface ServerDeps {
   fileAssignService: import('../tools/file-assign/applier').FileAssignService
   /** 按 run id 取运行行（诊断路由读 diagPath；app.ts 注入 db.getRunById） */
   getRunById(id: number): Promise<import('../infrastructure/db').RunRow | null>
+  /** 任务停止器（批次级/行级停止路由；app.ts 注入） */
+  stopper: TaskStopper
 }
 
 /**
@@ -68,7 +71,7 @@ export function createApp(deps: ServerDeps): express.Express {
 
   const api = express.Router()
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
-  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks }))
+  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById }))
   api.use(tasksRouter(deps))
   api.use(profilesRouter(deps))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))

@@ -9,6 +9,7 @@ import { todayStr, localWallNow, type AppDb } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 import type { TaskMeta } from './task'
 import type { CoalescingEnqueuer } from './queue'
+import type { CancelRegistry } from './cancel-registry'
 
 export interface RetryRecoveryDeps {
   db: AppDb
@@ -17,11 +18,13 @@ export interface RetryRecoveryDeps {
   logger: Logger
   /** 全局默认重试退避（秒），任务级 backoffSec 缺省时回落 */
   retryBackoffSec: number
+  /** 取消标记（app 装配注入）：重试到期时若该 (窗口,任务) 已被停止，跳过入队；未注入时行为不变 */
+  cancelRegistry?: CancelRegistry
 }
 
 /** 扫描当日 retry_wait 行并恢复重试；返回实际重新入队的行数（被取代的陈旧行不计） */
 export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number> {
-  const { db, tasks, enqueuer, logger, retryBackoffSec } = deps
+  const { db, tasks, enqueuer, logger, retryBackoffSec, cancelRegistry } = deps
   const date = todayStr()
   const rows = await db.listRunsForDate(date)
   const retryWait = rows.filter(r => r.status === 'retry_wait')
@@ -46,6 +49,10 @@ export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number
     setTimeout(() => {
       void (async () => {
         try {
+          if (cancelRegistry?.isCancelled(r.profileId, r.taskKey)) {
+            cancelRegistry.clear(r.profileId, r.taskKey)
+            return
+          }
           const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
           // 沿用原批次（重试不产生新批次）
           if (p) enqueuer.enqueue(p, r.taskKey, { batchId: r.batchId ?? undefined })
@@ -75,6 +82,10 @@ export async function recoverRetryTasks(deps: RetryRecoveryDeps): Promise<number
     setTimeout(() => {
       void (async () => {
         try {
+          if (cancelRegistry?.isCancelled(r.profileId, r.taskKey)) {
+            cancelRegistry.clear(r.profileId, r.taskKey)
+            return
+          }
           const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
           // 沿用原批次（崩溃残留恢复不产生新批次）
           if (p) enqueuer.enqueue(p, r.taskKey, { batchId: r.batchId ?? undefined })
