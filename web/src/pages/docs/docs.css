@@ -1,0 +1,438 @@
+/* 文档页样式：贴近 antd 官网文档站的三栏布局——
+   左侧固定章节菜单（当前项淡底 + 主色文字 + 左竖条）+ 中间限宽正文 + 右侧「目录」页内 TOC（粘性、独立滚动）。
+   中等屏隐藏右栏，窄屏单栏（左栏移入抽屉）。
+   颜色通过 .doc-page 上的 --doc-* 变量注入（文档页用 antd token 提供），随明暗主题变化。
+   依赖方向：纯样式，无。 */
+
+.doc-page {
+  min-height: 100%;
+}
+
+.doc-splitter {
+  background: transparent;
+}
+
+/* 左侧章节菜单：随窗口滚动吸顶，超出视口时由内层容器独立滚动
+   （Splitter 面板默认 overflow:auto 会截断吸顶，故面板 inline 放开为 visible） */
+.doc-sidebar {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  overflow: hidden;
+  padding-left: 4px;
+}
+
+.doc-sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  padding-right: 12px;
+  border-right: 1px solid var(--doc-border);
+}
+
+.doc-sidebar-filter {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.doc-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.doc-sidebar-loading {
+  padding: 24px;
+  text-align: center;
+}
+
+/* 目录节点：长标题换行显示（面板变窄时不再被挤压省略），悬浮 title 提供全文 */
+.doc-tree .ant-tree-node-content-wrapper {
+  position: relative;
+  border-radius: 6px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.doc-tree .ant-tree-title {
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 多行节点时让展开箭头与首行对齐 */
+.doc-tree .ant-tree-treenode {
+  align-items: flex-start;
+}
+
+.doc-tree-title {
+  display: inline-block;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 当前章节高亮：淡底 + 主色文字 + 左侧主色竖条（antd 官网左侧菜单观感） */
+.doc-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: var(--doc-fill);
+  color: var(--doc-primary);
+  font-weight: 600;
+}
+
+.doc-tree .ant-tree-node-content-wrapper.ant-tree-node-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--doc-primary);
+}
+
+.doc-tree .ant-tree-node-content-wrapper:hover {
+  background: var(--doc-blockquote-bg);
+}
+
+/* 主体区：正文栏 + 右侧「目录」，两者顶部对齐 */
+.doc-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  padding: 24px 40px 96px;
+}
+
+/* 中间正文栏：限宽、留白，不画外框 */
+.doc-article {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--doc-border);
+}
+
+.doc-toolbar-title {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.doc-toolbar-search {
+  flex: 0 1 320px;
+  min-width: 200px;
+}
+
+.doc-content {
+  max-width: 860px;
+}
+
+.doc-loading {
+  padding: 48px;
+  text-align: center;
+}
+
+/* 右侧「目录」：粘性、独立滚动，仅宽屏显示 */
+.doc-toc {
+  position: sticky;
+  top: 24px;
+  flex: 0 0 200px;
+  width: 200px;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.doc-toc-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doc-text-secondary);
+  letter-spacing: 0.4px;
+}
+
+.doc-toc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-left: 2px solid var(--doc-border);
+}
+
+.doc-toc-item a {
+  display: block;
+  padding: 3px 0 3px 12px;
+  color: var(--doc-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  margin-left: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.doc-toc-item--h4 a {
+  padding-left: 22px;
+  font-size: 12px;
+}
+
+.doc-toc-item a:hover {
+  color: var(--doc-primary);
+}
+
+.doc-toc-item--active a {
+  color: var(--doc-primary);
+  border-left-color: var(--doc-primary);
+}
+
+/* 正文排版：贴近 antd 官网——H1 30/600、H2 24 大上距、H3 18，正文 15/1.8 */
+.doc-body {
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.doc-body p {
+  margin: 0 0 16px;
+}
+
+.doc-body ul,
+.doc-body ol {
+  margin: 0 0 16px;
+  padding-left: 26px;
+}
+
+.doc-body li {
+  margin: 6px 0;
+}
+
+.doc-body li > p {
+  margin: 0 0 6px;
+}
+
+.doc-body blockquote {
+  margin: 0 0 16px;
+  padding: 10px 16px;
+  border-left: 4px solid var(--doc-primary);
+  background: var(--doc-blockquote-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--doc-text-secondary);
+}
+
+.doc-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.doc-body hr {
+  border: none;
+  border-top: 1px solid var(--doc-border);
+  margin: 32px 0;
+}
+
+.doc-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px 0;
+  border-radius: 8px;
+}
+
+.doc-body h1,
+.doc-body h2,
+.doc-body h3,
+.doc-body h4,
+.doc-body h5,
+.doc-body h6 {
+  position: relative;
+  scroll-margin-top: 72px;
+}
+
+/* 标题层级：以类名统一控制，避免受 antd Title 默认字号约束 */
+.doc-body .doc-h1 {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 8px 0 24px;
+}
+
+.doc-body .doc-h2 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 48px 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--doc-border);
+}
+
+.doc-body .doc-h3 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 32px 0 12px;
+}
+
+.doc-body .doc-h4 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 24px 0 8px;
+}
+
+.doc-body .doc-h5 {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 20px 0 8px;
+}
+
+.doc-body .doc-h6 {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 16px 0 6px;
+  color: var(--doc-text-secondary);
+}
+
+/* 标题 hover 出现的「#」锚点（点击经内容区委托平滑滚动） */
+.doc-anchor {
+  margin-left: 8px;
+  color: var(--doc-primary);
+  font-weight: 400;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.doc-body h1:hover .doc-anchor,
+.doc-body h2:hover .doc-anchor,
+.doc-body h3:hover .doc-anchor,
+.doc-body h4:hover .doc-anchor,
+.doc-body h5:hover .doc-anchor,
+.doc-body h6:hover .doc-anchor {
+  opacity: 0.45;
+}
+
+.doc-anchor:hover {
+  opacity: 1 !important;
+}
+
+/* 行内代码：淡底、圆角，与正文有区分但不喧宾夺主 */
+.doc-inline-code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--doc-blockquote-bg);
+  font-size: 0.9em;
+}
+
+/* 代码块：浅灰底 + 圆角；头部语言标签 + 右上角「复制/展开」（hover 出现） */
+.doc-code {
+  position: relative;
+  margin: 16px 0;
+  border: 1px solid var(--doc-border);
+  border-radius: 8px;
+  background: var(--doc-code-bg);
+  overflow: hidden;
+}
+
+.doc-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 8px 2px 14px;
+}
+
+.doc-code-lang {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  text-transform: lowercase;
+  color: var(--doc-text-secondary);
+}
+
+.doc-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 「复制」hover 才出现；「展开/折叠」常显，方便发现折叠的长代码 */
+.doc-code-copy {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.doc-code:hover .doc-code-copy,
+.doc-code:focus-within .doc-code-copy {
+  opacity: 1;
+}
+
+.doc-code-body {
+  position: relative;
+}
+
+/* 长代码折叠态：限高 + 底部渐隐，头部提供「展开」 */
+.doc-code-body--collapsed {
+  max-height: 340px;
+  overflow: hidden;
+}
+
+.doc-code-body--collapsed::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--doc-code-bg));
+}
+
+/* 窄屏顶部条：标题 + 打开章节抽屉 */
+.doc-narrow-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--doc-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--doc-blockquote-bg);
+}
+
+.doc-narrow-title {
+  min-width: 0;
+}
+
+/* 中等屏隐藏右侧「目录」（两栏） */
+@media (max-width: 1279px) {
+  .doc-toc {
+    display: none;
+  }
+}
+
+/* 窄屏：单栏、更小留白 */
+@media (max-width: 900px) {
+  .doc-main {
+    padding: 16px 16px 72px;
+  }
+
+  .doc-sidebar {
+    position: static;
+    max-height: none;
+    height: 100%;
+  }
+
+  .doc-sidebar-inner {
+    border-right: none;
+    padding: 12px 12px 24px;
+  }
+}

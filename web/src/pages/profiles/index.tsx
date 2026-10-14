@@ -62,7 +62,7 @@ export default function ProfilesPage() {
   }
 
   const copyIds = async () => {
-    const ids = joinBitbrowserIds(profiles.data ?? [], selectedRowKeys)
+    const ids = joinBitbrowserIds(profiles.data ?? [], selectedRowKeys as Array<string | number>)
     try {
       await navigator.clipboard.writeText(ids.join('\n'))
       message.success(`已复制 ${ids.length} 个窗口ID`)
@@ -245,7 +245,7 @@ export default function ProfilesPage() {
             {profiles.data?.length ?? 0} 个窗口 · 启用 {profiles.data?.filter((p) => p.enabled === 1).length ?? 0}
           </Typography.Text>
           <Divider type="vertical" />
-          <Typography.Text type={selectedRowKeys.length > 0 ? 'primary' : 'secondary'}>
+          <Typography.Text type={selectedRowKeys.length > 0 ? undefined : 'secondary'} style={selectedRowKeys.length > 0 ? { color: token.colorPrimary } : undefined}>
             {selectedRowKeys.length > 0 ? `已选 ${selectedRowKeys.length} 个窗口` : '未选窗口'}
           </Typography.Text>
           <Button
