@@ -3,6 +3,9 @@
  * 依赖方向：仅依赖 patchright 类型，被 task-context 与 scripts 依赖
  * 设计思路：先查已打开的页面，再同时用事件监听 + 100ms 轮询兜底（部分插件弹窗事件时序不可靠），
  * 任一命中即返回；超时返回 null，由调用方决定后续
+ * 说明：这里的真实弹窗对象就是 patchright 的 Page（结构满足 PopupPage），其 getByTestId/getByRole/locator
+ * 返回的正是 patchright Locator，因此 PopupLocator.isVisible 的真实实现即原生 Locator.isVisible，
+ * 无需额外包装层；适配器分类时优先调用它区分「存在但隐藏」与「可见」。
  */
 import type { BrowserContext, Page } from 'patchright'
 

@@ -5,7 +5,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, race, runJs, takeScreenshot } from '../api'
+import { openPage, connectWallet, race, evaluate, takeScreenshot } from '../api'
 
 const BALANCE_TEXT = 'Balance' // 登录态标记（余额小部件出现即已登录）
 const CONNECT_WALLET_BTN = '[data-testid="connect-wallet-button"]' // 未登录时的连接按钮
@@ -43,15 +43,13 @@ export class KonnexCheckinTask extends SiteTask {
    */
   async run(ctx: TaskContext): Promise<void> {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    await loginWallet(ctx, {
+    await connectWallet(ctx, {
       wallet: 'metamask',
-      scenario: 'dialog',
-      confirm: `text=${ETHEREUM_ENTRY_TEXT}`,
-      walletEntry: `text=${METAMASK_ENTRY_TEXT}`,
+      connected: { text: BALANCE_TEXT },
+      disconnected: 'Connect Wallet',
       connect: CONNECT_WALLET_BTN,
-      loggedIn: { text: BALANCE_TEXT },
-      loggedOut: 'Connect Wallet',
-      intents: ['connect'],
+      confirm: `text=${ETHEREUM_ENTRY_TEXT}`,
+      walletOption: { text: METAMASK_ENTRY_TEXT },
     })
     await this.checkin(ctx)
   }
@@ -102,8 +100,8 @@ export class KonnexCheckinTask extends SiteTask {
       return
     }
     // 兜底排错信息：把卡片文本与页面 h1 一并抛出，便于定位站点改版
-    const card = await runJs(ctx, () => (document.querySelector('#loyalty-quest-root-check_in')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
-    const headings = await runJs(ctx, () => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).filter(Boolean).join(' | ')).catch(() => '')
+    const card = await evaluate(ctx, () => (document.querySelector('#loyalty-quest-root-check_in')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
+    const headings = await evaluate(ctx, () => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim()).filter(Boolean).join(' | ')).catch(() => '')
     throw new Error(`点击 Check in 后未出现成功弹窗（卡片: ${card || '无'}；h1: ${headings || '无'}；可能已签到/站点改版）`)
   }
 

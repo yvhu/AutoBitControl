@@ -1,10 +1,10 @@
 /**
  * DAC Inception 任务：量子箱开箱（每日 5 箱）
- * 登录：Enter Inception → Get Started 弹窗点 WALLET → AppKit 归一化 → MetaMask
+ * 登录：Enter Inception → Get Started 弹窗点 WALLET → 站内钱包列表 → MetaMask
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, waitFor, race, runJs, elementState, takeScreenshot } from '../api'
+import { openPage, connectWallet, click, waitFor, race, evaluate, getElementState, takeScreenshot } from '../api'
 
 const LIMIT_TEXT = 'Daily limit reached' // 每日开箱上限提示
 const MODAL_TITLE = 'What is inside?' // 开箱弹窗标题
@@ -12,7 +12,7 @@ const REVEAL_TEXTS = ['You Won', 'Better luck next time'] // 开箱结果文案�
 const INSUFFICIENT_TEXT = 'Insufficient QE' // 余额不足提示（无法继续开箱）
 const SIDEBAR_TEXT = 'Quantum Crate' // 左侧目录栏开箱入口（也作登录态标记）
 const ENTER_TEXT = 'Enter Inception' // 落地页进入按钮（未登录时可见）
-const METAMASK_ENTRY = 'wallet-selector-io.metamask' // AppKit 钱包选择项的 testid
+const WALLET_TEXT = 'WALLET' // Get Started 弹窗内的钱包按钮（点开后露出站内钱包列表）
 
 const CRATE_PAGE_WAIT_MS = 20000 // 点目录栏后等开箱页元素（Open Free）出现的预算
 const CRATE_PAGE_ATTEMPTS = 2 // 进入开箱页的补点次数（SPA 路由可能未生效）
@@ -33,7 +33,7 @@ export class InceptionDachainTask extends SiteTask {
     group: { key: 'inception', name: 'Inception' },
     url: 'https://inception.dachain.io/',
     sourceUrl: ['https://airdrops.io/dac/', 'https://cryptorank.io/zh/drophunting/arc-chain-activity911'],
-    note: '真机核实：免费箱按钮实为 OPEN FOR 150 QE（余额 ≥150 QE 才可点）；弹窗 Close 常驻，开箱结果需等 You Won / Better luck next time；每日 5 箱上限；登录：Enter Inception → Get Started 点 WALLET → AppKit 归一化点 MetaMask；MetaMask 中文界面（适配器按 testid）',
+    note: '真机核实：免费箱按钮实为 OPEN FOR 150 QE（余额 ≥150 QE 才可点）；弹窗 Close 常驻，开箱结果需等 You Won / Better luck next time；每日 5 箱上限；登录：Enter Inception → Get Started 点 WALLET → 站内钱包列表点 MetaMask；MetaMask 中文界面（适配器按 testid）',
     category: 'checkin',
     lastUpdated: '2026-10-09',
     enabled: true,
@@ -44,20 +44,18 @@ export class InceptionDachainTask extends SiteTask {
   }
 
   /**
-   * 执行流程：打开任务页 → 声明式钱包登录（AppKit 归一化 MetaMask）→ 进入开箱页反复开箱。
+   * 执行流程：打开任务页 → 声明式钱包登录（Enter Inception → WALLET → 站内钱包列表 → MetaMask）→ 进入开箱页反复开箱。
    * @param ctx 任务上下文
    */
   async run(ctx: TaskContext): Promise<void> {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    await loginWallet(ctx, {
+    await connectWallet(ctx, {
       wallet: 'metamask',
-      scenario: 'appkit',
-      loggedIn: { text: SIDEBAR_TEXT },
-      loggedOut: ENTER_TEXT,
+      connected: { text: SIDEBAR_TEXT },
+      disconnected: ENTER_TEXT,
       connect: `button:has-text("${ENTER_TEXT}")`,
-      open: 'button:has-text("WALLET")',
-      entryTestId: METAMASK_ENTRY,
-      intents: ['connect'],
+      // 点 Enter Inception 后站内弹出 Get Started 对话框，需再点 WALLET 才露出钱包列表
+      confirm: `button:has-text("${WALLET_TEXT}")`,
     })
     await this.action(ctx)
   }
@@ -73,7 +71,7 @@ export class InceptionDachainTask extends SiteTask {
 
   /** 判断某选择器的首个匹配元素当前是否可见 */
   private async isVisible(ctx: TaskContext, selector: string): Promise<boolean> {
-    return (await elementState(ctx, selector)) === 'visible'
+    return (await getElementState(ctx, selector)) === 'visible'
   }
 
   /** 点 Open Free 后竞速：上限提示 / 开箱弹窗 / 余额不足 */
@@ -93,7 +91,7 @@ export class InceptionDachainTask extends SiteTask {
 
   /** 读页面每日开箱计数器（DAILY OPENS x/y）；解析失败返回 null */
   private async dailyOpens(ctx: TaskContext): Promise<{ opened: number; total: number } | null> {
-    return runJs<{ opened: number; total: number } | null>(ctx, () => {
+    return evaluate<{ opened: number; total: number } | null>(ctx, () => {
       const text = (document as unknown as { body?: { innerText?: string } }).body?.innerText ?? ''
       const m = text.match(/DAILY[\s|]*OPENS[\s|]*(\d+)\s*\/\s*(\d+)/)
       return m ? { opened: Number(m[1]), total: Number(m[2]) } : null
@@ -150,7 +148,7 @@ export class InceptionDachainTask extends SiteTask {
       if (revealed === 'insufficient') throw new Error('QE 余额不足（Insufficient QE），无法继续开箱')
       if (revealed !== 'revealed') throw new Error('等待开箱结果超时（视频/接口过慢）')
       await click(ctx, 'button:has-text("Close")')
-      await waitFor(ctx, { gone: `text=${MODAL_TITLE}` }, { budgetMs: MODAL_GONE_MS })
+      await waitFor(ctx, { hidden: `text=${MODAL_TITLE}` }, { budgetMs: MODAL_GONE_MS })
       ctx.log.info({ step: 'crates', window: ctx.profile.name, opened: i + 1 }, '开箱完成')
     }
     throw new Error('开箱次数超过预期仍未出现每日上限提示')

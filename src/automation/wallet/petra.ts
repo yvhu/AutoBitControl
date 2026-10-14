@@ -21,6 +21,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  */
 export class PetraAdapter implements WalletAdapter {
   key = 'petra'
+  displayName = 'Petra'
   extensionId = 'ejjladinnckdgjemekebdpeokbikhfci'
   probePath = 'index.html'
   providerFlag = 'isPetra'
@@ -115,6 +116,51 @@ export class PetraAdapter implements WalletAdapter {
 
   /** 处理「站点请求交易确认」的弹窗：同样委托 confirm */
   async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /**
+   * 分类 Petra 弹窗：按可见文案判定（Petra 无稳定 testid，只能用 has-text）。
+   * 顺序：unlock → connect → tx → sign。'Approve'/'Confirm' → 交易，交易类保守且提前于签名，
+   * 保证「隐藏签名文案 + 可见确认文案」不会被误判为 sign 自动点击。
+   * @param popup 钱包弹窗页
+   * @returns 弹窗意图类别；无法判定返回 'unknown'
+   */
+  async classifyPopup(popup: PopupPage): Promise<'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'> {
+    if (await this.locatorVisible(popup, 'input[type="password"]')) return 'unlock'
+    if (await this.locatorVisible(popup, 'button:has-text("Connect")')) return 'connect'
+    if (await this.locatorVisible(popup, 'button:has-text("Approve")') || await this.locatorVisible(popup, 'button:has-text("Confirm")')) return 'tx'
+    if (await this.locatorVisible(popup, 'button:has-text("Sign In")') || await this.locatorVisible(popup, 'button:has-text("Sign")')) return 'sign'
+    return 'unknown'
+  }
+
+  /**
+   * 登录自适应：unlock 复用 unlock（需密码），connect/sign 复用 confirm；tx 绝不处理（返回 false）。
+   * @param popup 钱包弹窗页
+   * @param password 解锁密码（unlock 分类时需要）
+   * @returns 是否已处理（tx/unknown/缺密码返回 false）
+   */
+  async handleLoginPopup(popup: PopupPage, password?: string): Promise<boolean> {
+    const kind = await this.classifyPopup(popup)
+    if (kind === 'tx' || kind === 'unknown') return false
+    if (kind === 'unlock') {
+      if (!password) return false
+      await this.unlock(popup, password)
+      return true
+    }
+    if (kind === 'connect') { await this.connect(popup); return true }
+    await this.sign(popup)
+    return true
+  }
+
+  /** 某选择器当前是否可见：优先 isVisible（区分存在但隐藏），mock 无 isVisible 时回退 count>0 */
+  private async locatorVisible(popup: PopupPage, selector: string): Promise<boolean> {
+    const loc = popup.locator(selector).first()
+    try {
+      if (loc.isVisible) return await loc.isVisible()
+      return ((await loc.count?.()) ?? 0) > 0
+    } catch {
+      return false
+    }
+  }
 
   /**
    * 点击确认按钮至弹窗关闭。

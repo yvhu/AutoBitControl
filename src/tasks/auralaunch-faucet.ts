@@ -4,7 +4,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, click, getAccount, hasText, runJs, takeScreenshot } from '../api'
+import { openPage, click, getAccountValue, hasText, evaluate, takeScreenshot } from '../api'
 import type { Response } from 'patchright'
 
 export const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]' // 收款地址输入框
@@ -149,11 +149,11 @@ export class AuralaunchFaucetTask extends SiteTask {
         await takeScreenshot(ctx, 'auralaunch-faucet-limit')
         return
       }
-      const bodyText = await runJs(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
+      const bodyText = await evaluate(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
       throw new Error(`地址输入框持续禁用且无限频提示（页面文本: ${bodyText.slice(0, 300)}）`)
     }
     // 3) 读地址并填入；填后被框架清空则再填一次
-    const address = await getAccount(ctx, 'metamask钱包地址')
+    const address = await getAccountValue(ctx, 'metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
     await addressInput.fill(address)
     if (((await addressInput.inputValue().catch(() => '')) ?? '') !== address) {
@@ -196,7 +196,7 @@ export class AuralaunchFaucetTask extends SiteTask {
       await takeScreenshot(ctx, 'auralaunch-faucet-limit')
       return
     }
-    const bodyText = await runJs(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
+    const bodyText = await evaluate(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
     throw new Error(`点击 Request 后未出现成功/限频信号（页面文本: ${bodyText.slice(0, 300)}）`)
   }
 }

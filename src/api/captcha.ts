@@ -20,9 +20,9 @@ function windowLogger(ctx: TaskContext): Pick<Logger, 'info' | 'warn'> {
 /** Turnstile 方框：无 waitMs = 单次检测点击；有 waitMs = 预算内轮询等待并点击 */
 export async function clickTurnstile(
   ctx: TaskContext,
-  options: { waitMs?: number; selectors?: string[]; maxAttempts?: number } = {},
+  opts: { waitMs?: number; selectors?: string[]; maxAttempts?: number } = {},
 ): Promise<boolean> {
   const deps = { page: ctx.page, logger: windowLogger(ctx) }
-  const opts = { selectors: options.selectors, maxAttempts: options.maxAttempts }
-  return options.waitMs && options.waitMs > 0 ? autoClickTurnstile(deps, options.waitMs) : clickTurnstileBox(deps, opts)
+  const clickOpts = { selectors: opts.selectors, maxAttempts: opts.maxAttempts }
+  return opts.waitMs && opts.waitMs > 0 ? autoClickTurnstile(deps, opts.waitMs) : clickTurnstileBox(deps, clickOpts)
 }

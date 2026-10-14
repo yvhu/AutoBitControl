@@ -9,7 +9,7 @@ import { ok, asyncHandler } from '../http/response'
  * @swagger
  * /api/bitbrowser/test:
  *   post:
- *     summary: 比特浏览器本地 API 连接测试（失败不抛错，返回 ok:false）
+ *     summary: 测试比特浏览器本地 API 连接（失败不抛错，返回 ok:false）
  *     responses:
  *       '200':
  *         description: 连接状态

@@ -5,7 +5,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
  */
 import { SiteTask, RECOVER_TEXTS, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, waitFor, elementState, hasText, getAccount, uploadFile, takeScreenshot, signMessage } from '../api'
+import { openPage, connectWallet, click, waitFor, getElementState, hasText, getAccountValue, setInputFiles, takeScreenshot, signMessage } from '../api'
 
 const ADDRESS_SELECTOR = 'header button:has-text("0x")'
 const CONNECT_SELECTOR = 'header button:has-text("Connect Wallet")'
@@ -35,7 +35,7 @@ export class ShelbyExplorerTask extends SiteTask {
     group: { key: 'shelby', name: 'Shelby' },
     url: 'https://explorer.shelby.xyz/shelbynet',
     sourceUrl: 'https://cryptorank.io/zh/drophunting/shelby-activity1120',
-    note: '真机核实（2026-09-07）：站内 Petra Web 弹窗（非 AppKit），点弹窗内 Connect 后静默连接（扩展已授权无钱包弹窗），登录态以 header 0x 地址按钮为准（首页表格全是 0x 不能全页判定）；上传入口在账号页 Upload Files；file input 隐藏；选文件后站点立即查重——已上传直接 Blob name already taken 且 Upload 永不启用→短路视为成功；未上传则点 Upload 触发两次签名（register_multiple_blobs → commit_object）；成功文案 All files uploaded successfully；上传中不刷新防打断在途请求',
+    note: '真机核实（2026-09-07）：站内 Petra Web 弹窗（站内钱包列表，非浏览器扩展弹窗），点弹窗内 Connect 后静默连接（扩展已授权无钱包弹窗），登录态以 header 0x 地址按钮为准（首页表格全是 0x 不能全页判定）；上传入口在账号页 Upload Files；file input 隐藏；选文件后站点立即查重——已上传直接 Blob name already taken 且 Upload 永不启用→短路视为成功；未上传则点 Upload 触发两次签名（register_multiple_blobs → commit_object）；成功文案 All files uploaded successfully；上传中不刷新防打断在途请求',
     category: 'checkin',
     lastUpdated: '2026-10-09',
     enabled: true,
@@ -58,15 +58,13 @@ export class ShelbyExplorerTask extends SiteTask {
 
   /** 钱包登录声明（复用给初始登录与账号页会话失效时的兜底重登） */
   private walletLogin(ctx: TaskContext): Promise<void> {
-    return loginWallet(ctx, {
+    return connectWallet(ctx, {
       wallet: 'petra',
-      scenario: 'dialog',
-      loggedIn: { selector: ADDRESS_SELECTOR },
-      loggedOut: { selector: CONNECT_SELECTOR },
+      connected: { selector: ADDRESS_SELECTOR },
+      disconnected: { selector: CONNECT_SELECTOR },
       connect: CONNECT_SELECTOR,
       confirm: DIALOG_CONNECT_SELECTOR,
-      intents: ['connect'],
-      waitLoggedInMs: this.loginWaitMs,
+      waitConnectedMs: this.loginWaitMs,
     })
   }
 
@@ -82,7 +80,7 @@ export class ShelbyExplorerTask extends SiteTask {
   /** 账号页会话未恢复时的重新登录（复用登录声明） */
   private async doLoginIfNeeded(ctx: TaskContext): Promise<void> {
     // 初始登录已由 run 完成；此处仅在账号页会话失效时兜底重登
-    if ((await elementState(ctx, ADDRESS_SELECTOR)) === 'visible') return
+    if ((await getElementState(ctx, ADDRESS_SELECTOR)) === 'visible') return
     await this.walletLogin(ctx)
   }
 
@@ -92,7 +90,7 @@ export class ShelbyExplorerTask extends SiteTask {
    * @param ctx 任务上下文
    */
   private async upload(ctx: TaskContext): Promise<void> {
-    const address = await getAccount(ctx, 'petra钱包地址')
+    const address = await getAccountValue(ctx, 'petra钱包地址')
     const accountUrl = `${this.accountBaseUrl}/shelbynet/account/${address}/blobs`
     await openPage(ctx, accountUrl)
     if (!(await this.waitSelectorRecover(ctx, UPLOAD_FILES_SELECTOR, this.uploadEntryWaitMs))) {
@@ -109,7 +107,7 @@ export class ShelbyExplorerTask extends SiteTask {
       inputAttached = await this.waitAttached(ctx, FILE_INPUT_SELECTOR, this.uploadDialogWaitMs)
     }
     if (!inputAttached) throw new Error('上传弹窗未出现 file input（弹窗结构异常或点击落空）')
-    await uploadFile(ctx, FILE_INPUT_SELECTOR, await getAccount(ctx, '文件地址'))
+    await setInputFiles(ctx, FILE_INPUT_SELECTOR, await getAccountValue(ctx, '文件地址'))
     const settle = await this.waitSettle(ctx)
     if (settle === 'alreadyDone') {
       ctx.log.info({ step: 'upload', window: ctx.profile.name }, '文件已上传过（Blob name already taken），视为成功')
@@ -147,7 +145,7 @@ export class ShelbyExplorerTask extends SiteTask {
   private async waitAttached(ctx: TaskContext, selector: string, budgetMs: number): Promise<boolean> {
     const end = Date.now() + budgetMs
     while (Date.now() < end) {
-      if ((await elementState(ctx, selector)) !== 'absent') return true
+      if ((await getElementState(ctx, selector)) !== 'absent') return true
       await ctx.page.waitForTimeout(1000)
     }
     return false

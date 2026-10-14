@@ -121,7 +121,7 @@ async function assertNoOtherPureAssign(db: AppDb, excludeId: number | null): Pro
  * @swagger
  * /api/schedules:
  *   get:
- *     summary: 定时计划列表（面板视图）
+ *     summary: 列出定时计划（面板视图）
  *     responses:
  *       '200':
  *         description: 计划列表

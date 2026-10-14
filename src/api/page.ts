@@ -9,18 +9,18 @@ import { clickPoint } from '../automation'
 export async function openPage(
   ctx: TaskContext,
   url?: string,
-  options: { retries?: number; timeoutMs?: number; waitUntil?: 'domcontentloaded' | 'load' | 'networkidle'; closeOtherTabs?: boolean } = {},
+  opts: { retries?: number; timeoutMs?: number; waitUntil?: 'domcontentloaded' | 'load' | 'networkidle'; closeOtherTabs?: boolean } = {},
 ): Promise<void> {
   const target = url ?? ctx.task.meta.url
   if (!target) throw new Error('未提供 url（任务 meta.url 为空）')
-  if (options.closeOtherTabs) {
+  if (opts.closeOtherTabs) {
     for (const p of ctx.page.context().pages()) {
       if (p !== ctx.page) await p.close().catch(() => {})
     }
   }
-  const retries = options.retries ?? 3
-  const timeoutMs = options.timeoutMs ?? 45000
-  const waitUntil = options.waitUntil ?? 'domcontentloaded'
+  const retries = opts.retries ?? 3
+  const timeoutMs = opts.timeoutMs ?? 45000
+  const waitUntil = opts.waitUntil ?? 'domcontentloaded'
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await ctx.page.goto(target, { timeout: timeoutMs, waitUntil })
@@ -48,12 +48,12 @@ export async function fill(ctx: TaskContext, selector: string, text: string): Pr
 }
 
 /** 按键（'Enter' / 'Control+A' 等） */
-export async function pressKey(ctx: TaskContext, key: string): Promise<void> {
+export async function press(ctx: TaskContext, key: string): Promise<void> {
   await ctx.page.keyboard.press(key)
 }
 
 /** 主世界执行 JS 并返回结果（读站点注入的全局变量必须用主世界） */
-export async function runJs<T>(ctx: TaskContext, fn: () => T): Promise<T> {
+export async function evaluate<T>(ctx: TaskContext, fn: () => T): Promise<T> {
   // patchright 的 evaluate(pageFunction, arg, world, isFunction)：undefined=不传参，{}=默认上下文，false=主世界（同旧 ctx.js）
   return ctx.page.evaluate(fn, undefined, {}, false) as Promise<T>
 }

@@ -178,7 +178,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/statuses:
  *   get:
- *     summary: 空投追踪状态列清单（含每列项目数）
+ *     summary: 列出空投追踪状态列（含每列项目数）
  *     responses:
  *       '200':
  *         description: 状态列数组
@@ -215,7 +215,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/statuses/{id}:
  *   patch:
- *     summary: 改名/换序状态列
+ *     summary: 改名或换序状态列
  *     parameters:
  *       - { in: path, name: id, required: true, schema: { type: integer } }
  *     responses:
@@ -236,7 +236,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/projects:
  *   get:
- *     summary: 空投追踪项目清单（含子项，已按列与列内规则排序）
+ *     summary: 列出空投追踪项目（含子项，已按列与列内规则排序）
  *     responses:
  *       '200':
  *         description: 项目数组
@@ -287,7 +287,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/projects/import:
  *   post:
- *     summary: 批量从系统任务导入空投项目
+ *     summary: 从系统任务批量导入空投项目
  *     requestBody:
  *       content:
  *         application/json:
@@ -330,7 +330,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/projects/{id}:
  *   patch:
- *     summary: 部分更新项目（含拖拽流转 statusId）
+ *     summary: 更新项目（支持部分字段与拖拽流转 statusId）
  *     parameters:
  *       - { in: path, name: id, required: true, schema: { type: integer } }
  *     requestBody:
@@ -363,7 +363,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/projects/{id}/todos:
  *   post:
- *     summary: 给项目加待办子项
+ *     summary: 新增项目待办子项
  *     parameters:
  *       - { in: path, name: id, required: true, schema: { type: integer } }
  *     responses:
@@ -376,7 +376,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/todos/{id}:
  *   patch:
- *     summary: 更新子项（勾选/内容/日期/优先级）
+ *     summary: 更新子项（勾选、内容、日期、优先级）
  *     parameters:
  *       - { in: path, name: id, required: true, schema: { type: integer } }
  *     responses:
@@ -396,7 +396,7 @@ async function assertTaskKeyBindable(deps: { db: AppDb; tasks: Map<string, SiteT
  * @swagger
  * /api/airdrop/reminders:
  *   get:
- *     summary: 空投追踪提醒汇总（未来 5 天内 + 已过期）
+ *     summary: 汇总空投追踪提醒（未来 5 天内与已过期）
  *     responses:
  *       '200':
  *         description: 提醒汇总

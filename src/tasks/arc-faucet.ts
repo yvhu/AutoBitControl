@@ -4,7 +4,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数），不再直接 import automation
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, click, fill, getAccount, waitFor, takeScreenshot } from '../api'
+import { openPage, click, fill, getAccountValue, waitFor, takeScreenshot } from '../api'
 
 // —— 站点元素与文案（2026-09-09 SSR 核实）——
 export const ADDRESS_SELECTOR = 'input[name="address"]' // 收款地址输入框
@@ -105,7 +105,7 @@ export class ArcFaucetTask extends SiteTask {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 1) 等地址输入框渲染（落地页为 SSR + hydration，可能较慢）
     await waitFor(ctx, { selector: ADDRESS_SELECTOR }, { assert: true, budgetMs: 20000 })
-    const address = await getAccount(ctx, 'metamask钱包地址')
+    const address = await getAccountValue(ctx, 'metamask钱包地址')
     const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
     await fill(ctx, ADDRESS_SELECTOR, address)
     // 2) 校正网络（Arc Testnet）与币种（USDC），已正确则不动

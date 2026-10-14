@@ -13,15 +13,15 @@ import { clickTurnstile } from '../src/api'
 
 vi.mock('../src/api', () => ({
   openPage: vi.fn(),
-  loginWallet: vi.fn(),
+  connectWallet: vi.fn(),
   click: vi.fn(),
   waitFor: vi.fn(),
   race: vi.fn(),
-  runJs: vi.fn(),
+  evaluate: vi.fn(),
   takeScreenshot: vi.fn(),
   clickTurnstile: vi.fn(),
   hasText: vi.fn(),
-  elementState: vi.fn(),
+  getElementState: vi.fn(),
 }))
 
 /** 真机实测的错误原文（turnstile.ts 重试耗尽后上抛） */

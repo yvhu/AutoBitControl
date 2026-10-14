@@ -22,7 +22,7 @@ const EXAMPLE_WHITELIST = ['example-checkin.ts', 'faucet-example.ts', 'mint-exam
  * @swagger
  * /api/docs/guide:
  *   get:
- *     summary: API 使用手册 markdown 原文（前端 react-markdown 渲染）
+ *     summary: 读取 API 使用手册 markdown 原文（前端 react-markdown 渲染）
  *     responses:
  *       '200':
  *         description: 手册内容
@@ -40,7 +40,7 @@ const EXAMPLE_WHITELIST = ['example-checkin.ts', 'faucet-example.ts', 'mint-exam
  *
  * /api/docs/examples:
  *   get:
- *     summary: 示例任务文件清单（白名单限定）
+ *     summary: 列出示例任务文件（白名单限定）
  *     responses:
  *       '200':
  *         description: 示例清单
@@ -61,7 +61,7 @@ const EXAMPLE_WHITELIST = ['example-checkin.ts', 'faucet-example.ts', 'mint-exam
  *
  * /api/docs/examples/{name}:
  *   get:
- *     summary: 单个示例任务源码（白名单校验）
+ *     summary: 读取示例任务源码（白名单校验）
  *     parameters:
  *       - in: path
  *         name: name

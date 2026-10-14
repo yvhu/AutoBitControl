@@ -3,12 +3,12 @@
  * 站点：占位示例站点；url 为占位地址、开关默认关闭，仅作调试与复制起点，无真实站点
  * 执行流程：打开任务页（占位 url）→ 声明式登录（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
  *          → 判已签到（幂等）→ 点签到按钮 → 断言成功标志
- * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/hasText/waitFor）
+ * 设计：run 内直接用 ../api 能力函数（openPage/connectWallet/click/hasText/waitFor）
  * 时间预算：timeoutSec 180s（单任务整体超时）、retry.max 2 次 / 退避 600s、concurrency 4
  * 新增任务从这里复制改起：先跑通流程，再逐步替换选择器
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, hasText, waitFor } from '../api'
+import { openPage, connectWallet, click, hasText, waitFor } from '../api'
 
 export class ExampleCheckinTask extends SiteTask {
   meta: TaskMeta = {
@@ -35,11 +35,10 @@ export class ExampleCheckinTask extends SiteTask {
   async run(ctx: TaskContext): Promise<void> {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
     // 登录：竞速判登录态 → 点连接 → 签名/确认 → 等登录完成（占位选择器，复制后替换）
-    await loginWallet(ctx, {
+    await connectWallet(ctx, {
       wallet: 'metamask',
-      scenario: 'direct',
-      loggedIn: { text: '已连接' },
-      loggedOut: '连接钱包',
+      connected: { text: '已连接' },
+      disconnected: '连接钱包',
       connect: 'button:has-text("连接钱包")',
     })
     // 已签到直接成功返回（幂等：重复触发不报错）

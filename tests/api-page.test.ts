@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { openPage, click, fill, pressKey, runJs } from '../src/api'
+import { openPage, click, fill, press, evaluate } from '../src/api'
 
 /** 最小假 ctx：只提供函数用到的字段 */
 function makeCtx(over: Record<string, unknown> = {}) {
@@ -71,10 +71,10 @@ describe('api/page', () => {
     expect(send).toHaveBeenCalled()
   })
 
-  it('fill / pressKey / runJs', async () => {
+  it('fill / press / evaluate', async () => {
     const ctx = makeCtx()
     await fill(ctx, '#a', 'v')
-    await pressKey(ctx, 'Enter')
-    expect(await runJs(ctx, () => 42)).toBe(42)
+    await press(ctx, 'Enter')
+    expect(await evaluate(ctx, () => 42)).toBe(42)
   })
 })

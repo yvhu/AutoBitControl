@@ -1,131 +1,279 @@
 /**
- * 登录编排（automation/wallet 层）：竞速判登录态 → 点连接入口 → 露出钱包入口 → 按 intents 处理弹窗 → 等登录完成
- * 真机沉淀：静默连接容忍、AppKit 视图归一化、弹窗慢补点、token localStorage 刷新恢复
- * 依赖方向：依赖 ./actions、../dom、./appkit（静态导入，无运行时环）
+ * 自适应连接编排（automation/wallet 层）：判初始态 → 扩展就绪 → 点连接 → 竞速「站内钱包项/扩展弹窗/connected/disconnected」自适应推进 → 等 connected
+ * 真机沉淀：静默连接容忍、站内弹窗视图归一化（短竞速 + 归一化露出钱包列表）、弹窗慢补点、刷新恢复、登录阶段绝不自动确认交易。
+ * 依赖方向：依赖 ./actions（类型与门面）、./heuristics、./popup、../dom（静态导入，无运行时环）。
  */
-import { openAppKitWallet } from './appkit'
-import type { Probe } from '../dom'
-import type { WalletActions, WalletIntent } from './actions'
+import { probeDesc, probeLocator, probeVisible, raceProbes, type Probe } from '../dom'
+import { DEFAULT_RELOAD_TIMEOUT_MS } from '../../infrastructure/constants'
+import { findConnectButton, HEURISTIC_CONNECTED, HEURISTIC_DISCONNECTED, WALLET_LIST_REVEAL_SELECTORS } from './heuristics'
+import type { WalletActions } from './actions'
+import type { PopupPage, WalletAdapter } from './types'
+import { waitForPopup } from './popup'
 
-/** 探针简写：字符串等价于 `{ text }`（设计示例与测试用 `loggedOut: 'Connect Wallet'`） */
+/** 探针简写：字符串等价于 `{ text }`（设计示例与测试用 `disconnected: 'Connect Wallet'`） */
 export type LoginProbe = Probe | string
 
 /**
- * 登录规格：用声明式方式描述「怎么判断登录态、从哪个入口发起、要过哪些钱包弹窗」，
- * 默认骨架任务直接把它交给 TaskContext.wallet.ensureLoggedIn 执行。
+ * 自适应连接规格：只描述「可见行为」，其余交给框架推断。
+ * 未提供的 connected/disconnected/walletOption 由启发式判据补全（见 heuristics.ts）。
  */
-export interface LoginSpec {
-  /** 已登录标志探针（如 `{ text: 'Connected' }` 或 'Logout'）：出现即认定已登录 */
-  loggedIn: LoginProbe
-  /** 未登录标志探针（如 'Connect Wallet'）：出现即认定需要走登录流程 */
-  loggedOut: LoginProbe
-  /** 站点上「连接钱包」按钮选择器（可省略：有些站点进页面就自动弹连接框） */
+export interface LoginFlowOptions {
+  /** 已连接标志探针（显式）：出现即认定已登录；缺省用地址样式文本启发式 */
+  connected?: LoginProbe
+  /** 未连接标志探针（显式）：出现即走连接流程；缺省用通用连接按钮启发式 */
+  disconnected?: LoginProbe
+  /** 站点「连接钱包」按钮选择器；缺省用 findConnectButton 按候选文案自动找 */
   connect?: string
-  /**
-   * 连接入口类型：
-   * direct 直接点 connect；dialog 先点 confirm 打开站点对话框；appkit 走 AppKit（Reown）归一化流程
-   */
-  entry?:
-    | { kind: 'direct' }
-    | { kind: 'dialog'; confirm?: string }
-    | { kind: 'appkit'; open: string; entryTestId: string; modalTestId?: string }
-  /** 站点弹窗内「钱包选择入口」（如 MetaMask）；在 connect/dialog/appkit 之后、等扩展弹窗之前点击，并作为补点选择器 */
-  walletEntry?: string
-  /** 要依次处理的钱包意图序列；缺省 ['connect']（登录通常只需连接） */
-  intents?: WalletIntent[]
-  /** 等「已登录」标志出现的最长毫秒数（缺省 90000） */
-  waitLoggedInMs?: number
-  /** 自定义可恢复错误文案（透传给 recover，出现即刷新页面） */
-  recoverTexts?: string[]
-  /** 等待登录期间周期刷新间隔毫秒（缺省 25000） */
+  /** 站内钱包选择项探针（如 `{ text: 'MetaMask' }`）；缺省按适配器 displayName 匹配 */
+  walletOption?: LoginProbe
+  /** 站点在点连接后需要额外确认的按钮（如站内对话框的「Connect with Ethereum」）；仅软点，不阻断 */
+  confirm?: string
+  /** 等「已连接」标志出现的最长毫秒数（缺省 90000） */
+  waitConnectedMs?: number
+  /** 自定义可恢复错误文案（透传 recover，出现即刷新页面） */
+  errorTexts?: string[]
+  /** 等待连接期间周期刷新间隔毫秒（缺省 25000） */
   refreshEveryMs?: number
-  /** 整体重试轮数（缺省 2）：从第二轮的刷新页面开始，覆盖网络抖动/控件晚渲染 */
+  /** 整体重试轮数（缺省 2）：从第二轮起先刷新页面，覆盖网络抖动/控件晚渲染 */
   attempts?: number
-  /** 弹窗未按时出现时，补点入口前的等待毫秒数（缺省 8000） */
+  /** 每轮内竞速「什么都没命中」的等待毫秒数，超时补点一次连接按钮（缺省 8000） */
   reclickAfterMs?: number
 }
 
+/** 初始态竞速预算（毫秒）：判页面进来时已登录还是未登录 */
+const INITIAL_RACE_MS = 20000
+/** 单轮内每次短竞速的等待毫秒数：命中任一可见信号即返回，超时视为 idle 交给归一化处理 */
+const SHORT_RACE_MS = 3000
+/** 单轮内最多推进次数：防止「站内钱包项反复可见/扩展弹窗持续存在」等异常导致死循环 */
+const MAX_STEPS = 8
+
+/** 单轮竞速结果：命中的语义键（含扩展弹窗）或 none */
+type RoundResult =
+  | { kind: 'connected' }
+  | { kind: 'disconnected' }
+  | { kind: 'walletOption' }
+  | { kind: 'popup'; popup: PopupPage }
+  | { kind: 'none' }
+
 /**
- * 完整登录编排：竞速判登录态 → 点连接入口 → 露出钱包入口 → 按 intents 依次处理弹窗 → 等登录完成。
- * 执行流程：先花 20s 竞速 loggedIn/loggedOut 两探针——若登录态直接返回 skipped=true；
- * 否则先 ready() 确认扩展就绪，然后最多 attempts 轮（第二轮起先刷新页面）：
- * 依次点 connect、按 entry 类型（dialog 点 confirm / appkit 走归一化）开入口、点 walletEntry，
- * 再逐个执行 intents（每次 runIntent 等弹窗、解锁、确认）；随后用 recover 等 loggedIn 标志出现，
- * 出现即 finished；若一开始就能竞速到 loggedIn 也算成功。全部轮次失败则抛错。
- * @param wallet WalletActions 门面（提供 ready/runIntent 与依赖）
- * @param spec 登录规格
- * @returns skipped=true 进页面即已登录；false 本次实际完成了登录
- * @throws 等待已登录标志超时（所有轮次均未成功）
+ * 自适应连接编排：任务只声明可见行为，框架自动推断并推进到已连接。
+ * 执行流程：
+ * ① 20s 竞速判初始态（显式探针或启发式）；已连接直接返回 skipped=true；
+ * ② wallet.ready()（适配器无 extensionId 时视为就绪）；
+ * ③ 点连接按钮（显式 connect 或 findConnectButton）；
+ * ④ 最多 attempts 轮，每轮先点连接，再在短竞速循环里推进（每次短竞速 ~3s）：
+ *    站内钱包项 → 点击；扩展弹窗 → 按适配器分类自动处理（tx 绝不处理，告警后继续）；
+ *    connected → 成功；disconnected / 什么都没命中（idle）→ 归一化露出钱包列表后继续（不当作致命）；
+ *    期间若始终无任何钱包交互且超过 reclickAfterMs → 补点连接按钮；
+ * ⑤ 命中 connected 成功返回；否则走 recover 等「已连接」标志（错误文案/周期刷新恢复）；
+ * ⑥ 全部轮次失败抛「登录未完成（等待已连接标志超时）」。
+ * @param wallet WalletActions 门面（提供 deps/ready）
+ * @param opts 自适应连接规格
+ * @returns skipped=true 进页面即已连接；false 本次实际完成了连接
+ * @throws 任务未配置钱包/注册表未注入/适配器缺 displayName；或等待已连接标志超时
  */
-export async function ensureLoggedIn(wallet: WalletActions, spec: LoginSpec): Promise<{ skipped: boolean }> {
+export async function ensureConnected(wallet: WalletActions, opts: LoginFlowOptions = {}): Promise<{ skipped: boolean }> {
   const deps = wallet.deps
   const { page } = deps
-  const clickSoft = async (sel: string): Promise<void> => {
-    await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
-  }
-  // 慢渲染容忍：先等控件可见再点，等不到也照点（软失败不阻断），避免弹窗/钱包列表晚渲染时单击落空
-  const clickWhenReady = async (sel: string, timeoutMs: number): Promise<void> => {
-    await deps.page.locator(sel).first().waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {})
-    await deps.page.locator(sel).first().click({ timeout: 5000 }).catch(() => {})
-  }
-  const state0 = await raceState(wallet, spec, 20000)
-  if (state0 === 'loggedIn') return { skipped: true }
+  const adapter = resolveAdapter(wallet)
+  const connected = toProbe(opts.connected ?? HEURISTIC_CONNECTED)
+  const disconnected = toProbe(opts.disconnected ?? HEURISTIC_DISCONNECTED)
+  const walletOption = toProbe(opts.walletOption ?? { text: adapter.displayName })
+  // 判据暴露：打印本轮实际使用的判据（显式/启发式）与候选，便于真机排障
+  deps.log.info({
+    step: 'connect',
+    connected: probeDesc(connected),
+    connectedSource: opts.connected ? 'explicit' : 'heuristic',
+    disconnected: probeDesc(disconnected),
+    disconnectedSource: opts.disconnected ? 'explicit' : 'heuristic',
+    walletOption: probeDesc(walletOption),
+  }, '钱包连接：判定依据')
+
+  const initial = await raceProbes<StateKey>(page, [['connected', connected], ['disconnected', disconnected]], INITIAL_RACE_MS)
+  if (initial === 'connected') return { skipped: true }
+
   await wallet.ready()
-  const attempts = spec.attempts ?? 2
-  const reclickAfterMs = spec.reclickAfterMs ?? 8000
+
+  const attempts = opts.attempts ?? 2
+  const reclickAfterMs = opts.reclickAfterMs ?? 8000
+  const waitConnectedMs = opts.waitConnectedMs ?? 90000
+
   for (let round = 0; round < attempts; round++) {
     if (round > 0) {
-      await page.reload({ timeout: 45000, waitUntil: 'domcontentloaded' }).catch(() => {})
+      await page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
       await page.waitForTimeout(5000)
     }
-    if (spec.connect) await clickSoft(spec.connect)
-    const entry = spec.entry
-    if (entry?.kind === 'dialog' && entry.confirm) await clickWhenReady(entry.confirm, 45000)
-    if (entry?.kind === 'appkit') {
-      await openAppKitWallet(deps, entry)
+    // started 标记连接流程是否真正启动（点了连接按钮或额外确认）；未启动时不做站内弹窗视图归一化
+    const clicked = await clickConnect(deps, opts.connect)
+    let started = clicked
+    if (opts.confirm) {
+      await clickSoft(deps, opts.confirm)
+      started = true
     }
-    if (spec.walletEntry) await clickWhenReady(spec.walletEntry, 45000)
-    const intents = spec.intents ?? ['connect']
-    const reclickSelector = entry?.kind === 'appkit'
-      ? `[data-testid="${entry.entryTestId}"]`
-      : (spec.walletEntry
-        ?? (entry?.kind === 'dialog' && entry.confirm ? entry.confirm : spec.connect))
-    for (const intent of intents) {
-      const { popupFailed } = await wallet.runIntent(intent, reclickSelector
-        ? { reclick: { selector: reclickSelector, afterMs: reclickAfterMs } }
-        : undefined)
-      if (popupFailed) deps.log.info({ step: 'login' }, '钱包弹窗未出现（可能静默连接），以登录态判定')
-    }
-    const ok = await deps.recover(toProbe(spec.loggedIn), {
-      budgetMs: spec.waitLoggedInMs ?? 90000,
-      refreshEveryMs: spec.refreshEveryMs ?? 25000,
-      recoverTexts: spec.recoverTexts,
+
+    const advanced = await advanceRound(deps, adapter, walletOption, connected, disconnected, opts.connect, reclickAfterMs, started)
+    if (advanced.connected) return { skipped: false }
+    // 整轮没有任何钱包动作（站内列表/扩展弹窗均未命中）→ 补点连接按钮一次，覆盖点击落空/慢渲染
+    if (!advanced.interacted) await clickConnect(deps, opts.connect)
+
+    const ok = await deps.recover(connected, {
+      budgetMs: waitConnectedMs,
+      refreshEveryMs: opts.refreshEveryMs ?? 25000,
+      recoverTexts: opts.errorTexts,
     })
     if (ok) return { skipped: false }
-    const st = await raceState(wallet, spec, 15000)
-    if (st === 'loggedIn') return { skipped: false }
   }
-  throw new Error('登录未完成（等待已登录标志超时）')
+  throw new Error('登录未完成（等待已连接标志超时）')
+}
+
+/** 初始态竞速键 */
+type StateKey = 'connected' | 'disconnected'
+
+/**
+ * 取当前任务的适配器，并校验具备 displayName（walletOption 缺省匹配依赖它）。
+ * @throws 任务未配置钱包；注册表未注入；适配器缺 displayName
+ */
+function resolveAdapter(wallet: WalletActions): WalletAdapter {
+  const key = wallet.deps.walletKey
+  if (!key) throw new Error('任务未配置钱包')
+  if (!wallet.deps.wallets) throw new Error('钱包注册表未注入')
+  const adapter = wallet.deps.wallets.get(key)
+  if (!adapter.displayName) throw new Error(`钱包适配器 ${key} 缺少 displayName`)
+  return adapter
 }
 
 /**
- * 把探针简写归一为完整探针：字符串按文案匹配，已结构化对象原样返回。
- * @param p 字符串或探针对象
- * @returns 结构化探针
+ * 单轮竞速：页面探针（站内钱包项/connected/disconnected）与扩展弹窗同时监视，任一先命中即返回。
+ * 页面探针用 raceProbes（等待可见）；扩展弹窗用 waitForPopup（新窗口/已在窗口），二者 Promise.race。
+ * @returns 命中的语义键与弹窗（弹窗时）；预算内都没命中返回 none
  */
+async function raceRound(
+  deps: WalletActions['deps'],
+  adapter: WalletAdapter,
+  walletOption: Probe,
+  connected: Probe,
+  disconnected: Probe,
+  timeoutMs: number,
+): Promise<RoundResult> {
+  const pageRace = raceProbes<StateKey | 'walletOption'>(
+    deps.page,
+    [['walletOption', walletOption], ['connected', connected], ['disconnected', disconnected]],
+    timeoutMs,
+  ).then((k): RoundResult => (k ? { kind: k } : { kind: 'none' }))
+  const popupRace = waitForPopup(deps.page.context(), adapter.extensionUrlPatterns, timeoutMs)
+    .then((p): RoundResult => (p ? { kind: 'popup', popup: p as unknown as PopupPage } : { kind: 'none' }))
+    .catch((): RoundResult => ({ kind: 'none' }))
+  return Promise.race([pageRace, popupRace])
+}
+
+/**
+ * 单轮推进：短竞速（~3s）循环，直到命中 connected 或推进次数耗尽。
+ * 每次短竞速命中站内钱包项/扩展弹窗就处理并继续；命中 disconnected 或什么都没命中（idle）视作
+ * 「站内弹窗可能不在钱包列表视图」，在连接流程已启动（allowReveal）或本轮已发生过钱包交互时
+ * 调用 revealWalletList 归一化后继续（不当作致命失败）；连接流程尚未启动时不做归一化，避免误点站点按钮。
+ * 期间若始终没有任何钱包交互且距上次补点超过 reclickAfterMs，补点一次连接按钮（覆盖点击落空/慢渲染）。
+ * @returns connected=是否已连接；interacted=本轮是否发生过钱包交互（点钱包项/处理弹窗）
+ */
+async function advanceRound(
+  deps: WalletActions['deps'],
+  adapter: WalletAdapter,
+  walletOption: Probe,
+  connected: Probe,
+  disconnected: Probe,
+  connectSelector: string | undefined,
+  reclickAfterMs: number,
+  allowReveal: boolean,
+): Promise<{ connected: boolean; interacted: boolean }> {
+  let interacted = false
+  // 连接流程一旦启动（或本轮已交互）才允许归一化站内弹窗视图
+  let revealAllowed = allowReveal
+  let lastReclickAt = Date.now()
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const res = await raceRound(deps, adapter, walletOption, connected, disconnected, SHORT_RACE_MS)
+    if (res.kind === 'connected') return { connected: true, interacted }
+    if (res.kind === 'walletOption') {
+      await clickWalletOption(deps, walletOption)
+      interacted = true
+      revealAllowed = true
+      lastReclickAt = Date.now()
+      continue
+    }
+    if (res.kind === 'popup') {
+      await handlePopup(deps, adapter, res.popup)
+      interacted = true
+      revealAllowed = true
+      lastReclickAt = Date.now()
+      continue
+    }
+    // disconnected / idle：连接流程已启动才尝试把站内弹窗视图拨回钱包列表，再按需补点连接按钮
+    if (revealAllowed) await revealWalletList(deps)
+    if (!interacted && Date.now() - lastReclickAt >= reclickAfterMs) {
+      if (await clickConnect(deps, connectSelector)) revealAllowed = true
+      lastReclickAt = Date.now()
+    }
+  }
+  return { connected: false, interacted }
+}
+
+/**
+ * 处理扩展弹窗：先分类再决定是否自动处理。
+ * tx 弹窗绝不自动确认（安全边界）——告警后返回 false，由任务显式 confirmTransaction；
+ * unlock/connect/sign 交给适配器 handleLoginPopup 自动完成。
+ * @returns 是否实际处理了弹窗
+ */
+async function handlePopup(deps: WalletActions['deps'], adapter: WalletAdapter, popup: PopupPage): Promise<boolean> {
+  const kind = await adapter.classifyPopup(popup).catch(() => 'unknown' as const)
+  if (kind === 'tx') {
+    deps.log.warn({ step: 'connect', kind, wallet: adapter.key }, '检测到交易确认弹窗，登录流程不自动处理（交由任务显式确认）')
+    return false
+  }
+  const handled = await adapter.handleLoginPopup(popup, deps.walletPasswords?.[adapter.key]).catch(() => false)
+  if (!handled) deps.log.warn({ step: 'connect', kind, wallet: adapter.key }, '钱包弹窗未识别（unknown/缺密码），继续等待连接标志')
+  return handled
+}
+
+/**
+ * 点击站内钱包选择项：能走到这里说明短竞速已确认其可见，直接点（点击落空由下一轮竞速/补点兜底）。
+ */
+async function clickWalletOption(deps: WalletActions['deps'], probe: Probe): Promise<void> {
+  await probeLocator(deps.page, probe).first().click({ timeout: 5000 }).catch(() => {})
+}
+
+/**
+ * 归一化站内钱包弹窗视图：弹窗可能停在 QR 详情页/收起态而非钱包列表，逐一探测库无关候选
+ * （返回/全部钱包/浏览器标签 + 通用文案/aria 兜底），点首个可见者把视图拨回列表；一个都没命中则静默返回。
+ * @returns 是否实际点击了归一化候选
+ */
+async function revealWalletList(deps: WalletActions['deps']): Promise<boolean> {
+  for (const selector of WALLET_LIST_REVEAL_SELECTORS) {
+    if (await probeVisible(deps.page, { selector })) {
+      await clickSoft(deps, selector)
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 点连接按钮：显式 connect 优先，否则按候选文案自动找；找不到只记日志（部分站点进页自动弹窗）。
+ * @returns 是否实际点击了连接按钮（false=未找到，供调用方判断连接流程是否已启动）
+ */
+async function clickConnect(deps: WalletActions['deps'], explicit?: string): Promise<boolean> {
+  const selector = explicit ?? (await findConnectButton(deps.page))
+  if (!selector) {
+    deps.log.info({ step: 'connect' }, '未找到连接按钮（可能进页自动弹窗或已连接）')
+    return false
+  }
+  await clickSoft(deps, selector)
+  return true
+}
+
+/** 软点：控件慢渲染/点击落空都不抛错，交给后续竞速与补点兜底 */
+async function clickSoft(deps: WalletActions['deps'], selector: string): Promise<void> {
+  await deps.page.locator(selector).first().click({ timeout: 5000 }).catch(() => {})
+}
+
+/** 把探针简写归一为完整探针：字符串按文案匹配，已结构化对象原样返回 */
 function toProbe(p: LoginProbe): Probe {
   return typeof p === 'string' ? { text: p } : p
-}
-
-/**
- * 双探针竞速：判断当前处于已登录还是未登录，谁先可见就是谁。
- * @param wallet WalletActions 门面（取其页面依赖）
- * @param spec 登录规格（提供两个探针）
- * @param timeoutMs 竞速等待毫秒数
- * @returns 'loggedIn'/'loggedOut'；预算内都没出现返回 null
- */
-async function raceState(wallet: WalletActions, spec: LoginSpec, timeoutMs: number): Promise<'loggedIn' | 'loggedOut' | null> {
-  const deps = wallet.deps
-  const { raceProbes } = await import('../dom')
-  return raceProbes(deps.page, [['loggedIn', toProbe(spec.loggedIn)], ['loggedOut', toProbe(spec.loggedOut)]], timeoutMs) as Promise<'loggedIn' | 'loggedOut' | null>
 }

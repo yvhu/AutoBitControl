@@ -18,7 +18,7 @@ export interface AppKitEntry {
   modalTestId?: string
 }
 
-/** AppKit 登录入参（对应 login-flow.ts 的 ensureLoggedIn 展开 entry 后传入 openAppKitWallet 的形状） */
+/** AppKit 登录入参（历史专用入口；自适应连接已改用 login-flow 的库无关归一化，保留供兼容/单测） */
 export interface AppKitLoginOptions {
   /** 钱包类型（与 WalletAdapter.key 对应，弹窗连接时取适配器） */
   walletKey: string

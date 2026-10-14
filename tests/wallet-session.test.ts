@@ -35,6 +35,7 @@ function makeFakePage(opts: { providerOk?: boolean; cdpOk?: boolean; evaluateDel
 
 const adapter: WalletAdapter = {
   key: 'metamask',
+  displayName: 'MetaMask',
   extensionUrlPatterns: [],
   extensionId: 'nkbihfbeogaeaoehlefnkodbefgpgknn',
   probePath: 'home.html',
@@ -42,6 +43,8 @@ const adapter: WalletAdapter = {
   connect: async () => {},
   sign: async () => {},
   confirmTx: async () => {},
+  classifyPopup: async () => 'unknown',
+  handleLoginPopup: async () => false,
 }
 
 describe('WalletSession', () => {

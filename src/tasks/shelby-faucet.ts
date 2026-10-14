@@ -5,7 +5,7 @@
  * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）；不连钱包
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, click, fill, getAccount, waitFor, takeScreenshot } from '../api'
+import { openPage, click, fill, getAccountValue, waitFor, takeScreenshot } from '../api'
 import type { Response } from 'patchright'
 
 const ADDRESS_SELECTOR = 'input[name="address"]' // 收款地址输入框（APT 页与 USD 页一致）
@@ -129,7 +129,7 @@ export class ShelbyFaucetTask extends SiteTask {
   private async claimOnPage(ctx: TaskContext, url: string, knownAddress?: string, closeOtherTabs = false): Promise<{ addr: string; claimed: number }> {
     await openPage(ctx, url, { closeOtherTabs })
     await waitFor(ctx, { selector: ADDRESS_SELECTOR }, { assert: true, budgetMs: 20000 })
-    const addr = knownAddress ?? (await getAccount(ctx, 'petra钱包地址'))
+    const addr = knownAddress ?? (await getAccountValue(ctx, 'petra钱包地址'))
     await fill(ctx, ADDRESS_SELECTOR, addr)
     const { claimed } = await runClaimLoop(ctx, addr, MAX_CLAIMS_PER_RUN)
     return { addr, claimed }

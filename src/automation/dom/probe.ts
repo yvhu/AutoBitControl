@@ -1,5 +1,5 @@
 /**
- * DOM 探针原语（automation/dom 层）：统一「文案 / 选择器 / gone」定位与命中判定，供竞速、恢复与等待复用
+ * DOM 探针原语（automation/dom 层）：统一「文案 / 选择器 / hidden」定位与命中判定，供竞速、恢复与等待复用
  * 依赖方向：仅依赖 patchright，被 dom 内 race/recover 与 engine 使用
  */
 import type { Locator, Page } from 'patchright'
@@ -13,14 +13,14 @@ export type Probe = { text: string } | { selector: string }
 
 /**
  * 命中探针（等待/命中场景的扩展形态）：在 Probe 基础上增加「字符串」（等价文案）与
- * 「gone」（目标不可见或已消失）两种形态，让命中判定与等待复用同一套结构。
+ * 「hidden」（目标不可见或已消失）两种形态，让命中判定与等待复用同一套结构。
  */
-export type HitProbe = string | Probe | { gone: string }
+export type HitProbe = string | Probe | { hidden: string }
 
 /**
  * 把探针翻译成 patchright 的 Locator（定位句柄）。
  * 执行流程：字符串或带 text 字段走 getByText 并设 exact:false 做包含匹配（允许文案前后还有其它字符）；
- * 带 selector 或 gone 字段按其中的选择器走 locator。
+ * 带 selector 或 hidden 字段按其中的选择器走 locator。
  * @param page 目标页面（patchright 的 Page）
  * @param probe 待解析的探针
  * @returns 仅表达「如何查找」、尚未锁定具体元素的 Locator，调用方可继续 .first()/.waitFor() 等
@@ -28,15 +28,15 @@ export type HitProbe = string | Probe | { gone: string }
 export function probeLocator(page: Page, probe: HitProbe): Locator {
   if (typeof probe === 'string') return page.getByText(probe, { exact: false })
   if ('text' in probe) return page.getByText(probe.text, { exact: false })
-  return page.locator('selector' in probe ? probe.selector : probe.gone)
+  return page.locator('selector' in probe ? probe.selector : probe.hidden)
 }
 
 /**
  * 命中判定（探针统一入口，waitFor/race/recover 共用，单一事实源）。
  * 执行流程：字符串或 { text } 按「存在」判定（count>0，不判可见性，兼容双 DOM/动画态）；
- * { selector } 按「存在且可见」判定；{ gone } 按「不存在或不可见」判定。
+ * { selector } 按「存在且可见」判定；{ hidden } 按「不存在或不可见」判定。
  * 整个过程包在 try 中——探测本身的异常不应中断流程：普通探针异常按「未命中」返回 false，
- * 而 gone 探针「查不到元素」本就是命中，故异常时返回 true。
+ * 而 hidden 探针「查不到元素」本就是命中，故异常时返回 true。
  * @param page 目标页面
  * @param probe 待探测的目标
  * @returns 探针此刻是否命中
@@ -45,7 +45,7 @@ export async function probeHit(page: Page, probe: HitProbe): Promise<boolean> {
   try {
     if (typeof probe === 'string') return (await page.getByText(probe, { exact: false }).count()) > 0
     if ('text' in probe) return (await page.getByText(probe.text, { exact: false }).count()) > 0
-    const sel = 'selector' in probe ? probe.selector : probe.gone
+    const sel = 'selector' in probe ? probe.selector : probe.hidden
     const loc = page.locator(sel).first()
     if ('selector' in probe) {
       if ((await loc.count()) === 0) return false
@@ -54,7 +54,7 @@ export async function probeHit(page: Page, probe: HitProbe): Promise<boolean> {
     if ((await loc.count()) === 0) return true
     return !(await loc.isVisible().catch(() => false))
   } catch {
-    return typeof probe !== 'string' && 'gone' in probe
+    return typeof probe !== 'string' && 'hidden' in probe
   }
 }
 
@@ -110,5 +110,5 @@ export function probeDesc(probe: HitProbe): string {
   if (typeof probe === 'string') return `文案 ${probe}`
   if ('text' in probe) return `文案 ${probe.text}`
   if ('selector' in probe) return `选择器 ${probe.selector}`
-  return `消失 ${probe.gone}`
+  return `消失 ${probe.hidden}`
 }

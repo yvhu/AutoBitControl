@@ -24,6 +24,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  */
 export class MetaMaskAdapter implements WalletAdapter {
   key = 'metamask'
+  displayName = 'MetaMask'
   extensionId = 'nkbihfbeogaeaoehlefnkodbefgpgknn'
   probePath = 'home.html'
   providerFlag = 'isMetaMask'
@@ -93,6 +94,58 @@ export class MetaMaskAdapter implements WalletAdapter {
 
   /** 处理「站点请求交易确认」的弹窗：同样委托 confirm */
   async confirmTx(popup: PopupPage): Promise<void> { await this.confirm(popup) }
+
+  /**
+   * 分类 MetaMask 弹窗：按稳定 data-testid 判定意图。
+   * 顺序：unlock → connect → tx → sign。之所以 tx 先于 sign：二者可能共享 confirm 按钮，
+   * 且 mock/旧定位器只提供 count（存在即命中）时，隐藏的签名标记会被误判为可见——
+   * 把保守的 tx 提前，保证「隐藏 sign + 可见 confirm」不会误自动点击交易确认。
+   * @param popup 钱包弹窗页
+   * @returns 弹窗意图类别；无法判定返回 'unknown'
+   */
+  async classifyPopup(popup: PopupPage): Promise<'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'> {
+    if (await this.testIdVisible(popup, ['unlock-password', 'unlock-page'])) return 'unlock'
+    if (await this.testIdVisible(popup, ['connect-page', 'permissions-connect-button'])) return 'connect'
+    if (await this.testIdVisible(popup, ['confirm-footer-button', 'confirm-btn'])) return 'tx'
+    if (await this.testIdVisible(popup, ['signature-request', 'signature-request-sign-button'])) return 'sign'
+    return 'unknown'
+  }
+
+  /**
+   * 登录自适应：unlock 复用 unlock（需密码），connect/sign 复用 confirm；tx 绝不处理（返回 false）。
+   * @param popup 钱包弹窗页
+   * @param password 解锁密码（unlock 分类时需要）
+   * @returns 是否已处理（tx/unknown/缺密码返回 false）
+   */
+  async handleLoginPopup(popup: PopupPage, password?: string): Promise<boolean> {
+    const kind = await this.classifyPopup(popup)
+    if (kind === 'tx' || kind === 'unknown') return false
+    if (kind === 'unlock') {
+      if (!password) return false
+      await this.unlock(popup, password)
+      return true
+    }
+    if (kind === 'connect') { await this.connect(popup); return true }
+    await this.sign(popup)
+    return true
+  }
+
+  /** 一组 testid 中是否至少有一个当前可见：优先 isVisible（区分存在但隐藏），mock 无 isVisible 时回退 count>0 */
+  private async testIdVisible(popup: PopupPage, testids: string[]): Promise<boolean> {
+    for (const tid of testids) {
+      const loc = popup.getByTestId(tid).first()
+      try {
+        if (loc.isVisible) {
+          if (await loc.isVisible()) return true
+        } else if (((await loc.count?.()) ?? 0) > 0) {
+          return true
+        }
+      } catch {
+        if (popup.isClosed?.()) return false
+      }
+    }
+    return false
+  }
 
   /**
    * 点击确认按钮完成一次授权（连接/签名/交易共用）。

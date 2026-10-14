@@ -40,7 +40,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、ai/（OpenAI 兼容客户端，默认 DeepSeek，供 AI 答题）
 - `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
-- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（薄门面：`ctx.page` 直用 patchright + `ctx.wallet/captcha/race/recover/step` 命名空间）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}
@@ -82,6 +82,20 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ## 代码风格
 
 无分号、单引号、2 空格缩进、TS 严格模式；文件头中文注释块说明模块职责与依赖方向；命名用 camelCase，文件 kebab-case；日志用 logger（中文消息，格式 `logger.info({count}, '消息')`）。commit 风格 conventional：`feat:`/`fix:`/`chore:`/`docs:` + 中文描述。
+
+### 命名规范（全项目统一，详见 `docs/superpowers/specs/2026-10-14-naming-conventions-design.md`）
+
+- 标识符英文，注释/文档/commit 中文。
+- 命名按层级：文件 `kebab-case`、类/接口 `PascalCase`、函数/变量 `camelCase`、常量 `SCREAMING_SNAKE_CASE`。
+- 动作函数动词开头（`open`/`click`/`fill`/`wait`/`connect`…）；查询用 `getX`/`isX`/`hasX`。
+- **类型/接口名禁用缩写**；导出即公共契约，命名同函数。
+- 参数形状：**≥2 个可选参数 → 单个 `opts` 对象**；单一必填 → 位置参数。
+- 布尔字段**肯定式**（`enabled`/`isX`/`hasX`），禁 `noX`/`disableX`。
+- 时间带单位后缀（`Ms`/`Sec`/`Days`），同层统一；选择器字段以 `Selector` 结尾 / 文案用 `Text`；集合用复数。
+- **不暴露第三方库/SDK/实现概念名**（如 appkit/reown/rainbowkit/w3m/scenario/intent/probe/spec/entry）；只说「站点上可见的行为」。
+- 文件头注释块模板：一行模块职责 → `依赖方向：…` → 可选设计思路。
+- 测试文件 `<模块>.test.ts`；用例名中文描述行为。
+- `tests/api-docs-drift.test.ts` 守卫：`src/api/index.ts` 的每个导出名必须出现在用户手册 `docs/API-GUIDE.md`（改 API 出口要同步手册）。
 
 ## 真机验证规范（硬性执行）
 

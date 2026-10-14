@@ -1,11 +1,12 @@
 /**
  * InceptionDachainTask 竞速与等待逻辑单测（注入假页面，不连真浏览器）
- * 改写后任务经 ../api 的 race/runJs/elementState 调用，故假页面按「文案是否出现」提供 count，
- * 并支持 runJs 的 evaluate（注入假 document 执行原函数体）与竞速轮询用的 waitForTimeout。
+ * 改写后任务经 ../api 的 race/evaluate/getElementState 调用，故假页面按「文案是否出现」提供 count，
+ * 并支持 evaluate（注入假 document 执行原函数体）与竞速轮询用的 waitForTimeout。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { InceptionDachainTask } from '../src/tasks/inception-dachain'
 import { TaskContext } from '../src/tasks/base'
+import { WalletActions } from '../src/automation'
 
 /** 按文案配置是否出现；locator 恒存在且可见（供 isVisible 判定补点） */
 function makeFakePage(textPresent: Record<string, boolean>, opts: { visible?: boolean; bodyText?: string } = {}) {
@@ -22,7 +23,11 @@ function makeFakePage(textPresent: Record<string, boolean>, opts: { visible?: bo
       }),
     }),
     waitForTimeout: async (ms: number) => { await new Promise((r) => setTimeout(r, ms)) },
-    // runJs 会把任务闭包经 page.evaluate 执行；用 new Function 注入假 document 执行原函数体
+    // openPage 需要 context().pages()（closeOtherTabs）与 goto
+    context: () => ({ pages: () => [] }),
+    goto: async () => {},
+    url: () => 'https://inception.dachain.io/',
+    // evaluate 会把任务闭包经 page.evaluate 执行；用 new Function 注入假 document 执行原函数体
     evaluate: async (fn: () => unknown) => {
       const exec = new Function('document', `return (${fn.toString()})()`)
       return exec({ body: { innerText: opts.bodyText ?? '' } })
@@ -120,5 +125,21 @@ describe('InceptionDachainTask 竞速与等待逻辑', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('run：进页登录经 connectWallet 传入 WALLET 中间步骤（confirm），恢复 Enter Inception → WALLET → 钱包列表', async () => {
+    const ctx = makeCtx(makeFakePage({}))
+    let captured: Record<string, unknown> | undefined
+    const spy = vi.spyOn(WalletActions.prototype, 'ensureConnected').mockImplementation(async (opts) => {
+      captured = opts as Record<string, unknown>
+      throw new Error('__connect__')
+    })
+    try {
+      await expect(new InceptionDachainTask().run(ctx)).rejects.toThrow('__connect__')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(captured?.connect).toBe('button:has-text("Enter Inception")')
+    expect(captured?.confirm).toBe('button:has-text("WALLET")')
   })
 })

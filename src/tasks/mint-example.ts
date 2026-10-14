@@ -3,12 +3,12 @@
  * 站点：占位示例铸币站；url 为占位地址、开关默认关闭，仅作调试与复制起点
  * 执行流程：打开任务页（占位 url）→ 声明式登录（Petra）→ action 填名称/符号
  *          → 下一步 → 填描述/数量 → 提交 → 等钱包确认交易 → 断言链上成功提示 → 截图
- * 设计：run 内直接用 ../api 能力函数（openPage/loginWallet/click/fill/waitFor/confirmTransaction）
+ * 设计：run 内直接用 ../api 能力函数（openPage/connectWallet/click/fill/waitFor/confirmTransaction）
  * 时间预算：timeoutSec 300s（单任务整体超时）、retry.max 1 次 / 退避 600s、concurrency 4
  */
 import { faker } from '@faker-js/faker'
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, fill, waitFor, confirmTransaction, takeScreenshot } from '../api'
+import { openPage, connectWallet, click, fill, waitFor, confirmTransaction, takeScreenshot } from '../api'
 
 export class MintExampleTask extends SiteTask {
   meta: TaskMeta = {
@@ -33,11 +33,10 @@ export class MintExampleTask extends SiteTask {
    */
   async run(ctx: TaskContext): Promise<void> {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    await loginWallet(ctx, {
+    await connectWallet(ctx, {
       wallet: 'petra',
-      scenario: 'direct',
-      loggedIn: { text: '连接钱包' },
-      loggedOut: '连接钱包',
+      connected: { text: '连接钱包' },
+      disconnected: '连接钱包',
       connect: 'button:has-text("连接钱包")',
     })
     await this.action(ctx)

@@ -32,7 +32,7 @@ function daysAgoStr(days: number): string {
  * @swagger
  * /api/batches:
  *   get:
- *     summary: 运行批次列表（含每批统计与全局数字）
+ *     summary: 列出运行批次（含每批统计与全局数字）
  *     parameters:
  *       - in: query
  *         name: range
@@ -47,7 +47,7 @@ function daysAgoStr(days: number): string {
  * @swagger
  * /api/batches/{id}:
  *   get:
- *     summary: 批次明细（窗口运行行）
+ *     summary: 查看批次明细（窗口运行行）
  *     parameters:
  *       - in: path
  *         name: id

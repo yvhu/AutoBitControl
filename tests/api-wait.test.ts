@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { waitFor, race, waitResponse } from '../src/api'
+import { waitFor, race, waitForResponse } from '../src/api'
 
 function makeCtx(over: Record<string, unknown> = {}) {
   return {
@@ -24,9 +24,9 @@ describe('api/wait', () => {
     const ctx = makeCtx()
     await expect(waitFor(ctx, { text: 'NO' }, { budgetMs: 200, assert: true })).rejects.toThrow()
   })
-  it('waitFor：WaitProbe 的 gone 形态——目标不存在即命中', async () => {
+  it('waitFor：WaitMatcher 的 hidden 形态——目标不存在即命中', async () => {
     const ctx = makeCtx({ locator: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }) })
-    expect(await waitFor(ctx, { gone: '#done' }, { budgetMs: 500 })).toBe(true)
+    expect(await waitFor(ctx, { hidden: '#done' }, { budgetMs: 500 })).toBe(true)
   })
   it('waitFor：选择器可见即命中', async () => {
     const ctx = makeCtx()
@@ -48,9 +48,9 @@ describe('api/wait', () => {
     const ctx = makeCtx({ text_visible: 'A' })
     expect(await race(ctx, [['a', { text: 'A' }], ['b', { text: 'B' }]], 500)).toBe('a')
   })
-  it('waitResponse：命中返回 { status, body }', async () => {
+  it('waitForResponse：命中返回 { status, body }', async () => {
     const ctx = makeCtx({ waitForResponse: async () => ({ status: () => 200, json: async () => ({ ok: true }) }) })
-    const r = await waitResponse(ctx, { urlPart: '/x', predicate: (s) => s === 200 }, { timeoutMs: 500 })
+    const r = await waitForResponse(ctx, { urlPart: '/x', predicate: (s) => s === 200 }, { timeoutMs: 500 })
     expect(r.status).toBe(200)
     expect(r.body).toEqual({ ok: true })
   })

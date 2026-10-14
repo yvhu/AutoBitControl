@@ -89,6 +89,8 @@ export class WalletSession {
    * @returns 扩展页能否被创建（true=扩展已加载）
    */
   private async probeExtensionPage(adapter: WalletAdapter): Promise<boolean> {
+    // 适配器未配 extensionId（新钱包降级场景）→ 无法构造扩展页 URL，跳过探测、视为已加载
+    if (!adapter.extensionId) return true
     let session: CdpProbeSession | null = null
     try {
       session = (await this.page.context().newCDPSession(this.page)) as unknown as CdpProbeSession

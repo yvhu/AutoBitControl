@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { elementState, getText, hasText } from '../src/api'
+import { getElementState, getText, hasText } from '../src/api'
 
 function makeCtx(opts: { count?: number; visible?: boolean; text?: string; pageText?: boolean } = {}) {
   return {
@@ -14,10 +14,10 @@ function makeCtx(opts: { count?: number; visible?: boolean; text?: string; pageT
 }
 
 describe('api/find', () => {
-  it('elementState：visible / hidden / absent', async () => {
-    expect(await elementState(makeCtx({ count: 1, visible: true }), '#a')).toBe('visible')
-    expect(await elementState(makeCtx({ count: 1, visible: false }), '#a')).toBe('hidden')
-    expect(await elementState(makeCtx({ count: 0 }), '#a')).toBe('absent')
+  it('getElementState：visible / hidden / absent', async () => {
+    expect(await getElementState(makeCtx({ count: 1, visible: true }), '#a')).toBe('visible')
+    expect(await getElementState(makeCtx({ count: 1, visible: false }), '#a')).toBe('hidden')
+    expect(await getElementState(makeCtx({ count: 0 }), '#a')).toBe('absent')
   })
   it('getText / hasText', async () => {
     expect(await getText(makeCtx({ text: ' hi ' }), '#a')).toBe('hi')

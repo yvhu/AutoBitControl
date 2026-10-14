@@ -1,15 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 interface CapturedSpec {
-  entry: Record<string, unknown>
-  walletEntry?: string
-  loggedIn?: unknown
-  loggedOut?: unknown
+  connected?: unknown
+  disconnected?: unknown
+  connect?: string
+  walletOption?: unknown
+  confirm?: string
+  waitConnectedMs?: number
+  errorTexts?: string[]
+  refreshEveryMs?: number
+  attempts?: number
+  reclickAfterMs?: number
 }
 
 // 捕获自动化层 WalletActions 的实例与各动作调用，用于断言 api 层的映射
 const mocks = vi.hoisted(() => ({
-  ensureLoggedIn: vi.fn(async (_spec: CapturedSpec) => ({ skipped: false })),
+  ensureConnected: vi.fn(async (_spec: CapturedSpec) => {}),
   sign: vi.fn(async () => ({ popupFailed: false })),
   confirmTx: vi.fn(async () => ({ popupFailed: false })),
   instances: [] as Array<{ deps: Record<string, unknown> }>,
@@ -22,16 +28,20 @@ vi.mock('../src/automation/wallet', () => ({
       this.deps = deps
       mocks.instances.push(this)
     }
-    ensureLoggedIn = mocks.ensureLoggedIn
+    ensureConnected = mocks.ensureConnected
     sign = mocks.sign
     confirmTx = mocks.confirmTx
   },
 }))
 
-import { loginWallet, signMessage, confirmTransaction } from '../src/api'
+import { connectWallet, signMessage, confirmTransaction } from '../src/api'
 
+/** 假 ctx：wallets.get 按 key 返回带 displayName 的适配器 */
 function makeCtx(taskWallet = 'metamask') {
-  const wallets = { get: () => ({}) }
+  const wallets = {
+    get: (k: string) => ({ displayName: k === 'petra' ? 'Petra' : 'MetaMask' }),
+    has: () => true,
+  }
   return {
     page: {},
     task: { meta: { wallet: taskWallet } },
@@ -42,70 +52,58 @@ function makeCtx(taskWallet = 'metamask') {
   } as never
 }
 
-describe('api/wallet loginWallet', () => {
+describe('api/wallet connectWallet', () => {
   beforeEach(() => {
-    mocks.ensureLoggedIn.mockClear()
+    mocks.ensureConnected.mockClear()
     mocks.instances.length = 0
   })
 
-  it('direct：entry 为 direct，无 walletEntry；探针透传', async () => {
-    await loginWallet(makeCtx(), {
-      wallet: 'metamask',
-      scenario: 'direct',
-      loggedIn: { text: 'Connected' },
-      loggedOut: { text: 'Connect Wallet' },
-    })
-    expect(mocks.ensureLoggedIn).toHaveBeenCalledTimes(1)
-    const spec = mocks.ensureLoggedIn.mock.calls[0][0]
-    expect(spec.entry).toEqual({ kind: 'direct' })
-    expect(spec.walletEntry).toBeUndefined()
-    expect(spec.loggedIn).toEqual({ text: 'Connected' })
-    expect(spec.loggedOut).toEqual({ text: 'Connect Wallet' })
+  it('缺省 walletOption 按适配器 displayName 组装', async () => {
+    await connectWallet(makeCtx('metamask'), { wallet: 'metamask' })
+    expect(mocks.ensureConnected).toHaveBeenCalledTimes(1)
+    const spec = mocks.ensureConnected.mock.calls[0][0]
+    expect(spec.walletOption).toEqual({ text: 'MetaMask' })
+    expect(spec.connected).toBeUndefined()
+    expect(spec.disconnected).toBeUndefined()
   })
 
-  it('appkit：entry 带 open/entryTestId/modalTestId', async () => {
-    await loginWallet(makeCtx(), {
-      wallet: 'metamask',
-      scenario: 'appkit',
-      entryTestId: 'wallet-metamask',
-      open: '#connect',
-      modalTestId: '#modal',
-      loggedIn: { text: 'Connected' },
-      loggedOut: { text: 'Connect' },
-    })
-    const spec = mocks.ensureLoggedIn.mock.calls[0][0]
-    expect(spec.entry).toEqual({
-      kind: 'appkit',
-      open: '#connect',
-      entryTestId: 'wallet-metamask',
-      modalTestId: '#modal',
-    })
-    expect(spec.walletEntry).toBeUndefined()
+  it('petra 缺省 walletOption 用 Petra 显示名', async () => {
+    await connectWallet(makeCtx('petra'), { wallet: 'petra' })
+    expect(mocks.ensureConnected.mock.calls[0][0].walletOption).toEqual({ text: 'Petra' })
   })
 
-  it('appkit：open 缺省用默认连接按钮', async () => {
-    await loginWallet(makeCtx(), {
+  it('显式 walletOption/connected/disconnected/connect/confirm 覆盖并透传', async () => {
+    await connectWallet(makeCtx(), {
       wallet: 'metamask',
-      scenario: 'appkit',
-      entryTestId: 'wallet-x',
-      loggedIn: { text: 'a' },
-      loggedOut: { text: 'b' },
-    })
-    expect(mocks.ensureLoggedIn.mock.calls[0][0].entry.open).toBe('button:has-text("Connect Wallet")')
-  })
-
-  it('dialog：entry 带 confirm，walletEntry 透传', async () => {
-    await loginWallet(makeCtx(), {
-      wallet: 'petra',
-      scenario: 'dialog',
+      connected: { text: 'Connected' },
+      disconnected: 'Connect Wallet',
+      connect: '#connect',
+      walletOption: { selector: '[data-testid="rk-wallet-option-metaMask"]' },
       confirm: '#confirm',
-      walletEntry: 'button:has-text("Petra")',
-      loggedIn: { text: 'Connected' },
-      loggedOut: { text: 'Connect' },
     })
-    const spec = mocks.ensureLoggedIn.mock.calls[0][0]
-    expect(spec.entry).toEqual({ kind: 'dialog', confirm: '#confirm' })
-    expect(spec.walletEntry).toBe('button:has-text("Petra")')
+    const spec = mocks.ensureConnected.mock.calls[0][0]
+    expect(spec.connected).toEqual({ text: 'Connected' })
+    expect(spec.disconnected).toBe('Connect Wallet')
+    expect(spec.connect).toBe('#connect')
+    expect(spec.walletOption).toEqual({ selector: '[data-testid="rk-wallet-option-metaMask"]' })
+    expect(spec.confirm).toBe('#confirm')
+  })
+
+  it('超时/刷新/轮次参数透传', async () => {
+    await connectWallet(makeCtx(), {
+      wallet: 'metamask',
+      waitConnectedMs: 120000,
+      errorTexts: ['Network Error'],
+      refreshEveryMs: 30000,
+      attempts: 3,
+      reclickAfterMs: 5000,
+    })
+    const spec = mocks.ensureConnected.mock.calls[0][0]
+    expect(spec.waitConnectedMs).toBe(120000)
+    expect(spec.errorTexts).toEqual(['Network Error'])
+    expect(spec.refreshEveryMs).toBe(30000)
+    expect(spec.attempts).toBe(3)
+    expect(spec.reclickAfterMs).toBe(5000)
   })
 
   it('把 ctx 的 walletKey/wallets/walletPasswords/walletSession/log 与 recover 装配进 WalletActions', async () => {
@@ -115,12 +113,7 @@ describe('api/wallet loginWallet', () => {
       walletSession: unknown
       log: unknown
     }
-    await loginWallet(ctx as never, {
-      wallet: 'petra',
-      scenario: 'direct',
-      loggedIn: { text: 'a' },
-      loggedOut: { text: 'b' },
-    })
+    await connectWallet(ctx as never, { wallet: 'petra' })
     const { deps } = mocks.instances[0]
     expect(deps.walletKey).toBe('petra')
     expect(deps.wallets).toBe(ctx.wallets)

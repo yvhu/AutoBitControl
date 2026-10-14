@@ -3,8 +3,8 @@
  * 背景：真机核实（2026-09-07）后选择器/流程已锁定（站内 Petra Web 弹窗静默连接、header 选择器
  * 判定登录态、账号页 Upload Files 入口、隐藏 file input、双签名、选文件后已上传短路：
  * 站点查重报 Blob name already taken 且 Upload 按钮永不启用 → 不点 Upload 直接成功）
- * 改写后任务经 ../api 的 loginWallet/signMessage/uploadFile 等调用：
- * 登录/签名由 WalletActions 原型桩接管（runIntent/sign），ensureLoggedIn 仍走真实实现 + 假页面；
+ * 改写后任务经 ../api 的 connectWallet/signMessage/setInputFiles 等调用：
+ * 登录由 WalletActions 原型桩接管（sign），ensureConnected 仍走真实实现 + 假页面；
  * 上传选文件断言落在 page.locator(...).setInputFiles，截图断言落在 page.screenshot。
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
@@ -18,6 +18,11 @@ import type { AddressInfo } from 'node:net'
 import { ShelbyExplorerTask, ALREADY_DONE_TEXT } from '../src/tasks/shelby-explorer'
 import { TaskContext } from '../src/tasks/base'
 import { WalletActions } from '../src/automation'
+import { WalletRegistry } from '../src/automation/wallet/types'
+import { PetraAdapter } from '../src/automation/wallet/petra'
+
+vi.mock('../src/automation/wallet/popup', () => ({ waitForPopup: vi.fn() }))
+import { waitForPopup } from '../src/automation/wallet/popup'
 
 /** 登录态判定用选择器（与任务实现一致，测试按选择器分流 visible 行为） */
 const ADDRESS_SELECTOR = 'header button:has-text("0x")'
@@ -33,13 +38,14 @@ const UPLOADING_TEXT = 'Uploading files'
 /** 默认数据源行（真机两条列） */
 const DEFAULT_ROW = { petra钱包地址: '0xabc', 文件地址: 'C:\\files\\a.png' }
 
-/** 钱包弹窗边界：runIntent/sign 由钱包扩展驱动、测试无法模拟，故对原型打桩；ensureLoggedIn 保留真实实现 */
-let runIntent: MockInstance
+/** 钱包弹窗边界：扩展弹窗无法在测试浏览器模拟，仅对 sign 打桩；ensureConnected 保留真实实现 + 假页面 */
 let sign: MockInstance
 
 beforeEach(() => {
-  runIntent = vi.spyOn(WalletActions.prototype, 'runIntent').mockResolvedValue({ popupFailed: false })
   sign = vi.spyOn(WalletActions.prototype, 'sign').mockResolvedValue({ popupFailed: false })
+  // 站内静默连接：扩展弹窗永不出现（waitForPopup 永不落定，让页面竞速先判 connected）
+  vi.mocked(waitForPopup).mockReset()
+  vi.mocked(waitForPopup).mockImplementation(() => new Promise(() => {}))
 })
 
 afterEach(() => {
@@ -77,7 +83,7 @@ function makeState(overrides: Partial<HarnessState> = {}): HarnessState {
 
 /**
  * 假 page：locator/getByText 按选择器与文案分流；goto/reload 记录调用；
- * waitForTimeout 瞬时返回、context().pages() 为空、url 固定（驱动真实 ensureLoggedIn/waitFor 内核）
+ * waitForTimeout 瞬时返回、context().pages() 为空、url 固定（驱动真实 ensureConnected/waitFor 内核）
  */
 function makePage(state: HarnessState) {
   const setInputFiles = vi.fn(async () => {})
@@ -135,6 +141,13 @@ function makePage(state: HarnessState) {
   }
 }
 
+/** 构造只含 Petra 适配器的注册表（连接编排需要适配器提供 displayName/URL 模式） */
+function makePetraRegistry(): WalletRegistry {
+  const wallets = new WalletRegistry()
+  wallets.register(new PetraAdapter())
+  return wallets
+}
+
 /** 构造注入假依赖的 TaskContext（数据源列可覆盖，用于严格模式用例） */
 function makeCtx(
   task = new ShelbyExplorerTask(),
@@ -150,6 +163,7 @@ function makeCtx(
     cfg: {} as never,
     logger: log as never,
     artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
+    wallets: makePetraRegistry(),
     walletPasswords: { petra: 'pw' },
     accountRow,
   })
@@ -159,12 +173,12 @@ function makeCtx(
 describe('ShelbyExplorerTask run 流程', () => {
   it('已登录：跳过登录（不触发连接意图），仅上传两次签名，账号页地址取自数据源', async () => {
     const task = new ShelbyExplorerTask()
-    const { ctx, page } = makeCtx(task)
+    const { ctx, page, state } = makeCtx(task)
     await task.run(ctx)
     expect(page.context).toHaveBeenCalled()
     expect(page.goto).toHaveBeenCalledTimes(2)
-    // 已登录：ensureLoggedIn 竞速命中 loggedIn 直接跳过，未触发钱包连接意图
-    expect(runIntent).not.toHaveBeenCalled()
+    // 已登录：ensureConnected 竞速命中 connected 直接跳过，未触发任何登录点击
+    expect(state.clicks.filter((s) => s === CONNECT_SELECTOR || s === DIALOG_CONNECT_SELECTOR)).toHaveLength(0)
     expect(sign).toHaveBeenCalledTimes(2)
     expect(page.setInputFiles).toHaveBeenCalledTimes(1)
     expect(page.setInputFiles).toHaveBeenCalledWith('C:\\files\\a.png')
@@ -174,7 +188,7 @@ describe('ShelbyExplorerTask run 流程', () => {
     expect(page.screenshot).toHaveBeenCalled()
   })
 
-  it('未登录：Connect Wallet → 站内弹窗 Connect → 登录完成（runIntent connect），再上传双签', async () => {
+  it('未登录：Connect Wallet → 站内弹窗 Connect → 登录完成，再上传双签', async () => {
     const task = new ShelbyExplorerTask()
     const state = makeState({ addressVisible: false, connectVisible: true })
     state.onClick = (sel) => {
@@ -182,8 +196,8 @@ describe('ShelbyExplorerTask run 流程', () => {
     }
     const { ctx } = makeCtx(task, state)
     await task.run(ctx)
-    expect(runIntent).toHaveBeenCalledTimes(1)
-    expect(runIntent).toHaveBeenCalledWith('connect', expect.anything())
+    expect(state.clicks).toContain(CONNECT_SELECTOR)
+    expect(state.clicks).toContain(DIALOG_CONNECT_SELECTOR)
     expect(sign).toHaveBeenCalledTimes(2)
   })
 
@@ -194,11 +208,10 @@ describe('ShelbyExplorerTask run 流程', () => {
       if (sel === DIALOG_CONNECT_SELECTOR) state.addressVisible = true
     }
     const { ctx, log } = makeCtx(task, state)
-    // 静默连接：弹窗未出现（popupFailed）不判失败，以登录态判定
-    runIntent.mockResolvedValue({ popupFailed: true })
+    // 静默连接：扩展弹窗未出现不判失败，以登录态判定
     await expect(task.run(ctx)).resolves.toBeUndefined()
-    expect(runIntent).toHaveBeenCalledTimes(1)
-    expect(log.info.mock.calls.some((c) => (c[1] as string).includes('静默连接'))).toBe(true)
+    expect(state.clicks).toContain(DIALOG_CONNECT_SELECTOR)
+    expect(log.info.mock.calls.some((c) => (c[1] as string).includes('判定依据'))).toBe(true)
   })
 
   it('登录后 header 地址未出现 → 抛登录未完成', async () => {
@@ -221,14 +234,13 @@ describe('ShelbyExplorerTask run 流程', () => {
     // 任务层保留「入口 + 弹窗 Connect」点击经 ctx.page 直调的行为断言
     expect(state.clicks.filter((s) => s === CONNECT_SELECTOR).length).toBeGreaterThanOrEqual(1)
     expect(state.clicks.filter((s) => s === DIALOG_CONNECT_SELECTOR).length).toBeGreaterThanOrEqual(1)
-    expect(runIntent).toHaveBeenCalled()
   })
 
   it('数据源缺「petra钱包地址」列 → 严格模式抛错（不跑上传）', async () => {
     const task = new ShelbyExplorerTask()
-    const { ctx } = makeCtx(task, makeState(), { 文件地址: 'C:\\files\\a.png' })
+    const { ctx, state } = makeCtx(task, makeState(), { 文件地址: 'C:\\files\\a.png' })
     await expect(task.run(ctx)).rejects.toThrow('数据源缺少列')
-    expect(runIntent).not.toHaveBeenCalled()
+    expect(state.clicks.filter((s) => s === CONNECT_SELECTOR)).toHaveLength(0)
   })
 
   it('数据源缺「文件地址」列 → 严格模式抛错（不硬跑）', async () => {
@@ -241,9 +253,9 @@ describe('ShelbyExplorerTask run 流程', () => {
   it('选文件后 Upload 按钮始终禁用 → 抛按钮未启用', async () => {
     const task = new ShelbyExplorerTask()
     task.uploadEnabledWaitMs = 10
-    const { ctx } = makeCtx(task, makeState({ uploadDisabled: true }))
+    const { ctx, state } = makeCtx(task, makeState({ uploadDisabled: true }))
     await expect(task.run(ctx)).rejects.toThrow('Upload 按钮未启用')
-    expect(runIntent).not.toHaveBeenCalled()
+    expect(state.clicks.filter((s) => s === CONNECT_SELECTOR)).toHaveLength(0)
   })
 
   it('上传弹窗未出现 file input（挂载超时）→ 补点后抛错', async () => {
@@ -343,7 +355,7 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
     const browser = await chromium.launch({ headless: true })
     try {
       const page = await browser.newPage()
-      // 真实临时文件（uploadFile 的 setInputFiles 要求文件存在）
+      // 真实临时文件（setInputFiles 要求文件存在）
       const uploadFilePath = join(tmpdir(), `shelby-explorer-${Date.now()}.txt`)
       writeFileSync(uploadFilePath, 'hello shelby')
       const task = new ShelbyExplorerTask()
@@ -356,13 +368,13 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
         artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
+        wallets: makePetraRegistry(),
         walletPasswords: { petra: 'pw' },
         accountRow: { petra钱包地址: '0xabc', 文件地址: uploadFilePath },
       })
-      // 钱包扩展弹窗无法在测试浏览器模拟：连接/签名弹窗由原型桩接管（站点侧登录态由 fixture 模拟）
+      // 钱包扩展弹窗无法在测试浏览器模拟：签名弹窗由原型桩接管（站点侧登录态由 fixture 模拟）
       await task.run(ctx)
       expect(await page.getByText('All files uploaded successfully').count()).toBeGreaterThan(0)
-      expect(runIntent).toHaveBeenCalledTimes(1)
       expect(sign).toHaveBeenCalledTimes(2)
     } finally {
       await browser.close()
@@ -385,13 +397,13 @@ describe('ShelbyExplorerTask 集成（真实浏览器 + 本地 fixture，钱包�
         cfg: {} as never,
         logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
         artifactsDir: join(tmpdir(), 'shelby-explorer-test-artifacts'),
+        wallets: makePetraRegistry(),
         walletPasswords: { petra: 'pw' },
         accountRow: { petra钱包地址: '0xabc', 文件地址: uploadFilePath },
       })
       await task.run(ctx)
       expect(await page.getByText('Blob name already taken').count()).toBeGreaterThan(0)
-      // 已上传短路（真机核实）：选文件后直接视为成功——不点 Upload、不双签名（仅登录连接 1 次）
-      expect(runIntent).toHaveBeenCalledTimes(1)
+      // 已上传短路（真机核实）：选文件后直接视为成功——不点 Upload、不双签名
       expect(sign).not.toHaveBeenCalled()
     } finally {
       await browser.close()

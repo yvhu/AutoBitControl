@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import type { TaskContext } from '../engine/task-context'
 
 /** 取数据源当前窗口行某列（严格：无行/无列/空值抛错） */
-export async function getAccount(ctx: TaskContext, column: string): Promise<string> {
+export async function getAccountValue(ctx: TaskContext, column: string): Promise<string> {
   const row = ctx.accountRow
   if (!row) throw new Error(`数据源无当前窗口对应的行（窗口: ${ctx.profile.name}）`)
   const v = row[column]
@@ -18,7 +18,7 @@ export async function getAccount(ctx: TaskContext, column: string): Promise<stri
 }
 
 /** 上传文件：值支持 http(s) URL（自动下载到临时文件）或本地路径 */
-export async function uploadFile(ctx: TaskContext, selector: string, value: string): Promise<void> {
+export async function setInputFiles(ctx: TaskContext, selector: string, value: string): Promise<void> {
   const loc = ctx.page.locator(selector).first()
   if (/^https?:\/\//i.test(value)) {
     const res = await fetch(value)

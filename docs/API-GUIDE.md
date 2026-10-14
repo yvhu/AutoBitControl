@@ -16,6 +16,20 @@
 
 ## 先读我
 
+### 怎么用这份文档
+
+先想清楚「我要做的事」，再对号入座，别从头读到尾：
+
+| 我要做的事 | 去看 |
+| --- | --- |
+| 第一次写一个新任务 | §1 五分钟上手 → §2 任务骨架 |
+| 查某个能力函数怎么用（参数 / 返回值 / 示例） | §3 函数参考 |
+| 钱包登录（连钱包 / 签名 / 确认交易） | §4 钱包登录 |
+| 抄一段完整可运行流程（签到 / 领水 / 多签上传） | §5 常用配方 |
+| 任务卡住、失败、报错，想排查 | §6 排错与真机经验 |
+| 改框架配置（超时 / 并发 / 重试 / 端口等） | §7 配置速查 |
+| 看不懂某个名词（熔断 / slot / 在途 / 探针…） | 下方「术语表（名词速查）」 |
+
 **这个系统里，谁负责什么：**
 
 | 部件 | 大白话 |
@@ -36,26 +50,36 @@
 2. 任何一步抛错（`throw`）都等于「这次任务失败」，框架按 `retry` 配置自动重试，并在面板留档。
 3. 成功与否由**断言**说了算（「该出现的东西出现了没有」），而不是「点到了按钮」就算数。
 
-**名词表：**
+**术语表（名词速查）：** 每条一句人话，右侧给去向章节；看不懂某词时回来查。
 
-| 名词 | 一句话大白话 |
-| --- | --- |
-| 任务 / Task | 一个站点的自动化流程（如「每天去 X 站签到」），对应 `src/tasks/` 一个文件 |
-| 选择器 / Selector | 定位网页元素的规则，如 `#checkin-btn` 表示 id 为 `checkin-btn` 的按钮 |
-| 探针 / Probe | 一个「等什么」的描述：一段文案，或一个选择器 |
-| 断言 / Assertion | 检查「该出现的东西出现了没有」，没出现就报错 |
-| 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 |
-| 遮罩 / Mask | 弹窗背后盖住整页的半透明灰层 |
-| DOM | 浏览器把网页解析成的一棵树，每个元素都能按规则定位 |
-| 隔离世界 / 主世界 | 自动化工具默认在隔离世界看网页；站点自己注入的全局变量只能进主世界读 |
-| CDP | 浏览器调试协议；框架通过它把真事件派发给页面 |
-| 窗口 / Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 |
-| 熔断 / Circuit Breaker | 保险丝：一个窗口连续失败 N 次即熔断、剩余任务跳过；每日 23:59 自动重置（任一任务成功也清零） |
-| 重试 / Retry | 任务失败后自动再跑，次数与间隔可配置 |
-| 退避 / Backoff | 重试前的等待时间，给站点限流留冷却 |
-| 数据源 / DataSource | 预先准备的账号/素材 Excel（`config/accounts.xlsx`），每个窗口按行领取 |
-| patchright | 我们用的隐形浏览器驱动，自动屏蔽自动化痕迹 |
-| log4js | 写日志的库 |
+| 名词 / 旧称 | 一句话大白话 | 详见 |
+| --- | --- | --- |
+| 任务 / Task | 一个站点的自动化流程（如「每天去 X 站签到」），对应 `src/tasks/` 一个文件 | §2 |
+| `TaskMeta` | 任务的「基本信息卡」：key / name / url、钱包、超时、重试、并发等静态元信息 | §2.1 |
+| `TaskContext`（`ctx`） | 任务运行时的「数据袋子」：装当前页面、日志、窗口、数据源行、任务本身；只有数据、没有方法 | 第 3 章 |
+| 选择器 / Selector | 定位网页元素的规则，如 `#checkin-btn` 表示 id 为 `checkin-btn` 的按钮 | §5 |
+| 探针 / `Matcher`（旧称 Probe） | 一个「等什么」的描述：一段文案，或一个选择器 | 第 3 章「公共类型」 |
+| 命中 / 未命中 | 探针等到了（返回 `true` 或对应键）叫命中；超时/没等到叫未命中（返回 `false` 或 `null`） | §3.3 |
+| 等待探针 / `WaitMatcher` | 在 `Matcher` 基础上多一种「等消失」（`{ hidden }`），仅等待类函数支持 | 第 3 章「公共类型」 |
+| 断言 / Assertion | 检查「该出现的东西出现了没有」，没出现就报错 | §3.3 |
+| `connected` / `disconnected` | `connectWallet` 的登录态判据：`connected` 出现即认定已登录，`disconnected` 出现即走连接流程 | §4.3 |
+| 钱包适配器 / wallet | 一组「解锁 / 连接 / 签名 / 确认交易」的钱包操作方法，按 `meta.wallet` 的 key 查找（`metamask` / `petra`） | §4.1 |
+| 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
+| 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
+| 熔断 / Circuit Breaker | 保险丝：一个窗口连续失败 N 次即熔断、剩余任务跳过；每日 23:59 自动重置（任一任务成功也清零） | §6.4 |
+| 错峰 / Stagger | 批量开窗前随机等一小段（默认最多 120 秒），避免所有窗口同一秒一起访问站点 | §7 |
+| 在途 / in-flight | 某窗口或任务正在跑、尚未结束；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
+| 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
+| 遮罩 / Mask | 弹窗背后盖住整页的半透明灰层 | §6.3 |
+| DOM | 浏览器把网页解析成的一棵树，每个元素都能按规则定位 | §5 |
+| 隔离世界 / 主世界 | 自动化工具默认在隔离世界看网页；站点自己注入的全局变量只能进主世界读（用 `evaluate`） | §3.1 |
+| CDP | 浏览器调试协议；框架通过它把真事件派发给页面 | §3.1 |
+| 窗口 / Profile | 一个比特浏览器环境（独立代理、指纹、Cookie），面板「窗口」页管理的单位 | §2.1 |
+| 重试 / Retry | 任务失败后自动再跑，次数与间隔可配置 | §2.1 |
+| 退避 / Backoff | 重试前的等待时间，给站点限流留冷却 | §2.1 |
+| 数据源 / DataSource | 预先准备的账号/素材 Excel（`config/accounts.xlsx`），每个窗口按行领取 | §3.6 |
+| patchright | 我们用的隐形浏览器驱动，自动屏蔽自动化痕迹 | 第 3 章 |
+| log4js | 写日志的库 | §6.5 |
 
 ---
 
@@ -77,7 +101,7 @@
 
 ```ts
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, hasText, waitFor } from '../api'
+import { openPage, connectWallet, click, hasText, waitFor } from '../api'
 
 export class MyCheckinTask extends SiteTask {
   meta: TaskMeta = {
@@ -90,12 +114,11 @@ export class MyCheckinTask extends SiteTask {
   async run(ctx: TaskContext): Promise<void> {
     // 打开任务页（首屏顺带清掉残留标签页）
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    // 声明式钱包登录：竞速判登录态 → 点连接 → 等登录完成
-    await loginWallet(ctx, {
+    // 自适应钱包登录：自动寻连接按钮/选钱包/处理弹窗并等已连接标志
+    await connectWallet(ctx, {
       wallet: 'metamask',
-      scenario: 'direct',
-      loggedIn: { text: '已连接' }, // 已登录标志
-      loggedOut: '连接钱包', // 未登录标志（字符串等价 { text }）
+      connected: { text: '已连接' }, // 已连接标志
+      disconnected: '连接钱包', // 未连接标志（字符串等价 { text }）
       connect: 'button:has-text("连接钱包")',
     })
     // 已签到直接成功返回（幂等：重复触发不报错）
@@ -156,7 +179,7 @@ export abstract class SiteTask {
 | `group` | `{ key: string; name: string }?` | `undefined` | 空投分组：同一空投的多个任务写相同的 key+name，面板按组折叠展示 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-10-09'`） |
 | `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` 时手动触发接口 409。面板开关写入本地库 `task_states` 覆盖，立即生效、重启保留 |
-| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`）；`loginWallet`/`signMessage`/`confirmTransaction` 按此查找适配器 |
+| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`）；`connectWallet`/`signMessage`/`confirmTransaction` 按此查找适配器 |
 | `timeoutSec` | `number?` | 180 | 单次运行超时（秒）；缺省取全局 `execution.taskTimeoutMs / 1000` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；缺省取全局 `execution.retryMax`/`execution.retryBackoffSec` |
 | `concurrency` | `number?` | 4 | 任务级并发：同一时间最多几个窗口并行跑该任务；缺省 `DEFAULT_TASK_CONCURRENCY`（4） |
@@ -185,8 +208,8 @@ meta: TaskMeta = {
 ### 2.2 `run(ctx)` 要点
 
 - 打开页面一律用 `openPage`（自带失败重试）。
-- 要钱包登录就调 `loginWallet`；只做单次签名/确认就调 `signMessage`/`confirmTransaction`。
-- 页面判定用 `waitFor` / `race` / `hasText` / `elementState`，**别写固定 sleep**。
+- 要钱包登录就调 `connectWallet`；只做单次签名/确认就调 `signMessage`/`confirmTransaction`。
+- 页面判定用 `waitFor` / `race` / `hasText` / `getElementState`，**别写固定 sleep**。
 - **成功必须显式断言**：要么 `waitFor(..., { assert: true })`，要么自己 `throw`。
 - 多页流程在一个 `run` 里连续调 `openPage` 即可（首屏可 `closeOtherTabs: true`）。
 
@@ -200,19 +223,19 @@ meta: TaskMeta = {
 
 ```ts
 /** 探针：一段文案，或一个选择器；字符串等价于 { text } */
-type Probe = string | { text: string } | { selector: string }
+type Matcher = string | { text: string } | { selector: string }
 
-/** 等待探针：在 Probe 基础上增加“等消失” */
-type WaitProbe = Probe | { gone: string }
+/** 等待探针：在 Matcher 基础上增加“等消失” */
+type WaitMatcher = Matcher | { hidden: string }
 ```
 
 - `{ text }`（或字符串）：按**存在**判定（元素数 > 0，不判可见性，兼容双 DOM / 动画态）。
 - `{ selector }`：按**可见**判定（需元素存在且 `isVisible()`）。
-- `{ gone }`：按**不可见或不存在**判定（仅等待类函数支持）。
+- `{ hidden }`：按**不可见或不存在**判定（仅等待类函数支持）。
 
 ### 3.1 页面（`src/api/page.ts`）
 
-#### `openPage(ctx, url?, options?)`
+#### `openPage(ctx, url?, opts?)`
 
 **用途**：打开网页（默认 `meta.url`），失败自动重试，等加载完成。
 
@@ -222,7 +245,7 @@ type WaitProbe = Probe | { gone: string }
 openPage(
   ctx: TaskContext,
   url?: string,
-  options?: {
+  opts?: {
     retries?: number
     timeoutMs?: number
     waitUntil?: 'domcontentloaded' | 'load' | 'networkidle'
@@ -236,10 +259,10 @@ openPage(
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
 | `url` | `string` | 否 | `ctx.task.meta.url` | 目标地址；两者都为空串则抛错 |
-| `options.retries` | `number` | 否 | `3` | 加载失败重试次数（含首次）；失败按 2–5 秒随机退避 |
-| `options.timeoutMs` | `number` | 否 | `45000` | 单次 `goto` 超时（毫秒） |
-| `options.waitUntil` | `string` | 否 | `'domcontentloaded'` | 等待的加载状态 |
-| `options.closeOtherTabs` | `boolean` | 否 | `false` | 打开前是否关闭当前上下文里其它标签页 |
+| `opts.retries` | `number` | 否 | `3` | 加载失败重试次数（含首次）；失败按 2–5 秒随机退避 |
+| `opts.timeoutMs` | `number` | 否 | `45000` | 单次 `goto` 超时（毫秒） |
+| `opts.waitUntil` | `string` | 否 | `'domcontentloaded'` | 等待的加载状态 |
+| `opts.closeOtherTabs` | `boolean` | 否 | `false` | 打开前是否关闭当前上下文里其它标签页 |
 
 **示例**：
 
@@ -299,11 +322,11 @@ await click(ctx, { x: 120, y: 300 }) // 坐标点击
 
 **注意**：需要逐键慢速输入、触发输入事件时才用 `ctx.page.locator(...).pressSequentially()`（patchright 逃生口）。
 
-#### `pressKey(ctx, key)`
+#### `press(ctx, key)`
 
 **用途**：在当前焦点上按键。
 
-**签名**：`pressKey(ctx: TaskContext, key: string): Promise<void>`
+**签名**：`press(ctx: TaskContext, key: string): Promise<void>`
 
 **参数**
 
@@ -311,15 +334,15 @@ await click(ctx, { x: 120, y: 300 }) // 坐标点击
 | --- | --- | --- | --- | --- |
 | `key` | `string` | 是 | — | 键名或组合键，如 `'Enter'`、`'Control+A'` |
 
-**示例**：`await pressKey(ctx, 'Enter')`
+**示例**：`await press(ctx, 'Enter')`
 
 **注意**：先确保目标输入框已聚焦（`click` 或 `fill` 过后一般已聚焦）。
 
-#### `runJs(ctx, fn)`
+#### `evaluate(ctx, fn)`
 
 **用途**：在页面**主世界**执行一段 JS 并返回结果（读站点注入的全局变量、`localStorage` 必须用主世界）。
 
-**签名**：`runJs<T>(ctx: TaskContext, fn: () => T): Promise<T>`
+**签名**：`evaluate<T>(ctx: TaskContext, fn: () => T): Promise<T>`
 
 **参数**
 
@@ -330,10 +353,10 @@ await click(ctx, { x: 120, y: 300 }) // 坐标点击
 **示例**：
 
 ```ts
-const state = await runJs<{ user?: { id: string } }>(ctx, () => (window as any).__APP_STATE__)
+const state = await evaluate<{ user?: { id: string } }>(ctx, () => (window as any).__APP_STATE__)
 if (!state?.user) throw new Error('未登录')
 
-const done = await runJs<boolean>(ctx, () => localStorage.getItem('claimed_today') === '1')
+const done = await evaluate<boolean>(ctx, () => localStorage.getItem('claimed_today') === '1')
 if (done) return // 今日已做 → 成功
 ```
 
@@ -344,11 +367,11 @@ if (done) return // 今日已做 → 成功
 
 ### 3.2 查找（`src/api/find.ts`，即时判断，不等待）
 
-#### `elementState(ctx, selector)`
+#### `getElementState(ctx, selector)`
 
 **用途**：判断元素状态：可见 / 隐藏 / 不存在。
 
-**签名**：`elementState(ctx: TaskContext, selector: string): Promise<'visible' | 'hidden' | 'absent'>`
+**签名**：`getElementState(ctx: TaskContext, selector: string): Promise<'visible' | 'hidden' | 'absent'>`
 
 **参数**
 
@@ -361,7 +384,7 @@ if (done) return // 今日已做 → 成功
 **示例**：
 
 ```ts
-if ((await elementState(ctx, ADDRESS_SELECTOR)) === 'visible') return // 已登录
+if ((await getElementState(ctx, ADDRESS_SELECTOR)) === 'visible') return // 已登录
 ```
 
 **注意**：是即时快照，不做等待；要等它出现用 `waitFor`。
@@ -405,14 +428,14 @@ if (await hasText(ctx, '维护中')) throw new Error('水龙头维护中')
 
 ### 3.3 等待（`src/api/wait.ts`）
 
-#### `waitFor(ctx, probe, options?)`
+#### `waitFor(ctx, matcher, opts?)`
 
 **用途**：等条件命中（文案出现 / 元素可见 / 元素消失）；可选**刷新恢复**（出错或周期性刷新页面）；返回是否命中。
 
 **签名**：
 
 ```ts
-waitFor(ctx: TaskContext, probe: WaitProbe, options?: {
+waitFor(ctx: TaskContext, matcher: WaitMatcher, opts?: {
   budgetMs?: number
   assert?: boolean
   refreshEveryMs?: number
@@ -426,13 +449,13 @@ waitFor(ctx: TaskContext, probe: WaitProbe, options?: {
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `probe` | `WaitProbe` | 是 | — | 等待条件：`{ text }`/字符串按存在、`{ selector }` 按可见、`{ gone }` 按消失 |
-| `options.budgetMs` | `number` | 否 | `10000` | 总预算（毫秒），超时即结束 |
-| `options.assert` | `boolean` | 否 | `false` | `true` → 超时抛错；`false` → 返回 `false` |
-| `options.refreshEveryMs` | `number` | 否 | `0`（关闭） | 周期主动刷新间隔（刷新恢复，原 `recover` 语义） |
-| `options.recoverTexts` | `string[]` | 否 | `[]` | 页面出现这些文案立即刷新；恢复型等待显式传 `RECOVER_TEXTS`（默认 `['Network Error', 'Turnstile token request timed out']`，从 `./base` 引入） |
-| `options.settleMs` | `number` | 否 | `5000` | 刷新后的沉降等待（毫秒） |
-| `options.heartbeatMs` | `number` | 否 | `15000` | 心跳日志间隔（毫秒） |
+| `matcher` | `WaitMatcher` | 是 | — | 等待条件：`{ text }`/字符串按存在、`{ selector }` 按可见、`{ hidden }` 按消失 |
+| `opts.budgetMs` | `number` | 否 | `10000` | 总预算（毫秒），超时即结束 |
+| `opts.assert` | `boolean` | 否 | `false` | `true` → 超时抛错；`false` → 返回 `false` |
+| `opts.refreshEveryMs` | `number` | 否 | `0`（关闭） | 周期主动刷新间隔（刷新恢复，原 `recover` 语义） |
+| `opts.recoverTexts` | `string[]` | 否 | `[]` | 页面出现这些文案立即刷新；恢复型等待显式传 `RECOVER_TEXTS`（默认 `['Network Error', 'Turnstile token request timed out']`，从 `./base` 引入） |
+| `opts.settleMs` | `number` | 否 | `5000` | 刷新后的沉降等待（毫秒） |
+| `opts.heartbeatMs` | `number` | 否 | `15000` | 心跳日志间隔（毫秒） |
 
 **示例**：
 
@@ -451,7 +474,7 @@ await waitFor(ctx, { selector: '#upload-files' }, {
 })
 
 // 等弹窗消失
-await waitFor(ctx, { gone: `text=${MODAL_TITLE}` }, { budgetMs: 10000 })
+await waitFor(ctx, { hidden: `text=${MODAL_TITLE}` }, { budgetMs: 10000 })
 ```
 
 **注意**
@@ -463,13 +486,13 @@ await waitFor(ctx, { gone: `text=${MODAL_TITLE}` }, { budgetMs: 10000 })
 
 **用途**：多探针竞速——任一先命中即返回它的键；都等不到返回 `null`（**不抛错**）。
 
-**签名**：`race<K extends string>(ctx: TaskContext, entries: Array<[K, Probe]>, timeoutMs: number): Promise<K | null>`
+**签名**：`race<K extends string>(ctx: TaskContext, entries: Array<[K, Matcher]>, timeoutMs: number): Promise<K | null>`
 
 **参数**
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `entries` | `Array<[键, Probe]>` | 是 | — | 键为自定义字符串，值为探针；空数组直接返回 `null` |
+| `entries` | `Array<[键, Matcher]>` | 是 | — | 键为自定义字符串，值为探针；空数组直接返回 `null` |
 | `timeoutMs` | `number` | 是 | — | 竞速总时长（毫秒） |
 
 **示例**：
@@ -487,19 +510,19 @@ throw new Error('签到未完成')
 
 **注意**：一个动作后可能出现多种**互斥**结果时（成功 / 已做 / 上限 / 余额不足），用竞速比连续判断更可靠、更省时；返回值是 `null` 时不抛错，由任务决定后续。
 
-#### `waitResponse(ctx, match, options?)`
+#### `waitForResponse(ctx, matcher, opts?)`
 
 **用途**：等接口响应，按 URL/方法过滤、按状态/值判定命中，返回 `{ status, body }`。
 
 **签名**：
 
 ```ts
-waitResponse(ctx: TaskContext, match: {
+waitForResponse(ctx: TaskContext, matcher: {
   urlPart?: string
   method?: string
   predicate?: (status: number, body: unknown) => boolean
   parse?: 'json' | 'text'
-}, options?: { timeoutMs?: number }): Promise<{ status: number; body: unknown }>
+}, opts?: { timeoutMs?: number }): Promise<{ status: number; body: unknown }>
 ```
 
 **参数**
@@ -510,12 +533,12 @@ waitResponse(ctx: TaskContext, match: {
 | `match.method` | `string` | 否 | 不限 | 只等此 HTTP 方法（如 `'POST'`） |
 | `match.predicate` | `(status, body) => boolean` | 否 | 不限 | 命中条件：不满足则抛错 `接口响应未命中判定` |
 | `match.parse` | `'json' \| 'text'` | 否 | `'json'` | body 解析方式；`'text'` 返回原文，JSON 解析失败为 `null` |
-| `options.timeoutMs` | `number` | 否 | `15000` | 等待响应的超时（毫秒） |
+| `opts.timeoutMs` | `number` | 否 | `15000` | 等待响应的超时（毫秒） |
 
 **示例**：
 
 ```ts
-const { status, body } = await waitResponse(ctx, {
+const { status, body } = await waitForResponse(ctx, {
   urlPart: '/api/claim',
   method: 'POST',
   predicate: (s, b) => s === 200 && Boolean((b as { tx?: string })?.tx),
@@ -525,76 +548,82 @@ ctx.log.info({ status }, '领取接口命中')
 
 **注意**
 
-- 要在**点击前**先注册等待（先 `const p = waitResponse(...)`，再点，再 `await p`），否则可能错过响应。
+- 要在**点击前**先注册等待（先 `const p = waitForResponse(...)`，再点，再 `await p`），否则可能错过响应。
 - `predicate` 不满足时抛错；想自己判 body，省略 `predicate` 拿返回值即可。
 
 ### 3.4 钱包动作（`src/api/wallet.ts`）
 
-#### `loginWallet(ctx, spec)`
+#### `connectWallet(ctx, opts)`
 
-**用途**：钱包登录全流程（按 `wallet` 取适配器、按 `scenario` 露出钱包入口，自适应完成连接/签名/确认并等登录态）。
+> 兼容别名：旧名 `loginWallet` 仍导出，等价于 `connectWallet`（已废弃，建议改用 `connectWallet`）。
+
+**用途**：自适应钱包登录全流程——按 `wallet` 取适配器，自动找连接按钮、自动检测站内钱包列表、自动按显示名选钱包、自动归一化弹窗、静默连接、连接后自动签名，并等已连接标志出现。
 
 **签名**：
 
 ```ts
+// 已知内置钱包 key；ConnectOptions.wallet 接受任意已注册适配器 key（配置驱动新钱包无需改类型）
 type WalletType = 'metamask' | 'petra'
-type WalletScenario = 'direct' | 'appkit' | 'dialog'
-type WalletIntent = 'connect' | 'sign' | 'confirmTx'
 
-type LoginSpec =
-  | (LoginSpecBase & { scenario: 'direct' })
-  | (LoginSpecBase & { scenario: 'appkit'; entryTestId: string; open?: string; modalTestId?: string })
-  | (LoginSpecBase & { scenario: 'dialog'; confirm?: string; walletEntry?: string })
+interface ConnectOptions {
+  wallet: string
+  connected?: Matcher
+  disconnected?: Matcher
+  connect?: string
+  walletOption?: Matcher
+  confirm?: string
+  waitConnectedMs?: number
+  errorTexts?: string[]
+  refreshEveryMs?: number
+  attempts?: number
+  reclickAfterMs?: number
+}
 
-loginWallet(ctx: TaskContext, spec: LoginSpec): Promise<void>
+connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 ```
 
-**参数（`LoginSpec` 字段）**
+**参数（`ConnectOptions` 字段）**
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `wallet` | `'metamask' \| 'petra'` | 是 | — | 钱包适配器 key |
-| `loggedIn` | `Probe` | 是 | — | 已登录标志探针（出现即认定已登录） |
-| `loggedOut` | `Probe` | 是 | — | 未登录标志探针（出现即走登录流程） |
-| `scenario` | `'direct' \| 'appkit' \| 'dialog'` | 是 | — | 站点连接入口形态（判别字段，见第 4 章） |
-| `connect` | `string` | 否 | `undefined` | 站点「连接钱包」按钮选择器 |
-| `entryTestId` | `string` | appkit 必填 | — | AppKit 钱包选择项的 `data-testid`（如 `wallet-selector-io.metamask`） |
-| `open` | `string` | 否 | `'button:has-text("Connect Wallet")'` | appkit：打开钱包列表的按钮选择器 |
-| `modalTestId` | `string` | 否 | `undefined` | appkit：弹窗根节点 testid（可选） |
-| `confirm` | `string` | 否 | `undefined` | dialog：站内对话框的确认按钮选择器（如 `text=Connect with Ethereum`） |
-| `walletEntry` | `string` | 否 | `undefined` | dialog：弹窗内钱包选择项（如 `text=MetaMask`），也用作补点选择器 |
-| `intents` | `WalletIntent[]` | 否 | `['connect']` | 要依次处理的钱包动作序列 |
-| `waitLoggedInMs` | `number` | 否 | `90000` | 等「已登录」标志出现的最长毫秒数 |
-| `recoverTexts` | `string[]` | 否 | `[]` | 可恢复错误文案（透传 `waitFor`，默认不因文案刷新，仅靠周期刷新） |
-| `refreshEveryMs` | `number` | 否 | `25000` | 等待登录期间周期刷新间隔（毫秒） |
-| `attempts` | `number` | 否 | `2` | 登录整体重试轮数（第二轮起先刷新页面重来） |
-| `reclickAfterMs` | `number` | 否 | `8000` | 弹窗未按时出现时，补点入口前的等待毫秒数 |
+| `wallet` | `string` | 是 | — | 钱包适配器 key（内置 `'metamask'`/`'petra'`，可填任意已注册 key） |
+| `connected` | `Matcher` | 否 | 地址样式文本启发式 | 已连接标志探针（出现即认定已连接） |
+| `disconnected` | `Matcher` | 否 | 通用连接按钮启发式 | 未连接标志探针（出现即走连接流程） |
+| `connect` | `string` | 否 | 按候选文案（`Connect Wallet`/`连接钱包`/`Connect`）自动找 | 站点「连接钱包」按钮选择器 |
+| `walletOption` | `Matcher` | 否 | 按适配器 `displayName` | 站内钱包列表项匹配器（如 `{ text: 'MetaMask' }`） |
+| `confirm` | `string` | 否 | `undefined` | 点连接后站内需额外确认的按钮（如 `text=Connect with Ethereum`，软点） |
+| `waitConnectedMs` | `number` | 否 | `90000` | 等「已连接」标志出现的最长毫秒数 |
+| `errorTexts` | `string[]` | 否 | `[]` | 可恢复错误文案（出现即刷新页面） |
+| `refreshEveryMs` | `number` | 否 | `25000` | 等待连接期间周期刷新间隔（毫秒） |
+| `attempts` | `number` | 否 | `2` | 整体重试轮数（第二轮起先刷新页面重来） |
+| `reclickAfterMs` | `number` | 否 | `8000` | 一轮内无动作时补点连接按钮前的等待毫秒数 |
 
-**示例**：见第 4 章（三种场景各一份完整示例）。
+**示例**：`await connectWallet(ctx, { wallet: 'metamask' })` 即可跑通常见站点。完整示例见第 4 章。
 
 **注意**
 
-- 进页面先竞速 `loggedIn`/`loggedOut`（20s），已登录直接返回，不点任何按钮。
+- 进页面先判初始态：有 `connected`/`disconnected` 用它们竞速（20s）；否则用启发式（连接按钮可见 = 未连接，页面出现 `0x` 地址样式文本 = 已连接）。命中已连接直接返回，不点任何按钮。
 - 内部会先做扩展就绪检查（`ready`）：扩展未加载会快速失败，重试会重启浏览器窗口恢复。
-- **静默连接**（扩展已授权站点，点了却不弹钱包弹窗）不判失败，以登录态为准。
-- 失败最终抛 `登录未完成（等待已登录标志超时）`。
+- **静默连接**（扩展已授权站点，点了却不弹钱包弹窗）不判失败，以已连接标志为准。
+- **安全边界**：登录阶段只自动处理解锁/连接/签名，**绝不自动确认交易**（交易弹窗会告警并跳过，由任务显式 `confirmTransaction`）。
+- 失败最终抛 `登录未完成（等待已连接标志超时）`。
 
-#### `signMessage(ctx, options?)`
+#### `signMessage(ctx, opts?)`
 
 **用途**：等一次钱包弹窗并完成**消息签名**（适用于自己控制流程的多签场景，如上传需两次签名）。
 
 **签名**：
 
 ```ts
-signMessage(ctx: TaskContext, options?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
+signMessage(ctx: TaskContext, opts?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
 ```
 
 **参数**
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `options.reclick.selector` | `string` | 否 | — | 弹窗没出现时补点的选择器（如提交按钮） |
-| `options.reclick.afterMs` | `number` | 否 | — | 等 `afterMs` 毫秒弹窗仍未出现就补点一次 |
+| `opts.reclick.selector` | `string` | 否 | — | 弹窗没出现时补点的选择器（如提交按钮） |
+| `opts.reclick.afterMs` | `number` | 否 | — | 等 `afterMs` 毫秒弹窗仍未出现就补点一次 |
 
 **返回值**：`{ popupFailed }` —— `true` 表示弹窗根本没出现（可能静默/无需签名），调用方按业务态判定，**不要直接当失败**。
 
@@ -609,14 +638,14 @@ for (let i = 0; i < 2; i++) {
 
 **注意**：作用于任务配置的钱包 `meta.wallet`——未配置会抛 `任务未配置钱包`；未注册的 key 抛 `未注册的钱包适配器: X`。
 
-#### `confirmTransaction(ctx, options?)`
+#### `confirmTransaction(ctx, opts?)`
 
 **用途**：等一次钱包弹窗并**确认交易**。签名与参数、返回值同 `signMessage`。
 
 **签名**：
 
 ```ts
-confirmTransaction(ctx: TaskContext, options?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
+confirmTransaction(ctx: TaskContext, opts?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
 ```
 
 **示例**：
@@ -631,14 +660,14 @@ await waitFor(ctx, { selector: '.tx-success' }, { assert: true, budgetMs: 30000 
 
 ### 3.5 验证码（`src/api/captcha.ts`）
 
-#### `clickTurnstile(ctx, options?)`
+#### `clickTurnstile(ctx, opts?)`
 
 **用途**：处理交互式 Cloudflare Turnstile 人机验证**方框**（检测到方框即坐标点击；ISP 住宅 IP 一点即过）。站点的 v3 隐形评分由页面自行完成，任务不介入。
 
 **签名**：
 
 ```ts
-clickTurnstile(ctx: TaskContext, options?: {
+clickTurnstile(ctx: TaskContext, opts?: {
   waitMs?: number
   selectors?: string[]
   maxAttempts?: number
@@ -649,9 +678,9 @@ clickTurnstile(ctx: TaskContext, options?: {
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `options.waitMs` | `number` | 否 | 无 | 有值（>0）→ 在预算内轮询等待方框并点击；无值 → 单次检测点击 |
-| `options.selectors` | `string[]` | 否 | Turnstile 默认选择器 | 覆盖方框 iframe 选择器（**仅 `waitMs` 未设置时生效**） |
-| `options.maxAttempts` | `number` | 否 | `3` | 点击被瞬时拒绝时的重试次数（**仅 `waitMs` 未设置时生效**） |
+| `opts.waitMs` | `number` | 否 | 无 | 有值（>0）→ 在预算内轮询等待方框并点击；无值 → 单次检测点击 |
+| `opts.selectors` | `string[]` | 否 | Turnstile 默认选择器 | 覆盖方框 iframe 选择器（**仅 `waitMs` 未设置时生效**） |
+| `opts.maxAttempts` | `number` | 否 | `3` | 点击被瞬时拒绝时的重试次数（**仅 `waitMs` 未设置时生效**） |
 
 **返回值**：执行了点击为 `true`；预算内/单次未检测到方框为 `false`。
 
@@ -674,11 +703,11 @@ if (await clickTurnstile(ctx)) ctx.log.info({ step: 'turnstile' }, '已点击方
 
 ### 3.6 数据与产物（`src/api/data.ts`）
 
-#### `getAccount(ctx, column)`
+#### `getAccountValue(ctx, column)`
 
 **用途**：取数据源当前窗口行的列值（**严格**：缺行/缺列/空值都抛错）。
 
-**签名**：`getAccount(ctx: TaskContext, column: string): Promise<string>`
+**签名**：`getAccountValue(ctx: TaskContext, column: string): Promise<string>`
 
 **参数**
 
@@ -689,17 +718,17 @@ if (await clickTurnstile(ctx)) ctx.log.info({ step: 'turnstile' }, '已点击方
 **示例**：
 
 ```ts
-const address = await getAccount(ctx, 'metamask钱包地址')
+const address = await getAccountValue(ctx, 'metamask钱包地址')
 await fill(ctx, 'input[name="address"]', address)
 ```
 
 **注意**：报错三形态——`数据源无当前窗口对应的行（窗口: X）` / `数据源缺少列: X（可用列: …）` / `数据源列 X 在窗口 Y 的行为空`。报错即任务失败，通常正是你想要的（数据没备齐就不该硬跑）。想「缺了用 faker 兜底」改用 `ctx.accountRow?.['邮箱'] || faker.internet.email()`。
 
-#### `uploadFile(ctx, selector, value)`
+#### `setInputFiles(ctx, selector, value)`
 
 **用途**：往 file 输入框设置文件。`value` 支持 **http(s) URL**（自动下载到临时文件）或**本地路径**。
 
-**签名**：`uploadFile(ctx: TaskContext, selector: string, value: string): Promise<void>`
+**签名**：`setInputFiles(ctx: TaskContext, selector: string, value: string): Promise<void>`
 
 **参数**
 
@@ -711,14 +740,14 @@ await fill(ctx, 'input[name="address"]', address)
 **示例**：
 
 ```ts
-await uploadFile(ctx, 'input[type="file"]', await getAccount(ctx, '图片地址')) // URL
-await uploadFile(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // 本地路径
+await setInputFiles(ctx, 'input[type="file"]', await getAccountValue(ctx, '图片地址')) // URL
+await setInputFiles(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // 本地路径
 ```
 
 **注意**
 
 - URL 下载失败抛 `图片下载失败: <url> (HTTP <状态码>)`；临时文件落在系统临时目录 `abc-uploads/`。
-- 内部用 `setInputFiles`，不弹系统文件框，对 `display:none` 的隐藏 input 也可用（隐藏 input 用 `elementState(...) !== 'absent'` 判挂载，别用可见性等待）。
+- 内部用 `setInputFiles`，不弹系统文件框，对 `display:none` 的隐藏 input 也可用（隐藏 input 用 `getElementState(...) !== 'absent'` 判挂载，别用可见性等待）。
 
 #### `takeScreenshot(ctx, name)`
 
@@ -779,14 +808,14 @@ await recordStep(ctx, 'open-crate', async () => {
 
 需在 `config/.env` 配 `AI_API_KEY`（OpenAI 兼容，默认 DeepSeek，见第 7 章配置速查）。未配置时 `ctx.ai` 为 `undefined`，`askAi`/`answerQuiz` 抛 `AI 未配置（AI_API_KEY）`；任务侧可先判空 `ctx.ai` 再决定是否调用。
 
-#### `askAi(ctx, prompt, options?)`
+#### `askAi(ctx, prompt, opts?)`
 
 **用途**：问 AI 要一段文本（可带 system 提示）。
 
 **签名**：
 
 ```ts
-askAi(ctx: TaskContext, prompt: string, options?: { system?: string; maxTokens?: number; timeoutMs?: number }): Promise<string>
+askAi(ctx: TaskContext, prompt: string, opts?: { system?: string; maxTokens?: number; timeoutMs?: number }): Promise<string>
 ```
 
 **参数**
@@ -794,9 +823,9 @@ askAi(ctx: TaskContext, prompt: string, options?: { system?: string; maxTokens?:
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
 | `prompt` | `string` | 是 | — | 用户提问内容 |
-| `options.system` | `string` | 否 | — | system 提示（约束输出格式等） |
-| `options.maxTokens` | `number` | 否 | 客户端默认（300） | 输出上限 |
-| `options.timeoutMs` | `number` | 否 | `cfg.ai.timeoutMs` | 请求超时毫秒 |
+| `opts.system` | `string` | 否 | — | system 提示（约束输出格式等） |
+| `opts.maxTokens` | `number` | 否 | 客户端默认（300） | 输出上限 |
+| `opts.timeoutMs` | `number` | 否 | `cfg.ai.timeoutMs` | 请求超时毫秒 |
 
 **返回值**：模型输出的文本（由 AI 客户端去除首尾空格）。
 
@@ -808,14 +837,14 @@ const summary = await askAi(ctx, '用一句话概括这段文本', { system: '�
 
 **注意**：`ctx.ai` 仅在配置了 `AI_API_KEY` 时注入；未配置时为 `undefined`，`askAi` 直接抛错，不静默返回空串。
 
-#### `answerQuiz(ctx, spec)`
+#### `answerQuiz(ctx, opts)`
 
 **用途**：页面选择题——读题干与选项文本 → 问 AI → 点击对应项；**解析不出答案时兜底随机点一项**（`fallback:true`，「答了就算成功」）。
 
 **签名**：
 
 ```ts
-answerQuiz(ctx: TaskContext, spec: {
+answerQuiz(ctx: TaskContext, opts: {
   question: string | { selector: string }
   options: { selector: string }
   match?: 'letter' | 'index' | 'text'
@@ -826,9 +855,9 @@ answerQuiz(ctx: TaskContext, spec: {
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `spec.question` | `string \| { selector }` | 是 | — | 题干文本；给 `{ selector }` 时经 `getText` 读取 |
-| `spec.options.selector` | `string` | 是 | — | 选项元素选择器（全部匹配项按 DOM 顺序编号 A/B/C…） |
-| `spec.match` | `'letter' \| 'index' \| 'text'` | 否 | `'letter'` | 让 AI 返回的答案格式：字母 / 1 基序号 / 选项文本 |
+| `opts.question` | `string \| { selector }` | 是 | — | 题干文本；给 `{ selector }` 时经 `getText` 读取 |
+| `opts.options.selector` | `string` | 是 | — | 选项元素选择器（全部匹配项按 DOM 顺序编号 A/B/C…） |
+| `opts.match` | `'letter' \| 'index' \| 'text'` | 否 | `'letter'` | 让 AI 返回的答案格式：字母 / 1 基序号 / 选项文本 |
 
 **返回值**：`{ answer, clicked, fallback }`——AI 原始答案、是否已点击、是否走了兜底随机。
 
@@ -849,60 +878,78 @@ if (fallback) ctx.log.warn('AI 未给出可用答案，已随机作答')
 
 ---
 
-## 4. 钱包登录场景（`wallet` × `scenario`）
+## 4. 钱包登录：自适应连接（`connectWallet`）
 
-`loginWallet` 用 `scenario` 描述**站点连接入口的形态**，用 `wallet` 选择**钱包适配器**。三个场景：
-
-| `scenario` | 适用站点 | 额外字段 | 说明 |
-| --- | --- | --- | --- |
-| `direct` | 点连接直接唤起扩展弹窗 | 无 | 如 Petra 点 Connect Wallet 直开 `prompt.html`；登录常走 `intents: ['sign']` |
-| `dialog` | 点连接后先弹**站内**钱包选择对话框 | `confirm`（确认按钮）、`walletEntry`（钱包选择项） | 如 Konnex：Connect Wallet → Connect with Ethereum → MetaMask |
-| `appkit` | 站点用 **AppKit（Reown）** 弹窗 | `entryTestId`（必填）；`open`、`modalTestId`（可选） | 框架做视图归一化后点钱包入口，如 DAC Inception |
-
-`entryTestId` 是 AppKit 钱包选择项的 `data-testid`（如 `wallet-selector-io.metamask`）；`open` 缺省 `button:has-text("Connect Wallet")`。
-
-### 4.1 direct（Petra，直接唤起扩展）
+`connectWallet` 用 `wallet` 选择**钱包适配器**，其余交给框架按站点**可见行为自动推断**：自动找连接按钮、自动检测站内钱包列表并选钱包、自动归一化弹窗、静默连接、连接后自动签名。大多数站点只写 `wallet` 即可：
 
 ```ts
-await loginWallet(ctx, {
-  wallet: 'petra',
-  scenario: 'direct',
-  loggedIn: { text: '连接钱包' },
-  loggedOut: '连接钱包',
-  connect: 'button:has-text("连接钱包")',
-  intents: ['sign'], // Petra 登录是签名（Sign In）
-})
+await connectWallet(ctx, { wallet: 'metamask' })
 ```
 
-### 4.2 appkit（MetaMask，AppKit 归一化）
+框架内部（无需任务声明）：竞速判初始登录态 → 扩展就绪检查 → 点连接按钮 → 自适应推进（点站内钱包项 / 处理扩展弹窗 / 补点）→ 等已连接标志。
+
+### 4.1 钱包适配器
+
+| `wallet` key | 显示名（`displayName`） | 说明 |
+| --- | --- | --- |
+| `metamask` | `MetaMask` | 自定义适配器（解锁/URL 逻辑成熟，真机验证过） |
+| `petra` | `Petra` | 自定义适配器 |
+
+`walletOption` 缺省按上表**显示名**匹配站内钱包列表项。
+
+### 4.2 完整示例
 
 ```ts
-await loginWallet(ctx, {
-  wallet: 'metamask',
-  scenario: 'appkit',
-  loggedIn: { text: 'Quantum Crate' },
-  loggedOut: 'Enter Inception',
-  connect: 'button:has-text("Enter Inception")',
-  open: 'button:has-text("WALLET")', // 打开 AppKit 钱包列表
-  entryTestId: 'wallet-selector-io.metamask', // 钱包选择项的 testid
-  intents: ['connect'],
-})
+import { openPage, connectWallet, click, hasText, waitFor } from '../api'
+
+async run(ctx: TaskContext): Promise<void> {
+  await openPage(ctx, this.meta.url, { closeOtherTabs: true })
+  // 通常只写 wallet：框架自动连接（寻按钮/选钱包/归一化弹窗/静默连接/自动签名）
+  await connectWallet(ctx, { wallet: 'metamask' })
+  // 连接完成后的站点动作（宁严勿松：必须显式断言成功）
+  if (await hasText(ctx, '已签到')) return
+  await click(ctx, '#checkin-btn')
+  await waitFor(ctx, { selector: '#checked-badge' }, { assert: true, budgetMs: 10000 })
+}
 ```
 
-### 4.3 dialog（MetaMask，站内对话框后选钱包）
+### 4.3 复杂站点的覆盖项
+
+只有站点形态不标准时才补字段：
+
+| 字段 | 何时需要 | 说明 |
+| --- | --- | --- |
+| `connected` | 启发式误判（如首页有 `0x` 文本） | 已连接标志探针（出现即认定已登录） |
+| `disconnected` | 连接按钮文案无法自动识别 | 未连接标志探针（出现即走连接流程） |
+| `connect` | 连接按钮非候选文案 | 站点「连接钱包」按钮选择器 |
+| `walletOption` | 站内列表项文案与钱包显示名不同 | 站内钱包列表项匹配器 |
+| `confirm` | 点连接后站内还需确认 | 站内对话框确认按钮（软点） |
 
 ```ts
-await loginWallet(ctx, {
+// 站内钱包选择弹窗后再等扩展弹窗（如 Konnex）：覆盖 connect / confirm / walletOption
+await connectWallet(ctx, {
   wallet: 'metamask',
-  scenario: 'dialog',
-  loggedIn: { text: 'Balance' },
-  loggedOut: 'Connect Wallet',
+  connected: { text: 'Balance' },
+  disconnected: 'Connect Wallet',
   connect: '[data-testid="connect-wallet-button"]',
-  confirm: 'text=Connect with Ethereum', // 站内对话框确认
-  walletEntry: 'text=MetaMask', // 弹窗内钱包选择项（兼作补点）
-  intents: ['connect'],
+  confirm: 'text=Connect with Ethereum',
+  walletOption: { text: 'MetaMask' },
 })
 ```
+
+### 4.4 安全边界与判据可靠性
+
+- **登录阶段绝不自动确认交易**：连接编排只处理解锁/连接/签名；分类为交易（tx）的弹窗告警并跳过，交易一律由任务显式 `confirmTransaction` 完成。
+- **判据可靠性**：自动嗅探的登录态判据（地址样式文本 / 连接按钮）是启发式，可能误判；关键站点应显式给 `connected`（框架日志会打印本轮实际使用的判据，便于排障）。
+- 站点把登录包成自定义流程（如先点站内「Sign In」再签名）的，任务里显式 `click` 后再 `signMessage`。
+
+### 4.5 新增钱包 checklist
+
+1. 真机开该钱包，取 `extensionId` / `probePath`（取不到则省略，走降级：`ready` 不探测扩展页）。
+2. 写配置驱动适配器：`createConfigWalletAdapter({ key, displayName, extensionId? })`（`src/automation/wallet/config-adapter.ts`；多数钱包只需 `key`+`displayName`+`extensionId`，特殊按钮用 `buttons` 覆盖）。
+3. 在 `src/app.ts` 注册：`wallets.register(createConfigWalletAdapter({ ... }))`。
+4. 在手册「钱包适配器」表（4.1）加一行。
+5. 测试：适配器单测 + 真机 `task:run`。
 
 ---
 
@@ -913,19 +960,17 @@ await loginWallet(ctx, {
 适用：每天/每周固定时间开放签到、已签到有多种界面、钱包登录的站点。
 
 ```ts
-import { openPage, loginWallet, click, hasText, race, runJs, takeScreenshot } from '../api'
+import { openPage, connectWallet, click, hasText, race, evaluate, takeScreenshot } from '../api'
 
 async run(ctx: TaskContext): Promise<void> {
   await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-  await loginWallet(ctx, {
+  await connectWallet(ctx, {
     wallet: 'metamask',
-    scenario: 'dialog',
-    loggedIn: { text: 'Balance' },
-    loggedOut: 'Connect Wallet',
+    connected: { text: 'Balance' },
+    disconnected: 'Connect Wallet',
     connect: '[data-testid="connect-wallet-button"]',
     confirm: 'text=Connect with Ethereum',
-    walletEntry: 'text=MetaMask',
-    intents: ['connect'],
+    walletOption: { text: 'MetaMask' },
   })
   // 已签到两种界面（横幅 / 倒计时）任一即成功
   if (await hasText(ctx, 'Great job!')) return
@@ -964,19 +1009,22 @@ async run(ctx: TaskContext): Promise<void> {
 }
 ```
 
-### 配方三：钱包登录三种入口
+### 配方三：钱包登录速查
 
-见第 4 章三份完整示例。速查：
+见第 4 章完整示例。速查：
 
 ```ts
-// direct：点 Connect 直接唤起扩展弹窗（Petra 常见）
-scenario: 'direct', connect: 'button:has-text("Connect Wallet"):visible', intents: ['sign']
+// 通常站点：只写 wallet，其余全自动（寻按钮/选钱包/归一化弹窗/静默连接/自动签名）
+await connectWallet(ctx, { wallet: 'metamask' })
 
-// dialog：站内钱包选择弹窗后再等扩展弹窗（Konnex）
-scenario: 'dialog', confirm: 'text=Connect with Ethereum', walletEntry: 'text=MetaMask'
-
-// appkit：AppKit(Reown) 弹窗，框架做视图归一化（DAC Inception）
-scenario: 'appkit', open: 'button:has-text("WALLET")', entryTestId: 'wallet-selector-io.metamask'
+// 复杂站点：按需覆盖登录态判据与选择器
+await connectWallet(ctx, {
+  wallet: 'metamask',
+  connected: { text: 'Balance' }, // 已连接标志（启发式误判时显式给）
+  disconnected: 'Connect Wallet', // 未连接标志
+  connect: '[data-testid="connect-wallet-button"]',
+  walletOption: { text: 'MetaMask' }, // 站内钱包列表项（缺省按显示名）
+})
 ```
 
 ### 配方四：多签上传（自己控制钱包动作）
@@ -1049,11 +1097,12 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `数据源列 X 在窗口 Y 的行为空` | 单元格是空的 | 忘了填 | 补数据；想「缺了就用 faker」改用 `ctx.accountRow` |
 | `任务未配置钱包` | 调钱包动作但没配 `meta.wallet` | meta 漏了 wallet | 补 `wallet`；或该任务本就不该用钱包动作 |
 | `未注册的钱包适配器: X` | `meta.wallet` 的 key 没人认领 | key 拼错或没在 `src/app.ts` 注册 | 核对 key 与注册列表（见第 4 章） |
-| 钱包弹窗未出现（`popupFailed` / 登录超时） | 等钱包弹窗超时 | 未配/未注册 wallet；站点要先点连接按钮；扩展未加载；静默连接 | `loginWallet` 内部会先做扩展就绪检查（扩展未加载会快速失败，重试重启窗口恢复）；确保先点连接；静默连接以登录态为准（见 6.3） |
+| 钱包弹窗未出现（`popupFailed` / 登录超时） | 等钱包弹窗超时 | 未配/未注册 wallet；站点要先点连接按钮；扩展未加载；静默连接 | `connectWallet` 内部会先做扩展就绪检查（扩展未加载会快速失败，重试重启窗口恢复）；确保先点连接；静默连接以登录态为准（见 6.3） |
 | `窗口 X 钱包扩展未加载（重试将重启浏览器窗口）` | 钱包就绪检查探测扩展未加载 | 窗口实例异常/扩展未启用 | 等重试重启窗口恢复；连续出现检查比特窗口扩展安装 |
 | `MetaMask 已锁定且未配置解锁密码` | 弹窗停在解锁页但没配密码 | `WALLET_PASSWORDS` 漏了该类型 | 在 `config/.env` 的 `WALLET_PASSWORDS` 配置密码 |
 | `MetaMask 解锁失败（密码错误或解锁页未离开）` | 密码错或解锁页没走 | 密码错 | 核对 `WALLET_PASSWORDS` |
-| `AppKit 弹窗未出现 X 钱包入口` | AppKit 视图异常，归一化没命中 | 站点改版/渲染异常/`entryTestId` 错 | 核对 `entryTestId` 与站点当前 AppKit 视图（见第 4 章） |
+| `登录未完成（等待已连接标志超时）` | 连接编排跑完所有轮次仍未出现已连接标志 | 站点需先登录/判据误判/交互未命中 | 关键站点显式给 `connected`/`connect`/`walletOption`；核对站点是否改版（见第 4 章） |
+| `检测到交易确认弹窗，登录流程不自动处理` | 登录阶段遇到交易（tx）弹窗 | 站点把交易确认混入登录弹窗 | 安全边界：交易一律用任务里显式 `confirmTransaction` 确认（见 4.4） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec` | 卡死；某等待超时太长 | 核对各等待超时；必要时上调 `meta.timeoutSec` 或 `execution.taskTimeoutMs` |
 | `任务已停用` | 手动触发被拒（409） | 开关关着 | 面板打开开关（立即生效） |
 | `任务未注册` | 队列有 key 但框架找不到任务 | key 拼错/没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组 |
@@ -1069,12 +1118,12 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 6.3 钱包弹窗不出现
 
-- **症状**：`loginWallet` 登录超时，或 `signMessage`/`confirmTransaction` 返回 `popupFailed: true`。
+- **症状**：`connectWallet` 登录超时，或 `signMessage`/`confirmTransaction` 返回 `popupFailed: true`。
 - **对策**：
   1. 检查 `meta.wallet` 的 key 是否已注册（未注册报 `未注册的钱包适配器: X`）；
   2. 登录流程内部会先做扩展就绪检查（`ready`）：扩展未加载会快速失败，等重试重启窗口恢复，比空等高效；
   3. 用 DevTools 查看弹窗实际 URL，对照适配器 `extensionUrlPatterns` 是否匹配；
-  4. 若站点要先点「连接」按钮才弹窗，确保 `LoginSpec.connect` 正确；
+  4. 若站点要先点「连接」按钮才弹窗，确保 `ConnectOptions.connect` 正确；
   5. **静默连接**：扩展已授权站点时可能不弹窗——以登录态判定，不要当失败。
 
 ### 6.4 熔断触发与重置
@@ -1110,7 +1159,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 **2）登录态判定：别用全页文本**
 
 - 首页表格/数据可能全是 `0x` 开头内容（区块链站常见）——全页文案判定必误判（`hasText` 尤其危险）。
-- 正确做法：用**范围选择器**（如 `header button:has-text("0x")`）作探针，交给 `loginWallet` 竞速（已登录/未登录谁先可见）或 `race`；不要自己写全页文本判断。
+- 正确做法：用**范围选择器**（如 `header button:has-text("0x")`）作探针，交给 `connectWallet` 竞速（已登录/未登录谁先可见）或 `race`；不要自己写全页文本判断。
 - SPA 渲染有 0-3s 延迟，首轮竞速至少 20 秒。
 
 **3）钱包弹窗三个坑**
@@ -1121,7 +1170,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 **4）文件上传两个坑**
 
-1. **隐藏 file input**：`display:none` 的 input 不能用可见性等待，用挂载判定（`elementState(...) !== 'absent'` 轮询）；`uploadFile` / `setInputFiles` 对隐藏 input 可用。
+1. **隐藏 file input**：`display:none` 的 input 不能用可见性等待，用挂载判定（`getElementState(...) !== 'absent'` 轮询）；本封装的 `setInputFiles` 与 patchright 原生 `setInputFiles` 对隐藏 input 均可用。
 2. **一次性文件（blob 名查重）**：站点可能在选文件后立即查重——已上传的文件弹窗直接报错（如 `Blob name already taken`）且提交按钮**永不启用**。必须把该错误文案短路视为「已上传=成功」（幂等收敛），不能等按钮启用、更不能当失败重试。
 
 **5）任务卡死：先看日志，别盲目重跑（最重要）**

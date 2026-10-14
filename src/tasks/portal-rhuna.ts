@@ -5,7 +5,7 @@
  * 依赖方向：依赖 ./base（任务基类与常量）与 ../api（能力函数）
  */
 import { SiteTask, RECOVER_TEXTS, type TaskContext, type TaskMeta } from './base'
-import { openPage, loginWallet, click, waitFor, race, runJs, takeScreenshot, clickTurnstile, hasText, elementState } from '../api'
+import { openPage, connectWallet, click, waitFor, race, evaluate, takeScreenshot, clickTurnstile, hasText, getElementState } from '../api'
 
 const HELLO_TEXT = 'Hello,' // 登录态标记（页头问候语出现即已登录）
 const CONNECT_TEXT = 'Connect Wallet' // 未登录时的连接按钮文案
@@ -45,13 +45,11 @@ export class PortalRhunaTask extends SiteTask {
    */
   async run(ctx: TaskContext): Promise<void> {
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    await loginWallet(ctx, {
+    await connectWallet(ctx, {
       wallet: 'petra',
-      scenario: 'direct',
-      loggedIn: { text: HELLO_TEXT },
-      loggedOut: CONNECT_TEXT,
+      connected: { text: HELLO_TEXT },
+      disconnected: CONNECT_TEXT,
       connect: 'button:has-text("Connect Wallet"):visible',
-      intents: ['sign'],
     })
     await this.enterQuests(ctx)
     await this.checkin(ctx)
@@ -115,7 +113,7 @@ export class PortalRhunaTask extends SiteTask {
         return
       }
       if (outcome !== 'claim') {
-        const modalText = await runJs(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
+        const modalText = await evaluate(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
         ctx.log.warn({ step: 'checkin', window: ctx.profile.name, modalText }, '弹窗内未出现 Claim/完成提示，下一轮重开')
         continue
       }
@@ -131,7 +129,7 @@ export class PortalRhunaTask extends SiteTask {
         await takeScreenshot(ctx, 'rhuna-success')
         return
       }
-      const modalText = await runJs(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
+      const modalText = await evaluate(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
       ctx.log.warn({ step: 'checkin', window: ctx.profile.name, modalText }, '点 Claim 后等待完成提示超时，下一轮重开')
     }
     throw new Error('Daily Check-in 领取未完成（弹窗内未出现完成提示）')
@@ -163,7 +161,7 @@ export class PortalRhunaTask extends SiteTask {
         if (result === 'clicked' || result === 'rejected') lastCheckClick = Date.now()
         if (result === 'clicked') continue
       }
-      if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await elementState(ctx, TURNSTILE_FRAME_SELECTOR)) === 'visible') {
+      if (lastCheckClick > 0 && Date.now() - lastCheckClick < 15000 && Date.now() - lastCheckLog > 30000 && (await getElementState(ctx, TURNSTILE_FRAME_SELECTOR)) === 'visible') {
         lastCheckLog = Date.now()
         ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '验证方框已点击但仍存在（验证未通过），冷却期满后重点')
       }

@@ -5,7 +5,7 @@
 import type { TaskContext } from '../engine/task-context'
 
 /** 元素状态：可见 / 隐藏（在 DOM 但不可见）/ 不存在（查询异常按不存在处理） */
-export async function elementState(ctx: TaskContext, selector: string): Promise<'visible' | 'hidden' | 'absent'> {
+export async function getElementState(ctx: TaskContext, selector: string): Promise<'visible' | 'hidden' | 'absent'> {
   try {
     const loc = ctx.page.locator(selector).first()
     if ((await loc.count()) === 0) return 'absent'

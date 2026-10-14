@@ -6,13 +6,13 @@ import type { TaskContext } from '../engine/task-context'
 import { getText } from './find'
 
 /** 低层：问 AI 要一段文本（system 可选） */
-export async function askAi(ctx: TaskContext, prompt: string, options: { system?: string; maxTokens?: number; timeoutMs?: number } = {}): Promise<string> {
+export async function askAi(ctx: TaskContext, prompt: string, opts: { system?: string; maxTokens?: number; timeoutMs?: number } = {}): Promise<string> {
   if (!ctx.ai) throw new Error('AI 未配置（AI_API_KEY）')
   const messages = [
-    ...(options.system ? [{ role: 'system' as const, content: options.system }] : []),
+    ...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []),
     { role: 'user' as const, content: prompt },
   ]
-  return ctx.ai.chat(messages, { maxTokens: options.maxTokens, timeoutMs: options.timeoutMs })
+  return ctx.ai.chat(messages, { maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs })
 }
 
 /** 解析 AI 答案为选项序号（越界/解析不出返回 null） */
@@ -43,15 +43,15 @@ function quizSystemPrompt(match: 'letter' | 'index' | 'text'): string {
 }
 
 /** 页面问答：读题干+选项 → 问 AI → 选并点击；解析失败兜底随机点一项（答了就算成功） */
-export async function answerQuiz(ctx: TaskContext, spec: { question: string | { selector: string }; options: { selector: string }; match?: 'letter' | 'index' | 'text' }): Promise<{ answer: string; clicked: boolean; fallback: boolean }> {
-  const question = typeof spec.question === 'string' ? spec.question : await getText(ctx, spec.question.selector)
-  const loc = ctx.page.locator(spec.options.selector)
+export async function answerQuiz(ctx: TaskContext, opts: { question: string | { selector: string }; options: { selector: string }; match?: 'letter' | 'index' | 'text' }): Promise<{ answer: string; clicked: boolean; fallback: boolean }> {
+  const question = typeof opts.question === 'string' ? opts.question : await getText(ctx, opts.question.selector)
+  const loc = ctx.page.locator(opts.options.selector)
   const n = await loc.count()
-  if (n === 0) throw new Error(`未找到选项元素: ${spec.options.selector}`)
+  if (n === 0) throw new Error(`未找到选项元素: ${opts.options.selector}`)
   const texts: string[] = []
   for (let i = 0; i < n; i++) texts.push(((await loc.nth(i).textContent()) ?? '').trim())
   const list = texts.map((t, i) => `${String.fromCharCode(65 + i)}. ${t}`).join('\n')
-  const match = spec.match ?? 'letter'
+  const match = opts.match ?? 'letter'
   const answer = await askAi(ctx, `${question}\n\n${list}`, { system: quizSystemPrompt(match) })
   const idx = parseIndex(answer, match, texts, n)
   if (idx === null) {

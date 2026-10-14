@@ -15,7 +15,7 @@ import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/type
  * @swagger
  * /api/tools:
  *   get:
- *     summary: 工具清单（面板工具中心卡片数据源）
+ *     summary: 列出工具（面板工具中心卡片数据源）
  *     responses:
  *       '200':
  *         description: 工具列表
@@ -43,7 +43,7 @@ import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/type
  * @swagger
  * /api/tools/file-assign/preview:
  *   post:
- *     summary: 文件随机分配预览（校验并生成分配计划，不落盘）
+ *     summary: 预览文件随机分配（校验并生成分配计划，不落盘）
  *     responses:
  *       '200':
  *         description: 分配计划
@@ -75,7 +75,7 @@ import type { AssignRow, FileAssignTemplate } from '../../tools/file-assign/type
  * @swagger
  * /api/tools/file-assign/apply:
  *   post:
- *     summary: 文件随机分配执行（按预览回传计划改名并写回 xlsx）
+ *     summary: 执行文件随机分配（按预览回传计划改名并写回 xlsx）
  *     responses:
  *       '200':
  *         description: 执行结果

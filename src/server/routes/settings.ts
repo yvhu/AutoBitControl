@@ -28,7 +28,7 @@ export interface PublicSettings {
  * @swagger
  * /api/settings:
  *   get:
- *     summary: 公开只读设置（不含任何密钥）+ 数据源状态
+ *     summary: 读取公开设置与数据源状态（不含任何密钥）
  *     responses:
  *       '200':
  *         description: 非敏感配置项

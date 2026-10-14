@@ -110,13 +110,13 @@ export class WalletActions {
   async confirmTx(opts: PopupLoginOpts = {}): Promise<{ popupFailed: boolean }> { return this.runIntent('confirmTx', opts) }
 
   /**
-   * 完整登录编排：动态载入 login-flow.ts 的 ensureLoggedIn 执行，
-   * 因为登录编排需要用到本类实例，放外部以避免模块循环依赖。
-   * @param spec 登录规格（探针、入口、意图序列等，见 LoginSpec）
-   * @returns skipped=true 表示进页面时就已是登录态；false 表示本次实际完成了登录
+   * 自适应连接编排：动态载入 login-flow.ts 的 ensureConnected 执行，
+   * 因为连接编排需要用到本类实例，放外部以避免模块循环依赖。
+   * @param opts 自适应连接规格（可见行为声明，见 LoginFlowOptions）
+   * @returns skipped=true 表示进页面时就已是连接态；false 表示本次实际完成了连接
    */
-  async ensureLoggedIn(spec: import('./login-flow').LoginSpec): Promise<{ skipped: boolean }> {
-    const { ensureLoggedIn } = await import('./login-flow')
-    return ensureLoggedIn(this, spec)
+  async ensureConnected(opts: import('./login-flow').LoginFlowOptions = {}): Promise<{ skipped: boolean }> {
+    const { ensureConnected } = await import('./login-flow')
+    return ensureConnected(this, opts)
   }
 }

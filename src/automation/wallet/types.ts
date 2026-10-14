@@ -21,6 +21,11 @@ export interface PopupLocator {
   first(): PopupLocator
   /** 元素是否存在（0/1/多；真实 Locator.count 实现，mock 可不提供） */
   count?(): Promise<number>
+  /**
+   * 元素当前是否可见（真实 patchright Locator.isVisible 实现，mock 可不提供）。
+   * 分类判定优先用它：隐藏但存在的元素不应被当成可见意图（否则会把隐藏的签名元素误判成签名）。
+   */
+  isVisible?(): Promise<boolean>
   /** 等待元素状态变化（如解锁页 detached；真实 Locator.waitFor 实现，mock 可不提供） */
   waitFor?(opts: { state?: 'visible' | 'hidden' | 'attached' | 'detached'; timeout?: number }): Promise<void>
 }
@@ -45,16 +50,24 @@ export interface PopupPage {
 }
 
 /**
+ * 弹窗分类：登录自适应流程用来判断「当前这个钱包弹窗要做什么」，
+ * 只自动处理 unlock/connect/sign，tx 必须交给任务显式确认（安全边界）。
+ */
+export type PopupKind = 'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'
+
+/**
  * 钱包适配器契约：每种钱包插件实现同一个接口，任务侧只按 key 取用，不感知各插件 UI 的差异。
  * 抽象出四种交互：解锁、连接、签名、交易确认——前三者是可选的「一次弹窗一次意图」动作。
  */
 export interface WalletAdapter {
   /** 钱包类型标识，全局唯一，与 TaskMeta.wallet 对应（如 'metamask'/'petra'） */
   key: string
+  /** 钱包显示名（如 'MetaMask'/'Petra'）：站内钱包列表按显示名匹配入口用 */
+  displayName: string
   /** 用于判断某个弹窗页 URL 是否属于该钱包的 URL 模式列表（正则字符串，见 waitForPopup） */
   extensionUrlPatterns: string[]
-  /** 扩展 ID：CDP 探测扩展页用（MetaMask = nkbihfbeogaeaoehlefnkodbefgpgknn，真机弹窗 URL 实证） */
-  extensionId: string
+  /** 扩展 ID：CDP 探测扩展页用（MetaMask = nkbihfbeogaeaoehlefnkodbefgpgknn，真机弹窗 URL 实证）；缺省则不做 CDP 扩展页探测 */
+  extensionId?: string
   /** 扩展页探测路径（MetaMask home.html / Petra index.html） */
   probePath: string
   /** 页面 provider 标识字段：区分其它钱包注入的 window.ethereum（isMetaMask / isPetra） */
@@ -74,6 +87,21 @@ export interface WalletAdapter {
   sign(popup: PopupPage): Promise<void>
   /** 交易确认（站点请求发送/授权交易，如 Approve、register_blobs）：点确认，直到弹窗关闭 */
   confirmTx(popup: PopupPage): Promise<void>
+  /**
+   * 分类当前弹窗（登录自适应用）：按弹窗内可见的按钮/密码框判定意图类别。
+   * 因需读取 DOM 可见性（PopupLocator.isVisible/count 为异步），返回 Promise；分类为 tx 的弹窗绝不被登录流程自动处理。
+   * @param popup 钱包弹窗页
+   * @returns 弹窗意图类别；无法判定返回 'unknown'
+   */
+  classifyPopup(popup: PopupPage): Promise<PopupKind>
+  /**
+   * 登录自适应入口：按分类自动处理 unlock/connect/sign，绝不自动确认交易（tx）。
+   * unlock 需提供密码；无密码或分类为 tx/unknown 时不做任何点击并返回 false，由调用方决定等待或放弃。
+   * @param popup 钱包弹窗页
+   * @param password 解锁密码（unlock 分类时需要）
+   * @returns 是否已实际处理该弹窗（false=未处理，含 tx/unknown/缺密码）
+   */
+  handleLoginPopup(popup: PopupPage, password?: string): Promise<boolean>
 }
 
 /**

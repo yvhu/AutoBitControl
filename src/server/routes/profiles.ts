@@ -13,7 +13,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  * @swagger
  * /api/profiles:
  *   get:
- *     summary: 窗口列表（含启用状态、熔断计数与打开状态）
+ *     summary: 列出窗口（含启用状态、熔断计数与打开状态）
  *     responses:
  *       '200':
  *         description: 窗口列表
@@ -46,7 +46,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  * @swagger
  * /api/profiles/{id}:
  *   patch:
- *     summary: 窗口开关（只更新显式传入的 enabled 字段）
+ *     summary: 切换窗口开关（只更新显式传入的 enabled 字段）
  *     parameters:
  *       - in: path
  *         name: id
@@ -86,7 +86,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  * @swagger
  * /api/profiles/{id}/breaker/reset:
  *   post:
- *     summary: 重置该窗口熔断计数
+ *     summary: 重置窗口熔断计数
  *     parameters:
  *       - in: path
  *         name: id
@@ -167,7 +167,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  * @swagger
  * /api/profiles/batch:
  *   post:
- *     summary: 批量窗口操作（打开/关闭/重置熔断），逐项处理并汇总成败
+ *     summary: 批量操作窗口（打开、关闭、重置熔断，逐项处理并汇总成败）
  *     requestBody:
  *       required: true
  *       content:

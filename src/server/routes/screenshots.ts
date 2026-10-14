@@ -15,7 +15,7 @@ import { ERROR_CODES } from '../http/errors'
  * @swagger
  * /api/screenshots:
  *   get:
- *     summary: 取截图文件（path 传截图目录内相对路径，双层防护防目录穿越）
+ *     summary: 读取截图文件（path 传截图目录内相对路径，双层防护防目录穿越）
  *     parameters:
  *       - in: query
  *         name: path

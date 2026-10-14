@@ -13,7 +13,7 @@ import type { RunRow } from '../../infrastructure/db'
  * @swagger
  * /api/diagnostics/{runId}:
  *   get:
- *     summary: 失败诊断包（按 run id）
+ *     summary: 获取失败诊断包（按 run id）
  *     parameters:
  *       - in: path
  *         name: runId
