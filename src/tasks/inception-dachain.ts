@@ -29,7 +29,7 @@ type RaceKey = 'loggedIn' | 'landing' | 'limit' | 'modal' | 'revealed' | 'insuff
 export class InceptionDachainTask extends SiteTask {
   meta: TaskMeta = {
     key: 'inception-dachain',
-    name: 'DAC 签到',
+    name: 'DAC 签到（测试网）',
     group: { key: 'inception', name: 'Inception' },
     url: 'https://inception.dachain.io/',
     sourceUrl: ['https://airdrops.io/dac/', 'https://cryptorank.io/zh/drophunting/arc-chain-activity911'],
