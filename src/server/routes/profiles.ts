@@ -2,7 +2,7 @@
  * 窗口路由（server 层）：窗口列表、启用开关、打开/关闭与熔断重置
  * 依赖方向：依赖 engine/infrastructure；被 app 装配
  * 设计思路：find 辅助统一 404 语义；PATCH 幂等局部更新（只改传了的字段）；
- * "是否已打开"以 open_windows 登记 + 比特浏览器 pid 实测双重判定（跨进程共享）
+ * "是否已打开"以比特浏览器 pid 实测为准（open_windows 登记行仅供复用/清理，不参与判定）
  */
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
@@ -34,7 +34,7 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  *                       name: { type: string }
  *                       enabled: { type: integer, description: '0/1 开关' }
  *                       circuitBreakerCount: { type: integer }
- *                       open: { type: boolean, description: '是否已打开（open_windows 登记 + 比特浏览器 pid 实测）' }
+ *                       open: { type: boolean, description: '是否已打开（比特浏览器 pid 实测）' }
  *                       remark: { type: string, nullable: true, description: '比特客户端窗口备注' }
  *                       seq: { type: integer, nullable: true, description: '比特客户端排序号' }
  *                       lastIp: { type: string, nullable: true, description: '最近探测 IP' }
@@ -260,14 +260,15 @@ export function profilesRouter(deps: {
     }
     const result: Array<ProfileRow & { open: boolean }> = []
     for (const p of profiles) {
-      // 判定链：无登记 → 未开；有登记且 pid 存活 → 已开；有登记但 pid 已死 → 视为已关（自动清行）
-      const row = await deps.db.getOpenWindow(p.bitbrowserId)
-      if (row && openIds?.has(p.bitbrowserId)) {
-        result.push({ ...p, open: true })
-        continue
+      // 打开状态以比特浏览器 pid 实测为准：窗口可能由任务运行/手动打开，未必有 open_windows 登记行，
+      // 故不能要求「登记行存在」才算已开（否则真实已开的窗口会显示未打开）；
+      // 探测失败（openIds=null）保守按未开；顺带清理「有登记行但 pid 已死」的残留登记
+      const alive = openIds?.has(p.bitbrowserId) ?? false
+      if (!alive && openIds !== null) {
+        const row = await deps.db.getOpenWindow(p.bitbrowserId)
+        if (row) await deps.db.clearOpenWindow(p.bitbrowserId)
       }
-      if (row && openIds !== null) await deps.db.clearOpenWindow(p.bitbrowserId)
-      result.push({ ...p, open: false })
+      result.push({ ...p, open: alive })
     }
     ok(res, result)
   }))

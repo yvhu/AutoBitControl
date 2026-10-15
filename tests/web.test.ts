@@ -631,12 +631,21 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
   })
 
-  it('GET /api/profiles 返回 open 字段（批量 pid 探测，无登记为 false）', async () => {
+  it('GET /api/profiles 无 pid 存活返回 open=false（批量 pid 探测）', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).get('/api/profiles')
     expect(res.body.code).toBe(0)
     expect(res.body.data[0].open).toBe(false)
     expect(deps.bitbrowser.openPids).toHaveBeenCalledWith(['bb-1'])
+  })
+
+  it('GET /api/profiles 无登记但 pid 存活返回 open=true（任务/手动打开的窗口）', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue(null)
+    deps.bitbrowser.openPids.mockResolvedValue(new Set(['bb-1']))
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.body.data[0].open).toBe(true)
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it('GET /api/profiles 登记且 pid 存活返回 open=true', async () => {
