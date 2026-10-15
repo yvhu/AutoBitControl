@@ -1219,6 +1219,12 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 3. **失败时先看诊断包、别只翻日志**：失败自动落盘 URL/页面文本/步骤/错误；Turnstile 未检测到时会额外记录页面全部 iframe 及其尺寸（`iframes:[]` 即页面当时根本没有方框），面板看板失败行点「诊断」即可查（见 6.6）。
 4. **站点侧问题要与代码问题分开**：官方下线/站点服务端渲染报错（如 `We couldn't render this page`）会导致固定失败，属站点环境，不是任务逻辑；连续失败按第 5 条停手求助，别反复重跑。
 
+**11）Turnstile 取盒会阻塞轮询预算（2026-10-15 auralaunch-faucet）**
+
+- `locator.boundingBox()` 在元素尚未挂载时会**阻塞等到默认超时（30s）**（patchright 内部走 `waitForSelector({ state: "attached" })`）。在「轮询等待 + 顺带点方框」的循环里直接调 `clickTurnstile`，方框还没渲染时会一次吃光整个等待预算 → 预算刚耗尽就失败（真机现象：日志停在「检测到人机验证方框，坐标点击」后约 0.6s 即报超时）。
+- 对策：`turnstileBox` 取盒已限时（`TURNSTILE_BOX_TIMEOUT_MS`，元素未挂载时快速返回 null）；任务侧「等地址框解锁」时先给验证自动通过留宽限期，超期再兜底点击方框。
+- 通用经验：**任何「在轮询循环里调用、内部可能等待元素」的封装，都要确认它不阻塞**，否则单次调用就会吃掉整段预算。
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）

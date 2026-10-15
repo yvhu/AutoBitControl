@@ -16,6 +16,9 @@ export const TURNSTILE_FRAME_SEL = ['div[data-turnstile-container] iframe:visibl
 /** 单次「等方框并点击」内允许的最大点击尝试次数（真机实测：被拒后隔一会儿重点一次大多能过） */
 export const TURNSTILE_CLICK_MAX = 3
 
+/** 单次取盒时 boundingBox 的最长等待毫秒数（元素未挂载时 patchright 默认会等到 30s，必须限时避免吃光轮询预算） */
+export const TURNSTILE_BOX_TIMEOUT_MS = 1000
+
 /** 验证方框在页面中的位置与尺寸（视口像素坐标） */
 export interface TurnstileBox {
   /** 方框左上角横坐标 */
@@ -40,6 +43,8 @@ export interface TurnstileDeps {
  * 取验证方框的位置盒。
  * 依次尝试各选择器，取首个匹配元素调用 boundingBox；不可见或尺寸过小（宽或高 < 20 像素）
  * 视为没找到，继续下一个选择器。这样重试循环每次都会重新取盒，避免用旧坐标点已经移动过的 iframe。
+ * boundingBox 限时 TURNSTILE_BOX_TIMEOUT_MS：否则元素未挂载时 patchright 会阻塞等到默认超时（30s），
+ * 在轮询场景会把预算吃光（方框尚未出现时也一直卡住）。
  * @param page 目标页面
  * @param selectors 候选 iframe 选择器（缺省 TURNSTILE_FRAME_SEL）
  * @returns 方框位置盒；未找到返回 null
@@ -49,7 +54,7 @@ export async function turnstileBox(page: Page, selectors: string[] = TURNSTILE_F
     const box = await page
       .locator(sel)
       .first()
-      .boundingBox()
+      .boundingBox({ timeout: TURNSTILE_BOX_TIMEOUT_MS })
       .catch(() => null)
     if (box && box.width >= 20 && box.height >= 20) return box
   }
