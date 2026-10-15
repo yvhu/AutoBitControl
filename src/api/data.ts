@@ -5,6 +5,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import type { Page } from 'patchright'
 import type { TaskContext } from '../engine/task-context'
 
 /** 取数据源当前窗口行某列（严格：无行/无列/空值抛错） */
@@ -34,12 +35,12 @@ export async function setInputFiles(ctx: TaskContext, selector: string, value: s
   await loc.setInputFiles(value)
 }
 
-/** 容错截图：存产物目录，失败只告警返回空串 */
-export async function takeScreenshot(ctx: TaskContext, name: string): Promise<string> {
+/** 容错截图：默认截当前页，可传 page 指定其它页面（如新标签页跳转后的页）；存产物目录，失败只告警返回空串 */
+export async function takeScreenshot(ctx: TaskContext, name: string, page?: Page): Promise<string> {
   try {
     mkdirSync(ctx.artifactsDir, { recursive: true })
     const file = join(ctx.artifactsDir, `${name}.png`)
-    await ctx.page.screenshot({ path: file, fullPage: false })
+    await (page ?? ctx.page).screenshot({ path: file, fullPage: false })
     return file
   } catch (e) {
     ctx.log.warn({ step: 'screenshot', window: ctx.profile.name, err: (e as Error).message }, '截图失败（不影响任务结果）')

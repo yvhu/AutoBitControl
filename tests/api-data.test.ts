@@ -63,6 +63,15 @@ describe('api/data takeScreenshot', () => {
     expect(await takeScreenshot(ctx, 'shot')).toBe('')
     expect((ctx as never as { log: { warn: ReturnType<typeof vi.fn> } }).log.warn).toHaveBeenCalled()
   })
+
+  it('可指定 page：截取传入页面而非 ctx.page', async () => {
+    const { ctx, spies } = makeCtx()
+    const otherShot = vi.fn(async () => {})
+    const out = await takeScreenshot(ctx, 'shot2', { screenshot: otherShot } as never)
+    expect(out.endsWith('shot2.png')).toBe(true)
+    expect(otherShot).toHaveBeenCalled()
+    expect(spies.screenshot).not.toHaveBeenCalled()
+  })
 })
 
 describe('api/diag recordStep', () => {

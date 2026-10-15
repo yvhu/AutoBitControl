@@ -751,19 +751,20 @@ await setInputFiles(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // �
 - URL 下载失败抛 `图片下载失败: <url> (HTTP <状态码>)`；临时文件落在系统临时目录 `abc-uploads/`。
 - 内部用 `setInputFiles`，不弹系统文件框，对 `display:none` 的隐藏 input 也可用（隐藏 input 用 `getElementState(...) !== 'absent'` 判挂载，别用可见性等待）。
 
-#### `takeScreenshot(ctx, name)`
+#### `takeScreenshot(ctx, name, page?)`
 
 **用途**：截当前视口存到产物目录；**容错**：失败只告警返回空串，不判任务失败。
 
-**签名**：`takeScreenshot(ctx: TaskContext, name: string): Promise<string>`
+**签名**：`takeScreenshot(ctx: TaskContext, name: string, page?: Page): Promise<string>`
 
 **参数**
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
 | `name` | `string` | 是 | — | 文件名（不含扩展名），存为 `<name>.png` |
+| `page` | `Page` | 否 | `ctx.page` | 目标页面；截其它页面（如新标签页跳转后的页）时传入 |
 
-**示例**：`await takeScreenshot(ctx, 'checkin-success')`
+**示例**：`await takeScreenshot(ctx, 'checkin-success')`；`await takeScreenshot(ctx, 'claim-success', gamePage)`
 
 **注意**
 
