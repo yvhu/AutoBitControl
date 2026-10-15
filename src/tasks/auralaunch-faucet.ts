@@ -1,202 +1,109 @@
 /**
  * AuraLaunch 领水任务（auralaunch-faucet）：Caldera LiteForge 测试网水龙头
- * 地址取自数据源「metamask钱包地址」直填（不连钱包）；领取走 tRPC，限频=已领取=成功幂等
- * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
+ * 站点：https://liteforge.hub.caldera.xyz/
+ * 设计：地址取自数据源「metamask钱包地址」直填（不连钱包）；领取走 tRPC faucet.requestFaucetFunds
+ * 时间预算：timeoutSec 300s、retry.max 2 次 / 退避 120s、concurrency 3
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, click, getAccountValue, hasText, evaluate, takeScreenshot } from '../api'
-import type { Response } from 'patchright'
+import { openPage, fill, click, waitFor, race, clickTurnstile, getAccountValue, takeScreenshot, evaluate } from '../api'
 
-export const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]' // 收款地址输入框
-export const REQUEST_BTN_SELECTOR = '.flex.justify-center.items-center.gap-2:has-text("Request")' // Request 领取按钮
-export const LIMIT_KEYWORDS = ['sorry, something went wrong', 'try again later', 'already claimed', 'rate limit', 'cooldown', '24 hours'] // 限频/已领取文案（命中即按成功幂等）
-export const SUCCESS_TEXT = 'Successfully requested funds to your wallet' // 页面成功文案
-export const FAUCET_RESPONSE_WAIT_MS = 15000 // 单次等领水请求的预算
-export const UI_OUTCOME_WAIT_MS = 30000 // 无请求时等页面成功/限频文案的预算
-export const INPUT_READY_WAIT_MS = 45000 // 首屏等地址框可用的预算
-export const INPUT_READY_RELOAD_WAIT_MS = 30000 // 刷新后等地址框可用的预算
-export const RECLICK_MAX = 1 // 未捕获请求时补点 Request 的最大次数（Turnstile token 未就绪自愈）
-export const RECLICK_WAIT_MS = 5000 // 补点前等待时间
+const ADDRESS_SELECTOR = 'input[placeholder="Recipient\'s Wallet Address"]' // 收款地址输入框
+const REQUEST_BTN_SELECTOR = 'button:has-text("Request")' // Request 领取按钮
+const SUCCESS_TEXT = 'Successfully requested funds to your wallet' // 成功弹窗文案
+const ERROR_TEXT = 'something went wrong' // 报错弹窗文案（出现则刷新重走）
+const BUTTON_ENABLE_WAIT_MS = 20000 // 填地址后等按钮可点的预算
+const ADDRESS_UNLOCK_WAIT_MS = 45000 // 地址框禁用时等人机验证通过（地址框解锁）的预算
+const AUTO_PASS_GRACE_MS = 10000 // 先等验证自动通过的宽限期，过了仍禁用才兜底点击方框
+const TURNSTILE_CLICK_INTERVAL_MS = 3000 // 兜底点击方框的重试间隔
+const MAX_RELOAD_ATTEMPTS = 3 // 报错弹窗刷新重走的最大次数，超过直接失败
 
-/**
- * 解包 tRPC 批量信封（真机 2026-10-08 核实）：
- *   成功/失败：200 + [{result:{data:{json:{success:boolean,message:string}}}}]
- *   限频：429 + [{error:{json:{message,code,data:{code:"TOO_MANY_REQUESTS"}}}}]
- * 返回 success 布尔与 message；无该信封返回 null
- */
-export function unwrapTrpcEnvelope(body: unknown): { success?: boolean; message?: string } | null {
-  const items = Array.isArray(body) ? body : [body]
-  for (const item of items) {
-    const it = item as { result?: { data?: unknown }; error?: { json?: unknown } } | null
-    if (!it) continue
-    const resultData = it.result?.data as { json?: unknown } | null
-    const json = resultData?.json ?? null
-    if (json && typeof json === 'object' && typeof (json as { success?: unknown }).success === 'boolean') {
-      const c = json as { success: boolean; message?: unknown }
-      return { success: c.success, message: typeof c.message === 'string' ? c.message : '' }
-    }
-  }
-  return null
-}
-
-/**
- * 领水响应判定（真机 2026-10-08 核实：成功/失败都返回 200 + success 布尔，不能只看状态码）：
- * 429 + TOO_MANY_REQUESTS = limit；信封 success:true = success；success:false = rejected；无信封按状态码兜底
- */
-export async function judgeFaucetResponse(res: Response): Promise<'success' | 'limit' | 'rejected'> {
-  const body = await res.json().catch(() => null)
-  const raw = JSON.stringify(body ?? {})
-  const envelope = unwrapTrpcEnvelope(body)
-  if (envelope && typeof envelope.success === 'boolean') return envelope.success ? 'success' : 'rejected'
-  if (res.status() === 429) return 'limit'
-  if (/TOO_MANY_REQUESTS|24 hours|rate limit|cooldown/i.test(raw)) return 'limit'
-  if (res.status() >= 200 && res.status() < 300) return 'success'
-  return 'rejected'
-}
-
-/**
- * 注册并等待一次领水 POST 响应（请求体含目标地址以区分本窗口请求；注册即吞错，超时返回 null）。
- * @param ctx 任务上下文
- * @param address 目标地址（用于匹配请求体）
- */
-export function waitFaucetResponse(ctx: TaskContext, address: string): Promise<Response | null> {
-  return ctx.page
-    .waitForResponse((r) => r.request().method() === 'POST' && (r.request().postData() ?? '').includes(address), { timeout: FAUCET_RESPONSE_WAIT_MS })
-    .catch(() => null)
-}
-
-/**
- * 轮询页面文案判结果（无请求可捕获时的兜底）：成功文案=success、命中任限频词=limit、超时=none。
- * @param ctx 任务上下文
- * @param timeoutMs 轮询预算，默认 UI_OUTCOME_WAIT_MS
- */
-export async function waitUiOutcome(ctx: TaskContext, timeoutMs = UI_OUTCOME_WAIT_MS): Promise<'success' | 'limit' | 'none'> {
-  const end = Date.now() + timeoutMs
+/** 轮询等按钮从 disabled 变为可点（超时抛错） */
+async function waitButtonEnabled(ctx: TaskContext, selector: string, budgetMs = BUTTON_ENABLE_WAIT_MS): Promise<void> {
+  const loc = ctx.page.locator(selector).first()
+  const end = Date.now() + budgetMs
   while (Date.now() < end) {
-    if (await ctx.page.getByText(SUCCESS_TEXT, { exact: false }).count() > 0) return 'success'
-    for (const kw of LIMIT_KEYWORDS) {
-      if (await ctx.page.getByText(kw, { exact: false }).count() > 0) return 'limit'
-    }
-    await ctx.page.waitForTimeout(1000)
+    if (await loc.isEnabled().catch(() => false)) return
+    await ctx.page.waitForTimeout(500)
   }
-  return 'none'
+  throw new Error(`领取按钮持续禁用: ${selector}`)
 }
 
 /**
- * 等地址框就绪：先按 timeoutMs 轮询；若始终不存在则刷新一次再按刷新预算轮询。
- * 地址框存在但持续禁用是站点已领取的表现（由调用方结合限频文案判定）。
- * @param ctx 任务上下文
- * @param timeoutMs 首轮等待预算，默认 INPUT_READY_WAIT_MS
- * @returns ready=出现且可用、disabled=出现但禁用、missing=两轮都不存在
+ * 地址框禁用时轮询等其变为可编辑（=人机验证已通过）：先给自动通过留宽限期，宽限期内不点击；
+ * 过了宽限期仍禁用，说明未自动通过，则兜底点击人机验证方框（clickTurnstile 取盒已限时，不会阻塞预算）。
+ * 点完继续轮询等解锁。超时抛错。
  */
-export async function waitInputReady(ctx: TaskContext, timeoutMs = INPUT_READY_WAIT_MS): Promise<'ready' | 'disabled' | 'missing'> {
-  const poll = async (ms: number): Promise<'ready' | 'disabled' | null> => {
-    const end = Date.now() + ms
-    let existed = false
-    while (Date.now() < end) {
-      const loc = ctx.page.locator(ADDRESS_SELECTOR).first()
-      if ((await loc.count()) > 0) {
-        existed = true
-        if (await loc.isEnabled().catch(() => false)) return 'ready'
-      }
-      await ctx.page.waitForTimeout(1000)
+async function waitAddressEditable(ctx: TaskContext, budgetMs = ADDRESS_UNLOCK_WAIT_MS): Promise<void> {
+  const loc = ctx.page.locator(ADDRESS_SELECTOR).first()
+  const end = Date.now() + budgetMs
+  let nextClickAt = Date.now() + AUTO_PASS_GRACE_MS
+  while (Date.now() < end) {
+    if (await loc.isEnabled().catch(() => false)) return
+    if (Date.now() >= nextClickAt) {
+      const clicked = await clickTurnstile(ctx)
+      if (clicked) ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '地址框仍禁用，检测到人机验证方框并点击（自动通过未生效的兜底）')
+      nextClickAt = Date.now() + TURNSTILE_CLICK_INTERVAL_MS
     }
-    return existed ? 'disabled' : null
+    await ctx.page.waitForTimeout(500)
   }
-  const first = await poll(timeoutMs)
-  if (first) return first
-  await ctx.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
-  return (await poll(INPUT_READY_RELOAD_WAIT_MS)) ?? 'missing'
+  throw new Error('地址框持续禁用（人机验证未通过）')
 }
 
-/** AuraLaunch 领水任务（Caldera LiteForge 测试网水龙头） */
 export class AuralaunchFaucetTask extends SiteTask {
   meta: TaskMeta = {
-    key: 'auralaunch-faucet',
+    key: 'auralaunch-faucet', // 全局唯一任务键（面板/API/数据库均以此索引）
     name: 'AuraLaunch 领水',
-    group: { key: 'auralaunch', name: 'AuraLaunch' },
-    url: 'https://liteforge.hub.caldera.xyz/',
-    sourceUrl: 'https://liteforge.hub.caldera.xyz/',
-    note: '真机核实（2026-10-08）：Caldera LiteForge 水龙头（Bridge/Faucet 同页 SPA）；地址框 input[placeholder="Recipient\'s Wallet Address"]；不连钱包，地址取自数据源「metamask钱包地址」列；领水走 tRPC faucet.requestFaucetFunds——成功 200+success:true、失败 200+success:false（不能只看状态码）、限频 429+TOO_MANY_REQUESTS（24h 一次，视为已领取=成功幂等）；站点有 Turnstile（实测无需人工点击），token 未就绪时点击无请求——补点一次自愈；落地页渲染可超 20s、已领后地址框可能短暂禁用——等就绪+刷新兜底',
-    category: 'faucet',
-    lastUpdated: '2026-10-09',
-    enabled: true,
-    timeoutSec: 300,
-    retry: { max: 2, backoffSec: 120 },
-    concurrency: 3,
+    group: { key: 'auralaunch', name: 'AuraLaunch' }, // 任务分组（面板按组展示）
+    url: 'https://liteforge.hub.caldera.xyz/', // 落地页
+    sourceUrl: 'https://liteforge.hub.caldera.xyz/', // 任务来源说明链接（面板展示用）
+    note: '真机核实（2026-10-08）：Caldera LiteForge 水龙头（Bridge/Faucet 同页 SPA）；地址框 input[placeholder="Recipient\'s Wallet Address"]；不连钱包，地址取自数据源「metamask钱包地址」列；地址框初始禁用，站点 Turnstile 人机验证多数自动通过（通过后地址框自行解锁，此时无需点击）；未自动通过时才兜底点击验证方框（先留 10s 宽限期再点）；点击 Request 后成功弹窗=成功、报错弹窗=刷新重走（最多 3 次，超过失败）',
+    category: 'faucet', // 任务类别：领水
+    lastUpdated: '2026-10-15',
+    enabled: true, // 参与定时/批量触发
+    timeoutSec: 300, // 单任务整体超时秒数
+    retry: { max: 2, backoffSec: 120 }, // 失败最多再试 2 次，每次退避 120s（不占窗）
+    concurrency: 3, // 任务级并发上限（与全局 maxConcurrentWindows 取更严者）
   }
 
   /**
-   * 站点动作：打开落地页 → 等地址框就绪 → 读地址填入 → 点 Request 并捕获 tRPC 响应 → 判定成功/限频/拒绝。
-   * 不连钱包；限频（24h 一次）视为已领取=成功幂等。
+   * 执行流程：打开落地页 → 等地址框出现 → 判断是否禁用（禁用则轮询等人机验证解锁：先等自动通过，
+   *          过了宽限期未通过再兜底点击验证方框）
+   *          → 可输入则填地址 → 等 Request 按钮可点 → 点击 → 弹窗判定：
+   *          成功弹窗=成功返回；报错弹窗=刷新页面重走流程。
    * @param ctx 任务上下文（page/log/accountRow 等运行时数据）
    */
   async run(ctx: TaskContext): Promise<void> {
-    // 0) 打开落地页并清掉残留标签页
     await openPage(ctx, this.meta.url, { closeOtherTabs: true })
-    // 1) 等地址框就绪；missing=站点未渲染/改版，直接失败
-    const ready = await waitInputReady(ctx)
-    if (ready === 'missing') throw new Error('地址输入框未出现（页面未渲染或站点改版）')
-    // 2) 地址框存在但禁用：多为已领取（结合限频文案确认为成功幂等），否则失败并附页面文本
-    if (ready === 'disabled') {
-      // 逐一匹配全部限频关键词（与旧 recoverErrorText(LIMIT_KEYWORDS) 等价）
-      let limitText = ''
-      for (const kw of LIMIT_KEYWORDS) {
-        if (await hasText(ctx, kw)) { limitText = kw; break }
-      }
-      if (limitText !== '') {
-        ctx.log.info({ step: 'faucet', window: ctx.profile.name, limitText }, '地址框禁用且出现限频提示，视为已领取 = 成功（重跑幂等）')
-        await takeScreenshot(ctx, 'auralaunch-faucet-limit')
-        return
-      }
-      const bodyText = await evaluate(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
-      throw new Error(`地址输入框持续禁用且无限频提示（页面文本: ${bodyText.slice(0, 300)}）`)
-    }
-    // 3) 读地址并填入；填后被框架清空则再填一次
     const address = await getAccountValue(ctx, 'metamask钱包地址')
-    const addressInput = ctx.page.locator(ADDRESS_SELECTOR).first()
-    await addressInput.fill(address)
-    if (((await addressInput.inputValue().catch(() => '')) ?? '') !== address) {
-      await addressInput.fill(address)
-    }
-    // 4) 点 Request 并捕获请求；未捕获（Turnstile token 未就绪）则等待后补点
-    let resp: Response | null = null
-    for (let attempt = 0; attempt <= RECLICK_MAX && !resp; attempt++) {
-      const respPromise = waitFaucetResponse(ctx, address)
-      await click(ctx, REQUEST_BTN_SELECTOR)
-      resp = await respPromise
-      if (!resp && attempt < RECLICK_MAX) {
-        ctx.log.warn({ step: 'faucet', window: ctx.profile.name, attempt: attempt + 1 }, '点击 Request 后未捕获领水请求（Turnstile 未就绪？），等待后补点')
-        await ctx.page.waitForTimeout(RECLICK_WAIT_MS)
+    let reloadCount = 0 // 已刷新重走次数
+    while (true) {
+      await waitFor(ctx, { selector: ADDRESS_SELECTOR }, { assert: true, budgetMs: 45000 })
+      // 地址框禁用：轮询等其解锁（站点人机验证会自动通过，无需点击方框）
+      if (!(await ctx.page.locator(ADDRESS_SELECTOR).first().isEnabled().catch(() => false))) {
+        await waitAddressEditable(ctx)
       }
-    }
-    if (resp) {
-      const verdict = await judgeFaucetResponse(resp)
-      if (verdict === 'success') {
-        ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '领水成功（tRPC success:true）')
+      // 可输入：填地址 → 等按钮可点 → 点 Request
+      await fill(ctx, ADDRESS_SELECTOR, address)
+      await waitButtonEnabled(ctx, REQUEST_BTN_SELECTOR)
+      await click(ctx, REQUEST_BTN_SELECTOR)
+      // 弹窗判定：成功弹窗=成功；报错弹窗=刷新重走
+      const outcome = await race(ctx, [['success', { text: SUCCESS_TEXT }], ['error', { text: ERROR_TEXT }]], 30000)
+      if (outcome === 'success') {
+        ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '领水成功')
         await takeScreenshot(ctx, 'auralaunch-faucet-success')
         return
       }
-      if (verdict === 'limit') {
-        ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '已达当日领取上限（24h 限频），视为已领取 = 成功（重跑幂等）')
-        await takeScreenshot(ctx, 'auralaunch-faucet-limit')
-        return
+      if (outcome === 'error') {
+        if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+          throw new Error(`点击 Request 报错后已刷新 ${MAX_RELOAD_ATTEMPTS} 次仍未成功`)
+        }
+        reloadCount += 1
+        ctx.log.warn({ step: 'faucet', window: ctx.profile.name, reloadCount }, '弹窗报错（something went wrong），刷新页面重走流程')
+        await ctx.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+        continue
       }
-      const envelope = unwrapTrpcEnvelope(await resp.json().catch(() => null))
-      throw new Error(`领水请求被拒绝: ${envelope?.message ?? '未知原因（无信封）'}`.slice(0, 400))
+      const bodyText = await evaluate(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
+      throw new Error(`点击 Request 后未出现成功/报错弹窗（页面文本: ${bodyText.slice(0, 300)}）`)
     }
-    const outcome = await waitUiOutcome(ctx)
-    if (outcome === 'success') {
-      ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '领水成功（页面成功文案）')
-      await takeScreenshot(ctx, 'auralaunch-faucet-success')
-      return
-    }
-    if (outcome === 'limit') {
-      ctx.log.info({ step: 'faucet', window: ctx.profile.name }, '页面出现限频提示，视为已领取 = 成功（重跑幂等）')
-      await takeScreenshot(ctx, 'auralaunch-faucet-limit')
-      return
-    }
-    const bodyText = await evaluate(ctx, () => document.body.innerText.slice(0, 500)).catch(() => '')
-    throw new Error(`点击 Request 后未出现成功/限频信号（页面文本: ${bodyText.slice(0, 300)}）`)
   }
 }
