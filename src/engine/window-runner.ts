@@ -295,6 +295,18 @@ export class WindowRunner {
    */
   private async runTask(profile: ProfileRow, taskKey: string, page: Page, date: string, walletSession: WalletSession): Promise<RunRow | null> {
     const { cfg, db, logger } = this.deps
+    // 停止可能落在「会话开始前检查之后」，而关窗又失败（如窗口正在打开、比特 API 拒绝关闭）：
+    // 在此再消费一次取消标记，确保不执行任务（把当前非终态行结算为 skipped「手动停止」）。
+    if (this.deps.cancelRegistry?.isCancelled(profile.id, taskKey)) {
+      this.deps.cancelRegistry.clear(profile.id, taskKey)
+      const canceled = await this.safeDb(() => db.getLatestRun(profile.id, taskKey, date), null)
+      const canceledTerminal = canceled ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(canceled.status) : true
+      logger.info({ profile: profile.name, task: taskKey }, '任务已被停止，跳过执行')
+      if (canceled && !canceledTerminal) {
+        return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, canceled.slot, 'skipped', { error: '手动停止', finishedAt: localWallNow() }), null)
+      }
+      return canceled
+    }
     const task = this.deps.tasks.get(taskKey)
     if (!task) {
       const finishedAt = localWallNow()

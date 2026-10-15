@@ -468,6 +468,24 @@ describe('WindowRunner', () => {
     expect(reg.isCancelled(1, 'ok-task')).toBe(false)
   })
 
+  it('停止落在开窗期间（开窗成功但已请求停止）：不执行任务、落 skipped、清标记', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    const task = new OkTask()
+    const bb2 = {
+      openBrowser: vi.fn(async () => {
+        reg.request(1, 'ok-task')
+        return open
+      }),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      listBrowsers: vi.fn().mockResolvedValue([]),
+    }
+    const runner = makeRunner({ db, bitbrowser: bb2 as never, tasks: new Map([['ok-task', task]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(task.run).not.toHaveBeenCalled()
+    expect(reg.isCancelled(1, 'ok-task')).toBe(false)
+  })
+
   it('停止落在成功路径：任务正常结束仍清理取消标记', async () => {
     const db = makeDb()
     const reg = new CancelRegistry()
