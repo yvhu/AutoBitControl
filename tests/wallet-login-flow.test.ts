@@ -229,4 +229,25 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     const warn = (deps.log as unknown as { warn: ReturnType<typeof vi.fn> }).warn
     expect(warn).toHaveBeenCalled()
   })
+
+  it('autoConfirmTransaction=true：tx 弹窗自动确认（0 撸站点无真实交易）→ connected', async () => {
+    const state: FakeState = {
+      [DISCONNECTED_TEXT]: true,
+      onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
+    }
+    const popup = { url: () => 'chrome-extension://x/notification.html' }
+    const adapter = makeAdapter({
+      classifyPopup: vi.fn(async () => 'tx'),
+      confirmTx: vi.fn(async () => { state[CONNECTED_TEXT] = true }),
+    })
+    vi.mocked(waitForPopup).mockReset()
+    vi.mocked(waitForPopup).mockResolvedValueOnce(popup as never).mockImplementation(neverPopup)
+    const { deps } = makeDeps(adapter, state)
+    const r = await new WalletActions(deps).ensureConnected({
+      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL,
+      attempts: 1, reclickAfterMs: 30, autoConfirmTransaction: true,
+    })
+    expect(r.skipped).toBe(false)
+    expect(adapter.confirmTx).toHaveBeenCalledWith(popup)
+  })
 })

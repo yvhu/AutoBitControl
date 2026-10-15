@@ -39,6 +39,12 @@ export interface ConnectOptions {
   attempts?: number
   /** 每轮内无动作时补点连接按钮前的等待毫秒数（缺省 8000） */
   reclickAfterMs?: number
+  /**
+   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 false：
+   * 交易一律交任务显式 confirmTransaction（安全边界）；仅「无真实链上交易的 0 撸站点」
+   * 在站点把授权确认混入登录弹窗时按需开启。
+   */
+  autoConfirmTransaction?: boolean
 }
 
 /**
@@ -60,6 +66,7 @@ export async function connectWallet(ctx: TaskContext, opts: ConnectOptions): Pro
     refreshEveryMs: opts.refreshEveryMs,
     attempts: opts.attempts,
     reclickAfterMs: opts.reclickAfterMs,
+    autoConfirmTransaction: opts.autoConfirmTransaction,
   })
 }
 

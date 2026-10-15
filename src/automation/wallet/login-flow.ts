@@ -38,6 +38,12 @@ export interface LoginFlowOptions {
   attempts?: number
   /** 每轮内竞速「什么都没命中」的等待毫秒数，超时补点一次连接按钮（缺省 8000） */
   reclickAfterMs?: number
+  /**
+   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 false：
+   * 交易一律交任务显式 confirmTransaction（安全边界）；仅「无真实链上交易的 0 撸站点」
+   * 在站点把授权确认混入登录弹窗时按需开启，避免登录卡死。
+   */
+  autoConfirmTransaction?: boolean
 }
 
 /** 初始态竞速预算（毫秒）：判页面进来时已登录还是未登录 */
@@ -62,7 +68,8 @@ type RoundResult =
  * ② wallet.ready()（适配器无 extensionId 时视为就绪）；
  * ③ 点连接按钮（显式 connect 或 findConnectButton）；
  * ④ 最多 attempts 轮，每轮先点连接，再在短竞速循环里推进（每次短竞速 ~3s）：
- *    站内钱包项 → 点击；扩展弹窗 → 按适配器分类自动处理（tx 绝不处理，告警后继续）；
+ *    站内钱包项 → 点击；扩展弹窗 → 按适配器分类自动处理（tx 默认绝不处理，告警后继续；
+ *    autoConfirmTransaction=true 时自动确认，见 handlePopup）；
  *    connected → 成功；disconnected / 什么都没命中（idle）→ 归一化露出钱包列表后继续（不当作致命）；
  *    期间若始终无任何钱包交互且超过 reclickAfterMs → 补点连接按钮；
  * ⑤ 命中 connected 成功返回；否则走 recover 等「已连接」标志（错误文案/周期刷新恢复）；
@@ -97,6 +104,7 @@ export async function ensureConnected(wallet: WalletActions, opts: LoginFlowOpti
   const attempts = opts.attempts ?? 2
   const reclickAfterMs = opts.reclickAfterMs ?? 8000
   const waitConnectedMs = opts.waitConnectedMs ?? 90000
+  const autoConfirmTransaction = opts.autoConfirmTransaction ?? false
 
   for (let round = 0; round < attempts; round++) {
     if (round > 0) {
@@ -111,7 +119,7 @@ export async function ensureConnected(wallet: WalletActions, opts: LoginFlowOpti
       started = true
     }
 
-    const advanced = await advanceRound(deps, adapter, walletOption, connected, disconnected, opts.connect, reclickAfterMs, started)
+    const advanced = await advanceRound(deps, adapter, walletOption, connected, disconnected, opts.connect, reclickAfterMs, started, autoConfirmTransaction)
     if (advanced.connected) return { skipped: false }
     // 整轮没有任何钱包动作（站内列表/扩展弹窗均未命中）→ 补点连接按钮一次，覆盖点击落空/慢渲染
     if (!advanced.interacted) await clickConnect(deps, opts.connect)
@@ -183,6 +191,7 @@ async function advanceRound(
   connectSelector: string | undefined,
   reclickAfterMs: number,
   allowReveal: boolean,
+  autoConfirmTransaction: boolean,
 ): Promise<{ connected: boolean; interacted: boolean }> {
   let interacted = false
   // 连接流程一旦启动（或本轮已交互）才允许归一化站内弹窗视图
@@ -199,7 +208,7 @@ async function advanceRound(
       continue
     }
     if (res.kind === 'popup') {
-      await handlePopup(deps, adapter, res.popup)
+      await handlePopup(deps, adapter, res.popup, autoConfirmTransaction)
       interacted = true
       revealAllowed = true
       lastReclickAt = Date.now()
@@ -217,15 +226,21 @@ async function advanceRound(
 
 /**
  * 处理扩展弹窗：先分类再决定是否自动处理。
- * tx 弹窗绝不自动确认（安全边界）——告警后返回 false，由任务显式 confirmTransaction；
+ * tx 弹窗默认绝不自动确认（安全边界）——告警后返回 false，由任务显式 confirmTransaction；
+ * 仅当 autoConfirmTransaction=true（0 撸站点，站点把授权确认混入登录弹窗）时自动确认 tx；
  * unlock/connect/sign 交给适配器 handleLoginPopup 自动完成。
  * @returns 是否实际处理了弹窗
  */
-async function handlePopup(deps: WalletActions['deps'], adapter: WalletAdapter, popup: PopupPage): Promise<boolean> {
+async function handlePopup(deps: WalletActions['deps'], adapter: WalletAdapter, popup: PopupPage, autoConfirmTransaction: boolean): Promise<boolean> {
   const kind = await adapter.classifyPopup(popup).catch(() => 'unknown' as const)
   if (kind === 'tx') {
-    deps.log.warn({ step: 'connect', kind, wallet: adapter.key }, '检测到交易确认弹窗，登录流程不自动处理（交由任务显式确认）')
-    return false
+    if (!autoConfirmTransaction) {
+      deps.log.warn({ step: 'connect', kind, wallet: adapter.key, url: popup.url?.() }, '检测到交易确认弹窗，登录流程不自动处理（交由任务显式确认）')
+      return false
+    }
+    deps.log.info({ step: 'connect', kind, wallet: adapter.key, url: popup.url?.() }, '检测到交易/授权确认弹窗，已按任务配置自动确认（autoConfirmTransaction）')
+    await adapter.confirmTx(popup).catch(() => {})
+    return true
   }
   const handled = await adapter.handleLoginPopup(popup, deps.walletPasswords?.[adapter.key]).catch(() => false)
   if (!handled) deps.log.warn({ step: 'connect', kind, wallet: adapter.key }, '钱包弹窗未识别（unknown/缺密码），继续等待连接标志')
