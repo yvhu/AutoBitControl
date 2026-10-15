@@ -9,6 +9,7 @@ import { FaucetExampleTask } from './faucet-example'
 import { MintExampleTask } from './mint-example'
 import { InceptionDachainTask } from './inception-dachain'
 import { DacCheckinMainnetTask } from './dac-checkin-mainnet'
+import { DacPlayMainnetTask } from './dac-play-mainnet'
 import { PortalRhunaTask } from './portal-rhuna'
 import { ShelbyFaucetTask } from './shelby-faucet'
 import { ShelbyExplorerTask } from './shelby-explorer'
@@ -24,6 +25,7 @@ const ALL: SiteTask[] = [
   new MintExampleTask(), 
   new InceptionDachainTask(), 
   new DacCheckinMainnetTask(), 
+  new DacPlayMainnetTask(), 
   new PortalRhunaTask(), 
   new ShelbyFaucetTask(), 
   new ShelbyExplorerTask(), 
