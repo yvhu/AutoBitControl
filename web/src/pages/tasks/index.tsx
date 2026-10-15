@@ -79,12 +79,17 @@ function TaskCard({ task }: { task: TaskMetaView }) {
               )}
             </div>
           )}
-          {task.sourceUrl && (
+          {(task.url || task.sourceUrl) && (
             <div style={{ marginTop: 4, fontSize: 12 }}>
               <Space size="small" wrap>
-                {(Array.isArray(task.sourceUrl) ? task.sourceUrl : [task.sourceUrl]).map((u, i) => (
+                {task.url && (
+                  <Typography.Link href={task.url} target="_blank" rel="noreferrer">
+                    🔗 任务页
+                  </Typography.Link>
+                )}
+                {(Array.isArray(task.sourceUrl) ? task.sourceUrl : task.sourceUrl ? [task.sourceUrl] : []).map((u, i) => (
                   <Typography.Link key={u} href={u} target="_blank" rel="noreferrer">
-                    🔗 来源页{i > 0 ? i + 1 : ''}
+                    🔗 发现来源{i > 0 ? ` ${i + 1}` : ''}
                   </Typography.Link>
                 ))}
               </Space>

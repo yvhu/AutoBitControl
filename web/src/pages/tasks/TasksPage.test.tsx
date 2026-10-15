@@ -49,4 +49,17 @@ describe('TasksPage 状态 Tab', () => {
     fireEvent.click(screen.getByRole('tab', { name: /已停用/ }))
     expect(await screen.findByText('组二')).toBeInTheDocument()
   })
+
+  it('任务卡同时展示「任务页」与「发现来源」链接', async () => {
+    vi.mocked(fetchTasks).mockResolvedValue([
+      { key: 'dac', name: 'DAC 签到', enabled: true, url: 'https://site/', sourceUrl: ['https://a/', 'https://b/'] },
+    ] as unknown as TaskMetaView[])
+    renderPage()
+
+    expect(await screen.findByRole('link', { name: /任务页/ })).toHaveAttribute('href', 'https://site/')
+    const sources = await screen.findAllByRole('link', { name: /发现来源/ })
+    expect(sources).toHaveLength(2)
+    expect(sources[0]).toHaveAttribute('href', 'https://a/')
+    expect(sources[1]).toHaveAttribute('href', 'https://b/')
+  })
 })

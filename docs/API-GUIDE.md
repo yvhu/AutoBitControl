@@ -172,8 +172,8 @@ export abstract class SiteTask {
 | --- | --- | --- | --- |
 | `key` | `string` | 无（必填） | 全局唯一标识；数据库 runs 表与面板都用它 |
 | `name` | `string` | 无（必填） | 面板任务页显示名 |
-| `url` | `string` | 无（必填，可为 `''`） | 站点入口页；`openPage()` 不传 url 时用它。空串时 `openPage()` 抛错，任务需自行处理（示例任务改用占位地址 `https://example.com/`） |
-| `sourceUrl` | `string \| string[]` | `undefined` | 信息来源页：选择器从哪个页面确认的；站点改版时回这里重查；多步骤可给多个地址 |
+| `url` | `string` | 无（必填，可为 `''`） | 站点入口页（即项目任务页）；`openPage()` 不传 url 时用它。面板任务卡显示为「🔗 任务页」链接。空串时 `openPage()` 抛错，任务需自行处理（示例任务改用占位地址 `https://example.com/`） |
+| `sourceUrl` | `string \| string[]` | `undefined` | 项目发现来源（如空投榜单/信息页）：查找到该项目的出处，也是选择器核实时回溯的页面；面板任务卡显示为「🔗 发现来源」链接；多步骤可给多个地址 |
 | `note` | `string?` | `undefined` | 备注：站点的坑与特殊逻辑，面板任务页直接可见 |
 | `category` | `'checkin' \| 'faucet' \| 'mint' \| 'other'` | `undefined` | 面板显示对应颜色徽章 |
 | `group` | `{ key: string; name: string }?` | `undefined` | 空投分组：同一空投的多个任务写相同的 key+name，面板按组折叠展示 |
