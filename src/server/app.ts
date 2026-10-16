@@ -73,7 +73,7 @@ export function createApp(deps: ServerDeps): express.Express {
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
   api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById }))
   api.use(tasksRouter(deps))
-  api.use(profilesRouter(deps))
+  api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, logger: deps.logger }))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())

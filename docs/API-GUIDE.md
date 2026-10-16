@@ -1111,7 +1111,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `任务未注册` | 队列有 key 但框架找不到任务 | key 拼错/没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组 |
 | `窗口熔断` | 该窗口连续失败太多，剩余任务全 skip | 前面任务终态失败把熔断计数顶到阈值 | 先修失败任务；面板「窗口」页「重置熔断」（见 6.4）；定时自动重置（本仓库默认每小时，见第 7 章） |
 | `窗口超时` | 单窗口会话到点（默认 15 分钟） | 窗口任务太多/某任务跑太久 | 精简窗口任务；查耗时异常；上调 `execution.windowTimeoutMs` |
-| 开窗失败 | 比特窗口打不开，整轮任务全 skip | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 设置页「测试连接」；核对窗口 ID |
+| 开窗失败 | 比特窗口打不开，整轮任务全 skip | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 设置页「测试连接」；核对窗口 ID；开窗"失败"可能是超时误判（窗口仍在开）→ 框架会延迟兜底补关一次 |
+| `同时打开的窗口已达上限（N）` | 面板/接口开窗被拒（409，`WINDOW_LIMIT_REACHED`） | 当前已开窗口数 ≥ `execution.maxConcurrentWindows` | 先关闭部分窗口；或调大 `execution.maxConcurrentWindows`（见第 7 章） |
 | CDP 连接失败 | 窗口开了但接管失败，整轮 failed | 调试端口/内核异常 | 看日志与截图；重启比特客户端后重试 |
 
 ### 6.2 选择器失效
@@ -1246,7 +1247,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerThreshold`（2）、`maxConcurrentWindows`（4）、**`circuitBreakerResetAt`（`"23:59"`）**、**`circuitBreakerResetEveryHours`（`0`）** | 执行引擎全局默认值（任务级可覆盖部分字段，见第 2 章）。`circuitBreakerThreshold` 是连续失败达阈值即熔断；熔断自动重置二选一：`circuitBreakerResetEveryHours` > 0 时每 N 小时重置一次（优先，如 `1`=每小时），否则按 `circuitBreakerResetAt` 每日时刻重置（本地 `HH:mm`，空串 `""` 关闭），时区沿用 `scheduler.timezone`；`maxConcurrentWindows` 是全局开窗上限（与任务级 `concurrency` 双闸门取更严者） |
+| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerThreshold`（2）、`maxConcurrentWindows`（4）、**`circuitBreakerResetAt`（`"23:59"`）**、**`circuitBreakerResetEveryHours`（`0`）** | 执行引擎全局默认值（任务级可覆盖部分字段，见第 2 章）。`circuitBreakerThreshold` 是连续失败达阈值即熔断；熔断自动重置二选一：`circuitBreakerResetEveryHours` > 0 时每 N 小时重置一次（优先，如 `1`=每小时），否则按 `circuitBreakerResetAt` 每日时刻重置（本地 `HH:mm`，空串 `""` 关闭），时区沿用 `scheduler.timezone`；`maxConcurrentWindows` 是全局开窗上限（**跨进程**按比特实测的已开窗口数排队等待，满额时先回收「无归属/归属进程已死」的孤儿窗口腾名额，再对在途会话等待；也用于面板/接口开窗校验；与任务级 `concurrency` 双闸门取更严者） |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |

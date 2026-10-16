@@ -8,6 +8,8 @@ import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
+import type { Logger } from '../../infrastructure/logger'
+import { reclaimOrphanWindows } from '../../engine/window-registry'
 
 /**
  * @swagger
@@ -135,6 +137,8 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
  *                     already: { type: boolean, description: 'true=复用已开窗口；false=本次新开' }
  *       '404':
  *         description: 窗口不存在（业务码 40402）
+ *       '409':
+ *         description: 同时打开的窗口已达上限（业务码 40907）
  */
 
 /**
@@ -214,6 +218,10 @@ export function profilesRouter(deps: {
     isOpen(id: string): Promise<boolean>
     openPids(ids: string[]): Promise<Set<string>>
   }
+  /** 同时打开窗口上限（execution.maxConcurrentWindows）；打开前校验，达上限拒绝 */
+  maxConcurrentWindows: number
+  /** 日志器（孤儿回收打点用） */
+  logger: Logger
 }): Router {
   const router = Router()
   /** 按内部 id 查窗口，不存在抛 404（各端点共用） */
@@ -226,6 +234,36 @@ export function profilesRouter(deps: {
   /** 批量操作类型（打开/关闭/重置熔断） */
   type BatchAction = 'open' | 'close' | 'resetBreaker'
 
+  /**
+   * 打开前校验同时打开窗口上限（execution.maxConcurrentWindows）：
+   * 以 /browser/pids 实测全量窗口数为准；满额时先回收孤儿窗口（无归属/归属进程已死）腾名额，
+   * 仍满才抛 409；探测/回收失败（本地 API 未就绪）放行，避免校验本身阻断。
+   */
+  const ensureWindowCapacity = async (): Promise<void> => {
+    const max = deps.maxConcurrentWindows
+    if (!Number.isFinite(max)) return
+    const ids = (await deps.db.listProfiles(false)).map((p: ProfileRow) => p.bitbrowserId)
+    let open: Set<string>
+    try {
+      open = await deps.bitbrowser.openPids(ids)
+    } catch {
+      return
+    }
+    if (open.size >= max) {
+      const reclaimed = await reclaimOrphanWindows({ db: deps.db, bitbrowser: deps.bitbrowser }, deps.logger).catch(() => 0)
+      if (reclaimed > 0) {
+        try {
+          open = await deps.bitbrowser.openPids(ids)
+        } catch {
+          return
+        }
+      }
+    }
+    if (open.size >= max) {
+      throw new HttpError(409, ERROR_CODES.WINDOW_LIMIT_REACHED, `同时打开的窗口已达上限（${max}），请先关闭部分窗口再开`)
+    }
+  }
+
   /** 单窗口动作执行（单窗口端点与批量端点共用）；open 返回 already 语义；openIds 为批量预探测的存活集合（缺省逐窗口 isOpen） */
   const applyAction = async (profile: ProfileRow, action: BatchAction, openIds?: Set<string>): Promise<{ already?: boolean }> => {
     if (action === 'resetBreaker') {
@@ -237,8 +275,16 @@ export function profilesRouter(deps: {
       const row = await deps.db.getOpenWindow(profile.bitbrowserId)
       const alive = openIds ? openIds.has(profile.bitbrowserId) : await deps.bitbrowser.isOpen(profile.bitbrowserId)
       if (row && alive) return { already: true }
-      const opened = await deps.bitbrowser.openBrowser(profile.bitbrowserId)
-      await deps.db.setOpenWindow(profile.bitbrowserId, opened.http)
+      await ensureWindowCapacity()
+      // 先预留归属登记（避免「已开未登记」竞态被孤儿回收误关），开成功后补 http
+      await deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
+      try {
+        const opened = await deps.bitbrowser.openBrowser(profile.bitbrowserId)
+        await deps.db.setOpenWindow(profile.bitbrowserId, opened.http, process.pid)
+      } catch (e) {
+        await deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+        throw e
+      }
       return { already: false }
     }
     // close：无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略

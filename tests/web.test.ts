@@ -18,7 +18,9 @@ interface MockDeps {
     setTaskEnabled: Mock
     getOpenWindow: Mock
     setOpenWindow: Mock
+    reserveOpenWindow: Mock
     clearOpenWindow: Mock
+    listOpenWindows: Mock
     countInFlightRuns: Mock
     createBatch: Mock
     getBatch: Mock
@@ -83,7 +85,9 @@ function makeDeps(): MockDeps {
       setTaskEnabled: vi.fn().mockResolvedValue(undefined),
       getOpenWindow: vi.fn().mockResolvedValue(null),
       setOpenWindow: vi.fn().mockResolvedValue(undefined),
+      reserveOpenWindow: vi.fn().mockResolvedValue(undefined),
       clearOpenWindow: vi.fn().mockResolvedValue(undefined),
+      listOpenWindows: vi.fn().mockResolvedValue([]),
       countInFlightRuns: vi.fn().mockResolvedValue(0),
       createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
       getBatch: vi.fn().mockResolvedValue({ id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
@@ -671,7 +675,8 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data).toEqual({ already: false })
     expect(deps.bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
-    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234')
+    expect(deps.db.reserveOpenWindow).toHaveBeenCalledWith('bb-1', expect.any(Number))
+    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234', expect.any(Number))
   })
 
   it('POST /api/profiles/:id/open 已打开返回 already 且不重复开窗', async () => {
@@ -715,8 +720,8 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data).toEqual({ total: 1, succeeded: 1, failed: [] })
     expect(deps.bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
-    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234')
-    expect(deps.db.listProfiles).toHaveBeenCalledTimes(1)
+    expect(deps.db.setOpenWindow).toHaveBeenCalledWith('bb-1', '127.0.0.1:61234', expect.any(Number))
+    expect(deps.db.listProfiles).toHaveBeenCalled() // 打开前另有一次全量窗口占用校验
     expect(deps.bitbrowser.openPids).toHaveBeenCalledWith(['bb-1'])
   })
 

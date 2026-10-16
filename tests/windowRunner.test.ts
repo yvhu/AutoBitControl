@@ -28,6 +28,10 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     getLatestRun: vi.fn().mockResolvedValue(null),
     nextRunSlot: vi.fn().mockResolvedValue(0),
     clearRunDiag: vi.fn().mockResolvedValue(undefined),
+    reserveOpenWindow: vi.fn().mockResolvedValue(undefined),
+    setOpenWindow: vi.fn().mockResolvedValue(undefined),
+    clearOpenWindow: vi.fn().mockResolvedValue(undefined),
+    listOpenWindows: vi.fn().mockResolvedValue([]),
     ...over,
   } as unknown as AppDb
 }
@@ -51,6 +55,7 @@ const bitbrowser = {
   openBrowser: vi.fn().mockResolvedValue(open),
   closeBrowser: vi.fn().mockResolvedValue(undefined),
   listBrowsers: vi.fn().mockResolvedValue([]),
+  openPids: vi.fn().mockResolvedValue(new Set<string>()),
 }
 /** 共享比特浏览器假件别名（新增批次用例直接用 bb） */
 const bb = bitbrowser
@@ -557,6 +562,10 @@ describe('批次透传与 pending 预写', () => {
       incrCircuitBreaker: async () => 0,
       clearRunDiag: async () => undefined,
       listProfiles: async () => [] as ProfileRow[],
+      reserveOpenWindow: async () => undefined,
+      setOpenWindow: async () => undefined,
+      clearOpenWindow: async () => undefined,
+      listOpenWindows: async () => [],
     }
     return db as unknown as AppDb
   }
@@ -615,5 +624,72 @@ describe('批次透传与 pending 预写', () => {
     expect(calls[1][3]).toBe(3) // 兜底按 nextRunSlot 新开轮（无预写可结算时）
     expect(String(calls[1][5].error)).toBe('任务未注册: ghost-task')
     expect(db.nextRunSlot).toHaveBeenCalled()
+  })
+})
+
+describe('WindowRunner 跨进程窗口上限与开窗失败兜底关窗', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  const cfgObj = cfg as unknown as { execution: Record<string, unknown>; bitbrowser: Record<string, unknown> }
+  const cfgWithCap = (cap: number) => ({ ...cfgObj, execution: { ...cfgObj.execution, maxConcurrentWindows: cap } })
+
+  it('跨进程上限：pids 显示已满时先等待，放开后才开窗', async () => {
+    vi.useFakeTimers()
+    try {
+      let pidsCalls = 0
+      const bbFake = {
+        openBrowser: vi.fn().mockResolvedValue(open),
+        closeBrowser: vi.fn().mockResolvedValue(undefined),
+        openPids: vi.fn(async () => (++pidsCalls === 1 ? new Set(['a', 'b']) : new Set<string>())),
+      }
+      const db = makeDb({ listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' }), makeProfile({ id: 2, bitbrowserId: 'b' })]) })
+      const runner = new WindowRunner({
+        cfg: cfgWithCap(2) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
+        tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry,
+      })
+      const p = runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+      expect(bbFake.openBrowser).not.toHaveBeenCalled() // 已满，先等待，未开窗
+      await vi.advanceTimersByTimeAsync(5000) // 跨过一轮等待轮询
+      await p
+      expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('跨进程上限：探测失败（本地 API 未就绪）直接放行开窗', async () => {
+    const bbFake = {
+      openBrowser: vi.fn().mockResolvedValue(open),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      openPids: vi.fn().mockRejectedValue(new Error('本地 API 未就绪')),
+    }
+    const runner = new WindowRunner({
+      cfg: cfgWithCap(1) as never, db: makeDb(), bitbrowser: bbFake as never, driver: makeDriver(),
+      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry,
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('开窗耗尽：延迟 90s 兜底补关一次，清理可能半开的窗口', async () => {
+    vi.useFakeTimers()
+    try {
+      const bbFake = {
+        openBrowser: vi.fn().mockRejectedValue(new Error('请求失败: The operation was aborted due to timeout')),
+        closeBrowser: vi.fn().mockResolvedValue(undefined),
+        openPids: vi.fn().mockResolvedValue(new Set<string>()),
+      }
+      const runner = new WindowRunner({
+        cfg: { ...cfgObj, bitbrowser: { ...cfgObj.bitbrowser, maxRetries: 1 } } as never,
+        db: makeDb(), bitbrowser: bbFake as never, driver: makeDriver(),
+        tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords, scheduleRetry,
+      })
+      await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+      const closesAfterFail = bbFake.closeBrowser.mock.calls.length // 开窗重试前清理
+      await vi.advanceTimersByTimeAsync(90000)
+      expect(bbFake.closeBrowser.mock.calls.length).toBe(closesAfterFail + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

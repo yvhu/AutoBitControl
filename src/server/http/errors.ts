@@ -37,6 +37,8 @@ export const ERROR_CODES = {
   TOOL_BUSY: 40904,
   AIRDROP_STATUS_NOT_EMPTY: 40905,
   SCHEDULE_PURE_ASSIGN_EXISTS: 40906,
+  /** 同时打开的窗口数已达 execution.maxConcurrentWindows 上限，拒绝再开 */
+  WINDOW_LIMIT_REACHED: 40907,
   // 500xx：服务端异常
   INTERNAL: 50000,
   TOOL_IO_FAILED: 50001,

@@ -26,11 +26,22 @@ import { AppDb, todayStr, localWallNow, type ProfileRow, type RunRow } from '../
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure, shouldSkipAfterBreaker } from './state'
 import { TaskContext } from './task-context'
+import { reclaimOrphanWindows } from './window-registry'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
 import type { CancelRegistry } from './cancel-registry'
 import { WalletSession, type WalletRegistry } from '../automation'
 import { createAiClient, type AiClient } from '../integrations/ai'
+
+/**
+ * 开窗失败兜底关窗延迟（毫秒）：/browser/open 是异步的，HTTP 超时报错时窗口可能仍在打开，
+ * 此时立即 closeBrowser 多半失败（窗口"正在打开中"），等它开完再补关一次，避免残留孤儿窗口。
+ */
+const DELAYED_FALLBACK_CLOSE_MS = 90000
+/** 跨进程全局窗口上限：等待轮询间隔（毫秒） */
+const CAPACITY_POLL_MS = 5000
+/** 跨进程全局窗口上限：单次等待总预算（毫秒；超出则放行并告警，不无限阻塞会话） */
+const CAPACITY_WAIT_MS = 10 * 60 * 1000
 
 /** 浏览器连接抽象：测试注入假驱动，生产用 PatchrightDriver */
 export interface BrowserDriver {
@@ -161,13 +172,24 @@ export class WindowRunner {
         open = { http: reused.http, ws: '' }
         reusedFlag = true
       } else {
-        open = await this.openWithRetry(profile.bitbrowserId)
+        // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http
+        await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
+        await this.waitForGlobalWindowCapacity()
+        try {
+          open = await this.openWithRetry(profile.bitbrowserId)
+          await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid)
+        } catch (e) {
+          await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+          throw e
+        }
       }
     } catch (e) {
       for (const t of runTasks) {
         const row = await this.settleWindowSkip(profile, t.taskKey, date, 'skipped', `开窗失败: ${(e as Error).message}`)
         results.set(t.taskKey, row)
       }
+      // 开窗"失败"的窗口可能仍在后台打开（open 异步 + "正在打开中"），延迟兜底补关一次，防止孤儿窗口堆积
+      this.scheduleFallbackClose(profile.bitbrowserId)
       logger.warn({ profile: profile.name }, '开窗重试耗尽，本轮跳过')
       return results
     }
@@ -213,10 +235,13 @@ export class WindowRunner {
       }
       return results
     } finally {
-      // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）；close 失败只忽略
+      // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）
       if (connected) await connected.close().catch(() => {})
-      // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口
-      if (!reusedFlag && open) await bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
+      // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口；关窗失败记日志，便于发现残留
+      if (!reusedFlag && open) {
+        await this.closeWindowSafely(profile.bitbrowserId, '会话结束')
+        await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+      }
     }
   }
 
@@ -246,11 +271,78 @@ export class WindowRunner {
       } catch (e) {
         lastErr = e as Error
         this.deps.logger.warn({ id, attempt: attempt + 1 }, `开窗失败: ${lastErr.message}`)
-        await this.deps.bitbrowser.closeBrowser(id).catch(() => {})
+        await this.closeWindowSafely(id, '开窗重试前清理')
         if (attempt < maxRetries - 1) await new Promise(r => setTimeout(r, retryBackoffMs[attempt] ?? 5000))
       }
     }
     throw lastErr ?? new Error('开窗失败')
+  }
+
+  /**
+   * 关窗（容错）：失败只告警返回，不抛错。用于会话结束 / 开窗重试清理 / 兜底关窗。
+   * 之前用 `.catch(() => {})` 完全静默，导致关窗失败产生的残留窗口无法从日志发现。
+   * @param bitbrowserId 窗口 ID
+   * @param reason 触发场景（日志用）
+   */
+  private async closeWindowSafely(bitbrowserId: string, reason: string): Promise<void> {
+    try {
+      await this.deps.bitbrowser.closeBrowser(bitbrowserId)
+    } catch (e) {
+      this.deps.logger.warn({ bitbrowserId, reason, err: (e as Error).message }, '关窗失败（窗口可能残留）')
+    }
+  }
+
+  /**
+   * 开窗失败后的延迟兜底关窗：`/browser/open` 异步，HTTP 超时报错时窗口可能仍在后台打开，
+   * 立即关多半失败（窗口"正在打开中"），等 DELAYED_FALLBACK_CLOSE_MS 后再补关一次（best-effort，不阻塞会话）。
+   */
+  private scheduleFallbackClose(bitbrowserId: string): void {
+    const timer = setTimeout(() => {
+      void this.deps.bitbrowser.closeBrowser(bitbrowserId)
+        .then(() => this.deps.logger.info({ bitbrowserId }, '开窗失败兜底关窗完成（清理可能半开的窗口）'))
+        .catch((e) => this.deps.logger.warn({ bitbrowserId, err: (e as Error).message }, '开窗失败兜底关窗失败（窗口可能残留，请手动清理）'))
+    }, DELAYED_FALLBACK_CLOSE_MS)
+    timer.unref?.()
+  }
+
+  /**
+   * 跨进程全局窗口闸门：本进程队列闸门只统计进程内会话，多进程（后端 + task:run 脚本）并存时
+   * 各自开满上限 → 实际开窗数翻倍。这里以比特浏览器 `/browser/pids` 实测的「当前已开窗口数」为准，
+   * 达到 `execution.maxConcurrentWindows` 时排队等待其它窗口释放；等待超预算则放行并告警（不无限阻塞会话）。
+   * 探测失败（本地 API 未就绪）直接放行，避免闸门本身阻断执行。
+   */
+  private async waitForGlobalWindowCapacity(): Promise<void> {
+    const max = this.deps.cfg.execution.maxConcurrentWindows
+    if (!Number.isFinite(max)) return
+    const ids = (await this.deps.db.listProfiles(false)).map((p) => p.bitbrowserId)
+    if (ids.length === 0) return
+    const deadline = Date.now() + CAPACITY_WAIT_MS
+    let reclaimedOnce = false
+    for (;;) {
+      let open: Set<string>
+      try {
+        open = await this.deps.bitbrowser.openPids(ids)
+      } catch (e) {
+        this.deps.logger.warn({ err: (e as Error).message }, '窗口占用探测失败，跳过跨进程窗口额度等待')
+        return
+      }
+      if (open.size < max) return
+      // 满额先甄别并回收占位者：孤儿/归属进程已死的窗口直接关掉，腾出名额后再重新计数
+      if (!reclaimedOnce) {
+        reclaimedOnce = true
+        const reclaimed = await reclaimOrphanWindows({ db: this.deps.db, bitbrowser: this.deps.bitbrowser }, this.deps.logger)
+        if (reclaimed > 0) {
+          this.deps.logger.info({ reclaimed, max }, '跨进程窗口满额：已回收孤儿窗口，重新计数')
+          continue
+        }
+      }
+      if (Date.now() >= deadline) {
+        this.deps.logger.warn({ open: open.size, max }, '跨进程窗口被在途会话占满且等待超时，仍继续开窗（放行）')
+        return
+      }
+      this.deps.logger.info({ open: open.size, max }, '跨进程窗口已达上限，等待其它窗口释放')
+      await new Promise((r) => setTimeout(r, CAPACITY_POLL_MS))
+    }
   }
 
   /** 取某任务当日下一轮 slot（库失败兜底 0——不阻塞任务执行） */
