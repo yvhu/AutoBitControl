@@ -9,6 +9,7 @@ import {
 import { buildTemplate, DEFAULT_TEMPLATE_FORM, type TemplateForm } from '../../components/name-template'
 import { NameTemplateEditor } from '../../components/name-template-editor'
 import { ScheduleFields } from '../../components/schedule-fields'
+import ConfirmButton from '../../components/ConfirmButton'
 import type { FileAssignPreview } from '../../types'
 
 export default function FileAssignPanel() {
@@ -160,9 +161,16 @@ export default function FileAssignPanel() {
         <NameTemplateEditor value={templateForm} onChange={setTemplateForm} />
 
         <div>
-          <Button type="primary" danger disabled={!plan} loading={apply.isPending} onClick={doApply}>
+          <ConfirmButton
+            type="primary"
+            danger
+            disabled={!plan}
+            loading={apply.isPending}
+            confirm={{ title: '执行文件分配？', description: '会按预览改名文件并写回 Excel，不可撤销', mode: 'modal', okText: '执行' }}
+            onConfirm={doApply}
+          >
             执行分配
-          </Button>
+          </ConfirmButton>
           <Typography.Text type="secondary" style={{ marginLeft: 12 }}>
             执行前需先生成并确认预览
           </Typography.Text>
@@ -219,13 +227,14 @@ export default function FileAssignPanel() {
           <Button type="primary" loading={saveSchedule.isPending} onClick={saveScheduleConfig}>
             保存定时配置
           </Button>
-          <Button
+          <ConfirmButton
             loading={runSchedule.isPending}
             disabled={!schedule || !schedule.enabled}
-            onClick={() => schedule && runSchedule.mutate(schedule.id)}
+            confirm={{ title: '立即执行一次文件分配？', okText: '执行' }}
+            onConfirm={() => { if (schedule) runSchedule.mutate(schedule.id) }}
           >
             立即执行一次
-          </Button>
+          </ConfirmButton>
           <Typography.Text type="secondary">
             保存时把上方源文件夹/目标列/名称模板固化进计划；改参数后需重新保存才生效
           </Typography.Text>

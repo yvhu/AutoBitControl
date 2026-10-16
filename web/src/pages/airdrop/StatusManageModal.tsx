@@ -15,7 +15,7 @@ export default function StatusManageModal({ open, statuses, onClose }: {
   statuses: AirdropStatusItem[]
   onClose: () => void
 }) {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [names, setNames] = useState<Record<number, string>>({})
   const [newName, setNewName] = useState('')
   const createStatus = useCreateStatus()
@@ -61,7 +61,21 @@ export default function StatusManageModal({ open, statuses, onClose }: {
           <span style={{ fontSize: 12, color: '#8c959f' }}>{s.projectCount} 项目</span>
           <Button type="text" size="small" icon={<UpOutlined />} disabled={i === 0} onClick={() => swap(s, statuses[i - 1])} />
           <Button type="text" size="small" icon={<DownOutlined />} disabled={i === statuses.length - 1} onClick={() => swap(s, statuses[i + 1])} />
-          <Button type="text" size="small" icon={<DeleteOutlined style={{ color: '#cf1322' }} />} onClick={() => deleteStatus.mutate(s.id)} />
+          <Button
+            type="text"
+            size="small"
+            icon={<DeleteOutlined style={{ color: '#cf1322' }} />}
+            onClick={() =>
+              modal.confirm({
+                title: `删除状态「${s.name}」？`,
+                content: '该列下不能有项目',
+                okText: '删除',
+                cancelText: '取消',
+                okButtonProps: { danger: true },
+                onOk: () => deleteStatus.mutateAsync(s.id),
+              })
+            }
+          />
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

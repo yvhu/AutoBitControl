@@ -12,14 +12,19 @@ import {
 import type { AirdropImportItem, AirdropPriority, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView } from '../../types'
 import { diffTodos, type TodoDraft } from './board'
 
-const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
+/** 变更失败统一文案（对外导出，供 guarded mutation 等复用） */
+export const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
 
 /** 全部空投查询失效（任一变更后刷新看板/列/提醒） */
-function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['airdrop-statuses'] })
   qc.invalidateQueries({ queryKey: ['airdrop-projects'] })
   qc.invalidateQueries({ queryKey: ['airdrop-reminders'] })
 }
+
+/** 待办更新的 mutationFn（抽出让 useGuardedMutation 复用，避免与 useUpdateTodo 重复实现） */
+export const updateTodoFn = (input: { id: number; body: { done?: boolean; content?: string; dueDate?: string | null; priority?: AirdropPriority } }) =>
+  updateAirdropTodo(input.id, input.body)
 
 export function useAirdropStatuses() {
   return useQuery({ queryKey: ['airdrop-statuses'], queryFn: fetchAirdropStatuses })
@@ -92,7 +97,7 @@ export function useUpdateTodo() {
   const { message } = App.useApp()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { id: number; body: { done?: boolean; content?: string; dueDate?: string | null; priority?: AirdropPriority } }) => updateAirdropTodo(input.id, input.body),
+    mutationFn: updateTodoFn,
     onSuccess: () => invalidateAll(qc),
     onError: (e) => message.error(errMsg(e)),
   })

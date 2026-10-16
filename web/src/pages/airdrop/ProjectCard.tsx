@@ -3,11 +3,13 @@
  * 依赖方向：依赖 ./board、./hooks 与 ../types，被 index.tsx 引用
  */
 import { useState } from 'react'
-import { Button, Checkbox, Dropdown, Popconfirm, Tag, Tooltip, Typography } from 'antd'
+import { App, Button, Checkbox, Dropdown, Popconfirm, Tag, Tooltip, Typography } from 'antd'
 import { DeleteOutlined, EditOutlined, LinkOutlined, MoreOutlined } from '@ant-design/icons'
 import { useDraggable } from '@dnd-kit/core'
+import { useQueryClient } from '@tanstack/react-query'
 import { deadlineBadge, PRIORITY_LABEL, PRIORITY_TAG, todayLocal } from './board'
-import { useDeleteProject, useDeleteTodo, useUpdateTodo } from './hooks'
+import { errMsg, invalidateAll, updateTodoFn, useDeleteProject, useDeleteTodo } from './hooks'
+import { useGuardedMutation } from '../../components/useGuardedMutation'
 import type { AirdropProjectView } from '../../types'
 
 const DAYS_TEXT = (b: { daysLeft: number; kind: 'over' | 'warn' | 'fine' }) => {
@@ -21,8 +23,17 @@ const DAYS_COLOR = { over: '#cf1322', warn: '#d46b08', fine: '#2f54eb' } as cons
 /** 项目卡片：拖拽源 + 字段展示 + 子项勾选/删除 + 展开备注 + 编辑/删除入口 */
 export default function ProjectCard({ project, onEdit }: { project: AirdropProjectView; onEdit: (p: AirdropProjectView) => void }) {
   const [expanded, setExpanded] = useState(false)
+  const { modal, message } = App.useApp()
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `project-${project.id}` })
-  const updateTodo = useUpdateTodo()
+  const qc = useQueryClient()
+  const updateTodo = useGuardedMutation(
+    {
+      mutationFn: updateTodoFn,
+      onSuccess: () => invalidateAll(qc),
+      onError: (e) => message.error(errMsg(e)),
+    },
+    { getKey: (v) => v.id },
+  )
   const deleteTodo = useDeleteTodo()
   const deleteProject = useDeleteProject()
   const badge = deadlineBadge(project.deadline, todayLocal())
@@ -51,7 +62,16 @@ export default function ProjectCard({ project, onEdit }: { project: AirdropProje
             items,
             onClick: ({ key }) => {
               if (key === 'edit') onEdit(project)
-              if (key === 'delete') deleteProject.mutate(project.id)
+              if (key === 'delete') {
+                modal.confirm({
+                  title: `删除项目「${project.name}」？`,
+                  content: '将同时删除其待办子项',
+                  okText: '删除',
+                  cancelText: '取消',
+                  okButtonProps: { danger: true },
+                  onOk: () => deleteProject.mutateAsync(project.id),
+                })
+              }
             },
           }}
           trigger={['click']}
@@ -88,7 +108,7 @@ export default function ProjectCard({ project, onEdit }: { project: AirdropProje
             <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
               <Checkbox
                 checked={t.done === 1}
-                onChange={(e) => updateTodo.mutate({ id: t.id, body: { done: e.target.checked } })}
+                onChange={(e) => updateTodo.run({ id: t.id, body: { done: e.target.checked } })}
                 style={{ flex: 'none' }}
               />
               <span style={t.done === 1 ? { textDecoration: 'line-through', color: '#a6adb5' } : undefined}>{t.content}</span>
@@ -97,7 +117,7 @@ export default function ProjectCard({ project, onEdit }: { project: AirdropProje
                   <span style={{ marginLeft: 'auto', fontSize: 11.5, color: deadlineBadge(t.dueDate, todayLocal())?.kind === 'over' ? '#cf1322' : '#8c959f', flex: 'none' }}>{t.dueDate.slice(5)}</span>
                 </Tooltip>
               )}
-              <Popconfirm title="删除该子项？" onConfirm={() => deleteTodo.mutate(t.id)}>
+              <Popconfirm title="删除该子项？" okButtonProps={{ loading: deleteTodo.isPending }} onConfirm={() => deleteTodo.mutate(t.id)}>
                 <Button type="text" size="small" icon={<DeleteOutlined style={{ fontSize: 11 }} />} style={{ flex: 'none', padding: 0 }} />
               </Popconfirm>
             </div>

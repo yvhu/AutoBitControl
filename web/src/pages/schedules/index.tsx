@@ -16,6 +16,7 @@ import {
   type FormValues,
 } from './hooks'
 import { useTasks } from '../tasks/hooks'
+import ConfirmButton from '../../components/ConfirmButton'
 import { ScheduleFields } from '../../components/schedule-fields'
 import { NameTemplateEditor } from '../../components/name-template-editor'
 import { buildTemplate, DEFAULT_TEMPLATE_FORM, templateToForm, type TemplateForm } from '../../components/name-template'
@@ -109,13 +110,28 @@ export default function SchedulesPage() {
     },
     {
       title: '启用', dataIndex: 'enabled', width: 80, render: (v: boolean, s: ScheduleItem) => (
-        <Switch size="small" checked={v} onChange={(checked) => update.mutate({ id: s.id, body: { enabled: checked } })} />
+        <Switch
+          size="small"
+          checked={v}
+          loading={update.isPending && update.variables?.id === s.id}
+          onChange={(checked) => update.mutate({ id: s.id, body: { enabled: checked } })}
+        />
       ),
     },
     {
       title: '操作', width: 200, render: (_: unknown, s: ScheduleItem) => (
         <Space size={0}>
-          <Button type="link" size="small" icon={<ClockCircleOutlined />} loading={run.isPending && run.variables === s.id} disabled={!s.enabled} onClick={() => run.mutate(s.id)}>立即运行</Button>
+          <ConfirmButton
+            type="link"
+            size="small"
+            icon={<ClockCircleOutlined />}
+            confirm={{ title: `立即触发计划「${s.name}」一次？`, okText: '运行' }}
+            loading={run.isPending && run.variables === s.id}
+            disabled={!s.enabled}
+            onConfirm={() => run.mutate(s.id)}
+          >
+            立即运行
+          </ConfirmButton>
           <Button type="link" size="small" onClick={() => openEdit(s)}>编辑</Button>
           <Popconfirm title={`删除计划「${s.name}」？`} onConfirm={() => remove.mutate(s.id)}>
             <Button type="link" size="small" danger>删除</Button>

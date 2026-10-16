@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card, Collapse, Empty, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
+import ConfirmButton from '../../components/ConfirmButton'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
@@ -68,9 +69,16 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
             {r.inFlight ? (
-              <Button type="link" size="small" danger loading={stop.isPending && stop.variables === r.id} onClick={() => stop.mutate(r.id)}>
+              <ConfirmButton
+                type="link"
+                size="small"
+                danger
+                confirm={{ title: `停止窗口「${r.profileName}」的任务？`, okText: '停止' }}
+                loading={stop.isPending && stop.variables === r.id}
+                onConfirm={() => stop.mutate(r.id)}
+              >
                 停止
-              </Button>
+              </ConfirmButton>
             ) : (
               <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
                 {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
@@ -104,17 +112,17 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
         <span style={{ fontWeight: 600 }}><TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /></span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
         {batchInFlight(batch) && (
-          <Button
-            size="small"
-            danger
-            loading={stop.isPending && stop.variables === batch.id}
-            onClick={(e) => {
-              e.stopPropagation()
-              stop.mutate(batch.id)
-            }}
-          >
-            停止
-          </Button>
+          <span onClick={(e) => e.stopPropagation()}>
+            <ConfirmButton
+              size="small"
+              danger
+              confirm={{ title: '停止该批次？在途窗口会被中止', okText: '停止', mode: 'modal' }}
+              loading={stop.isPending && stop.variables === batch.id}
+              onConfirm={() => stop.mutate(batch.id)}
+            >
+              停止
+            </ConfirmButton>
+          </span>
         )}
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
           {timing.finished && timing.durationSec != null
@@ -160,9 +168,16 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
             {r.inFlight ? (
-              <Button type="link" size="small" danger loading={stop.isPending && stop.variables === r.id} onClick={() => stop.mutate(r.id)}>
+              <ConfirmButton
+                type="link"
+                size="small"
+                danger
+                confirm={{ title: `停止窗口「${r.profileName}」的任务？`, okText: '停止' }}
+                loading={stop.isPending && stop.variables === r.id}
+                onConfirm={() => stop.mutate(r.id)}
+              >
                 停止
-              </Button>
+              </ConfirmButton>
             ) : (
               <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
                 {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}

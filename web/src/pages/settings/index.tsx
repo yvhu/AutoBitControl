@@ -1,5 +1,6 @@
 import { Alert, Button, Card, Descriptions, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import ConfirmButton from '../../components/ConfirmButton'
 import { useThemeMode } from '../../theme/useThemeMode'
 import {
   datasourceText,
@@ -79,9 +80,14 @@ export default function SettingsPage() {
             />
           )}
           <div>
-            <Button icon={<ReloadOutlined />} loading={reload.isPending} onClick={() => reload.mutate()}>
+            <ConfirmButton
+              icon={<ReloadOutlined />}
+              loading={reload.isPending}
+              confirm={{ title: '重新读取 Excel 数据源？', okText: '重载' }}
+              onConfirm={() => reload.mutate()}
+            >
               重载
-            </Button>
+            </ConfirmButton>
           </div>
         </Space>
       </Card>

@@ -16,6 +16,7 @@ import {
   type TaskGroup,
 } from './hooks'
 import TestWindowModal from './TestWindowModal'
+import ConfirmButton from '../../components/ConfirmButton'
 
 const WALLET_ICON: Record<string, string> = { metamask: '🦊', petra: '🐍' }
 
@@ -103,16 +104,17 @@ function TaskCard({ task }: { task: TaskMetaView }) {
             onChange={(checked) => setEnabled.mutate({ key: task.key, enabled: checked })}
           />
           {task.enabled && (
-            <Button
+            <ConfirmButton
               type="primary"
               size="small"
               icon={<ThunderboltOutlined />}
+              confirm={{ title: '将对全部启用窗口开窗执行，确认？', okText: '触发' }}
               loading={trigger.isPending && trigger.variables === task.key}
               disabled={triggerButton(task.inFlight).disabled}
-              onClick={() => trigger.mutate(task.key)}
+              onConfirm={() => trigger.mutate(task.key)}
             >
               {triggerButton(task.inFlight).label}
-            </Button>
+            </ConfirmButton>
           )}
           {task.enabled && (
             <Button size="small" onClick={() => setTestOpen(true)}>

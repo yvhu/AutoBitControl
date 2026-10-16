@@ -18,6 +18,7 @@ import {
 } from 'antd'
 import { CopyOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ConfirmButton from '../../components/ConfirmButton'
 import type { ProfileRow } from '../../types'
 import {
   filterProfiles,
@@ -195,18 +196,29 @@ export default function ProfilesPage() {
       key: 'action',
       width: 240,
       render: (_, p) => {
-        const toggling = (open.isPending && open.variables === p.id) || (close.isPending && close.variables === p.id)
         return (
           <Space size="small">
-            <Button
-              type="link"
-              size="small"
-              danger={p.open}
-              loading={toggling}
-              onClick={() => (p.open ? close.mutate(p.id) : open.mutate(p.id))}
-            >
-              {p.open ? '关闭' : '打开'}
-            </Button>
+            {p.open ? (
+              <ConfirmButton
+                type="link"
+                size="small"
+                danger
+                confirm={{ title: `关闭窗口「${p.name}」？`, okText: '关闭' }}
+                loading={close.isPending && close.variables === p.id}
+                onConfirm={() => close.mutate(p.id)}
+              >
+                关闭
+              </ConfirmButton>
+            ) : (
+              <Button
+                type="link"
+                size="small"
+                loading={open.isPending && open.variables === p.id}
+                onClick={() => open.mutate(p.id)}
+              >
+                打开
+              </Button>
+            )}
             <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
               复制ID
             </Button>
@@ -248,20 +260,23 @@ export default function ProfilesPage() {
           <Typography.Text type={selectedRowKeys.length > 0 ? undefined : 'secondary'} style={selectedRowKeys.length > 0 ? { color: token.colorPrimary } : undefined}>
             {selectedRowKeys.length > 0 ? `已选 ${selectedRowKeys.length} 个窗口` : '未选窗口'}
           </Typography.Text>
-          <Button
+          <ConfirmButton
             disabled={selectedRowKeys.length === 0}
             loading={batch.isPending && batch.variables?.action === 'open'}
-            onClick={() => batch.mutate({ action: 'open', ids: selectedRowKeys.map(Number) })}
+            confirm={{ title: `打开选中的 ${selectedRowKeys.length} 个窗口？`, mode: 'modal' }}
+            onConfirm={() => batch.mutate({ action: 'open', ids: selectedRowKeys.map(Number) })}
           >
             批量打开
-          </Button>
-          <Button
+          </ConfirmButton>
+          <ConfirmButton
+            danger
             disabled={selectedRowKeys.length === 0}
             loading={batch.isPending && batch.variables?.action === 'close'}
-            onClick={() => batch.mutate({ action: 'close', ids: selectedRowKeys.map(Number) })}
+            confirm={{ title: `关闭选中的 ${selectedRowKeys.length} 个窗口？`, mode: 'modal', okText: '关闭' }}
+            onConfirm={() => batch.mutate({ action: 'close', ids: selectedRowKeys.map(Number) })}
           >
             批量关闭
-          </Button>
+          </ConfirmButton>
           <Button disabled={selectedRowKeys.length === 0} onClick={copyIds}>
             复制 ID
           </Button>

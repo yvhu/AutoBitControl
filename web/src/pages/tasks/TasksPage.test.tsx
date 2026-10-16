@@ -3,11 +3,11 @@
  * 依赖方向：mock ../../api/endpoints；用 antd App + QueryClientProvider 包裹
  */
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from 'antd'
 import TasksPage from './index'
-import { fetchTasks } from '../../api/endpoints'
+import { fetchTasks, triggerTask } from '../../api/endpoints'
 import type { TaskMetaView } from '../../types'
 
 vi.mock('../../api/endpoints', () => ({
@@ -16,6 +16,9 @@ vi.mock('../../api/endpoints', () => ({
   triggerTask: vi.fn(),
   fetchProfiles: vi.fn(),
 }))
+
+// antd 弹层在 jsdom 下渲染较重，全量并行跑时默认 5s 超时不够，本文件单独放宽
+vi.setConfig({ testTimeout: 20000 })
 
 const tasks = [
   { key: 'a', name: '启用任务', enabled: true, group: { key: 'g1', name: '组一' } },
@@ -61,5 +64,21 @@ describe('TasksPage 状态 Tab', () => {
     expect(sources).toHaveLength(2)
     expect(sources[0]).toHaveAttribute('href', 'https://a/')
     expect(sources[1]).toHaveAttribute('href', 'https://b/')
+  })
+
+  it('点「立即触发」需经二次确认才调用触发接口', async () => {
+    vi.mocked(fetchTasks).mockResolvedValue([
+      { key: 'a', name: '启用任务', enabled: true },
+    ] as unknown as TaskMetaView[])
+    renderPage()
+    const btn = await screen.findByRole('button', { name: /立\s?即\s?触\s?发/ }, { timeout: 15000 })
+    fireEvent.click(btn)
+    // 确认弹窗出现前不调用接口
+    expect(vi.mocked(triggerTask)).not.toHaveBeenCalled()
+    await screen.findByText('将对全部启用窗口开窗执行，确认？', undefined, { timeout: 15000 })
+    // antd 会在两个中文字之间自动插空格，用 \s? 兼容
+    const ok = await screen.findByRole('button', { name: /^触\s?发$/ }, { timeout: 15000 })
+    fireEvent.click(ok)
+    await waitFor(() => expect(vi.mocked(triggerTask)).toHaveBeenCalledWith('a'))
   })
 })
