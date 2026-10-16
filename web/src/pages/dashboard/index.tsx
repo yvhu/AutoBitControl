@@ -1,25 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Collapse, Empty, Progress, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
+import { Button, Card, Collapse, Empty, Segmented, Space, Table, Tag, Typography, theme } from 'antd'
 import StatusPill from '../../components/StatusPill'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
 import { splitBatches, batchProgress, batchTiming } from './groupBatches'
+import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
 
 const RANGE_OPTIONS = [
   { label: '今天', value: 'today' },
   { label: '近 7 天', value: '7d' },
   { label: '全部', value: 'all' },
-]
-
-const STATUS_TAG: Array<{ key: keyof BatchItem['stats']; label: string; color: string; bg: string; border: string }> = [
-  { key: 'success', label: '成功', color: '#52c41a', bg: '#f6ffed', border: '#b7eb8f' },
-  { key: 'failed', label: '失败', color: '#ff4d4f', bg: '#fff2f0', border: '#ffccc7' },
-  { key: 'captchaFailed', label: '验证码', color: '#13c2c2', bg: '#e6fffb', border: '#87e8de' },
-  { key: 'running', label: '进行中', color: '#faad14', bg: '#fffbe6', border: '#ffe58f' },
-  { key: 'retryWait', label: '重试中', color: '#fa8c16', bg: '#fff7e6', border: '#ffd591' },
-  { key: 'pending', label: '待执行', color: '#8c8c8c', bg: '#fafafa', border: '#d9d9d9' },
 ]
 
 const KIND_TAG: Record<BatchItem['kind'], { label: string; color: string }> = {
@@ -95,7 +87,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
   const [open, setOpen] = useState(defaultOpen)
   const detail = useBatchDetail(open ? batch.id : null)
   const stop = useStopBatch()
-  const { done, pct } = batchProgress(batch)
+  const { done } = batchProgress(batch)
   const timing = batchTiming(batch)
   const stats = batch.stats
   // 最新批次开始运行时（defaultOpen 由 false→true）自动展开；用户手动收起不受影响
@@ -130,12 +122,8 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
             : '进行中'}
         </span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-        <Progress percent={pct} size="small" style={{ flex: 1, minWidth: 120, margin: 0 }} format={() => null} />
-        <span style={{ fontSize: 12, color: '#666' }}>{done}/{stats.total}</span>
-        {STATUS_TAG.filter((t) => stats[t.key] > 0).map((t) => (
-          <Tag key={t.key} style={{ color: t.color, background: t.bg, borderColor: t.border, margin: 0 }}>{t.label} {stats[t.key]}</Tag>
-        ))}
+      <div style={{ marginTop: 8 }}>
+        <StatsBar stats={stats} right={<span style={{ fontSize: 12, color: '#666' }}>{done}/{stats.total}</span>} />
       </div>
       {open && (
         <div style={{ marginTop: 8 }}>
