@@ -74,4 +74,25 @@ describe('maintenance 熔断每日重置', () => {
       vi.useRealTimers()
     }
   })
+
+  it('everyHours>0：按间隔重置且优先于每日时刻', async () => {
+    vi.useFakeTimers({ now: new Date(Date.UTC(2026, 0, 1, 0, 0, 0)) })
+    try {
+      const reset = vi.fn().mockResolvedValue(1)
+      const db = { resetMeltedCircuitBreakers: reset } as never
+      // 同时配了每日 08:30（now=08:00，若走每日 30min 后即触发）——验证间隔模式优先
+      const cfg = { execution: { circuitBreakerResetAt: '08:30', circuitBreakerResetEveryHours: 1 }, scheduler: { timezone: 'Asia/Shanghai' } } as never
+      const h = startCircuitBreakerResetSchedule(cfg, db, { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never)
+      expect(reset).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(59 * 60 * 1000)
+      expect(reset).not.toHaveBeenCalled() // 未走每日 30min，也未到 1h
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+      expect(reset).toHaveBeenCalledTimes(1) // 每 1 小时触发
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+      expect(reset).toHaveBeenCalledTimes(2) // 自动重排下一次
+      h.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

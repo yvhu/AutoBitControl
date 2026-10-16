@@ -30,8 +30,10 @@ export interface ExecutionConfig {
   retryMax: number
   retryBackoffSec: number
   circuitBreakerThreshold: number
-  /** 熔断每日重置时刻（本地 HH:mm，默认 23:59）：到点自动归零所有窗口的熔断计数；空字符串关闭自动重置 */
+  /** 熔断每日重置时刻（本地 HH:mm，默认 23:59）：到点自动归零所有窗口的熔断计数；空字符串关闭自动重置；仅当 circuitBreakerResetEveryHours=0 时生效 */
   circuitBreakerResetAt: string
+  /** 熔断定时重置间隔（小时，默认 0=关闭）：>0 时每 N 小时归零一次，优先于 circuitBreakerResetAt 的每日时刻 */
+  circuitBreakerResetEveryHours: number
   /** 全局窗口上限：同时最多开几个窗口会话（机器资源容度；与任务级 concurrency 双闸门取更严者） */
   maxConcurrentWindows: number
 }
@@ -127,6 +129,8 @@ const defaults: AppConfig = {
     circuitBreakerThreshold: 2,
     // 熔断每日重置时刻（本地墙钟 HH:mm）：到点归零所有窗口熔断计数；"" 关闭自动重置
     circuitBreakerResetAt: '23:59',
+    // 熔断定时重置间隔（小时，0=关闭）：>0 时每 N 小时归零一次，优先于上面的每日时刻（如 1=每小时）
+    circuitBreakerResetEveryHours: 0,
     // 全局窗口上限：所有任务共享的同时开窗总数封顶（默认 4；与任务级 meta.concurrency 双闸门取更严者）
     maxConcurrentWindows: 4,
   },
@@ -240,6 +244,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.AI_MODEL) cfg.ai.model = env.AI_MODEL
   // 熔断每日重置时刻：CIRCUIT_BREAKER_RESET_AT 优先级高于配置文件（空串可显式关闭自动重置，与配置文件 "" 语义一致）
   if (env.CIRCUIT_BREAKER_RESET_AT !== undefined) cfg.execution.circuitBreakerResetAt = env.CIRCUIT_BREAKER_RESET_AT
+  // 熔断定时重置间隔（小时）：CIRCUIT_BREAKER_RESET_EVERY_HOURS 优先，>0 时按间隔重置（0 可显式关闭间隔模式；非法值忽略）
+  if (env.CIRCUIT_BREAKER_RESET_EVERY_HOURS !== undefined) {
+    const n = Number(env.CIRCUIT_BREAKER_RESET_EVERY_HOURS)
+    if (Number.isInteger(n) && n >= 0) cfg.execution.circuitBreakerResetEveryHours = n
+  }
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]
