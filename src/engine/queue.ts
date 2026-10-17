@@ -48,8 +48,8 @@ interface Gate {
 export class CoalescingEnqueuer {
   /** 尚未启动的窗口会话合并区（按窗口 id） */
   private pending = new Map<number, Entry>()
-  /** 正在运行的窗口 → 会话内任务集合（in-flight 判定用，会话结束即删） */
-  private running = new Map<number, Set<string>>()
+  /** 正在运行的窗口 → 会话内任务集合（in-flight 判定与批次取消标记用，会话结束即删） */
+  private running = new Map<number, SessionTask[]>()
   /** 运行中窗口收到的追加任务（本轮结束后重新入队） */
   private followUp = new Map<number, Entry>()
   /** 全局窗口闸门：同时开窗总数上限（clamp 到 ≥1；Infinity = 不限制） */
@@ -158,6 +158,8 @@ export class CoalescingEnqueuer {
 
   /** 执行合并完成的窗口会话（delayMs=0 时与 enqueue 同步）；全局额度满时进全局 FIFO 排队 */
   private dispatch(entry: Entry): void {
+    // 条目已被批次取消（或已被其它路径调度）：错峰定时器到期后不再开窗
+    if (this.pending.get(entry.profile.id) !== entry) return
     // 全局窗口闸门（同步判定，保证会话结束释放额度时的滚动续跑 FIFO 公平）：
     // 额度已满则进全局等待队列（条目保持 pending 合并区，同窗口后续任务继续合并进同一会话）
     if (this.globalActive >= this.globalMax) {
@@ -168,10 +170,12 @@ export class CoalescingEnqueuer {
     void (async () => {
       // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
       await Promise.resolve()
-      this.pending.delete(entry.profile.id)
-      this.running.set(entry.profile.id, new Set(entry.tasks.map((t) => t.taskKey)))
+      if (this.pending.get(entry.profile.id) === entry) this.pending.delete(entry.profile.id)
+      // 快照任务：批次取消可能已删掉部分条目，快照保证 runner 与额度释放看到同一集合
+      const tasks = entry.tasks.map((t) => ({ ...t }))
+      this.running.set(entry.profile.id, tasks)
       try {
-        await this.runner.runWindowTasks(entry.profile, entry.tasks)
+        await this.runner.runWindowTasks(entry.profile, tasks)
       } catch (e) {
         // 单窗口会话异常不影响其他窗口，只记日志
         this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
@@ -189,7 +193,7 @@ export class CoalescingEnqueuer {
       this.globalActive--
       const next = this.globalWaiting.shift()
       if (next) this.dispatch(next)
-      for (const t of entry.tasks) this.release(t.taskKey)
+      for (const t of tasks) this.release(t.taskKey)
     })()
   }
 
@@ -212,6 +216,59 @@ export class CoalescingEnqueuer {
     this.occupy(taskKey, next.profile, next.immediate, next.tasks.find((x) => x.taskKey === taskKey)?.batchId)
   }
 
+  /**
+   * 取消某批次仍在队列中的任务：错峰待启动 / 任务额度排队 / 全局排队 / followUp 全部移除，
+   * 已占任务额度的条目按被取消任务逐个释放；返回被取消的（窗口, 任务）及是否已进入运行阶段。
+   * 覆盖「尚未落运行行」的窗口——批次停止只靠 DB 行看不到它们。
+   * 运行中的会话不做队列手术（由停止器关窗 + 取消标记消费），但会一并返回其中同批任务。
+   */
+  cancelBatch(batchId: number): Array<{ profileId: number; taskKey: string; running: boolean }> {
+    const cancelled = new Map<string, { profileId: number; taskKey: string; running: boolean }>()
+    const filterEntry = (entry: Entry): SessionTask[] => {
+      const removed: SessionTask[] = []
+      entry.tasks = entry.tasks.filter((t) => {
+        if (t.batchId !== batchId) return true
+        removed.push(t)
+        const key = `${entry.profile.id}:${t.taskKey}`
+        if (!cancelled.has(key)) cancelled.set(key, { profileId: entry.profile.id, taskKey: t.taskKey, running: false })
+        return false
+      })
+      return removed
+    }
+    // 额度排队（尚未占额度）：先清，避免下面释放额度时把同批窗口滚进 pending
+    for (const gate of this.gates.values()) {
+      gate.waiting = gate.waiting.filter((entry) => {
+        filterEntry(entry)
+        return entry.tasks.length > 0
+      })
+    }
+    // followUp（未占额度）
+    for (const [profileId, entry] of [...this.followUp.entries()]) {
+      filterEntry(entry)
+      if (entry.tasks.length === 0) this.followUp.delete(profileId)
+    }
+    // pending / 全局排队（已占任务额度）：移除后按任务释放，滚动续跑其它批次
+    for (const [profileId, entry] of [...this.pending.entries()]) {
+      const removed = filterEntry(entry)
+      if (entry.tasks.length === 0) {
+        this.pending.delete(profileId)
+        this.globalWaiting = this.globalWaiting.filter((e) => e !== entry)
+      }
+      for (const t of removed) this.release(t.taskKey)
+    }
+    // 运行中会话：只收集并标记 running（会由停止器关窗/置标记处理）
+    for (const [profileId, tasks] of this.running) {
+      for (const t of tasks) {
+        if (t.batchId !== batchId) continue
+        const key = `${profileId}:${t.taskKey}`
+        const prev = cancelled.get(key)
+        if (prev) prev.running = true
+        else cancelled.set(key, { profileId, taskKey: t.taskKey, running: true })
+      }
+    }
+    return [...cancelled.values()]
+  }
+
   /** 错峰等待中的窗口数（已入队未开窗；路由层「实时运行」口径的队列部分） */
   pendingCount(): number {
     return this.pending.size
@@ -229,12 +286,12 @@ export class CoalescingEnqueuer {
   hasTaskInFlight(taskKey: string, profileId?: number): boolean {
     if (profileId !== undefined) {
       if (CoalescingEnqueuer.hasTask(this.pending.get(profileId), taskKey)) return true
-      if (this.running.get(profileId)?.has(taskKey)) return true
+      if (this.running.get(profileId)?.some((t) => t.taskKey === taskKey)) return true
       if (CoalescingEnqueuer.hasTask(this.followUp.get(profileId), taskKey)) return true
       return this.gates.get(taskKey)?.waiting.some((e) => e.profile.id === profileId) ?? false
     }
     for (const e of this.pending.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
-    for (const keys of this.running.values()) if (keys.has(taskKey)) return true
+    for (const tasks of this.running.values()) if (tasks.some((t) => t.taskKey === taskKey)) return true
     for (const e of this.followUp.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
     return (this.gates.get(taskKey)?.waiting.length ?? 0) > 0
   }

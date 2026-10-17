@@ -104,7 +104,7 @@ export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; t
    * @swagger
    * /api/batches/{id}/stop:
    *   post:
-   *     summary: 停止批次内全部在途运行（置 skipped「手动停止」）
+   *     summary: 停止批次内全部在途运行与排队窗口（置 skipped「手动停止」）
    *     parameters:
    *       - in: path
    *         name: id
@@ -160,13 +160,7 @@ export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; t
     if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '批次 id 必须为正整数')
     const batch = await deps.db.getBatch(id)
     if (!batch) throw new HttpError(404, ERROR_CODES.BATCH_NOT_FOUND, '批次不存在')
-    const runs = await deps.db.listRunsForBatch(id)
-    let stopped = 0
-    for (const r of runs) {
-      if (['success', 'failed', 'captcha_failed', 'skipped'].includes(r.status)) continue
-      if (await deps.stopper.stop(r.profileId, r.taskKey)) stopped++
-    }
-    ok(res, { stopped })
+    ok(res, { stopped: await deps.stopper.stopBatch(id) })
   }))
   router.post('/runs/:id/stop', asyncHandler(async (req, res) => {
     const id = Number(req.params.id)

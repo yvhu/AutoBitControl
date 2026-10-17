@@ -116,7 +116,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
             <ConfirmButton
               size="small"
               danger
-              confirm={{ title: '停止该批次？在途窗口会被中止', okText: '停止', mode: 'modal' }}
+              confirm={{ title: '停止该批次？在途与排队中的窗口都会停止', okText: '停止', mode: 'modal' }}
               loading={stop.isPending && stop.variables === batch.id}
               onConfirm={() => stop.mutate(batch.id)}
             >

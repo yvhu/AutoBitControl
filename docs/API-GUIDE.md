@@ -144,7 +144,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 1. **单窗口真跑**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=my-checkin npm run task:run`（不受开关与错峰限制，打印结果后退出）。
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
-4. **停止运行**：看板批次卡片头部「停止」停整批、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
+4. **停止运行**：看板批次卡片头部「停止」停整批（含错峰/并发排队中尚未开窗的窗口，这些窗口不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
 5. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
 
 注意：三个示例任务用占位地址 `https://example.com/`（可直接跑通导航步骤），但都显式写了 `enabled: false`，不参与日常执行；调试时在面板手动触发或用 `task:run` 脚本跑。改完任务代码必须**重启服务**才生效（后端无 watch）。
@@ -1191,7 +1191,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（不等待错峰）；批量触发不带 body。
 - 多窗口测试触发：任务页卡片「测试」→ 弹窗多选启用窗口，等价于「立即触发」的子集（走错峰与并发闸门，受开关限制）；对应 `POST /api/tasks/:key/trigger` + body `{"profileIds":["<id>","<id>"]}`，返回 `scope=selected`。
 - 停止会关闭该窗口（`closeBrowser`），正在跑的会话被中止并按「手动停止」结算；同窗口合并的其他任务会一并失败（立即触发为一窗口一任务，无影响）。
-- 不重启就立刻重触发：旧会话（错峰/排队中）结束前触发接口仍 409，等其结束或重启后端即可；改任务代码本就需要重启，重启后无在途会话。
+- 批次停止会先把仍在错峰/任务并发/全局窗口队列里的同批窗口移出队列（不会再开窗），并为尚未落运行行的窗口补一条 `skipped`「手动停止」行；行级停止只停该窗口该任务，排队中的会话会等启动时按标记跳过。
+- 不重启就立刻重触发：行级停止后旧会话（错峰/排队中）结束前触发接口仍可能 409；批次停止已清队列，通常无需等待。改任务代码本就需要重启，重启后无在途会话。
 - 结果核对：`GET /api/batches` 的 `stats`；每窗口今日成功数查 SQLite `runs` 表。
 - 熔断修复后可 `POST /api/profiles/:id/breaker/reset` 复位；熔断每日 23:59 也会自动重置（`execution.circuitBreakerResetAt`，见第 7 章）。
 - 任务 key 全局唯一，登记 `src/tasks/index.ts`；面板定时计划引用新 key 需手动新建计划。

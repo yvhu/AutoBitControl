@@ -236,6 +236,8 @@ export async function startApp(): Promise<void> {
     closeBrowser: (id) => bitbrowser.closeBrowser(id),
     getOpenWindow: (id) => db.getOpenWindow(id),
     clearOpenWindow: (id) => db.clearOpenWindow(id),
+    // 批次停止先撤队列：错峰/双闸门排队中的窗口还没落运行行，单靠 DB 行停不到
+    cancelQueued: (batchId) => enqueuer.cancelBatch(batchId),
   })
 
   const app = createApp({

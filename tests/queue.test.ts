@@ -302,6 +302,78 @@ describe('CoalescingEnqueuer 随机错峰', () => {
   })
 })
 
+describe('CoalescingEnqueuer 批次取消', () => {
+  it('cancelBatch 清掉错峰等待中的窗口：到期不再开窗', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    try {
+      const run = vi.fn().mockResolvedValue(undefined)
+      const enq = makeEnq(run, () => 4, 120)
+      enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
+      enq.enqueue(mk(2, 'bb-2'), 'task-a', { batchId: 7 })
+      enq.enqueue(mk(3, 'bb-3'), 'task-a', { batchId: 8 })
+      expect(enq.pendingCount()).toBe(3)
+      expect(enq.cancelBatch(7)).toEqual([
+        { profileId: 1, taskKey: 'task-a', running: false },
+        { profileId: 2, taskKey: 'task-a', running: false },
+      ])
+      expect(enq.pendingCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(run).toHaveBeenCalledTimes(1)
+      expect(run.mock.calls[0][0].id).toBe(3)
+      expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a', batchId: 8 }])
+    } finally {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('cancelBatch 清掉额度排队：释放后不再补跑', async () => {
+    const releases: Record<number, () => void> = {}
+    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
+    const enq = makeEnq(run, () => 1)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
+    await tick()
+    enq.enqueue(mk(2, 'bb-2'), 'task-a', { batchId: 7 })
+    expect(enq.hasTaskInFlight('task-a', 2)).toBe(true)
+    expect(enq.cancelBatch(7)).toContainEqual({ profileId: 2, taskKey: 'task-a', running: false })
+    expect(enq.hasTaskInFlight('task-a', 2)).toBe(false)
+    releases[1]()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancelBatch 清掉运行中窗口的 followUp：会话结束后不再补跑', async () => {
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    const run = vi.fn((_profile: { id: number }, _tasks: Array<{ taskKey: string }>) => firstGate.then(() => undefined))
+    const enq = makeEnq(run)
+    const profile = mk(1, 'bb-1')
+    enq.enqueue(profile, 'task-a')
+    await tick()
+    enq.enqueue(profile, 'task-b', { batchId: 9 })
+    expect(enq.hasTaskInFlight('task-b', 1)).toBe(true)
+    expect(enq.cancelBatch(9)).toContainEqual({ profileId: 1, taskKey: 'task-b', running: false })
+    expect(enq.hasTaskInFlight('task-b', 1)).toBe(false)
+    releaseFirst()
+    await tick()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancelBatch 返回运行中同批任务（供停止器置标记），但不打断会话', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>(r => { release = r })
+    const run = vi.fn((_profile: { id: number }) => gate.then(() => undefined))
+    const enq = makeEnq(run)
+    enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
+    await tick()
+    expect(enq.cancelBatch(7)).toEqual([{ profileId: 1, taskKey: 'task-a', running: true }])
+    expect(enq.hasTaskInFlight('task-a', 1)).toBe(true)
+    release()
+    await tick()
+  })
+})
+
 describe('CoalescingEnqueuer 全局窗口上限', () => {
   it('全局额度内立即执行，超额窗口进全局队列，会话结束 FIFO 滚动续跑', async () => {
     const releases: Record<number, () => void> = {}
