@@ -12,6 +12,11 @@ export function splitBatches(batches: BatchItem[]): { bulk: BatchItem[]; single:
   return { bulk, single }
 }
 
+/** 批次卡片是否显示「重跑失败」：仅 bulk 批次且有失败/验证码失败行 */
+export function canRerunFailed(batch: BatchItem): boolean {
+  return batch.kind === 'bulk' && batch.stats.failed + batch.stats.captchaFailed > 0
+}
+
 /** 批次完成率：终态行数 / 总行数（百分比四舍五入；total=0 返回 0） */
 export function batchProgress(b: BatchItem): { done: number; pct: number } {
   const s = b.stats

@@ -39,6 +39,38 @@ export type BatchDetailData = EnvelopeData<'/api/batches/{id}'>
 
 export type RunRow = EnvelopeData<'/api/batches/{id}'>['runs'][number]
 
+/** 失败重跑不可执行原因（与后端 blockedReason 枚举一致） */
+export type RerunBlockedReason = 'profile-missing' | 'profile-disabled' | 'circuit-breaker' | 'in-flight'
+
+/** 批次失败重跑候选窗口（预览接口返回） */
+export interface RerunCandidate {
+  runId: number
+  profileId: number
+  profileName: string
+  bitbrowserId: string
+  status: RunStatus
+  error: string | null
+  finishedAt: string | null
+  latestStatus: RunStatus | null
+  latestFinishedAt: string | null
+  alreadySuccess: boolean
+  inFlight: boolean
+  selectable: boolean
+  defaultSelected: boolean
+  blockedReason: RerunBlockedReason | null
+}
+
+export interface RerunCandidatesData {
+  batchId: number
+  taskKey: string
+  candidates: RerunCandidate[]
+}
+
+export interface RerunFailedResult {
+  batchId: number
+  queued: number
+}
+
 // 任务 meta 视图：与 /api/tasks envelope data 一致（retry 为对象或 null，见 server 注解）
 export type TaskMetaView = EnvelopeData<'/api/tasks'>[number]
 

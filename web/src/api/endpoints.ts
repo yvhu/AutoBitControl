@@ -1,8 +1,10 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle } from '../types'
+import type { BatchesData, BatchDetailData, RerunCandidatesData, RerunFailedResult, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
+export const fetchRerunCandidates = (batchId: number) => get<RerunCandidatesData>(`/api/batches/${batchId}/rerun-candidates`)
+export const rerunFailedBatch = (batchId: number, runIds: number[]) => post<RerunFailedResult>(`/api/batches/${batchId}/rerun-failed`, { runIds })
 export const fetchDiagnostics = (runId: number) => get<DiagBundle>(`/api/diagnostics/${runId}`)
 export const fetchTasks = () => get<TaskMetaView[]>('/api/tasks')
 export const fetchProfiles = () => get<ProfileRow[]>('/api/profiles')

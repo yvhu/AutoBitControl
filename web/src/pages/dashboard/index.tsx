@@ -5,9 +5,10 @@ import ConfirmButton from '../../components/ConfirmButton'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime } from './format'
-import { splitBatches, batchProgress, batchTiming } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming, canRerunFailed } from './groupBatches'
 import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
+import RerunFailedModal from './RerunFailedModal'
 
 const RANGE_OPTIONS = [
   { label: '今天', value: 'today' },
@@ -19,6 +20,11 @@ const KIND_TAG: Record<BatchItem['kind'], { label: string; color: string }> = {
   bulk: { label: '批量 · 全部窗口', color: 'blue' },
   single: { label: '单窗口', color: 'default' },
   schedule: { label: '定时', color: 'purple' },
+}
+
+function batchTag(batch: BatchItem): { label: string; color: string } {
+  if (batch.source === 'rerun-failed') return { label: '批量 · 重跑失败', color: 'orange' }
+  return KIND_TAG[batch.kind]
 }
 
 function runTime(v: string | null): string {
@@ -95,9 +101,12 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
   const [open, setOpen] = useState(defaultOpen)
   const detail = useBatchDetail(open ? batch.id : null)
   const stop = useStopBatch()
+  const [rerunOpen, setRerunOpen] = useState(false)
   const { done } = batchProgress(batch)
   const timing = batchTiming(batch)
   const stats = batch.stats
+  const failedCount = stats.failed + stats.captchaFailed
+  const tag = batchTag(batch)
   // 最新批次开始运行时（defaultOpen 由 false→true）自动展开；用户手动收起不受影响
   const prevDefaultOpen = useRef(defaultOpen)
   useEffect(() => {
@@ -108,7 +117,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
         <b>{formatDateTime(batch.createdAt)}</b>
-        <Tag color={KIND_TAG[batch.kind].color}>{KIND_TAG[batch.kind].label}</Tag>
+        <Tag color={tag.color}>{tag.label}</Tag>
         <span style={{ fontWeight: 600 }}><TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /></span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
         {batchInFlight(batch) && (
@@ -122,6 +131,11 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
             >
               停止
             </ConfirmButton>
+          </span>
+        )}
+        {canRerunFailed(batch) && (
+          <span onClick={(e) => e.stopPropagation()}>
+            <Button size="small" onClick={() => setRerunOpen(true)}>重跑失败 {failedCount}</Button>
           </span>
         )}
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
@@ -140,6 +154,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
             : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={detail.isPending ? '加载中…' : '暂无运行记录'} />}
         </div>
       )}
+      <RerunFailedModal batchId={batch.id} open={rerunOpen} onClose={() => setRerunOpen(false)} />
     </Card>
   )
 }

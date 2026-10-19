@@ -5,7 +5,7 @@
  *           明细接口懒加载（展开窗口明细时请求）
  */
 import { Router } from 'express'
-import { todayStr, type AppDb } from '../../infrastructure/db'
+import { todayStr, type AppDb, type BatchRow, type ProfileRow, type RunRow } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { TaskStopper } from '../../engine/task-stopper'
 import type { SiteTask } from '../../tasks/base'
@@ -19,6 +19,38 @@ function runDurationSec(startedAt: string | null, finishedAt: string | null): nu
   const f = new Date(finishedAt.replace(' ', 'T')).getTime()
   if (Number.isNaN(s) || Number.isNaN(f)) return null
   return Math.round((f - s) / 1000)
+}
+
+const RERUN_FAILED_STATUSES: RunRow['status'][] = ['failed', 'captcha_failed']
+
+/** 批次内失败行按窗口去重（同窗口取 slot 最大的一行） */
+function failedRunsByProfile(runs: RunRow[]): RunRow[] {
+  const byProfile = new Map<number, RunRow>()
+  for (const run of runs) {
+    if (!RERUN_FAILED_STATUSES.includes(run.status)) continue
+    const prev = byProfile.get(run.profileId)
+    if (!prev || run.slot > prev.slot) byProfile.set(run.profileId, run)
+  }
+  return [...byProfile.values()]
+}
+
+/** 取批次并校验 id；不存在抛 404 */
+async function getBatchOrThrow(db: AppDb, rawId: string): Promise<BatchRow> {
+  const id = Number(rawId)
+  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '批次 id 必须为正整数')
+  const batch = await db.getBatch(id)
+  if (!batch) throw new HttpError(404, ERROR_CODES.BATCH_NOT_FOUND, '批次不存在')
+  return batch
+}
+
+/** 任务不存在 404、任务停用 409（与手动触发守卫一致） */
+async function ensureTaskRunnable(deps: BatchesDeps, taskKey: string): Promise<SiteTask> {
+  const task = deps.tasks.get(taskKey)
+  if (!task) throw new HttpError(404, ERROR_CODES.TASK_NOT_FOUND, `任务不存在: ${taskKey}`)
+  if (!(await deps.db.getTaskEnabled(taskKey, task.meta.enabled ?? true))) {
+    throw new HttpError(409, ERROR_CODES.TASK_DISABLED, '任务已停用')
+  }
+  return task
 }
 
 /** 7 天前的日期字符串（本地时区） */
@@ -57,7 +89,16 @@ function daysAgoStr(days: number): string {
  *       '200':
  *         description: 批次明细
  */
-export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; stopper: TaskStopper; getRunById: AppDb['getRunById'] }): Router {
+export interface BatchesDeps {
+  db: AppDb
+  enqueuer: CoalescingEnqueuer
+  tasks: Map<string, SiteTask>
+  stopper: TaskStopper
+  getRunById: AppDb['getRunById']
+  circuitBreakerThreshold: number
+}
+
+export function batchesRouter(deps: BatchesDeps): Router {
   const router = Router()
   router.get('/batches', asyncHandler(async (req, res) => {
     const range = typeof req.query.range === 'string' ? req.query.range : 'today'
@@ -98,6 +139,143 @@ export function batchesRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; t
         inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0 || deps.enqueuer.hasTaskInFlight(r.taskKey, r.profileId),
       }))),
     })
+  }))
+
+  /**
+   * @swagger
+   * /api/batches/{id}/rerun-candidates:
+   *   get:
+   *     summary: 预览批次内失败窗口（今天最新一轮状态/在途/可执行性）
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     responses:
+   *       '200':
+   *         description: 候选窗口列表
+   */
+  router.get('/batches/:id/rerun-candidates', asyncHandler(async (req, res) => {
+    const batch = await getBatchOrThrow(deps.db, String(req.params.id))
+    await ensureTaskRunnable(deps, batch.taskKey)
+    const profiles = await deps.db.listProfiles(false)
+    const profileById = new Map(profiles.map((p: ProfileRow) => [p.id, p]))
+    const today = todayStr()
+    const candidates = []
+    for (const run of failedRunsByProfile(await deps.db.listRunsForBatch(batch.id))) {
+      const profile = profileById.get(run.profileId)
+      const latest = profile ? await deps.db.getLatestRun(profile.id, batch.taskKey, today) : null
+      const inFlight = profile
+        ? (await deps.db.countInFlightRuns(batch.taskKey, today, profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(batch.taskKey, profile.id)
+        : false
+      const blockedReason = !profile
+        ? 'profile-missing'
+        : profile.enabled !== 1
+          ? 'profile-disabled'
+          : profile.circuitBreakerCount >= deps.circuitBreakerThreshold
+            ? 'circuit-breaker'
+            : inFlight
+              ? 'in-flight'
+              : null
+      const alreadySuccess = latest?.status === 'success'
+      candidates.push({
+        runId: run.id,
+        profileId: run.profileId,
+        profileName: profile?.name ?? run.profileName,
+        bitbrowserId: profile?.bitbrowserId ?? run.bitbrowserId,
+        status: run.status,
+        error: run.error,
+        finishedAt: run.finishedAt,
+        latestStatus: latest?.status ?? null,
+        latestFinishedAt: latest?.finishedAt ?? null,
+        alreadySuccess,
+        inFlight,
+        selectable: blockedReason === null,
+        defaultSelected: blockedReason === null && !alreadySuccess,
+        blockedReason,
+      })
+    }
+    ok(res, { batchId: batch.id, taskKey: batch.taskKey, candidates })
+  }))
+
+  /**
+   * @swagger
+   * /api/batches/{id}/rerun-failed:
+   *   post:
+   *     summary: 按勾选的失败运行行重跑（新建 bulk 批次，勾选即执行）
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: integer }
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [runIds]
+   *             properties:
+   *               runIds:
+   *                 type: array
+   *                 items: { type: integer }
+   *     responses:
+   *       '200':
+   *         description: 已入队窗口数
+   *       '400':
+   *         description: runIds 非法或窗口不可执行（业务码 40000）
+   *       '404':
+   *         description: 批次/任务不存在（40405/40401）
+   *       '409':
+   *         description: 任务已停用（40901）
+   */
+  router.post('/batches/:id/rerun-failed', asyncHandler(async (req, res) => {
+    const batch = await getBatchOrThrow(deps.db, String(req.params.id))
+    await ensureTaskRunnable(deps, batch.taskKey)
+    const body = (req.body ?? {}) as { runIds?: unknown }
+    const rawIds = body.runIds
+    if (!Array.isArray(rawIds) || rawIds.length === 0 || !rawIds.every((id) => Number.isInteger(id) && (id as number) > 0)) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'runIds 必须为非空正整数数组')
+    }
+    const runIds = [...new Set(rawIds as number[])]
+    const runById = new Map((await deps.db.listRunsForBatch(batch.id)).map((r: RunRow) => [r.id, r]))
+    const profileById = new Map((await deps.db.listProfiles(false)).map((p: ProfileRow) => [p.id, p]))
+    const chosen = new Map<number, RunRow>()
+    const blocked: string[] = []
+    for (const runId of runIds) {
+      const run = runById.get(runId)
+      if (!run || (run.status !== 'failed' && run.status !== 'captcha_failed')) {
+        throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, `运行记录不属于该批次或不是失败状态: ${runId}`)
+      }
+      const profile = profileById.get(run.profileId)
+      if (!profile) {
+        blocked.push(`窗口不存在(${run.profileId})`)
+        continue
+      }
+      if (profile.enabled !== 1) {
+        blocked.push(`${profile.name} 已停用`)
+        continue
+      }
+      if (profile.circuitBreakerCount >= deps.circuitBreakerThreshold) {
+        blocked.push(`${profile.name} 熔断中`)
+        continue
+      }
+      const inFlight = (await deps.db.countInFlightRuns(batch.taskKey, todayStr(), profile.id)) > 0
+        || deps.enqueuer.hasTaskInFlight(batch.taskKey, profile.id)
+      if (inFlight) {
+        blocked.push(`${profile.name} 执行中`)
+        continue
+      }
+      const prev = chosen.get(profile.id)
+      if (!prev || run.slot > prev.slot) chosen.set(profile.id, run)
+    }
+    if (blocked.length > 0) {
+      throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, `以下窗口不可执行: ${blocked.join('、')}`)
+    }
+    const batchRow = await deps.db.createBatch('bulk', batch.taskKey, 'rerun-failed')
+    const profilesToRun = [...chosen.values()].map((run) => profileById.get(run.profileId) as ProfileRow)
+    for (const profile of profilesToRun) deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id })
+    ok(res, { batchId: batchRow.id, queued: profilesToRun.length })
   }))
 
   /**

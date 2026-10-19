@@ -145,7 +145,8 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
 4. **停止运行**：看板批次卡片头部「停止」停整批（含错峰/并发排队中尚未开窗的窗口，这些窗口不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
-5. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
+5. **重跑批次失败**：看板批量批次卡片头部「重跑失败 N」弹窗预览失败窗口今天最新一轮；已成功窗口默认不勾（可手勾强跑），停用/熔断/执行中的窗口不可勾。确认后按勾选窗口新建「批量 · 重跑失败」批次（对应 GET /api/batches/{id}/rerun-candidates、POST /api/batches/{id}/rerun-failed）。
+6. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
 
 注意：三个示例任务用占位地址 `https://example.com/`（可直接跑通导航步骤），但都显式写了 `enabled: false`，不参与日常执行；调试时在面板手动触发或用 `task:run` 脚本跑。改完任务代码必须**重启服务**才生效（后端无 watch）。
 

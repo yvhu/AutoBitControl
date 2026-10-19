@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitBatches, batchProgress, batchTiming } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming, canRerunFailed } from './groupBatches'
 import type { BatchItem } from '../../types'
 
 function makeBatch(over: Partial<BatchItem>): BatchItem {
@@ -32,6 +32,28 @@ describe('splitBatches 散批聚合', () => {
     ])
     expect(bulk.map((b) => b.id)).toEqual([5])
     expect(single).toHaveLength(0)
+  })
+})
+
+describe('canRerunFailed 重跑失败按钮可见性', () => {
+  it('bulk 批次有失败行时显示', () => {
+    expect(canRerunFailed(makeBatch({ kind: 'bulk', stats: { total: 5, success: 4, failed: 1, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))).toBe(true)
+  })
+
+  it('bulk 批次有验证码失败行时显示', () => {
+    expect(canRerunFailed(makeBatch({ kind: 'bulk', stats: { total: 5, success: 4, failed: 0, captchaFailed: 1, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))).toBe(true)
+  })
+
+  it('bulk 批次无失败行时不显示', () => {
+    expect(canRerunFailed(makeBatch({ kind: 'bulk', stats: { total: 5, success: 5, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))).toBe(false)
+  })
+
+  it('schedule 批次即使有失败行也不显示', () => {
+    expect(canRerunFailed(makeBatch({ kind: 'schedule', stats: { total: 5, success: 4, failed: 1, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))).toBe(false)
+  })
+
+  it('single 批次即使有失败行也不显示', () => {
+    expect(canRerunFailed(makeBatch({ kind: 'single', stats: { total: 5, success: 4, failed: 1, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))).toBe(false)
   })
 })
 
