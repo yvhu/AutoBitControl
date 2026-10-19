@@ -1,298 +1,221 @@
 /**
- * 窗口任务队列（engine 层）：任务级并发额度 + 全局窗口上限 + 同窗口任务合并
- * 依赖方向：依赖基础设施类型，被 server 路由依赖
- * 设计思路：
- * - 每个任务有独立并发额度（meta.concurrency，缺省 DEFAULT_TASK_CONCURRENCY=4）：
- *   active 计数已占窗口数，超额的窗口进 waiting FIFO，会话结束释放额度时滚动续跑
- * - 全局窗口上限（maxConcurrentWindows，缺省 Infinity）：所有任务共享的同时开窗总数封顶，
- *   dispatch 开窗前同步检查，超额会话进 globalWaiting FIFO（条目保留在 pending 合并区，
- *   同窗口后续任务继续合并）；会话结束先释放全局额度滚动续跑，再释放任务额度
- * - 同窗口任务合并保留：pending 合并区 + running/followUp 两套机制（由来见类注释）
- * - 错峰：首次入队随机延迟 staggerMaxSec 内再开窗（批量触发打散起点；0 = 关闭）
+ * 运行调度器（engine 层）：runs 表即队列，按 not_before_ms 调度窗口会话
+ * 依赖方向：依赖 infrastructure/db 与 engine/window-runner 类型；被 app 装配、server 路由使用
+ * 设计思路：enqueue 只写 DB；dispatcher 每秒拾取到期行；内存只保留活跃窗口与并发计数
  */
-import type { ProfileRow } from '../infrastructure/db'
+import { todayStr, type AppDb, type ProfileRow, type RunRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 
-/** 窗口会话要跑的一个任务（batchId 可选：重试恢复等场景不带） */
+/** 窗口会话要跑的一个任务 */
 export interface SessionTask {
   taskKey: string
+  /** 已认领行所属日期（跨午夜按行日期落库，不再用 todayStr 重新推导） */
+  date?: string
   batchId?: number
 }
 
-/** 一个窗口的合并任务条目 */
-interface Entry {
-  profile: ProfileRow
-  tasks: SessionTask[]
-  /** 单窗口手动入口（看板行级执行/重跑）标记：跳过错峰立即投递 */
-  immediate?: boolean
-}
+/** runner 拒绝后的回队退避：避免持久性故障导致 dispatcher 热循环 */
+const REQUEUE_BACKOFF_MS = 30_000
 
-/** 单任务额度：concurrency 上限、active 已占窗口数、waiting 等待队列（FIFO） */
+/** 任务级并发额度（本阶段仍保留内存 gates） */
 interface Gate {
   concurrency: number
   active: number
-  waiting: Entry[]
 }
 
-/**
- * 同窗口任务合并入队器（任务级并发）
- * 两套机制的由来（关键设计）：
- * - pending：窗口会话尚未开始（还没拿到额度或错峰等待中）时到达的任务在此合并，启动时一次性执行
- * - running/followUp：窗口会话运行中到达的任务进 followUp，等本轮结束后重新入队——
- *   直接开会话会与当前会话并发开同一窗口（同窗口两会话互相打架）
- * 结果：同窗口永不并发跑两个会话；不同窗口各自独立
- * - 额度：每个任务 active 计数不超过 concurrency；超额窗口进 waiting，release 时滚动续跑
- * - 错峰：首次入队随机延迟 staggerMaxSec 内再投递开窗（批量触发打散各窗口起点；
- *   task:run 调试脚本独立进程直接跑 runManual，不经本队列；0 = 关闭）
- */
 export class CoalescingEnqueuer {
-  /** 尚未启动的窗口会话合并区（按窗口 id） */
-  private pending = new Map<number, Entry>()
-  /** 正在运行的窗口 → 会话内任务集合（in-flight 判定与批次取消标记用，会话结束即删） */
-  private running = new Map<number, SessionTask[]>()
-  /** 运行中窗口收到的追加任务（本轮结束后重新入队） */
-  private followUp = new Map<number, Entry>()
-  /** 全局窗口闸门：同时开窗总数上限（clamp 到 ≥1；Infinity = 不限制） */
-  private readonly globalMax: number
-  /** 全局闸门已占开窗数 */
+  private timer: ReturnType<typeof setInterval> | null = null
+  private dispatchTimer: ReturnType<typeof setTimeout> | null = null
+  private ticking = false
+  private dispatchScheduled = false
+  private stopped = false
+  private readonly activeProfiles = new Set<number>()
+  /** 最近一次调度日期：跨午夜时结算旧日期的排队行（running 行由各自会话按认领日期结算） */
+  private lastDate: string | null = null
+  private readonly gates = new Map<string, Gate>()
   private globalActive = 0
-  /** 全局额度已满时的窗口会话 FIFO 排队（条目保留在 pending 合并区，续跑时直接 dispatch 不重复错峰） */
-  private globalWaiting: Entry[] = []
-  /** 任务级并发额度表（懒创建） */
-  private gates = new Map<string, Gate>()
+  private readonly globalMax: number
+  private readonly tickMs: number
 
   constructor(
-    private runner: { runWindowTasks(profile: ProfileRow, tasks: SessionTask[]): Promise<unknown> },
-    private logger: Logger,
-    /** 任务并发上限取值（meta.concurrency，缺省 DEFAULT_TASK_CONCURRENCY=4） */
-    private taskConcurrencyOf: (taskKey: string) => number,
-    /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
-    private staggerMaxSec = 0,
-    /** 全局窗口上限：同时最多开几个窗口会话（机器资源兜底；Infinity = 不限制） */
+    private readonly db: AppDb,
+    private readonly runner: { runWindowTasks(profile: ProfileRow, tasks: SessionTask[]): Promise<unknown> },
+    private readonly logger: Logger,
+    private readonly taskConcurrencyOf: (taskKey: string) => number,
+    private readonly staggerMaxSec = 0,
     maxConcurrentWindows = Number.POSITIVE_INFINITY,
+    tickMs = 1000,
   ) {
-    // 非法值（NaN/非数字，如配置误写字符串）不静默失效：回退为不限制，由配置层语义兜底
     this.globalMax = Number.isFinite(maxConcurrentWindows) ? Math.max(1, maxConcurrentWindows) : Number.POSITIVE_INFINITY
+    this.tickMs = tickMs
   }
 
-  /** 取（或懒创建）任务额度表 */
+  /** 启动 dispatcher 定时器（app 装配时调用） */
+  start(): void {
+    this.stopped = false
+    if (this.timer) return
+    this.timer = setInterval(() => void this.tick(), this.tickMs)
+    this.timer.unref?.()
+  }
+
+  /** 停止 dispatcher：清理定时器并拒绝后续调度 */
+  stop(): void {
+    this.stopped = true
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+    if (this.dispatchTimer) clearTimeout(this.dispatchTimer)
+    this.dispatchTimer = null
+    this.dispatchScheduled = false
+  }
+
+  /** 入队：写 pending 行；immediate 立即，否则按当前窗口 pending 时间或随机错峰 */
+  async enqueue(profile: ProfileRow, taskKey: string, opts: { immediate?: boolean; batchId?: number } = {}): Promise<void> {
+    const date = todayStr()
+    const notBeforeMs = opts.immediate ? Date.now() : await this.pickNotBefore(profile.id, date)
+    await this.db.enqueueRun(profile.id, taskKey, date, opts.batchId ?? null, notBeforeMs)
+    this.requestDispatch()
+  }
+
+  /** 同一窗口已有 pending 时沿用最早时间；否则随机错峰 */
+  private async pickNotBefore(profileId: number, date: string): Promise<number> {
+    const existing = await this.db.minPendingNotBefore(profileId, date)
+    if (existing != null) return existing
+    return Date.now() + Math.floor(Math.random() * this.staggerMaxSec * 1000)
+  }
+
+  /** 尽快跑一次 tick（合并多次 enqueue） */
+  private requestDispatch(): void {
+    if (this.stopped || this.dispatchScheduled) return
+    this.dispatchScheduled = true
+    this.dispatchTimer = setTimeout(() => {
+      this.dispatchTimer = null
+      this.dispatchScheduled = false
+      if (this.stopped) return
+      void this.tick()
+    }, 0)
+    this.dispatchTimer.unref?.()
+  }
+
+  /** 调度 tick：到期行按窗口分组，检查 gates/global 后启动会话 */
+  async tick(): Promise<void> {
+    if (this.stopped || this.ticking) return
+    this.ticking = true
+    try {
+      const date = todayStr()
+      // 进程跨午夜运行：旧日期的 pending/retry_wait 已不可能再被调度，直接结算；
+      // running 行不动——它们由正在执行的会话按认领日期自行落终态
+      if (this.lastDate !== date) {
+        try {
+          const settled = await this.db.settleOldQueuedRuns(date)
+          this.lastDate = date
+          if (settled > 0) this.logger.warn({ count: settled, date }, '已结算跨日未执行的排队行')
+        } catch (e) {
+          this.logger.warn({ err: (e as Error).message, date }, '跨日排队行结算失败（下轮重试）')
+        }
+      }
+      // 到期 pending/retry_wait 统一调度：两条路径都带 not_before_ms
+      const due = await this.db.listDueRuns(date, Date.now())
+      if (this.stopped) return
+      if (due.length === 0) return
+      const profiles = new Map((await this.db.listProfiles(false)).map((p) => [p.id, p]))
+      if (this.stopped) return
+      const groups = new Map<number, RunRow[]>()
+      for (const row of due) {
+        const list = groups.get(row.profileId) ?? []
+        list.push(row)
+        groups.set(row.profileId, list)
+      }
+      for (const [profileId, rows] of groups) {
+        if (this.stopped) return
+        if (this.globalActive >= this.globalMax) break
+        if (this.activeProfiles.has(profileId)) continue
+        const hasRunning = await this.db.hasRunningRunsForProfile(profileId, date)
+        if (this.stopped) return
+        if (hasRunning) continue
+        const profile = profiles.get(profileId)
+        if (!profile) continue
+        const eligible = rows.filter((row) => {
+          const gate = this.gateFor(row.taskKey)
+          return gate.active < gate.concurrency
+        })
+        if (eligible.length === 0) continue
+        // 原子认领：只启动仍为 pending/retry_wait 的行，避免与批次取消/其它 tick 竞态
+        const claimed = await this.db.claimQueuedRuns(eligible.map((row) => row.id), Date.now())
+        if (this.stopped) {
+          // 认领后恰逢 stop：退回 pending，避免留下无人结算的 running 行
+          if (claimed.length > 0) {
+            await this.db.requeueClaimedRuns(claimed.map((row) => row.id), '调度器已停止', Date.now()).catch(() => 0)
+          }
+          return
+        }
+        if (claimed.length === 0) continue
+        this.activeProfiles.add(profileId)
+        this.globalActive++
+        for (const row of claimed) this.gateFor(row.taskKey).active++
+        void this.runSession(profile, claimed)
+      }
+    } catch (e) {
+      this.logger.error({ err: (e as Error).message }, '队列调度异常')
+    } finally {
+      this.ticking = false
+    }
+  }
+
+  /** 跑一次窗口会话并释放额度 */
+  private async runSession(profile: ProfileRow, rows: RunRow[]): Promise<void> {
+    // 每行带上认领日期，runner 不再用 todayStr 重新推导（跨午夜时旧日期行会写错日期）
+    const tasks: SessionTask[] = rows.map((r) => ({
+      taskKey: r.taskKey,
+      date: r.date,
+      ...(r.batchId == null ? {} : { batchId: r.batchId }),
+    }))
+    let requeued = false
+    try {
+      await this.runner.runWindowTasks(profile, tasks)
+    } catch (e) {
+      const err = (e as Error).message
+      this.logger.error({ err, profile: profile.name }, '窗口任务执行异常')
+      try {
+        // 回队加退避：持久故障不能立刻重新认领形成热循环；交由周期 tick 到期拾取
+        const count = await this.db.requeueClaimedRuns(rows.map((row) => row.id), err, Date.now() + REQUEUE_BACKOFF_MS)
+        requeued = count > 0
+      } catch (re) {
+        this.logger.warn({ err: (re as Error).message, profile: profile.name }, '认领行回队失败')
+      }
+    } finally {
+      for (const row of rows) {
+        const gate = this.gateFor(row.taskKey)
+        gate.active = Math.max(0, gate.active - 1)
+      }
+      this.globalActive = Math.max(0, this.globalActive - 1)
+      this.activeProfiles.delete(profile.id)
+      // 成功/正常结束立即尝试下一批；失败回队则等 not_before_ms 到期（不热循环）
+      if (!requeued) this.requestDispatch()
+    }
+  }
+
+  /** 取（或懒创建）任务额度 */
   private gateFor(taskKey: string): Gate {
     let gate = this.gates.get(taskKey)
     if (!gate) {
-      gate = { concurrency: Math.max(1, this.taskConcurrencyOf(taskKey)), active: 0, waiting: [] }
+      gate = { concurrency: Math.max(1, this.taskConcurrencyOf(taskKey)), active: 0 }
       this.gates.set(taskKey, gate)
     }
     return gate
   }
 
-  /** 条目内是否已含某任务（入队去重 / in-flight 判定共用） */
-  private static hasTask(entry: Entry | undefined, taskKey: string): boolean {
-    return !!entry?.tasks.some((t) => t.taskKey === taskKey)
+  /** 某任务是否在途（DB 唯一口径） */
+  async hasTaskInFlight(taskKey: string, profileId?: number): Promise<boolean> {
+    return (await this.db.countInFlightRuns(taskKey, todayStr(), profileId)) > 0
   }
 
-  /** 追加任务到条目（去重） */
-  private static addTask(entry: Entry, taskKey: string, batchId?: number): void {
-    if (entry.tasks.some((t) => t.taskKey === taskKey)) return
-    entry.tasks.push(batchId === undefined ? { taskKey } : { taskKey, batchId })
-  }
-
-  /**
-   * 为某窗口入队一个任务（自动合并 + 任务级额度控制）
-   * @param profile 窗口记录
-   * @param taskKey 任务 key
-   * @param opts.immediate 单窗口手动入口（看板行级执行/重跑）：跳过错峰立即投递
-   * @param opts.batchId 运行批次 id（批次看板落库归属；重试恢复等场景不带）
-   */
-  enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean; batchId?: number }): void {
-    // 窗口正在跑：追加到 followUp，本轮结束后统一重排（不能进 pending，见类注释）
-    if (this.running.has(profile.id)) {
-      const fu = this.followUp.get(profile.id) ?? { profile, tasks: [] }
-      CoalescingEnqueuer.addTask(fu, taskKey, opts?.batchId)
-      if (opts?.immediate) fu.immediate = true
-      this.followUp.set(profile.id, fu)
-      return
-    }
-    // 已排队未启动：同窗口同任务去重（并发触发竞态下防止额度重复占用与同窗口双跑）
-    if (CoalescingEnqueuer.hasTask(this.pending.get(profile.id), taskKey)) return
-    const gate = this.gateFor(taskKey)
-    // 额度已满：进等待队列（同窗口同任务去重），额度释放后滚动续跑
-    if (gate.active >= gate.concurrency) {
-      const dup = gate.waiting.find((e) => e.profile.id === profile.id && e.tasks.some((t) => t.taskKey === taskKey))
-      if (dup) {
-        // 同窗口同任务已在等待：升级 immediate 标记（手动入口要求不等待错峰）
-        if (opts?.immediate) dup.immediate = true
-      } else {
-        gate.waiting.push({ profile, tasks: [{ taskKey, ...(opts?.batchId === undefined ? {} : { batchId: opts.batchId }) }], immediate: opts?.immediate })
-      }
-      return
-    }
-    this.occupy(taskKey, profile, opts?.immediate, opts?.batchId)
-  }
-
-  /** 占额度并进入 pending 合并区（已排队未启动的合并进已有条目；否则新建 + 错峰投递，immediate 跳过延迟） */
-  private occupy(taskKey: string, profile: ProfileRow, immediate = false, batchId?: number): void {
-    const gate = this.gateFor(taskKey)
-    const entry = this.pending.get(profile.id)
-    if (entry) {
-      // 纵深去重：并发触发竞态下同窗口同任务已在 pending 时不重复占额度（不双跑、不泄漏）
-      if (entry.tasks.some((t) => t.taskKey === taskKey)) return
-      // 已排入错峰等待的条目按原调度时间开窗：immediate 不回溯改写（定时器已排，标志无效）
-      CoalescingEnqueuer.addTask(entry, taskKey, batchId)
-      gate.active++
-      return
-    }
-    gate.active++
-    const fresh: Entry = { profile, tasks: [{ taskKey, ...(batchId === undefined ? {} : { batchId }) }], immediate }
-    this.pending.set(profile.id, fresh)
-    if (fresh.immediate) {
-      this.dispatch(fresh)
-      return
-    }
-    const delayMs = Math.floor(Math.random() * this.staggerMaxSec * 1000)
-    if (delayMs <= 0) {
-      this.dispatch(fresh)
-    } else {
-      setTimeout(() => this.dispatch(fresh), delayMs)
-    }
-  }
-
-  /** 执行合并完成的窗口会话（delayMs=0 时与 enqueue 同步）；全局额度满时进全局 FIFO 排队 */
-  private dispatch(entry: Entry): void {
-    // 条目已被批次取消（或已被其它路径调度）：错峰定时器到期后不再开窗
-    if (this.pending.get(entry.profile.id) !== entry) return
-    // 全局窗口闸门（同步判定，保证会话结束释放额度时的滚动续跑 FIFO 公平）：
-    // 额度已满则进全局等待队列（条目保持 pending 合并区，同窗口后续任务继续合并进同一会话）
-    if (this.globalActive >= this.globalMax) {
-      this.globalWaiting.push(entry)
-      return
-    }
-    this.globalActive++
-    void (async () => {
-      // 让出微任务：等后续 enqueue 合并完成后再删除 pending 条目
-      await Promise.resolve()
-      if (this.pending.get(entry.profile.id) === entry) this.pending.delete(entry.profile.id)
-      // 快照任务：批次取消可能已删掉部分条目，快照保证 runner 与额度释放看到同一集合
-      const tasks = entry.tasks.map((t) => ({ ...t }))
-      this.running.set(entry.profile.id, tasks)
-      try {
-        await this.runner.runWindowTasks(entry.profile, tasks)
-      } catch (e) {
-        // 单窗口会话异常不影响其他窗口，只记日志
-        this.logger.error({ err: (e as Error).message }, '窗口任务执行异常')
-      }
-      this.running.delete(entry.profile.id)
-      // 本轮期间收到的追加任务重新入队（下一轮会话；先于额度释放，追加任务可立即占额度或排队；
-      // 全局满时其 dispatch 走同步闸门自然排到全局队尾，FIFO 公平）
-      const fu = this.followUp.get(entry.profile.id)
-      if (fu) {
-        this.followUp.delete(entry.profile.id)
-        for (const t of fu.tasks) this.enqueue(fu.profile, t.taskKey, { immediate: fu.immediate, batchId: t.batchId })
-      }
-      // 先释放全局额度并滚动续跑全局队列（队首直接 dispatch，不重复错峰：会话结束时机天然错开），
-      // 再释放本会话各任务额度（其滚动续跑的新会话 dispatch 时重新过全局闸门）
-      this.globalActive--
-      const next = this.globalWaiting.shift()
-      if (next) this.dispatch(next)
-      for (const t of tasks) this.release(t.taskKey)
-    })()
-  }
-
-  /** 释放一个任务的额度并滚动续跑：waiting 队首出队重新入队 */
-  private release(taskKey: string): void {
-    const gate = this.gates.get(taskKey)
-    if (!gate) return
-    gate.active--
-    const next = gate.waiting.shift()
-    if (!next) return
-    // 等待期间该窗口可能已被其他任务的会话占用：转 followUp，由该会话结束后重新入队
-    if (this.running.has(next.profile.id)) {
-      const fu = this.followUp.get(next.profile.id) ?? { profile: next.profile, tasks: [] }
-      const t = next.tasks.find((x) => x.taskKey === taskKey)
-      CoalescingEnqueuer.addTask(fu, taskKey, t?.batchId)
-      if (next.immediate) fu.immediate = true
-      this.followUp.set(next.profile.id, fu)
-      return
-    }
-    this.occupy(taskKey, next.profile, next.immediate, next.tasks.find((x) => x.taskKey === taskKey)?.batchId)
-  }
-
-  /**
-   * 取消某批次仍在队列中的任务：错峰待启动 / 任务额度排队 / 全局排队 / followUp 全部移除，
-   * 已占任务额度的条目按被取消任务逐个释放；返回被取消的（窗口, 任务）及是否已进入运行阶段。
-   * 覆盖「尚未落运行行」的窗口——批次停止只靠 DB 行看不到它们。
-   * 运行中的会话不做队列手术（由停止器关窗 + 取消标记消费），但会一并返回其中同批任务。
-   */
-  cancelBatch(batchId: number): Array<{ profileId: number; taskKey: string; running: boolean }> {
-    const cancelled = new Map<string, { profileId: number; taskKey: string; running: boolean }>()
-    const filterEntry = (entry: Entry): SessionTask[] => {
-      const removed: SessionTask[] = []
-      entry.tasks = entry.tasks.filter((t) => {
-        if (t.batchId !== batchId) return true
-        removed.push(t)
-        const key = `${entry.profile.id}:${t.taskKey}`
-        if (!cancelled.has(key)) cancelled.set(key, { profileId: entry.profile.id, taskKey: t.taskKey, running: false })
-        return false
-      })
-      return removed
-    }
-    // 额度排队（尚未占额度）：先清，避免下面释放额度时把同批窗口滚进 pending
-    for (const gate of this.gates.values()) {
-      gate.waiting = gate.waiting.filter((entry) => {
-        filterEntry(entry)
-        return entry.tasks.length > 0
-      })
-    }
-    // followUp（未占额度）
-    for (const [profileId, entry] of [...this.followUp.entries()]) {
-      filterEntry(entry)
-      if (entry.tasks.length === 0) this.followUp.delete(profileId)
-    }
-    // pending / 全局排队（已占任务额度）：移除后按任务释放，滚动续跑其它批次
-    for (const [profileId, entry] of [...this.pending.entries()]) {
-      const removed = filterEntry(entry)
-      if (entry.tasks.length === 0) {
-        this.pending.delete(profileId)
-        this.globalWaiting = this.globalWaiting.filter((e) => e !== entry)
-      }
-      for (const t of removed) this.release(t.taskKey)
-    }
-    // 运行中会话：只收集并标记 running（会由停止器关窗/置标记处理）
-    for (const [profileId, tasks] of this.running) {
-      for (const t of tasks) {
-        if (t.batchId !== batchId) continue
-        const key = `${profileId}:${t.taskKey}`
-        const prev = cancelled.get(key)
-        if (prev) prev.running = true
-        else cancelled.set(key, { profileId, taskKey: t.taskKey, running: true })
-      }
-    }
-    return [...cancelled.values()]
-  }
-
-  /** 错峰等待中的窗口数（已入队未开窗；路由层「实时运行」口径的队列部分） */
-  pendingCount(): number {
-    return this.pending.size
-  }
-
-  /** 是否有任何窗口会话正在运行（代理切换的在途守卫：任务运行中换 IP 会破坏签到会话） */
+  /** 是否有活跃窗口会话（代理切换等在途守卫） */
   anyRunning(): boolean {
-    return this.running.size > 0
+    return this.globalActive > 0
   }
 
-  /**
-   * 某任务是否在途：pending/running/followUp/waiting 任一命中；
-   * 指定 profileId 时只看该窗口（看板行级判定用）
-   */
-  hasTaskInFlight(taskKey: string, profileId?: number): boolean {
-    if (profileId !== undefined) {
-      if (CoalescingEnqueuer.hasTask(this.pending.get(profileId), taskKey)) return true
-      if (this.running.get(profileId)?.some((t) => t.taskKey === taskKey)) return true
-      if (CoalescingEnqueuer.hasTask(this.followUp.get(profileId), taskKey)) return true
-      return this.gates.get(taskKey)?.waiting.some((e) => e.profile.id === profileId) ?? false
-    }
-    for (const e of this.pending.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
-    for (const tasks of this.running.values()) if (tasks.some((t) => t.taskKey === taskKey)) return true
-    for (const e of this.followUp.values()) if (CoalescingEnqueuer.hasTask(e, taskKey)) return true
-    return (this.gates.get(taskKey)?.waiting.length ?? 0) > 0
+  /** 取消批次中仍在排队的行，返回结算数量 */
+  async cancelBatch(batchId: number): Promise<number> {
+    return this.db.stopQueuedRuns(batchId)
   }
 }

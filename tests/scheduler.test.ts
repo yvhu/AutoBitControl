@@ -135,7 +135,7 @@ interface MockDeps extends SchedulerDeps {
     createBatch: Mock
     listProfiles: Mock
   }
-  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock }
+  enqueuer: { enqueue: Mock }
   fileAssign: { run: Mock }
 }
 
@@ -148,7 +148,7 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
       createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'schedule', taskKey: 'task-a', source: '', createdAt: '' }),
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }]),
     },
-    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false) },
+    enqueuer: { enqueue: vi.fn().mockResolvedValue(undefined) },
     fileAssign: { run: vi.fn().mockResolvedValue({ renamedCount: 1, updatedRows: 1 }) },
     tasks: new Map([['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }]]),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
@@ -212,19 +212,13 @@ describe('Scheduler', () => {
     expect(deps.db.createBatch).not.toHaveBeenCalled()
   })
 
-  it('在途守卫（DB 有在途 run 或队列在途）→ 跳过', async () => {
+  it('在途守卫（DB 有在途 run）→ 跳过', async () => {
     const deps = makeDeps()
     deps.db.listSchedules.mockResolvedValue([makeSchedule()])
     deps.db.countInFlightRuns.mockResolvedValue(1)
     await new Scheduler(deps).tick()
     expect(deps.db.createBatch).not.toHaveBeenCalled()
-
-    // 队列在途分支用独立实例（避免与上一个实例的去重 Map 冲突）
-    const deps2 = makeDeps()
-    deps2.db.listSchedules.mockResolvedValue([makeSchedule()])
-    deps2.enqueuer.hasTaskInFlight.mockReturnValue(true)
-    await new Scheduler(deps2).tick()
-    expect(deps2.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
   it('runNow 不受时间与去重限制，直接触发', async () => {

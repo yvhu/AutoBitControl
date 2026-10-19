@@ -32,8 +32,7 @@ export interface SchedulerDeps {
     listProfiles(enabledOnly: boolean): Promise<ProfileRow[]>
   }
   enqueuer: {
-    enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean; batchId?: number }): void
-    hasTaskInFlight(taskKey: string, profileId?: number): boolean
+    enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean; batchId?: number }): Promise<void>
   }
   /** 任务注册表最小视图（engine 不得 import tasks 层，SiteTask 结构兼容） */
   tasks: Map<string, { meta: TaskMeta }>
@@ -155,7 +154,7 @@ export class Scheduler {
       if (!t) { await skip('unknown-task'); continue }
       // 面板运行时开关（task_states 覆盖 meta.enabled）与手动触发守卫同语义
       if (!(await this.deps.db.getTaskEnabled(key, t.meta.enabled ?? true))) { await skip('task-disabled'); continue }
-      if ((await this.deps.db.countInFlightRuns(key, todayLocal())) > 0 || this.deps.enqueuer.hasTaskInFlight(key)) { await skip('in-flight'); continue }
+      if ((await this.deps.db.countInFlightRuns(key, todayLocal())) > 0) { await skip('in-flight'); continue }
       passing.push(key)
     }
     // 上传前自动文件随机分配：计划配置了 fileAssign 且通过守卫的任务中有依赖文件的任务时执行一次；
@@ -198,7 +197,7 @@ export class Scheduler {
       }
       const batch = await this.deps.db.createBatch('schedule', key, `计划#${schedule.id} ${schedule.name}`)
       for (const p of await this.deps.db.listProfiles(true)) {
-        this.deps.enqueuer.enqueue(p, key, { batchId: batch.id })
+        await this.deps.enqueuer.enqueue(p, key, { batchId: batch.id })
       }
       result.taskKeys.push(key)
       this.deps.logger.info({ schedule: schedule.name, task: key }, `定时触发已入队`)

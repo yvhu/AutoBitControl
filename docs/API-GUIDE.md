@@ -68,7 +68,7 @@
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
 | 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；30 分钟起步指数退避到 2 小时；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
 | 错峰 / Stagger | 批量开窗前随机等一小段（默认最多 120 秒），避免所有窗口同一秒一起访问站点 | §7 |
-| 在途 / in-flight | 某窗口或任务正在跑、尚未结束；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
+| 在途 / in-flight | 某窗口或任务当天已有 `pending/running/retry_wait` 行（已排队或正在跑）；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
 | 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
 | 遮罩 / Mask | 弹窗背后盖住整页的半透明灰层 | §6.3 |
 | DOM | 浏览器把网页解析成的一棵树，每个元素都能按规则定位 | §5 |
@@ -141,10 +141,10 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 
 **试跑与验证：**
 
-1. **单窗口真跑**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=my-checkin npm run task:run`（不受开关与错峰限制，打印结果后退出）。
+1. **单窗口真跑**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=my-checkin npm run task:run`（不受开关与错峰限制，运行前先认领当天该任务行；不启动 dispatcher，不要与后端同时在同一窗口运行，打印结果后退出）。
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
-4. **停止运行**：看板批次卡片头部「停止」停整批（含错峰/并发排队中尚未开窗的窗口，这些窗口不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
+4. **停止运行**：看板批次卡片头部「停止」停整批（含排队中尚未开窗的行，这些行会直接结算为 `skipped`、不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
 5. **重跑批次失败**：看板批量批次卡片头部「重跑失败 N」弹窗预览失败窗口今天最新一轮；已成功窗口默认不勾（可手勾强跑），停用/熔断/执行中的窗口不可勾。确认后按勾选窗口新建「批量 · 重跑失败」批次（对应 GET /api/batches/{id}/rerun-candidates、POST /api/batches/{id}/rerun-failed）。
 6. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
 
@@ -1152,8 +1152,18 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；看板批次明细可点开截图。
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
-- **运行状态**：`pending → running → success | failed | retry_wait → …`，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过。
+- **运行状态**：`pending → running → success | failed | retry_wait → …`；`pending` = 已入队待调度，`retry_wait` = 等待退避到期，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过 / 手动停止。
 - `runs.failure_kind` 记录每次尝试的失败分类；只有 `environment` 且终态失败才会计入窗口熔断，`task/timeout/stopped` 不计。
+
+### 运行队列（runs 即队列）
+
+- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（错峰/重试时间）与 `batch_id`。
+- dispatcher 每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口的多个任务合并为一次窗口会话。
+- 重试只写 `retry_wait + not_before_ms`，不再依赖进程内定时器；进程重启时会把当天崩溃残留的 `running` 行重置为 `pending`，重启后仍可继续。
+- 批次停止会把仍在排队的 `pending/retry_wait` 行直接结算为 `skipped`（手动停止）；运行中的行仍走取消 + 关窗。
+- 面板的 `pending/retry_wait` 行来自数据库；任务页在途、看板实时运行数也只查数据库。
+- `task:run` 单窗口调试在运行前会先入队并原子认领当天该任务行（`claimQueuedRuns`），因此后端 dispatcher 不会同时拾取同一行；它不启动 dispatcher，重试按行内 `not_before_ms` 自行等待。
+- 不要在同一窗口同时运行 `task:run` 与后端：后端重启恢复会把当天崩溃残留的 `running` 行（包括 `task:run` 正在跑的行）重新排队，可能导致双方重复执行。
 
 ### 6.6 失败自动诊断包
 
@@ -1204,8 +1214,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（不等待错峰）；批量触发不带 body。
 - 多窗口测试触发：任务页卡片「测试」→ 弹窗多选启用窗口，等价于「立即触发」的子集（走错峰与并发闸门，受开关限制）；对应 `POST /api/tasks/:key/trigger` + body `{"profileIds":["<id>","<id>"]}`，返回 `scope=selected`。
 - 停止会关闭该窗口（`closeBrowser`），正在跑的会话被中止并按「手动停止」结算；同窗口合并的其他任务会一并失败（立即触发为一窗口一任务，无影响）。
-- 批次停止会先把仍在错峰/任务并发/全局窗口队列里的同批窗口移出队列（不会再开窗），并为尚未落运行行的窗口补一条 `skipped`「手动停止」行；行级停止只停该窗口该任务，排队中的会话会等启动时按标记跳过。
-- 不重启就立刻重触发：行级停止后旧会话（错峰/排队中）结束前触发接口仍可能 409；批次停止已清队列，通常无需等待。改任务代码本就需要重启，重启后无在途会话。
+- 批次停止会先在数据库把同批仍在排队的 `pending/retry_wait` 行原子结算为 `skipped`（手动停止，不再开窗）；已被 dispatcher 认领/运行中的行走取消 + 关窗。行级停止对排队行只结算数据库、不关窗，对运行中的行取消并关窗。
+- 停止后可立刻重触发：在途判定与排队都以数据库状态为准；若行恰好刚被 dispatcher 认领为 `running`，行级停止会按运行中分支关窗结算。改任务代码仍需重启后端。
 - 结果核对：`GET /api/batches` 的 `stats`；每窗口今日成功数查 SQLite `runs` 表。
 - 熔断修复后可 `POST /api/profiles/:id/breaker/reset` 复位；熔断每日 23:59 也会自动重置（`execution.circuitBreakerResetAt`，见第 7 章）。
 - 任务 key 全局唯一，登记 `src/tasks/index.ts`；面板定时计划引用新 key 需手动新建计划。

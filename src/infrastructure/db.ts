@@ -123,6 +123,10 @@ export interface RunRow {
   diagPath: string | null
   /** 失败分类（NULL = 成功或未分类） */
   failureKind?: FailureKind | null
+  /** 允许开始/重试的 epoch 毫秒（0 表示立即可调度） */
+  notBeforeMs?: number
+  /** 首次入队时间（本地墙钟，展示用） */
+  queuedAt?: string | null
   /** JOIN profiles 得到的窗口比特 id（行级执行用） */
   bitbrowserId: string
   status: RunStatus
@@ -249,6 +253,8 @@ const SCHEMA = [
     batch_id INTEGER,
     diag_path TEXT,
     failure_kind TEXT,
+    not_before_ms INTEGER NOT NULL DEFAULT 0,
+    queued_at TEXT,
     UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
@@ -319,7 +325,7 @@ const SCHEMA = [
 ]
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, circuit_breaker_state AS circuitBreakerState, circuit_breaker_level AS circuitBreakerLevel, circuit_breaker_next_probe_ms AS circuitBreakerNextProbeMs, circuit_breaker_probe_started_ms AS circuitBreakerProbeStartedMs, circuit_breaker_reason AS circuitBreakerReason, circuit_breaker_updated_at AS circuitBreakerUpdatedAt, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
-const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, r.failure_kind AS failureKind, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, r.failure_kind AS failureKind, r.not_before_ms AS notBeforeMs, r.queued_at AS queuedAt, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
 const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
@@ -342,16 +348,16 @@ export class AppDb {
    * @returns 就绪的 AppDb 实例（磁盘/权限错误时抛错，由调用方处理退出）
    */
   static async open(dbPath: string): Promise<AppDb> {
-    const client = createClient({ url: toFileUrl(dbPath) })
+    // timeout 由 @libsql/core 应用到每个本地连接（含 transaction() 内部新建的连接）；
+    // PRAGMA busy_timeout 只作用于当前连接，事务连接会丢失该设置
+    const client = createClient({ url: toFileUrl(dbPath), timeout: 5000 })
     const db = new AppDb(client)
     await db.migrate()
     return db
   }
 
   async migrate(): Promise<void> {
-    // busy_timeout 为连接级设置，必须先于 WAL 切换执行：首次并发打开时 WAL 初始化遇到锁竞争，
-    // 已设置的 busy_timeout 会等待 5 秒而非立即报 SQLITE_BUSY
-    await this.client.execute('PRAGMA busy_timeout=5000')
+    // busy_timeout 由 open() 的 client timeout 配置统一承担（覆盖事务连接），此处不再重复设置
     // WAL 日志模式：面板进程与 task:run 脚本可能同时开同一文件，读写不互锁（库级设置，幂等；
     // file::memory: 上执行无副作用）
     await this.client.execute('PRAGMA journal_mode=WAL')
@@ -437,8 +443,18 @@ export class AppDb {
     if (!runsInfo4.rows.some((r) => String(r.name) === 'failure_kind')) {
       await this.client.execute(`ALTER TABLE runs ADD COLUMN failure_kind TEXT`)
     }
+    // 老库补列：runs.not_before_ms / runs.queued_at（队列调度字段；新库 CREATE TABLE 已自带）
+    const runsInfo5 = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo5.rows.some((r) => String(r.name) === 'not_before_ms')) {
+      await this.client.execute('ALTER TABLE runs ADD COLUMN not_before_ms INTEGER NOT NULL DEFAULT 0')
+    }
+    const runsInfo6 = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo6.rows.some((r) => String(r.name) === 'queued_at')) {
+      await this.client.execute('ALTER TABLE runs ADD COLUMN queued_at TEXT')
+    }
     // 索引放补列块外无条件幂等创建：ALTER 与建索引之间崩溃不会永久丢失索引
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
+    await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, not_before_ms)')
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
     // 空投追踪默认状态列种子（INSERT OR IGNORE 幂等：用户自建/改名后重启不覆盖）
@@ -746,8 +762,8 @@ export class AppDb {
    */
   async upsertRun(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
     await this.exec(
-      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id, diag_path, failure_kind)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id, diag_path, failure_kind, not_before_ms, queued_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date, slot) DO UPDATE SET
          status = excluded.status,
          attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
@@ -756,8 +772,10 @@ export class AppDb {
          finished_at = COALESCE(excluded.finished_at, runs.finished_at),
          batch_id = COALESCE(excluded.batch_id, runs.batch_id),
          diag_path = COALESCE(excluded.diag_path, runs.diag_path),
-         failure_kind = excluded.failure_kind`,
-      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null, patch.diagPath ?? null, patch.failureKind ?? null],
+         failure_kind = excluded.failure_kind,
+         not_before_ms = excluded.not_before_ms,
+         queued_at = COALESCE(excluded.queued_at, runs.queued_at)`,
+      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null, patch.diagPath ?? null, patch.failureKind ?? null, patch.notBeforeMs ?? 0, patch.queuedAt ?? null],
     )
     const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return rows[0] as unknown as RunRow
@@ -869,6 +887,210 @@ export class AppDb {
   async nextRunSlot(profileId: number, taskKey: string, date: string): Promise<number> {
     const rows = await this.exec(`SELECT COALESCE(MAX(slot), -1) + 1 AS nextSlot FROM runs WHERE profile_id = ? AND task_key = ? AND date = ?`, [profileId, taskKey, date])
     return Number(rows[0]?.nextSlot ?? 0)
+  }
+
+  /** 入队：无最新行或最新行已终态时新建 pending；retry_wait 提升为 pending；其余非终态复用并更新批次/时间 */
+  async enqueueRun(profileId: number, taskKey: string, date: string, batchId: number | null, notBeforeMs: number): Promise<RunRow> {
+    const tx = await this.client.transaction('write')
+    try {
+      const latestRows = await tx.execute({
+        sql: `${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? ORDER BY r.slot DESC LIMIT 1`,
+        args: [profileId, taskKey, date],
+      })
+      const latest = latestRows.rows[0] as unknown as RunRow | undefined
+      const terminal = latest ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(latest.status) : true
+      if (latest && latest.status === 'retry_wait') {
+        // 重试到期重新入队：retry_wait 行必须提升回 pending，否则 dispatcher（只调度 pending）永远看不到
+        await tx.execute({
+          sql: `UPDATE runs SET status = 'pending', not_before_ms = ?, batch_id = COALESCE(?, batch_id),
+                       queued_at = COALESCE(queued_at, ?), finished_at = NULL, failure_kind = NULL, error = NULL
+                WHERE id = ?`,
+          args: [notBeforeMs, batchId, localWallNow(), latest.id],
+        })
+        await tx.commit()
+        return (await this.getRunById(latest.id))!
+      }
+      if (latest && !terminal) {
+        // TODO: 最新行已是 running 时这里会静默更新批次/时间（dispatcher 认领后通常不会再入队）；
+        // 若后续需要冲突提示，可细分 running 并返回冲突信号，由调用方决定是否报错
+        await tx.execute({
+          sql: `UPDATE runs SET not_before_ms = ?, batch_id = COALESCE(?, batch_id), queued_at = COALESCE(queued_at, ?) WHERE id = ?`,
+          args: [notBeforeMs, batchId, localWallNow(), latest.id],
+        })
+        await tx.commit()
+        return (await this.getRunById(latest.id))!
+      }
+      const slot = latest ? Number(latest.slot) + 1 : 0
+      const queuedAt = localWallNow()
+      const rs = await tx.execute({
+        sql: `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, batch_id, not_before_ms, queued_at)
+              VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+        args: [profileId, taskKey, date, slot, batchId, notBeforeMs, queuedAt],
+      })
+      await tx.commit()
+      return (await this.getRunById(Number(rs.lastInsertRowid)))!
+    } catch (e) {
+      await tx.rollback().catch(() => {})
+      throw e
+    }
+  }
+
+  /**
+   * 原子认领排队行：把仍为 pending/retry_wait 的行置为 running（到期重试与排队共用同一入口），
+   * 返回实际认领到的行；取消或已被其它 tick 认领的行不会出现在结果里
+   */
+  async claimQueuedRuns(runIds: number[], nowMs: number): Promise<RunRow[]> {
+    if (runIds.length === 0) return []
+    const placeholders = runIds.map(() => '?').join(',')
+    const tx = await this.client.transaction('write')
+    try {
+      const claimed = await tx.execute({
+        sql: `UPDATE runs SET status = 'running', error = NULL
+              WHERE id IN (${placeholders}) AND status IN ('pending','retry_wait') AND not_before_ms <= ?
+              RETURNING id`,
+        args: [...runIds, nowMs],
+      })
+      const ids = claimed.rows.map((r) => Number(r.id))
+      if (ids.length === 0) {
+        await tx.commit()
+        return []
+      }
+      const idPlaceholders = ids.map(() => '?').join(',')
+      const rows = await tx.execute({
+        sql: `${SELECT_RUN} WHERE r.id IN (${idPlaceholders}) ORDER BY r.profile_id, r.not_before_ms, r.id`,
+        args: ids,
+      })
+      await tx.commit()
+      return rows.rows as unknown as RunRow[]
+    } catch (e) {
+      await tx.rollback().catch(() => {})
+      throw e
+    }
+  }
+
+  /** 会话启动失败/调度器停止：把已认领的 running 行退回 pending，等待下次调度 */
+  async requeueClaimedRuns(runIds: number[], error: string, nowMs: number): Promise<number> {
+    if (runIds.length === 0) return 0
+    const placeholders = runIds.map(() => '?').join(',')
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'pending', not_before_ms = ?, finished_at = NULL, error = ?, failure_kind = NULL
+            WHERE id IN (${placeholders}) AND status = 'running'`,
+      args: [nowMs, error, ...runIds],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /** 同窗口 pending 行的最早开始时间（无则 null） */
+  async minPendingNotBefore(profileId: number, date: string): Promise<number | null> {
+    const rows = await this.exec(
+      `SELECT MIN(not_before_ms) AS v FROM runs WHERE profile_id = ? AND date = ? AND status = 'pending'`,
+      [profileId, date],
+    )
+    return rows[0]?.v == null ? null : Number(rows[0].v)
+  }
+
+  /** 到期且为最新 slot 的 pending/retry_wait 行 */
+  async listDueRuns(date: string, nowMs: number): Promise<RunRow[]> {
+    return (await this.exec(
+      `${SELECT_RUN}
+       WHERE r.date = ? AND r.status IN ('pending','retry_wait') AND r.not_before_ms <= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM runs r2
+           WHERE r2.profile_id = r.profile_id AND r2.task_key = r.task_key AND r2.date = r.date AND r2.slot > r.slot
+         )
+       ORDER BY r.profile_id, r.not_before_ms, r.id`,
+      [date, nowMs],
+    )) as unknown as RunRow[]
+  }
+
+  /** 某窗口当天是否有 running 行 */
+  async hasRunningRunsForProfile(profileId: number, date: string): Promise<boolean> {
+    const rows = await this.exec(`SELECT COUNT(*) AS c FROM runs WHERE profile_id = ? AND date = ? AND status = 'running'`, [profileId, date])
+    return Number(rows[0]?.c ?? 0) > 0
+  }
+
+  /**
+   * 单行停止：仅当该行仍是 pending/retry_wait 时原子结算为 skipped。
+   * 条件更新用于与 dispatcher 的 claimQueuedRuns 竞争——已被认领为 running 的行不会被覆盖；
+   * 返回是否确实由本次调用结算（false 表示行已不存在或已进入其它状态）。
+   */
+  async stopQueuedRun(profileId: number, taskKey: string, date: string, slot: number): Promise<boolean> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'skipped', error = '手动停止', finished_at = ?, failure_kind = 'stopped'
+            WHERE profile_id = ? AND task_key = ? AND date = ? AND slot = ? AND status IN ('pending','retry_wait')`,
+      args: [localWallNow(), profileId, taskKey, date, slot],
+    })
+    return Number(rs.rowsAffected ?? 0) > 0
+  }
+
+  /**
+   * 单行停止 running 行：仅当该行仍为 running 时原子结算为 skipped。
+   * 与 runTask 的终态写入竞争：任务已成功/失败时返回 false，调用方不得覆盖终态。
+   */
+  async stopRunningRun(profileId: number, taskKey: string, date: string, slot: number): Promise<boolean> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'skipped', error = '手动停止', finished_at = ?, failure_kind = 'stopped'
+            WHERE profile_id = ? AND task_key = ? AND date = ? AND slot = ? AND status = 'running'`,
+      args: [localWallNow(), profileId, taskKey, date, slot],
+    })
+    return Number(rs.rowsAffected ?? 0) > 0
+  }
+
+  /** 批次停止：把排队中的 pending/retry_wait 结算为 skipped，返回行数 */
+  async stopQueuedRuns(batchId: number): Promise<number> {
+    const now = localWallNow()
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'skipped', error = '手动停止', finished_at = ?, failure_kind = 'stopped'
+            WHERE batch_id = ? AND status IN ('pending','retry_wait')`,
+      args: [now, batchId],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /** 跨日结算：旧日期仍在排队的 pending/retry_wait 行已无调度机会，直接 skipped */
+  async settleOldQueuedRuns(today: string): Promise<number> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'skipped', error = '跨日未执行，已结算', finished_at = ?
+            WHERE date < ? AND status IN ('pending','retry_wait')`,
+      args: [localWallNow(), today],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /** 跨日结算：旧日期残留 running 行（新进程无法续跑）落 failed，避免永久阻塞窗口 */
+  async settleOldRunningRuns(today: string): Promise<number> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'failed', error = '跨日崩溃残留', finished_at = ?, failure_kind = 'task'
+            WHERE date < ? AND status = 'running'`,
+      args: [localWallNow(), today],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /** 启动恢复：当天 running 行重置为 pending，等待 dispatcher 重新调度 */
+  async requeueStaleRunning(date: string, nowMs: number): Promise<number> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'pending', not_before_ms = ?, finished_at = NULL, failure_kind = NULL,
+                   error = '进程崩溃残留，重新排队'
+            WHERE date = ? AND status = 'running'`,
+      args: [nowMs, date],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /** 结算同一任务被更新 slot 取代的旧非终态行 */
+  async settleSupersededRuns(date: string): Promise<number> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'failed', error = '已被后续轮次取代', finished_at = ?, failure_kind = 'task'
+            WHERE date = ? AND status IN ('pending','running','retry_wait')
+              AND EXISTS (
+                SELECT 1 FROM runs r2
+                WHERE r2.profile_id = runs.profile_id AND r2.task_key = runs.task_key
+                  AND r2.date = runs.date AND r2.slot > runs.slot
+              )`,
+      args: [localWallNow(), date],
+    })
+    return Number(rs.rowsAffected ?? 0)
   }
 
   /** 某天的全部运行记录（面板矩阵/统计用，按窗口与任务排序） */

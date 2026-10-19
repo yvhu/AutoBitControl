@@ -1,525 +1,379 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { CoalescingEnqueuer } from '../src/engine/queue'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { AppDb, localWallNow, todayStr, type ProfileRow, type RunRow } from '../src/infrastructure/db'
+import { CoalescingEnqueuer, type SessionTask } from '../src/engine/queue'
 
 const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
+const TERMINAL = ['success', 'failed', 'captcha_failed', 'skipped']
+let db: AppDb
+let dir: string
 
-function makeEnq(
-  run: ReturnType<typeof vi.fn>,
-  concurrencyOf: (key: string) => number = () => 4,
-  staggerMaxSec = 0,
-  maxWindows = Number.POSITIVE_INFINITY,
-) {
-  return new CoalescingEnqueuer({ runWindowTasks: run } as never, logger, concurrencyOf, staggerMaxSec, maxWindows)
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'abc-enq-'))
+  db = await AppDb.open(`file:${join(dir, 'q.db').split('\\').join('/')}`)
+})
+afterEach(() => {
+  db.close()
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // Windows 下 libsql 句柄可能延迟释放，best-effort 清理
+  }
+})
+
+/** 假 runner：把本次会话的任务行结算为成功，模拟真实 runner 落库（避免同批 pending 行被反复拾取） */
+async function settleSuccess(profile: ProfileRow, tasks: SessionTask[]): Promise<void> {
+  const date = todayStr()
+  for (const t of tasks) {
+    const row = await db.getLatestRun(profile.id, t.taskKey, date)
+    if (!row || TERMINAL.includes(row.status)) continue
+    await db.upsertRun(profile.id, t.taskKey, date, Number(row.slot), 'success', { finishedAt: localWallNow() })
+  }
 }
 
-const mk = (id: number, bb: string) => ({ id, bitbrowserId: bb, name: bb, enabled: 1, circuitBreakerCount: 0 })
+/** 立即完成的 runner：结算为成功 */
+function makeSuccessRunner() {
+  return {
+    runWindowTasks: vi.fn(async (profile: ProfileRow, tasks: SessionTask[]) => {
+      await settleSuccess(profile, tasks)
+    }),
+  }
+}
 
-const tick = () => new Promise<void>(r => setTimeout(r, 10))
+/** 可控 runner：runWindowTasks 挂起直到 release，随后结算为成功 */
+function makeGatedRunner() {
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  const runner = {
+    runWindowTasks: vi.fn(async (profile: ProfileRow, tasks: SessionTask[]) => {
+      await gate
+      await settleSuccess(profile, tasks)
+    }),
+  }
+  return { runner, release: () => release() }
+}
 
-describe('CoalescingEnqueuer 任务级并发', () => {
-  it('并发额度内窗口立即执行，超额窗口等待释放后滚动续跑', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 2)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(3, 'bb-3'), 'task-a')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-    expect(run.mock.calls[2][0].id).toBe(3)
-    releases[2]()
-    releases[3]()
-    await tick()
+/** 多会话可控 runner：每次调用独立挂起，按调用顺序 release 后结算成功 */
+function makeMultiGatedRunner() {
+  const releases: Array<() => void> = []
+  const startedProfiles: number[] = []
+  const runner = {
+    runWindowTasks: vi.fn(async (profile: ProfileRow, tasks: SessionTask[]) => {
+      startedProfiles.push(profile.id)
+      await new Promise<void>((resolve) => { releases.push(resolve) })
+      await settleSuccess(profile, tasks)
+    }),
+  }
+  return { runner, startedProfiles, release: (index: number) => releases[index]?.() }
+}
+
+/** 首次会话抛错、之后成功的 runner（验证异常回队后额度释放可继续） */
+function makeRejectOnceRunner() {
+  const runner = {
+    runWindowTasks: vi.fn(async (profile: ProfileRow, tasks: SessionTask[]) => {
+      if (runner.runWindowTasks.mock.calls.length === 1) throw new Error('boom')
+      await settleSuccess(profile, tasks)
+    }),
+  }
+  return { runner }
+}
+
+describe('CoalescingEnqueuer DB 队列', () => {
+  it('enqueue 立即写 pending 行；tick 只启动到期窗口', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await q.enqueue(p, 't1', { immediate: true })
+    const rows = await db.listRunsForDate(todayStr())
+    expect(rows[0].status).toBe('pending')
+    await q.tick()
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
+    q.stop()
   })
 
-  it('任务额度相互独立：A 排队不影响 B 立即执行', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4))
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(3, 'bb-3'), 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-    expect(run.mock.calls[2][0].id).toBe(2)
-    releases[2]()
-    releases[3]()
-    await tick()
+  it('同一窗口 pending 任务合并成一次会话', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await q.enqueue(p, 't1', { immediate: true })
+    await q.enqueue(p, 't2', { immediate: true })
+    await q.tick()
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
+    expect((runner.runWindowTasks.mock.calls[0][1] as SessionTask[]).map((t) => t.taskKey)).toEqual(['t1', 't2'])
+    q.stop()
   })
 
-  it('同一窗口多任务合并为一次会话（各占各自任务额度）', async () => {
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run)
-    const p = mk(1, 'bb-1')
-    enq.enqueue(p, 'task-a')
-    enq.enqueue(p, 'task-b', { batchId: 7 })
-    enq.enqueue(p, 'task-c')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b', batchId: 7 }, { taskKey: 'task-c' }])
-  })
-
-  it('batchId 随 enqueue 透传并在 followUp 重入队时保留', async () => {
-    let releaseFirst: () => void = () => {}
-    const firstGate = new Promise<void>((r) => { releaseFirst = r })
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
-      if (run.mock.calls.length === 1) return firstGate.then(() => undefined)
-      return Promise.resolve(undefined)
-    })
-    const enq = makeEnq(run)
-    const profile = mk(1, 'bb-1')
-    enq.enqueue(profile, 'task-a')
-    await tick()
-    enq.enqueue(profile, 'task-b', { batchId: 9 })
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    releaseFirst()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b', batchId: 9 }])
-  })
-
-  it('pendingCount 返回错峰等待中的窗口数', async () => {
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 1000)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    expect(enq.pendingCount()).toBe(2)
-    await tick()
-  })
-
-  it('运行中再次 enqueue 排队为第二批且不与第一批并发', async () => {
-    let releaseFirst: () => void = () => {}
-    const firstGate = new Promise<void>(r => { releaseFirst = r })
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
-      if (profile.id === 1 && run.mock.calls.length === 1) return firstGate.then(() => undefined)
-      return Promise.resolve(undefined)
-    })
-    const enq = makeEnq(run)
-    const profile = mk(1, 'bb-1')
-    enq.enqueue(profile, 'task-a')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    enq.enqueue(profile, 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    releaseFirst()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
-  })
-
-  it('runner 抛错不会产生未处理的 rejection', async () => {
-    const run = vi.fn().mockRejectedValue(new Error('boom'))
-    const enq = makeEnq(run)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-  })
-
-  it('释放额度时窗口正被其他任务会话占用：转入 followUp 不并发开窗', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4))
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    releases[2]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-    expect(run.mock.calls[2][0].id).toBe(2)
-    expect(run.mock.calls[2][1]).toEqual([{ taskKey: 'task-a' }])
-    releases[2]()
-    await tick()
-  })
-
-  it('hasTaskInFlight：pending/running/waiting 均判在途', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 1)
-    const p1 = mk(1, 'bb-1')
-    const p2 = mk(2, 'bb-2')
-    enq.enqueue(p1, 'task-a')
-    await tick()
-    enq.enqueue(p2, 'task-a')
-    expect(enq.hasTaskInFlight('task-a')).toBe(true)
-    expect(enq.hasTaskInFlight('task-a', 1)).toBe(true)
-    expect(enq.hasTaskInFlight('task-a', 2)).toBe(true)
-    expect(enq.hasTaskInFlight('task-b')).toBe(false)
-    releases[1]()
-    await tick()
-    expect(enq.hasTaskInFlight('task-a')).toBe(true)
-    releases[2]()
-    await tick()
-    expect(enq.hasTaskInFlight('task-a')).toBe(false)
-  })
-
-  it('followUp 追加任务判在途', async () => {
-    let release: () => void = () => {}
-    const gate = new Promise<void>(r => { release = r })
-    const run = vi.fn((_profile: { id: number }, _tasks: Array<{ taskKey: string }>) => gate.then(() => undefined))
-    const enq = makeEnq(run)
-    const p1 = mk(1, 'bb-1')
-    enq.enqueue(p1, 'task-a')
-    await tick()
-    enq.enqueue(p1, 'task-b')
-    expect(enq.hasTaskInFlight('task-b')).toBe(true)
-    expect(enq.hasTaskInFlight('task-b', 1)).toBe(true)
+  it('running 窗口不会被重复启动；释放后可启动下一轮', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const { runner, release } = makeGatedRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await q.enqueue(p, 't1', { immediate: true })
+    await q.tick()
+    await q.enqueue(p, 't2', { immediate: true })
+    await q.tick()
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
     release()
-    await tick()
-    expect(enq.hasTaskInFlight('task-b')).toBe(false)
-  })
-})
-
-describe('CoalescingEnqueuer 随机错峰', () => {
-  beforeEach(() => { vi.useFakeTimers() })
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
-
-  it('staggerMaxSec > 0：窗口会话延迟到期才开窗', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 120)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    await vi.advanceTimersByTimeAsync(59_999)
-    expect(run).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1)
-    expect(run).toHaveBeenCalledTimes(1)
+    await vi.waitFor(async () => {
+      const first = (await db.listRunsForDate(todayStr())).find((row) => row.taskKey === 't1')
+      expect(first?.status).toBe('success')
+    })
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(2))
+    q.stop()
   })
 
-  it('等待期内同窗口任务继续合并为一次会话', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 120)
-    const profile = mk(1, 'bb-1')
-    enq.enqueue(profile, 'task-a')
-    enq.enqueue(profile, 'task-b')
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(run).toHaveBeenCalledTimes(1)
-    expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b' }])
-  })
-
-  it('不同窗口各自独立随机延迟', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 120)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(run).toHaveBeenCalledTimes(2)
-  })
-
-  it('pending 期间同窗口同任务重复 enqueue 去重：不双跑且额度不泄漏', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 1, 120)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(run).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-  })
-
-  it('等待期间 hasTaskInFlight 判在途，会话结束后解除', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 2, 120)
-    const p1 = mk(1, 'bb-1')
-    enq.enqueue(p1, 'task-a')
-    expect(enq.hasTaskInFlight('task-a')).toBe(true)
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(enq.hasTaskInFlight('task-a')).toBe(false)
-  })
-
-  it('immediate 单窗口入口跳过错峰立即投递', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 120)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a', { immediate: true })
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(1)
-  })
-
-  it('immediate 在额度满排队转 followUp 后重排仍跳过错峰立即执行', async () => {
-    // 第一次 random 取 0：task-b 错峰延迟为 0 立即开窗；之后取 0.5：无 immediate 时错峰 60s，用于证明重排确实跳过了定时器
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValue(0.5)
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, (key) => (key === 'task-a' ? 1 : 4), 120)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a', { immediate: true })
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(1)
-    enq.enqueue(mk(2, 'bb-2'), 'task-a', { immediate: true })
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-b' }])
-    releases[1]()
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(2)
-    releases[2]()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(3)
-    expect(run.mock.calls[2][0].id).toBe(2)
-    expect(run.mock.calls[2][1]).toEqual([{ taskKey: 'task-a' }])
-    expect(vi.getTimerCount()).toBe(0)
-    releases[2]()
-    await Promise.resolve()
-  })
-
-  it('错峰到期时全局额度已满：进全局队列等释放后续跑', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 120, 1)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a', { immediate: true })
-    await Promise.resolve()
-    expect(run).toHaveBeenCalledTimes(1)
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(run).toHaveBeenCalledTimes(1)
-    releases[1]()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-    releases[2]()
-    await Promise.resolve()
-  })
-})
-
-describe('CoalescingEnqueuer 批次取消', () => {
-  it('cancelBatch 清掉错峰等待中的窗口：到期不再开窗', async () => {
-    vi.useFakeTimers()
+  it('stagger 写入 not_before_ms；未到时间不启动', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     try {
-      const run = vi.fn().mockResolvedValue(undefined)
-      const enq = makeEnq(run, () => 4, 120)
-      enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
-      enq.enqueue(mk(2, 'bb-2'), 'task-a', { batchId: 7 })
-      enq.enqueue(mk(3, 'bb-3'), 'task-a', { batchId: 8 })
-      expect(enq.pendingCount()).toBe(3)
-      expect(enq.cancelBatch(7)).toEqual([
-        { profileId: 1, taskKey: 'task-a', running: false },
-        { profileId: 2, taskKey: 'task-a', running: false },
-      ])
-      expect(enq.pendingCount()).toBe(1)
-      await vi.advanceTimersByTimeAsync(60_000)
-      expect(run).toHaveBeenCalledTimes(1)
-      expect(run.mock.calls[0][0].id).toBe(3)
-      expect(run.mock.calls[0][1]).toEqual([{ taskKey: 'task-a', batchId: 8 }])
+      const p = await db.upsertProfile('bb-1', '窗口1')
+      const runner = makeSuccessRunner()
+      const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 60, 2)
+      await q.enqueue(p, 't1')
+      const row = (await db.listRunsForDate(todayStr()))[0]
+      expect(row.notBeforeMs).toBeGreaterThan(Date.now())
+      await q.tick()
+      expect(runner.runWindowTasks).not.toHaveBeenCalled()
+      q.stop()
     } finally {
-      vi.useRealTimers()
       vi.restoreAllMocks()
     }
   })
 
-  it('cancelBatch 清掉额度排队：释放后不再补跑', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 1)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
-    await tick()
-    enq.enqueue(mk(2, 'bb-2'), 'task-a', { batchId: 7 })
-    expect(enq.hasTaskInFlight('task-a', 2)).toBe(true)
-    expect(enq.cancelBatch(7)).toContainEqual({ profileId: 2, taskKey: 'task-a', running: false })
-    expect(enq.hasTaskInFlight('task-a', 2)).toBe(false)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
+  it('hasTaskInFlight 走 DB；cancelBatch 结算排队行', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const q = new CoalescingEnqueuer(db, { runWindowTasks: vi.fn() } as never, logger, () => 1, 0, 1)
+    await q.enqueue(p, 't1', { immediate: true, batchId: 9 })
+    expect(await q.hasTaskInFlight('t1')).toBe(true)
+    expect(await q.cancelBatch(9)).toBe(1)
+    expect(await q.hasTaskInFlight('t1')).toBe(false)
+    q.stop()
   })
 
-  it('cancelBatch 清掉运行中窗口的 followUp：会话结束后不再补跑', async () => {
-    let releaseFirst: () => void = () => {}
-    const firstGate = new Promise<void>(r => { releaseFirst = r })
-    const run = vi.fn((_profile: { id: number }, _tasks: Array<{ taskKey: string }>) => firstGate.then(() => undefined))
-    const enq = makeEnq(run)
-    const profile = mk(1, 'bb-1')
-    enq.enqueue(profile, 'task-a')
-    await tick()
-    enq.enqueue(profile, 'task-b', { batchId: 9 })
-    expect(enq.hasTaskInFlight('task-b', 1)).toBe(true)
-    expect(enq.cancelBatch(9)).toContainEqual({ profileId: 1, taskKey: 'task-b', running: false })
-    expect(enq.hasTaskInFlight('task-b', 1)).toBe(false)
-    releaseFirst()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-  })
-
-  it('cancelBatch 返回运行中同批任务（供停止器置标记），但不打断会话', async () => {
-    let release: () => void = () => {}
-    const gate = new Promise<void>(r => { release = r })
-    const run = vi.fn((_profile: { id: number }) => gate.then(() => undefined))
-    const enq = makeEnq(run)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a', { batchId: 7 })
-    await tick()
-    expect(enq.cancelBatch(7)).toEqual([{ profileId: 1, taskKey: 'task-a', running: true }])
-    expect(enq.hasTaskInFlight('task-a', 1)).toBe(true)
-    release()
-    await tick()
-  })
-})
-
-describe('CoalescingEnqueuer 全局窗口上限', () => {
-  it('全局额度内立即执行，超额窗口进全局队列，会话结束 FIFO 滚动续跑', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 2)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(3, 'bb-3'), 'task-a')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-    expect(run.mock.calls[2][0].id).toBe(3)
-    releases[2]()
-    releases[3]()
-    await tick()
-  })
-
-  it('全局排队期间同窗口任务继续合并为一次会话', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 1)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    await tick()
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-    expect(run.mock.calls[1][1]).toEqual([{ taskKey: 'task-a' }, { taskKey: 'task-b' }])
-    releases[2]()
-    await tick()
-  })
-
-  it('全局排队中的窗口判在途，会话结束后解除', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 1)
-    const p1 = mk(1, 'bb-1')
-    const p2 = mk(2, 'bb-2')
-    enq.enqueue(p1, 'task-a')
-    await tick()
-    enq.enqueue(p2, 'task-a')
-    expect(enq.hasTaskInFlight('task-a')).toBe(true)
-    expect(enq.hasTaskInFlight('task-a', 2)).toBe(true)
-    expect(enq.hasTaskInFlight('task-b')).toBe(false)
-    releases[1]()
-    await tick()
-    expect(enq.hasTaskInFlight('task-a')).toBe(true)
-    releases[2]()
-    await tick()
-    expect(enq.hasTaskInFlight('task-a')).toBe(false)
-  })
-
-  it('pendingCount 包含全局排队中的窗口数', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 1)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    await tick()
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(3, 'bb-3'), 'task-a')
-    expect(enq.pendingCount()).toBe(2)
-    releases[1]()
-    await tick()
-    expect(enq.pendingCount()).toBe(1)
-    releases[2]()
-    await tick()
-    releases[3]()
-    await tick()
-  })
-
-  it('双闸门取更严者：任务额度 1 严于全局额度 2', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 1, 0, 2)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    enq.enqueue(mk(3, 'bb-3'), 'task-a')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-    releases[2]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-    releases[3]()
-    await tick()
-  })
-
-  it('maxWindows 缺省 Infinity：不设全局限制，任务额度照常', async () => {
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    enq.enqueue(mk(3, 'bb-3'), 'task-c')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(3)
-  })
-
-  it('会话抛错仍释放全局额度并滚动续跑队首', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => {
-      if (profile.id === 1) return Promise.reject(new Error('boom'))
-      return new Promise<void>(resolve => { releases[profile.id] = resolve })
+  it('retry_wait 行再次 enqueueRun 时提升为 pending，tick 可调度', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const date = todayStr()
+    await db.enqueueRun(p.id, 't1', date, 7, 0)
+    await db.upsertRun(p.id, 't1', date, 0, 'retry_wait', {
+      notBeforeMs: Date.now() + 99_999,
+      error: '上次失败',
+      failureKind: 'task',
+      finishedAt: localWallNow(),
     })
-    const enq = makeEnq(run, () => 10, 0, 1)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    await tick()
-    enq.enqueue(mk(2, 'bb-2'), 'task-a')
-    expect(run).toHaveBeenCalledTimes(1)
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-    releases[2]()
-    await tick()
+
+    const promoted = await db.enqueueRun(p.id, 't1', date, 8, Date.now())
+    expect(promoted.status).toBe('pending')
+    expect(promoted.notBeforeMs).toBeLessThanOrEqual(Date.now())
+    expect(promoted.batchId).toBe(8)
+    expect(promoted.finishedAt).toBeNull()
+    expect(promoted.failureKind).toBeNull()
+    expect(promoted.error).toBeNull()
+
+    await q.tick()
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
+    q.stop()
   })
 
-  it('maxWindows 非法值回退为不限制（不静默失效为 0）', async () => {
-    const run = vi.fn().mockResolvedValue(undefined)
-    const enq = makeEnq(run, () => 4, 0, Number.NaN)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
+  it('到期的 retry_wait 行被 dispatcher 直接认领执行', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const date = todayStr()
+    await db.enqueueRun(p.id, 't1', date, 7, Date.now())
+    await db.upsertRun(p.id, 't1', date, 0, 'retry_wait', {
+      notBeforeMs: Date.now() - 1,
+      error: '上次失败',
+      failureKind: 'task',
+      finishedAt: localWallNow(),
+    })
+
+    await q.tick()
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
+    q.stop()
   })
 
-  it('maxWindows 小于 1 时 clamp 到 1', async () => {
-    const releases: Record<number, () => void> = {}
-    const run = vi.fn((profile: { id: number }, _tasks: Array<{ taskKey: string }>) => new Promise<void>(resolve => { releases[profile.id] = resolve }))
-    const enq = makeEnq(run, () => 10, 0, 0)
-    enq.enqueue(mk(1, 'bb-1'), 'task-a')
-    enq.enqueue(mk(2, 'bb-2'), 'task-b')
-    await tick()
-    expect(run).toHaveBeenCalledTimes(1)
-    releases[1]()
-    await tick()
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(run.mock.calls[1][0].id).toBe(2)
-    releases[2]()
-    await tick()
+  it('stop 后运行中会话结束也不再调度；start 可恢复调度', async () => {
+    const p1 = await db.upsertProfile('bb-1', '窗口1')
+    const p2 = await db.upsertProfile('bb-2', '窗口2')
+    const { runner, release } = makeMultiGatedRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 4, 0, 1)
+    await q.enqueue(p1, 't1', { immediate: true })
+    await q.enqueue(p2, 't2', { immediate: true })
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(1))
+    q.stop()
+    release(0)
+    await vi.waitFor(() => expect(q.anyRunning()).toBe(false))
+    expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
+    q.start()
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(2))
+    release(1)
+    q.stop()
+  })
+
+  it('任务级闸门饱和：同任务不同窗口先跑一个，释放后续跑', async () => {
+    const p1 = await db.upsertProfile('bb-1', '窗口1')
+    const p2 = await db.upsertProfile('bb-2', '窗口2')
+    const { runner, release } = makeMultiGatedRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 1, 0, 5)
+    await q.enqueue(p1, 't1', { immediate: true })
+    await q.enqueue(p2, 't1', { immediate: true })
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(1))
+    release(0)
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(2))
+    release(1)
+    q.stop()
+  })
+
+  it('全局窗口闸门饱和：上限 1 时不同窗口先跑一个，释放后续跑', async () => {
+    const p1 = await db.upsertProfile('bb-1', '窗口1')
+    const p2 = await db.upsertProfile('bb-2', '窗口2')
+    const { runner, release } = makeMultiGatedRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 4, 0, 1)
+    await q.enqueue(p1, 't1', { immediate: true })
+    await q.enqueue(p2, 't2', { immediate: true })
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(1))
+    release(0)
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(2))
+    release(1)
+    q.stop()
+  })
+
+  it('runner 拒绝时认领行退回 pending，且额度释放后可继续', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const { runner } = makeRejectOnceRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 1, 0, 1)
+    await q.enqueue(p, 't1', { immediate: true })
+    await q.tick()
+    q.stop()
+
+    const requeued = await vi.waitFor(async () => {
+      const row = await db.getLatestRun(p.id, 't1', todayStr())
+      expect(row?.status).toBe('pending')
+      expect(row?.error).toBe('boom')
+      return row!
+    })
+    // 回队带退避：不能立即被下一 tick 重新认领（持久故障不热循环）
+    expect(requeued.notBeforeMs).toBeGreaterThan(Date.now())
+    expect(q.anyRunning()).toBe(false)
+
+    // 退避到期后（测试直接清零 not_before_ms）同一行可再次被认领执行
+    await db.upsertRun(p.id, 't1', todayStr(), requeued.slot, 'pending', { notBeforeMs: 0 })
+    q.start()
+    await q.tick()
+    await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(2))
+    q.stop()
+  })
+
+  it('跨日：旧日期 pending/retry_wait 结算 skipped，running 保持不动', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const oldDate = '2000-01-01'
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await db.enqueueRun(p.id, 'old-pending', oldDate, null, 0)
+    await db.enqueueRun(p.id, 'old-retry', oldDate, null, 0)
+    await db.upsertRun(p.id, 'old-retry', oldDate, 0, 'retry_wait', { notBeforeMs: 0 })
+    const running = await db.enqueueRun(p.id, 'old-running', oldDate, null, 0)
+    await db.claimQueuedRuns([running.id], Date.now())
+
+    await q.tick()
+
+    expect((await db.getLatestRun(p.id, 'old-pending', oldDate))?.status).toBe('skipped')
+    expect((await db.getLatestRun(p.id, 'old-retry', oldDate))?.status).toBe('skipped')
+    // running 由正在执行的会话按认领日期自行结算，调度器不得越权改写
+    expect((await db.getLatestRun(p.id, 'old-running', oldDate))?.status).toBe('running')
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    q.stop()
+  })
+
+  it('认领行日期传给 runner（跨午夜不按 todayStr 重新推导）', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const oldDate = '2000-01-01'
+    const seen: SessionTask[] = []
+    const runner = {
+      runWindowTasks: vi.fn(async (_profile: ProfileRow, tasks: SessionTask[]) => {
+        seen.push(...tasks)
+      }),
+    }
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    // 先跑一次空 tick 建立 lastDate，避免首次 tick 的跨日结算把旧行清掉
+    await q.tick()
+    const row = await db.enqueueRun(p.id, 't1', oldDate, null, 0)
+    vi.spyOn(db, 'listDueRuns').mockResolvedValueOnce([row])
+
+    await q.tick()
+    await vi.waitFor(() => expect(seen).toHaveLength(1))
+    expect(seen[0]).toEqual({ taskKey: 't1', date: oldDate })
+    q.stop()
+  })
+
+  it('stop 发生在 tick 等待期间：不再认领或启动会话', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await q.enqueue(p, 't1', { immediate: true })
+
+    const original = db.listDueRuns.bind(db)
+    let resolveDue!: (rows: RunRow[]) => void
+    const paused = new Promise<RunRow[]>((resolve) => { resolveDue = resolve })
+    vi.spyOn(db, 'listDueRuns').mockImplementationOnce(() => paused)
+
+    const ticking = q.tick()
+    q.stop()
+    resolveDue(await original(todayStr(), Date.now()))
+    await ticking
+
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    expect((await db.listRunsForDate(todayStr()))[0].status).toBe('pending')
+  })
+
+  it('tick 认领前被取消的行不会启动（认领只含仍 pending 的行）', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    await q.enqueue(p, 't1', { immediate: true, batchId: 9 })
+    const original = db.listDueRuns.bind(db)
+    vi.spyOn(db, 'listDueRuns').mockImplementationOnce(async (date, nowMs) => {
+      const rows = await original(date, nowMs)
+      await db.stopQueuedRuns(9)
+      return rows
+    })
+    await q.tick()
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    expect((await db.listRunsForDate(todayStr()))[0].status).toBe('skipped')
+    q.stop()
+  })
+
+  it('claimQueuedRuns 只认领仍待执行的行（pending/retry_wait）', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const date = todayStr()
+    const row = await db.enqueueRun(p.id, 't1', date, null, 0)
+    const claimed = await db.claimQueuedRuns([row.id], Date.now())
+    expect(claimed.map((r) => r.id)).toEqual([row.id])
+    expect(claimed[0].status).toBe('running')
+    // started_at 由 runTask 真正开始时写入，认领阶段不抢写
+    expect(claimed[0].startedAt).toBeNull()
+    expect(await db.claimQueuedRuns([row.id], Date.now())).toEqual([])
+
+    const retryRow = await db.enqueueRun(p.id, 't2', date, null, 0)
+    await db.upsertRun(p.id, 't2', date, 0, 'retry_wait', { notBeforeMs: 0 })
+    const claimedRetry = await db.claimQueuedRuns([retryRow.id], Date.now())
+    expect(claimedRetry.map((r) => r.id)).toEqual([retryRow.id])
+    expect(claimedRetry[0].status).toBe('running')
+  })
+
+  it('enqueue 的 DB 写失败向调用方 reject（不会产生未处理 rejection）', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    vi.spyOn(db, 'enqueueRun').mockRejectedValueOnce(new Error('disk full'))
+    await expect(q.enqueue(p, 't1', { immediate: true })).rejects.toThrow('disk full')
+    q.stop()
   })
 })

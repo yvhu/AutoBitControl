@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createClient } from '@libsql/client'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { AppDb, todayStr } from '../src/infrastructure/db'
@@ -651,5 +651,186 @@ describe('cleanupOld 历史数据清理', () => {
     expect(result.runs).toBe(0)
     expect(await db.listRunsForDate(cutoff)).toHaveLength(1)
     db.close()
+  })
+})
+
+describe('runs 即队列', () => {
+  let qdb: AppDb
+  let qdir: string
+  // Windows 上 libsql 的文件句柄要等进程退出才释放，测试内删不掉；
+  // 用固定前缀在下一轮运行开始时清理上次遗留的临时库
+  const QUEUE_TMP_PREFIX = 'abc-queue-'
+  const removeDirQuietly = (dir: string): void => {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // 当前进程仍持有句柄，留待下次运行前清理
+    }
+  }
+  beforeEach(async () => {
+    for (const name of readdirSync(tmpdir())) {
+      if (name.startsWith(QUEUE_TMP_PREFIX)) removeDirQuietly(join(tmpdir(), name))
+    }
+    qdir = mkdtempSync(join(tmpdir(), QUEUE_TMP_PREFIX))
+    const url = `file:${join(qdir, 'queue.db').split('\\').join('/')}`
+    qdb = await AppDb.open(url)
+  })
+  afterEach(() => {
+    qdb.close()
+    removeDirQuietly(qdir)
+  })
+
+  it('enqueueRun 写入 pending/slot/notBefore/queuedAt；terminal 后新轮次 slot+1', async () => {
+    const p = await qdb.upsertProfile('bb-q', '队列窗口')
+    const a = await qdb.enqueueRun(p.id, 't', '2026-10-19', 7, 1000)
+    expect(a.status).toBe('pending')
+    expect(a.slot).toBe(0)
+    expect(a.batchId).toBe(7)
+    expect(a.notBeforeMs).toBe(1000)
+    expect(a.queuedAt).not.toBeNull()
+
+    await qdb.upsertRun(p.id, 't', '2026-10-19', 0, 'success', { finishedAt: '2026-10-19 12:00:00.000' })
+    const b = await qdb.enqueueRun(p.id, 't', '2026-10-19', 8, 2000)
+    expect(b.slot).toBe(1)
+    expect(b.batchId).toBe(8)
+  })
+
+  it('listDueRuns 只返回到期、最新 slot 的行', async () => {
+    const p = await qdb.upsertProfile('bb-due', '窗口')
+    await qdb.enqueueRun(p.id, 'a', '2026-10-19', 1, 1000)
+    await qdb.enqueueRun(p.id, 'b', '2026-10-19', 1, 5000)
+    const due = await qdb.listDueRuns('2026-10-19', 2000)
+    expect(due.map((r) => r.taskKey)).toEqual(['a'])
+
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'success')
+    await qdb.enqueueRun(p.id, 'a', '2026-10-19', 2, 1500)
+    const due2 = await qdb.listDueRuns('2026-10-19', 2000)
+    expect(due2.filter((r) => r.taskKey === 'a').map((r) => r.slot)).toEqual([1])
+  })
+
+  it('listDueRuns 对同一任务多轮 pending 只返回到期的最新 slot', async () => {
+    const p = await qdb.upsertProfile('bb-latest', '窗口')
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'pending', { notBeforeMs: 1000 })
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 1, 'pending', { notBeforeMs: 1000 })
+    const due = await qdb.listDueRuns('2026-10-19', 2000)
+    expect(due.map((r) => r.slot)).toEqual([1])
+  })
+
+  it('minPendingNotBefore 无 pending 返回 null，有则取 pending 最小值', async () => {
+    const p = await qdb.upsertProfile('bb-min', '窗口')
+    expect(await qdb.minPendingNotBefore(p.id, '2026-10-19')).toBeNull()
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'pending', { notBeforeMs: 3000 })
+    await qdb.upsertRun(p.id, 'b', '2026-10-19', 0, 'pending', { notBeforeMs: 1000 })
+    await qdb.upsertRun(p.id, 'c', '2026-10-19', 0, 'running', { notBeforeMs: 0 })
+    expect(await qdb.minPendingNotBefore(p.id, '2026-10-19')).toBe(1000)
+  })
+
+  it('hasRunningRunsForProfile 无 running 返回 false，有则 true', async () => {
+    const p = await qdb.upsertProfile('bb-running', '窗口')
+    expect(await qdb.hasRunningRunsForProfile(p.id, '2026-10-19')).toBe(false)
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'running')
+    expect(await qdb.hasRunningRunsForProfile(p.id, '2026-10-19')).toBe(true)
+  })
+
+  it('stopQueuedRuns 把 pending/retry_wait 结算为 skipped', async () => {
+    const p = await qdb.upsertProfile('bb-stop', '窗口')
+    await qdb.enqueueRun(p.id, 'a', '2026-10-19', 9, 0)
+    await qdb.enqueueRun(p.id, 'b', '2026-10-19', 9, 0)
+    await qdb.upsertRun(p.id, 'b', '2026-10-19', 0, 'retry_wait', { notBeforeMs: 99999 })
+    expect(await qdb.stopQueuedRuns(9)).toBe(2)
+    const rows = await qdb.listRunsForDate('2026-10-19')
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.status === 'skipped' && r.failureKind === 'stopped')).toBe(true)
+  })
+
+  it('requeueStaleRunning 把 running 重置为 pending；settleSupersededRuns 结算旧 slot', async () => {
+    const p = await qdb.upsertProfile('bb-recover', '窗口')
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'running', { attempts: 1 })
+    await qdb.upsertRun(p.id, 'a', '2026-10-19', 1, 'pending')
+    expect(await qdb.requeueStaleRunning('2026-10-19', 5000)).toBe(1)
+    expect((await qdb.getRun(p.id, 'a', '2026-10-19', 0))?.status).toBe('pending')
+    expect(await qdb.settleSupersededRuns('2026-10-19')).toBe(1)
+    expect((await qdb.getRun(p.id, 'a', '2026-10-19', 0))?.status).toBe('failed')
+  })
+
+  it('老库迁移补齐队列字段并创建队列索引', async () => {
+    const legacyDir = mkdtempSync(join(tmpdir(), QUEUE_TMP_PREFIX))
+    const url = `file:${join(legacyDir, 'legacy.db').split('\\').join('/')}`
+    const raw = createClient({ url })
+    // 模拟入队功能上线前的 runs 表：已有 slot/batch_id/diag_path/failure_kind，缺 not_before_ms/queued_at
+    await raw.execute(`CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL,
+      task_key TEXT NOT NULL,
+      date TEXT NOT NULL,
+      slot INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      screenshot TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      batch_id INTEGER,
+      diag_path TEXT,
+      failure_kind TEXT,
+      UNIQUE(profile_id, task_key, date, slot)
+    )`)
+    const legacy = await AppDb.open(url)
+    try {
+      const p = await legacy.upsertProfile('bb-legacy', '老库窗口')
+      const run = await legacy.enqueueRun(p.id, 't', '2026-10-19', 3, 1000)
+      expect(run.notBeforeMs).toBe(1000)
+
+      const cols = await raw.execute(`PRAGMA table_info(runs)`)
+      const names = cols.rows.map((r) => String(r.name))
+      expect(names).toContain('not_before_ms')
+      expect(names).toContain('queued_at')
+
+      const indexes = await raw.execute(`PRAGMA index_list(runs)`)
+      expect(indexes.rows.some((r) => String(r.name) === 'idx_runs_queue')).toBe(true)
+    } finally {
+      legacy.close()
+      raw.close()
+      removeDirQuietly(legacyDir)
+    }
+  })
+
+  it('stopRunningRun 只结算 running 行，不覆盖 success 终态', async () => {
+    const p = await qdb.upsertProfile('bb-stop', '窗口')
+    const date = '2026-10-19'
+    await qdb.enqueueRun(p.id, 't', date, null, 0)
+    await qdb.claimQueuedRuns([(await qdb.getLatestRun(p.id, 't', date))!.id], Date.now())
+
+    expect(await qdb.stopRunningRun(p.id, 't', date, 0)).toBe(true)
+    const stopped = await qdb.getLatestRun(p.id, 't', date)
+    expect(stopped?.status).toBe('skipped')
+    expect(stopped?.error).toBe('手动停止')
+    expect(stopped?.failureKind).toBe('stopped')
+
+    // 已终态：CAS 失败，返回 false 且不覆盖 success
+    await qdb.upsertRun(p.id, 't', date, 0, 'success', { finishedAt: '2026-10-19 10:00:00.000' })
+    expect(await qdb.stopRunningRun(p.id, 't', date, 0)).toBe(false)
+    expect((await qdb.getLatestRun(p.id, 't', date))?.status).toBe('success')
+  })
+
+  it('settleOldQueuedRuns/settleOldRunningRuns 只结算旧日期，保留当天行', async () => {
+    const p = await qdb.upsertProfile('bb-old', '窗口')
+    const old = '2026-10-18'
+    const today = '2026-10-19'
+    await qdb.enqueueRun(p.id, 'old-pending', old, null, 0)
+    await qdb.enqueueRun(p.id, 'old-retry', old, null, 0)
+    await qdb.upsertRun(p.id, 'old-retry', old, 0, 'retry_wait', { notBeforeMs: 0 })
+    const running = await qdb.enqueueRun(p.id, 'old-running', old, null, 0)
+    await qdb.claimQueuedRuns([running.id], Date.now())
+    await qdb.enqueueRun(p.id, 'today-pending', today, null, 0)
+
+    expect(await qdb.settleOldQueuedRuns(today)).toBe(2)
+    expect(await qdb.settleOldRunningRuns(today)).toBe(1)
+    expect((await qdb.getLatestRun(p.id, 'old-pending', old))?.status).toBe('skipped')
+    expect((await qdb.getLatestRun(p.id, 'old-retry', old))?.status).toBe('skipped')
+    const oldRunning = await qdb.getLatestRun(p.id, 'old-running', old)
+    expect(oldRunning?.status).toBe('failed')
+    expect(oldRunning?.failureKind).toBe('task')
+    expect((await qdb.getLatestRun(p.id, 'today-pending', today))?.status).toBe('pending')
   })
 })

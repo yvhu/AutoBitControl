@@ -49,7 +49,7 @@ interface MockDeps {
     deleteAirdropTodo: Mock
     listReminderSources: Mock
   }
-  enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
+  enqueuer: { enqueue: Mock }
   stopper: { stop: Mock; stopBatch: Mock }
   scheduler: { runNow: Mock }
   logger: { info: Mock; warn: Mock; error: Mock }
@@ -125,7 +125,7 @@ function makeDeps(): MockDeps {
       deleteAirdropTodo: vi.fn().mockResolvedValue(true),
       listReminderSources: vi.fn().mockResolvedValue({ projects: [], todos: [] }),
     },
-    enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
+    enqueuer: { enqueue: vi.fn().mockResolvedValue(undefined) },
     stopper: { stop: vi.fn().mockResolvedValue(true), stopBatch: vi.fn().mockResolvedValue(0) },
     scheduler: { runNow: vi.fn().mockResolvedValue({ taskKeys: ['t1'], skipped: [] }) },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -191,7 +191,8 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.data.batches[0].id).toBe(2)
       expect(res.body.data.batches[0].stats.failed).toBe(1)
       expect(res.body.data.unbatched).toHaveLength(1)
-      expect(res.body.data.running).toBeGreaterThan(0)
+      // 实时运行数只取 DB 在途（单任务 t1 × 3 行），不含队列内存态
+      expect(res.body.data.running).toBe(3)
       expect(res.body.data.taskNames).toEqual({ t1: '任务1' })
     })
 
@@ -270,7 +271,7 @@ describe('server API（RESTful + envelope）', () => {
       const res = await request(createApp(deps as never)).post('/api/runs/7/stop').send({})
       expect(res.status).toBe(200)
       expect(res.body.data).toEqual({ stopped: true })
-      expect(deps.stopper.stop).toHaveBeenCalledWith(1, 't1')
+      expect(deps.stopper.stop).toHaveBeenCalledWith(1, 't1', '2026-09-04')
     })
 
     it('POST /api/runs/:id/stop 不存在 404（40409）', async () => {
@@ -397,17 +398,6 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.code).toBe(40000)
       expect(res.body.message).toContain('窗口1 执行中')
       expect(deps.db.createBatch).not.toHaveBeenCalled()
-      expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
-    })
-
-    it('POST /api/batches/:id/rerun-failed 队列在途窗口拒绝执行', async () => {
-      const deps = makeDeps()
-      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
-      deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
-      expect(res.status).toBe(400)
-      expect(res.body.code).toBe(40000)
-      expect(res.body.message).toContain('窗口1 执行中')
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
     })
 
@@ -690,14 +680,6 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
-  it('触发任务队列内存态在途返回 409', async () => {
-    const deps = makeDeps()
-    deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
-    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
-    expect(res.status).toBe(409)
-    expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
-  })
-
   it('单窗口触发该窗口在途返回 409', async () => {
     const deps = makeDeps()
     deps.db.countInFlightRuns.mockImplementation((_k: string, _d: string, pid?: number) => Promise.resolve(pid === 1 ? 1 : 0))
@@ -775,15 +757,14 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(40901)
   })
 
-  it('GET /api/tasks 附加 inFlight（DB 在途与队列在途任一命中）', async () => {
+  it('GET /api/tasks 附加 inFlight（只看 DB 在途）', async () => {
     const deps = makeDeps()
     deps.db.countInFlightRuns.mockResolvedValue(2)
     const res = await request(createApp(deps as never)).get('/api/tasks')
     expect(res.body.data[0].inFlight).toBe(true)
     deps.db.countInFlightRuns.mockResolvedValue(0)
-    deps.enqueuer.hasTaskInFlight.mockReturnValue(true)
     const res2 = await request(createApp(deps as never)).get('/api/tasks')
-    expect(res2.body.data[0].inFlight).toBe(true)
+    expect(res2.body.data[0].inFlight).toBe(false)
   })
 
   it('POST /api/tasks/:key/trigger 缺参数 404 或 400', async () => {

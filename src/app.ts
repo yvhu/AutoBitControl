@@ -15,7 +15,7 @@ import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/win
 import { CoalescingEnqueuer } from './engine/queue'
 import { CancelRegistry } from './engine/cancel-registry'
 import { createTaskStopper } from './engine/task-stopper'
-import { recoverRetryTasks } from './engine/retry-recovery'
+import { recoverRuns } from './engine/run-recovery'
 import { Scheduler } from './engine/scheduler'
 import { startCircuitBreakerResetSchedule } from './engine/maintenance'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
@@ -125,6 +125,13 @@ export async function startApp(): Promise<void> {
   // 启动恢复：进程重启后残留的过期半开探测退回 open（1 分钟后可重探），避免窗口永久卡在 half_open
   const recovered = await db.recoverStaleWindowProbes(windowProbeLeaseMs(cfg)).catch(() => 0)
   if (recovered > 0) logger.info({ recovered }, '已回收过期窗口半开探测')
+  // 运行恢复必须先于 dispatcher 启动：先结算被更新 slot 取代的旧行，再把崩溃残留 running
+  // 重置为 pending，随后 dispatcher 统一按 not_before_ms 拾取（原内存重试定时器已移除）
+  try {
+    await recoverRuns({ db, logger })
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, '启动运行恢复失败（不影响启动）')
+  }
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
   // 启动时同步窗口列表到 profiles 表（未就绪仅告警，不阻塞启动）
@@ -156,10 +163,7 @@ export async function startApp(): Promise<void> {
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
 
-  // enqueuer 后置声明：runner 的 scheduleRetry 闭包引用它（重试到期重新入队），
-  // 二者互相依赖（enqueuer 需要 runner），先声明变量再在下方赋值
-  let enqueuer!: CoalescingEnqueuer
-  // 取消标记注册表：进程内「已请求停止」标记，runner / 重试回调 / 停止器共用
+  // 取消标记注册表：进程内「已请求停止」标记，runner / 停止器共用
   const cancelRegistry = new CancelRegistry()
   const runner = new WindowRunner({
     cfg,
@@ -186,30 +190,12 @@ export async function startApp(): Promise<void> {
       const row = datasource.rowFor(profile, await db.listProfiles(false))
       return row ? { ...row.values } : null
     },
-    // 重试不占窗：退避到期后重新入队（新一轮窗口会话），当前窗口正常继续/关窗；
-    // 到期时重取最新 profile（名称/开关可能已被面板修改），窗口已被删除则放弃重试；
-    // batchId 沿用原批次（重试不产生新批次）
-    scheduleRetry: (profile, taskKey, delayMs, batchId) => {
-      setTimeout(() => {
-        void (async () => {
-          try {
-            if (cancelRegistry.isCancelled(profile.id, taskKey)) {
-              cancelRegistry.clear(profile.id, taskKey)
-              logger.info({ task: taskKey }, '重试到期但已请求停止，跳过重试')
-              return
-            }
-            const p = (await db.listProfiles(false)).find(x => x.id === profile.id)
-            if (p) enqueuer.enqueue(p, taskKey, { batchId })
-          } catch (e) {
-            logger.warn({ err: (e as Error).message }, '重试到期查询窗口失败，放弃本次重试')
-          }
-        })()
-      }, delayMs)
-    },
   })
   // 双闸门：任务级并发（meta.concurrency）+ 全局窗口上限（execution.maxConcurrentWindows），
   // enqueuer 内部取更严者控制开窗总数
-  enqueuer = new CoalescingEnqueuer(runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec, cfg.execution.maxConcurrentWindows)
+  const enqueuer = new CoalescingEnqueuer(db, runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec, cfg.execution.maxConcurrentWindows)
+  // dispatcher 常驻：错峰/重试行即使没有新的 enqueue 也要到点被拾取
+  enqueuer.start()
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
   // （建 schedule 批次 + 全部启用窗口入队，不带 immediate 沿用全局错峰）
@@ -239,7 +225,7 @@ export async function startApp(): Promise<void> {
     closeBrowser: (id) => bitbrowser.closeBrowser(id),
     getOpenWindow: (id) => db.getOpenWindow(id),
     clearOpenWindow: (id) => db.clearOpenWindow(id),
-    // 批次停止先撤队列：错峰/双闸门排队中的窗口还没落运行行，单靠 DB 行停不到
+    // 批次停止先撤队列：排队行已由 dispatcher 落库，DB 原子结算 pending/retry_wait
     cancelQueued: (batchId) => enqueuer.cancelBatch(batchId),
   })
 
@@ -266,13 +252,6 @@ export async function startApp(): Promise<void> {
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {
     logger.info({ url: `http://${cfg.web.host}:${cfg.web.port}` }, '后端 API 已启动')
-  })
-
-  // 重试恢复：重试定时器是内存态，进程重启后丢失会让 retry_wait 行孤儿化（当天任务永不完成）——
-  // 启动时扫描当日 retry_wait 行：退避已到期的立即重新入队，未到期的重新挂定时器（与 scheduleRetry 同语义）；
-  // 已被后续轮次取代的陈旧行结算为 failed，避免每次重启重复执行
-  void recoverRetryTasks({ db, tasks, enqueuer, logger, retryBackoffSec: cfg.execution.retryBackoffSec, cancelRegistry }).catch((e) => {
-    logger.warn({ err: (e as Error).message }, '重试恢复扫描失败')
   })
 
   // 历史数据清理：按保留天数删超期 runs/batches（本地文件无限增长，启动时收敛一次）
@@ -310,6 +289,7 @@ export async function startApp(): Promise<void> {
   }
   const shutdown = () => {
     scheduler.stop()
+    enqueuer.stop()
     maintenance.stop()
     logger.info('正在关闭...')
     server.close(() => finish())

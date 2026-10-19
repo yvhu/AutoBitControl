@@ -51,13 +51,11 @@ async function main(): Promise<void> {
   // AI 客户端：仅在配置 AI_API_KEY 时构建（供任务经 ctx.ai / api/ai 问答）；未配置则不注入，ctx.ai 为 undefined
   const ai = cfg.ai.apiKey ? createAiClient(cfg.ai) : undefined
   let runner!: WindowRunner
-  // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后 scheduleRetry 重跑）沿用同一批次
+  // 本脚本运行产生的批次：首次运行时创建，重试（retry_wait 到期后按 notBeforeMs 重跑）沿用同一批次
   let lastBatchId: number | null = null
   // 本轮会话的复用目标（open_windows 登记 + pid 实测存活才复用）；闭包捕获，重试会话每次重新探测
   let reuse: { http: string } | null = null
-  // 数据库关闭标记：终态后关库，防止重试定时器触发时访问已关闭的连接（今早实测崩溃场景）
-  let dbClosed = false
-  /** 单次运行：跑完用 runner 内存返回的结果行判定终态；retry_wait 时保持存活等重试定时器 */
+  /** 单次运行：跑完用 runner 内存返回的结果行判定终态；retry_wait 时按行内 notBeforeMs 等待后重跑 */
   const runOnce = async (): Promise<void> => {
     // 复用探测：表里有登记且比特浏览器实测 pid 存活 → 复用（runner 内不重开、结束不关窗）；
     // 登记残留但 pid 已死 → 清行后按正常开窗流程走
@@ -77,10 +75,14 @@ async function main(): Promise<void> {
     }
     if (!row2 || row2.status !== 'retry_wait') {
       process.exitCode = row2 && row2.status === 'success' ? 0 : 1
-      dbClosed = true
       db.close()
     } else {
-      logger.info({ taskKey }, '任务待重试，脚本保持存活等待退避到期')
+      // 单任务调试不启动 dispatcher：按 runner 写入的 notBeforeMs 自行等待后重跑
+      const delayMs = Math.max(0, (row2.notBeforeMs ?? Date.now()) - Date.now())
+      logger.info({ taskKey, delayMs }, '任务待重试，脚本保持存活等待退避到期')
+      setTimeout(() => {
+        void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) })
+      }, delayMs)
     }
   }
   runner = new WindowRunner({
@@ -92,17 +94,6 @@ async function main(): Promise<void> {
       if (!datasource.available) return null
       const row = datasource.rowFor(profile, await db.listProfiles(false))
       return row ? { ...row.values } : null
-    },
-    // 脚本场景无队列：退避到期直接重跑该任务（定时器不 unref，保持进程存活等待重试）
-    scheduleRetry: (profile, taskKey, delayMs) => {
-      setTimeout(() => {
-        if (dbClosed) {
-          console.error('数据库已关闭，无法执行重试（状态异常）')
-          process.exit(1)
-          return
-        }
-        void runOnce().catch((e) => { console.error((e as Error).message); process.exit(1) })
-      }, delayMs)
     },
   })
   logger.info({ profileId, taskKey }, '开始单任务调试运行')

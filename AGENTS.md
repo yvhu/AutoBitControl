@@ -40,7 +40,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、ai/（OpenAI 兼容客户端，默认 DeepSeek，供 AI 答题）
 - `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
-- `engine/`：queue（全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、retry-recovery（重启后恢复 retry_wait）
+- `engine/`：queue（runs 表即队列的 DB-backed dispatcher，全局窗口上限 + 任务级并发双闸门 + 同窗口任务合并 CoalescingEnqueuer）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、run-recovery（启动时结算被新 slot 取代的旧行、把崩溃残留 running 重置为 pending）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}
@@ -57,7 +57,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 数据层
 
-本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
+本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次；同时即运行队列，`not_before_ms` 控制错峰/重试到期）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
 
 ## 前端与 API 变更
 
@@ -115,7 +115,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec
-- 批量触发（任务页「立即触发」）与重试会话开窗前自带随机错峰（`execution.staggerMaxSec`，默认 120 秒，0 关闭）；单窗口入口（看板行级执行、task:run 脚本）不等待
+- 运行队列以 `runs` 表为准：触发即写 `pending + not_before_ms`；dispatcher 每秒按 DB 调度（同一窗口任务合并为一次会话）；内存只保留活跃会话与并发计数。重试/错峰不再挂进程内定时器；`task:run` 不启动 dispatcher，按行内 `not_before_ms` 自行等待
+- 批量触发（任务页「立即触发」）与 `rerun-failed` 在入队时写入随机错峰时间（`execution.staggerMaxSec`，默认 120 秒，0 关闭）；自动重试只使用 `now + backoffSec`，不叠加错峰；单窗口入口（看板行级执行、task:run 脚本）不等待
 - 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/API-GUIDE.md` 第 6.7 节（真机经验））
 - 双后端实例会互相踩踏（2026-09-08 事故：旧 npm start 与新 dev 并存，定时计划双触发、同窗口双 CDP 会话、领水额度打乱）。已有单实例锁 `data/app.lock`（startApp 启动取锁，PID 存活检测自动接管残留锁）；报「检测到另一个后端实例正在运行」时先杀残留进程，确认无残留再删锁文件
 - **AI 自行启动的 node 进程，用后必须关闭**：无论出于什么目的（跑测试、临时探针脚本、起服务验证等），用完立即停止，绝不能留着后台跑——否则会和用户手动启动的 dev/pm2 后端冲突（端口占用、双实例踩踏）

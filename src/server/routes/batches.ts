@@ -183,11 +183,10 @@ export function batchesRouter(deps: BatchesDeps): Router {
     const unbatched = await Promise.all((await deps.db.listUnbatchedRuns(from, today)).map(async (r) => ({
       ...r,
       durationSec: runDurationSec(r.startedAt, r.finishedAt),
-      inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0 || deps.enqueuer.hasTaskInFlight(r.taskKey, r.profileId),
+      inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0,
     })))
-    // 实时运行：DB 在途行数（跨任务，并发查询后求和）+ 队列错峰等待窗口数（尚未开窗落库）
-    let running = (await Promise.all([...deps.tasks.keys()].map((key) => deps.db.countInFlightRuns(key, today)))).reduce((a, b) => a + b, 0)
-    running += deps.enqueuer.pendingCount()
+    // 实时运行：DB 在途行数（跨任务，并发查询后求和；pending 已计入，队列无需额外补数）
+    const running = (await Promise.all([...deps.tasks.keys()].map((key) => deps.db.countInFlightRuns(key, today)))).reduce((a, b) => a + b, 0)
     const taskNames: Record<string, string> = {}
     for (const [key, t] of deps.tasks) taskNames[key] = t.meta.name
     ok(res, {
@@ -211,7 +210,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
       runs: await Promise.all(rows.map(async (r) => ({
         ...r,
         durationSec: runDurationSec(r.startedAt, r.finishedAt),
-        inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0 || deps.enqueuer.hasTaskInFlight(r.taskKey, r.profileId),
+        inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0,
       }))),
     })
   }))
@@ -241,7 +240,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
       const profile = profileById.get(run.profileId)
       const latest = profile ? await deps.db.getLatestRun(profile.id, batch.taskKey, today) : null
       const inFlight = profile
-        ? (await deps.db.countInFlightRuns(batch.taskKey, today, profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(batch.taskKey, profile.id)
+        ? (await deps.db.countInFlightRuns(batch.taskKey, today, profile.id)) > 0
         : false
       const breakerBlocked = deps.circuitBreakerEnabled && (profile?.circuitBreakerState ?? 'closed') !== 'closed'
       const blockedReason = !profile
@@ -337,7 +336,6 @@ export function batchesRouter(deps: BatchesDeps): Router {
         continue
       }
       const inFlight = (await deps.db.countInFlightRuns(batch.taskKey, todayStr(), profile.id)) > 0
-        || deps.enqueuer.hasTaskInFlight(batch.taskKey, profile.id)
       if (inFlight) {
         blocked.push(`${profile.name} 执行中`)
         continue
@@ -350,7 +348,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
     }
     const batchRow = await deps.db.createBatch('bulk', batch.taskKey, 'rerun-failed')
     const profilesToRun = [...chosen.values()].map((run) => profileById.get(run.profileId) as ProfileRow)
-    for (const profile of profilesToRun) deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id })
+    for (const profile of profilesToRun) await deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id })
     ok(res, { batchId: batchRow.id, queued: profilesToRun.length })
   }))
 
@@ -421,7 +419,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
     if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, '运行 id 必须为正整数')
     const run = await deps.getRunById(id)
     if (!run) throw new HttpError(404, ERROR_CODES.RUN_NOT_FOUND, '运行记录不存在')
-    ok(res, { stopped: await deps.stopper.stop(run.profileId, run.taskKey) })
+    ok(res, { stopped: await deps.stopper.stop(run.profileId, run.taskKey, run.date) })
   }))
   return router
 }
