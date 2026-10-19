@@ -13,6 +13,9 @@ export interface PublicSettings {
   webPort: number
   staggerMaxSec: number
   circuitBreakerThreshold: number
+  circuitBreakerEnabled: boolean
+  circuitBreakerCooldownSec: number
+  circuitBreakerMaxCooldownSec: number
   maxConcurrentWindows: number
   version: string
   datasource: {
@@ -46,6 +49,9 @@ export interface PublicSettings {
  *                     webPort: { type: integer }
  *                     staggerMaxSec: { type: integer }
  *                     circuitBreakerThreshold: { type: integer }
+ *                     circuitBreakerEnabled: { type: boolean }
+ *                     circuitBreakerCooldownSec: { type: integer }
+ *                     circuitBreakerMaxCooldownSec: { type: integer }
  *                     maxConcurrentWindows: { type: integer }
  *                     version: { type: string }
  *                     datasource:
@@ -98,6 +104,9 @@ export function settingsRouter(deps: {
       webPort: deps.cfg.web.port,
       staggerMaxSec: deps.cfg.execution.staggerMaxSec,
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
+      circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled,
+      circuitBreakerCooldownSec: deps.cfg.execution.circuitBreakerCooldownSec,
+      circuitBreakerMaxCooldownSec: deps.cfg.execution.circuitBreakerMaxCooldownSec,
       maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows,
       version: deps.version,
       // 数据源状态：面板设置页展示（行数/列名/可用性），路径仅提示用途不泄密

@@ -153,19 +153,12 @@ describe('loadConfig', () => {
     expect(cfg.execution.circuitBreakerResetAt).toBe('')
   })
 
-  it('circuitBreakerResetEveryHours 默认 0（走每日时刻模式）', () => {
-    expect(loadConfig({ rootDir: dir }).execution.circuitBreakerResetEveryHours).toBe(0)
-  })
-
-  it('CIRCUIT_BREAKER_RESET_EVERY_HOURS env 覆盖为每小时', () => {
-    const cfg = loadConfig({ rootDir: dir, env: { CIRCUIT_BREAKER_RESET_EVERY_HOURS: '1' } })
-    expect(cfg.execution.circuitBreakerResetEveryHours).toBe(1)
-  })
-
-  it('CIRCUIT_BREAKER_RESET_EVERY_HOURS 非法值忽略并保留默认', () => {
-    for (const bad of ['abc', '-1', '1.5']) {
-      const cfg = loadConfig({ rootDir: dir, env: { CIRCUIT_BREAKER_RESET_EVERY_HOURS: bad } })
-      expect(cfg.execution.circuitBreakerResetEveryHours).toBe(0)
-    }
+  it('熔断新配置默认值正确', () => {
+    const cfg = loadConfig({ rootDir: dir })
+    expect(cfg.execution.circuitBreakerEnabled).toBe(true)
+    expect(cfg.execution.circuitBreakerThreshold).toBe(2)
+    expect(cfg.execution.circuitBreakerCooldownSec).toBe(1800)
+    expect(cfg.execution.circuitBreakerMaxCooldownSec).toBe(7200)
+    expect(cfg.execution.circuitBreakerResetAt).toBe('23:59')
   })
 })

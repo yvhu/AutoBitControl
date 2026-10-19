@@ -1,9 +1,10 @@
 /**
  * 钱包动作门面（automation/wallet 层）：ready/login/sign/confirmTx —— 一次弹窗一次意图
- * 依赖方向：依赖 ./types、./popup、./session、./login-flow 类型
+ * 依赖方向：依赖 ./types、./popup、./session、./login-flow 类型与 infrastructure/run-errors
  */
 import type { Page } from 'patchright'
 import type { Logger } from '../../infrastructure/logger'
+import { WindowUnavailableError } from '../../infrastructure/run-errors'
 import type { RecoverOpts, Probe } from '../dom'
 import type { WalletRegistry, PopupPage } from './types'
 import type { WalletSession } from './session'
@@ -61,7 +62,7 @@ export class WalletActions {
     if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(key)
     const state = await session.ensureReady(key, adapter)
-    if (state === 'missing') throw new Error(`窗口 ${key} 钱包扩展未加载（重试将重启浏览器窗口）`)
+    if (state === 'missing') throw new WindowUnavailableError(`窗口 ${key} 钱包扩展未加载（重试将重启浏览器窗口）`)
   }
 
   /**

@@ -19,11 +19,34 @@ function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
   return { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0, ...over }
 }
 
+const closedHealth = { state: 'closed' as const, failures: 0, level: 0, nextProbeMs: null, probeStartedMs: null, reason: null, updatedAt: null }
+
 function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
   return {
-    upsertRun: vi.fn().mockResolvedValue(null),
-    resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
-    incrCircuitBreaker: vi.fn().mockResolvedValue(0),
+    upsertRun: vi.fn(async (profileId: number, taskKey: string, date: string, slot: number, status: string, patch: Record<string, unknown> = {}) => ({
+      id: 1,
+      profileId,
+      taskKey,
+      date,
+      slot,
+      status,
+      attempts: Number(patch.attempts ?? 0),
+      error: (patch.error as string | null | undefined) ?? null,
+      screenshot: (patch.screenshot as string | null | undefined) ?? null,
+      startedAt: (patch.startedAt as string | null | undefined) ?? null,
+      finishedAt: (patch.finishedAt as string | null | undefined) ?? null,
+      batchId: (patch.batchId as number | null | undefined) ?? null,
+      diagPath: (patch.diagPath as string | null | undefined) ?? null,
+      failureKind: (patch.failureKind as string | null | undefined) ?? null,
+      profileName: '窗口1',
+      bitbrowserId: 'bb-1',
+    })),
+    getWindowHealth: vi.fn().mockResolvedValue(closedHealth),
+    claimWindowProbe: vi.fn().mockResolvedValue(true),
+    releaseWindowProbe: vi.fn().mockResolvedValue(undefined),
+    recordWindowEnvironmentFailure: vi.fn().mockResolvedValue(closedHealth),
+    recordWindowSuccess: vi.fn().mockResolvedValue(closedHealth),
+    resetWindowHealth: vi.fn().mockResolvedValue(undefined),
     listProfiles: vi.fn().mockResolvedValue([]),
     getLatestRun: vi.fn().mockResolvedValue(null),
     nextRunSlot: vi.fn().mockResolvedValue(0),
@@ -56,6 +79,7 @@ const bitbrowser = {
   closeBrowser: vi.fn().mockResolvedValue(undefined),
   listBrowsers: vi.fn().mockResolvedValue([]),
   openPids: vi.fn().mockResolvedValue(new Set<string>()),
+  health: vi.fn().mockResolvedValue(true),
 }
 /** 共享比特浏览器假件别名（新增批次用例直接用 bb） */
 const bb = bitbrowser
@@ -63,7 +87,16 @@ const bb = bitbrowser
 const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
 const cfg = {
   bitbrowser: { apiBase: '', openTimeoutMs: 0, maxRetries: 3, retryBackoffMs: [0, 0, 0] },
-  execution: { taskTimeoutMs: 5000, retryMax: 2, retryBackoffSec: 0, circuitBreakerThreshold: 2, windowTimeoutMs: 60000 },
+  execution: {
+    taskTimeoutMs: 5000,
+    retryMax: 2,
+    retryBackoffSec: 0,
+    circuitBreakerThreshold: 2,
+    circuitBreakerEnabled: true,
+    circuitBreakerCooldownSec: 1800,
+    circuitBreakerMaxCooldownSec: 7200,
+    windowTimeoutMs: 60000,
+  },
   ai: { apiKey: '' },
 } as never
 const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
@@ -201,7 +234,7 @@ describe('WindowRunner', () => {
     const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
     expect(statuses(db)).toEqual(['running', 'failed'])
-    expect(db.incrCircuitBreaker).toHaveBeenCalledWith(1)
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
     expect(scheduleRetry).not.toHaveBeenCalled()
   })
 
@@ -241,7 +274,7 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toEqual(['failed'])
     expect(task.run).not.toHaveBeenCalled()
     expect(scheduleRetry).not.toHaveBeenCalled()
-    expect(db.incrCircuitBreaker).not.toHaveBeenCalled()
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
   })
 
   it('开窗失败重试后跳过窗口', async () => {
@@ -456,7 +489,7 @@ describe('WindowRunner', () => {
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'abort-task' }])
     expect(statuses(db)).toContain('skipped')
     expect(scheduleRetry).not.toHaveBeenCalled()
-    expect(db.incrCircuitBreaker).not.toHaveBeenCalled()
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
     expect(reg.isCancelled(1, 'abort-task')).toBe(false)
   })
 
@@ -503,6 +536,285 @@ describe('WindowRunner', () => {
     expect(reg.isCancelled(1, 'ok-task')).toBe(false)
     expect(statuses(db)).toContain('success')
   })
+
+  it('停止任务 B 时任务 A 因关窗 Target closed：A/剩余任务均按 stopped 结算且不计熔断', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    class StoppedDuringRunTask implements SiteTask {
+      meta = { key: 'a-task', name: 'A', url: 'https://x.io' }
+      run = vi.fn(async () => {
+        // 模拟 TaskStopper.stop(profile, 'b-task')：置会话级 + 任务级标记后关窗
+        reg.request(1, 'b-task')
+        reg.requestSession(1)
+        throw new Error('Target closed')
+      })
+    }
+    const a = new StoppedDuringRunTask()
+    const b = new OkTask()
+    const c = new OkTask()
+    const runner = makeRunner({
+      db,
+      tasks: new Map([['a-task', a], ['b-task', b], ['c-task', c]]),
+      cancelRegistry: reg,
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'a-task' }, { taskKey: 'b-task' }, { taskKey: 'c-task' }])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    const byTask = (key: string) => calls.filter((call) => call[1] === key).at(-1)!
+    const aRow = byTask('a-task')
+    expect(aRow[4]).toBe('skipped')
+    expect(aRow[5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(byTask('b-task')[5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(byTask('c-task')[5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(b.run).not.toHaveBeenCalled()
+    expect(c.run).not.toHaveBeenCalled()
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+    expect(scheduleRetry).not.toHaveBeenCalled()
+    // 会话标记在 finally 清理，不泄漏到下一次会话
+    expect(reg.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('会话开始前已置会话停止标记：不开窗、全部 skipped/stopped、清标记', async () => {
+    const db = makeDb()
+    const task = new OkTask()
+    const reg = new CancelRegistry()
+    reg.requestSession(1)
+    const runner = makeRunner({ db, tasks: new Map([['ok-task', task]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(task.run).not.toHaveBeenCalled()
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls).toHaveLength(1)
+    expect(calls[0][4]).toBe('skipped')
+    expect(calls[0][5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(reg.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('停止发生在开窗失败阶段：不记环境失败，全部 skipped/stopped', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    const bb2 = {
+      openBrowser: vi.fn(async () => { reg.requestSession(1); throw new Error('open boom') }),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      listBrowsers: vi.fn().mockResolvedValue([]),
+    }
+    const runner = makeRunner({ db, bitbrowser: bb2 as never, tasks: new Map([['ok-task', new OkTask()]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.at(-1)![4]).toBe('skipped')
+    expect(calls.at(-1)![5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+    expect(reg.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('停止发生在 CDP 连接失败阶段：不记环境失败，全部 skipped/stopped', async () => {
+    const db = makeDb()
+    const reg = new CancelRegistry()
+    const driver = makeDriver({ connect: vi.fn(async () => { reg.requestSession(1); throw new Error('connect boom') }) })
+    const runner = makeRunner({ db, driver, tasks: new Map([['ok-task', new OkTask()]]), cancelRegistry: reg })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.at(-1)![4]).toBe('skipped')
+    expect(calls.at(-1)![5]).toMatchObject({ error: '手动停止', failureKind: 'stopped' })
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+    expect(reg.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('open 且未到探测时间：不开窗，任务落 skipped', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({
+        ...closedHealth,
+        state: 'open',
+        failures: 2,
+        nextProbeMs: Date.now() + 60_000,
+        reason: 'CDP 连接失败',
+      }),
+    })
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.at(-1)![4]).toBe('skipped')
+    expect(calls.at(-1)![5].failureKind).toBe('breaker')
+    expect(String(calls.at(-1)![5].error)).toContain('下次探测')
+  })
+
+  it('open 到期：抢占 half_open 并执行探测任务，成功后关闭熔断', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({
+        ...closedHealth,
+        state: 'open',
+        failures: 2,
+        nextProbeMs: Date.now() - 1,
+        reason: 'CDP 连接失败',
+      }),
+    })
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.claimWindowProbe).toHaveBeenCalled()
+    expect(db.recordWindowSuccess).toHaveBeenCalled()
+    expect(bitbrowser.openBrowser).toHaveBeenCalled()
+  })
+
+  it('closed 下任务失败不计熔断；环境终态失败才计', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+
+    class WindowFailTask implements SiteTask {
+      meta = { key: 'window-fail', name: 'WF', url: 'https://x.io' }
+      run = vi.fn().mockRejectedValue(new Error('Target closed'))
+    }
+    const db2 = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>),
+      recordWindowEnvironmentFailure: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() + 60_000, reason: 'Target closed' }),
+    })
+    const runner2 = makeRunner({ db: db2, tasks: new Map([['window-fail', new WindowFailTask()]]) })
+    await runner2.runWindowTasks(makeProfile(), [{ taskKey: 'window-fail' }])
+    expect(db2.recordWindowEnvironmentFailure).toHaveBeenCalled()
+  })
+
+  it('half_open 环境失败进入 retry_wait：保持 half_open、释放 retry 租约、剩余任务跳过', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'half_open', failures: 2, reason: 'Target closed' }),
+    })
+    class WindowFailTask implements SiteTask {
+      meta = { key: 'window-fail', name: 'WF', url: 'https://x.io' }
+      run = vi.fn().mockRejectedValue(new Error('Target closed'))
+    }
+    const ok = new OkTask()
+    const runner = makeRunner({ db, tasks: new Map([['window-fail', new WindowFailTask()], ['ok-task', ok]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'window-fail' }, { taskKey: 'ok-task' }])
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+    expect(db.releaseWindowProbe).toHaveBeenCalledWith(1, 'retry')
+    expect(ok.run).not.toHaveBeenCalled()
+  })
+
+  it('half_open 任务级失败视为窗口可用，关闭熔断', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'half_open', failures: 2 }),
+    })
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
+    expect(db.recordWindowSuccess).toHaveBeenCalled()
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+  })
+
+  it('half_open 环境终态失败：打开熔断并跳过剩余任务', async () => {
+    class WindowFailTask implements SiteTask {
+      meta = { key: 'window-fail', name: 'WF', url: 'https://x.io' }
+      run = vi.fn().mockRejectedValue(new Error('Target closed'))
+    }
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'half_open', failures: 2 }),
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>),
+      recordWindowEnvironmentFailure: vi.fn().mockResolvedValue({
+        ...closedHealth,
+        state: 'open',
+        failures: 3,
+        nextProbeMs: Date.now() + 60_000,
+        reason: 'Target closed',
+      }),
+    })
+    const ok = new OkTask()
+    const runner = makeRunner({ db, tasks: new Map([['window-fail', new WindowFailTask()], ['ok-task', ok]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'window-fail' }, { taskKey: 'ok-task' }])
+    expect(db.recordWindowEnvironmentFailure).toHaveBeenCalled()
+    expect(ok.run).not.toHaveBeenCalled()
+  })
+
+  it('开窗失败：全局健康时记环境失败；全局不健康时不记', async () => {
+    const unhealthyDb = makeDb()
+    const unhealthyBb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')), health: vi.fn().mockResolvedValue(false) }
+    const runner1 = makeRunner({ db: unhealthyDb, bitbrowser: unhealthyBb })
+    await runner1.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(unhealthyDb.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+
+    const healthyDb = makeDb()
+    const healthyBb = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')), health: vi.fn().mockResolvedValue(true) }
+    const runner2 = makeRunner({ db: healthyDb, bitbrowser: healthyBb })
+    await runner2.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(healthyDb.recordWindowEnvironmentFailure).toHaveBeenCalled()
+  })
+
+  it('FORCE_BREAKER=1 绕过 open 拦截', async () => {
+    process.env.FORCE_BREAKER = '1'
+    try {
+      const db = makeDb({
+        getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() + 60_000 }),
+      })
+      const runner = makeRunner({ db })
+      await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+      expect(bitbrowser.openBrowser).toHaveBeenCalled()
+    } finally {
+      delete process.env.FORCE_BREAKER
+    }
+  })
+
+  it('探测抢占失败：全部 skipped/breaker，不开窗', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() - 1, reason: 'CDP 连接失败' }),
+      claimWindowProbe: vi.fn().mockResolvedValue(false),
+    })
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    const calls = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.at(-1)![4]).toBe('skipped')
+    expect(calls.at(-1)![5].failureKind).toBe('breaker')
+  })
+
+  it('抢占后开窗失败：恰好释放一次 aborted 探测租约', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() - 1 }),
+      claimWindowProbe: vi.fn().mockResolvedValue(true),
+    })
+    const bb2 = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('open boom')) }
+    const runner = makeRunner({ db, bitbrowser: bb2 })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const aborted = (db.releaseWindowProbe as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[1] === 'aborted')
+    expect(aborted).toHaveLength(1)
+  })
+
+  it('抢占后 CDP 失败：恰好释放一次 aborted 探测租约', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() - 1 }),
+      claimWindowProbe: vi.fn().mockResolvedValue(true),
+    })
+    const driver = makeDriver({ connect: vi.fn().mockRejectedValue(new Error('connect boom')) })
+    const runner = makeRunner({ db, driver })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const aborted = (db.releaseWindowProbe as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[1] === 'aborted')
+    expect(aborted).toHaveLength(1)
+  })
+
+  it('抢占后正常成功：关闭熔断且不释放 aborted 租约', async () => {
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() - 1 }),
+      claimWindowProbe: vi.fn().mockResolvedValue(true),
+    })
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.recordWindowSuccess).toHaveBeenCalled()
+    const aborted = (db.releaseWindowProbe as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[1] === 'aborted')
+    expect(aborted).toHaveLength(0)
+  })
+
+  it('circuitBreakerEnabled=false：raw open 不拦截、不计数', async () => {
+    const disabledCfg = {
+      ...(cfg as unknown as Record<string, unknown>),
+      execution: { ...((cfg as unknown as Record<string, unknown>).execution as Record<string, unknown>), circuitBreakerEnabled: false },
+    } as never
+    const db = makeDb({
+      getWindowHealth: vi.fn().mockResolvedValue({ ...closedHealth, state: 'open', failures: 2, nextProbeMs: Date.now() + 60_000 }),
+    })
+    const bb2 = { ...bitbrowser, openBrowser: vi.fn().mockRejectedValue(new Error('open boom')) }
+    const runner = makeRunner({ db, cfgOver: disabledCfg, bitbrowser: bb2 })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bb2.openBrowser).toHaveBeenCalled()
+    expect(db.claimWindowProbe).not.toHaveBeenCalled()
+    expect(db.recordWindowEnvironmentFailure).not.toHaveBeenCalled()
+  })
 })
 
 describe('批次透传与 pending 预写', () => {
@@ -543,6 +855,7 @@ describe('批次透传与 pending 预写', () => {
           startedAt: null,
           finishedAt: null,
           profileName: '窗口1',
+          failureKind: null,
         }
         const merged: RunRow = {
           ...base,
@@ -553,13 +866,18 @@ describe('批次透传与 pending 预写', () => {
           startedAt: patch.startedAt ?? base.startedAt,
           finishedAt: patch.finishedAt ?? base.finishedAt,
           batchId: patch.batchId ?? base.batchId,
+          failureKind: patch.failureKind ?? base.failureKind,
         }
         if (idx >= 0) rows[idx] = merged
         else rows.push(merged)
         return merged
       },
-      resetCircuitBreaker: async () => undefined,
-      incrCircuitBreaker: async () => 0,
+      getWindowHealth: async () => closedHealth,
+      claimWindowProbe: async () => true,
+      releaseWindowProbe: async () => undefined,
+      resetWindowHealth: async () => undefined,
+      recordWindowEnvironmentFailure: async () => closedHealth,
+      recordWindowSuccess: async () => closedHealth,
       clearRunDiag: async () => undefined,
       listProfiles: async () => [] as ProfileRow[],
       reserveOpenWindow: async () => undefined,

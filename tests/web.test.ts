@@ -13,7 +13,7 @@ interface MockDeps {
     listRunsForDate: Mock
     listProfiles: Mock
     setProfileEnabled: Mock
-    resetCircuitBreaker: Mock
+    resetWindowHealth: Mock
     getTaskEnabled: Mock
     setTaskEnabled: Mock
     getOpenWindow: Mock
@@ -52,12 +52,20 @@ interface MockDeps {
   enqueuer: { enqueue: Mock; hasTaskInFlight: Mock; pendingCount: Mock }
   stopper: { stop: Mock; stopBatch: Mock }
   scheduler: { runNow: Mock }
+  logger: { info: Mock; warn: Mock; error: Mock }
   tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number; group?: { key: string; name: string } } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
-    execution: { staggerMaxSec: number; circuitBreakerThreshold: number; maxConcurrentWindows: number }
+    execution: {
+      staggerMaxSec: number
+      circuitBreakerThreshold: number
+      circuitBreakerEnabled: boolean
+      circuitBreakerCooldownSec: number
+      circuitBreakerMaxCooldownSec: number
+      maxConcurrentWindows: number
+    }
     scheduler: { timezone: string }
     dataSource: { path: string }
   }
@@ -81,7 +89,7 @@ function makeDeps(): MockDeps {
       ]),
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 1 }]),
       setProfileEnabled: vi.fn().mockResolvedValue(undefined),
-      resetCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+      resetWindowHealth: vi.fn().mockResolvedValue(undefined),
       getTaskEnabled: vi.fn().mockResolvedValue(true),
       setTaskEnabled: vi.fn().mockResolvedValue(undefined),
       getOpenWindow: vi.fn().mockResolvedValue(null),
@@ -120,12 +128,13 @@ function makeDeps(): MockDeps {
     enqueuer: { enqueue: vi.fn(), hasTaskInFlight: vi.fn().mockReturnValue(false), pendingCount: vi.fn().mockReturnValue(0) },
     stopper: { stop: vi.fn().mockResolvedValue(true), stopBatch: vi.fn().mockResolvedValue(0) },
     scheduler: { runNow: vi.fn().mockResolvedValue({ taskKeys: ['t1'], skipped: [] }) },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     tasks: new Map([['t1', { meta: { key: 't1', name: '任务1', url: '', wallet: 'metamask' } }]]),
     cfg: {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, maxConcurrentWindows: 4 },
+      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
       dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
@@ -284,7 +293,7 @@ describe('server API（RESTful + envelope）', () => {
         { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
         { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
         { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 0, circuitBreakerCount: 0 },
-        { id: 4, bitbrowserId: 'bb-4', name: '窗口4', enabled: 1, circuitBreakerCount: 2 },
+        { id: 4, bitbrowserId: 'bb-4', name: '窗口4', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open' },
       ])
       deps.db.getLatestRun.mockImplementation((profileId: number) => Promise.resolve(
         profileId === 1
@@ -302,6 +311,20 @@ describe('server API（RESTful + envelope）', () => {
       expect(byProfile[2]).toMatchObject({ alreadySuccess: false, inFlight: true, selectable: false, defaultSelected: false, blockedReason: 'in-flight' })
       expect(byProfile[3]).toMatchObject({ selectable: false, defaultSelected: false, blockedReason: 'profile-disabled' })
       expect(byProfile[4]).toMatchObject({ selectable: false, defaultSelected: false, blockedReason: 'circuit-breaker' })
+    })
+
+    it('circuitBreakerEnabled=false 时 raw open 状态不阻塞重跑候选与重跑', async () => {
+      const deps = makeDeps()
+      deps.cfg.execution.circuitBreakerEnabled = false
+      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
+      deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open' }])
+      const app = createApp(deps as never)
+      const candidates = await request(app).get('/api/batches/2/rerun-candidates')
+      expect(candidates.status).toBe(200)
+      expect(candidates.body.data.candidates[0]).toMatchObject({ selectable: true, defaultSelected: true, blockedReason: null })
+      const rerun = await request(app).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      expect(rerun.status).toBe(200)
+      expect(deps.enqueuer.enqueue).toHaveBeenCalled()
     })
 
     it('GET /api/batches/:id/rerun-candidates 同窗口多行取 slot 最大', async () => {
@@ -358,7 +381,7 @@ describe('server API（RESTful + envelope）', () => {
     it('POST /api/batches/:id/rerun-failed 熔断窗口拒绝执行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
-      deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2 }])
+      deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open' }])
       const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.code).toBe(40000)
@@ -817,7 +840,18 @@ describe('server API（RESTful + envelope）', () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/profiles/1/breaker/reset')
     expect(res.body.code).toBe(0)
-    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+    expect(deps.db.resetWindowHealth).toHaveBeenCalledWith(1)
+  })
+
+  it('GET /api/profiles 返回熔断健康字段', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([
+      { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open', circuitBreakerNextProbeMs: 1760000000000, circuitBreakerReason: 'CDP 连接失败', circuitBreakerUpdatedAt: '2026-10-19 12:00:00.000' },
+    ])
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.body.data[0].breakerState).toBe('open')
+    expect(res.body.data[0].breakerNextProbeAt).toContain('2025')
+    expect(res.body.data[0].breakerReason).toBe('CDP 连接失败')
   })
 
   it('GET /api/profiles 无 pid 存活返回 open=false（批量 pid 探测）', async () => {
@@ -924,7 +958,7 @@ describe('server API（RESTful + envelope）', () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/profiles/batch').send({ action: 'resetBreaker', ids: [1] })
     expect(res.body.code).toBe(0)
-    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+    expect(deps.db.resetWindowHealth).toHaveBeenCalledWith(1)
   })
 
   it('POST /api/profiles/batch 单项不存在记入 failed，其余继续，HTTP 仍 200', async () => {
@@ -934,7 +968,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data.succeeded).toBe(1)
     expect(res.body.data.failed).toEqual([{ id: 999, error: '窗口不存在: 999' }])
-    expect(deps.db.resetCircuitBreaker).toHaveBeenCalledWith(1)
+    expect(deps.db.resetWindowHealth).toHaveBeenCalledWith(1)
   })
 
   it('POST /api/profiles/batch action 非法返回 400', async () => {
@@ -1002,6 +1036,9 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data.bitbrowserApiBase).toBeTruthy()
     expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
+    expect(res.body.data.circuitBreakerEnabled).toBe(true)
+    expect(res.body.data.circuitBreakerCooldownSec).toBe(1800)
+    expect(res.body.data.circuitBreakerMaxCooldownSec).toBe(7200)
     expect(res.body.data.maxConcurrentWindows).toBe(4)
     expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
     expect(JSON.stringify(res.body.data)).not.toContain('test-secret-key-abc123')

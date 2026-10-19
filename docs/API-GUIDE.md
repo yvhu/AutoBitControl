@@ -66,7 +66,7 @@
 | 钱包适配器 / wallet | 一组「解锁 / 连接 / 签名 / 确认交易」的钱包操作方法，按 `meta.wallet` 的 key 查找（`metamask` / `petra`） | §4.1 |
 | 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
-| 熔断 / Circuit Breaker | 保险丝：一个窗口连续失败 N 次即熔断、剩余任务跳过；自动定时重置（本仓库 config.json 设每 1 小时；任一任务成功也清零） | §6.4 |
+| 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；30 分钟起步指数退避到 2 小时；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
 | 错峰 / Stagger | 批量开窗前随机等一小段（默认最多 120 秒），避免所有窗口同一秒一起访问站点 | §7 |
 | 在途 / in-flight | 某窗口或任务正在跑、尚未结束；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
 | 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
@@ -1110,7 +1110,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `任务 X 超时` | 单次运行超过 `timeoutSec` | 卡死；某等待超时太长 | 核对各等待超时；必要时上调 `meta.timeoutSec` 或 `execution.taskTimeoutMs` |
 | `任务已停用` | 手动触发被拒（409） | 开关关着 | 面板打开开关（立即生效） |
 | `任务未注册` | 队列有 key 但框架找不到任务 | key 拼错/没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组 |
-| `窗口熔断` | 该窗口连续失败太多，剩余任务全 skip | 前面任务终态失败把熔断计数顶到阈值 | 先修失败任务；面板「窗口」页「重置熔断」（见 6.4）；定时自动重置（本仓库默认每小时，见第 7 章） |
+| `窗口熔断` | 该窗口连续环境级失败太多，剩余任务全 skip | 前面任务环境级终态失败把熔断计数顶到阈值 | 先查窗口/代理/扩展等环境问题；面板「窗口」页「重置熔断」（见 6.4）；每日 23:59 全量重置；半开探测或面板手动重置 |
 | `窗口超时` | 单窗口会话到点（默认 15 分钟） | 窗口任务太多/某任务跑太久 | 精简窗口任务；查耗时异常；上调 `execution.windowTimeoutMs` |
 | 开窗失败 | 比特窗口打不开，整轮任务全 skip | 比特客户端未登录/API 不可达；窗口 ID 不存在 | 设置页「测试连接」；核对窗口 ID；开窗"失败"可能是超时误判（窗口仍在开）→ 框架会延迟兜底补关一次 |
 | `同时打开的窗口已达上限（N）` | 面板/接口开窗被拒（409，`WINDOW_LIMIT_REACHED`） | 当前已开窗口数 ≥ `execution.maxConcurrentWindows` | 先关闭部分窗口；或调大 `execution.maxConcurrentWindows`（见第 7 章） |
@@ -1133,15 +1133,27 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 6.4 熔断触发与重置
 
-- 窗口任务终态失败时 `circuitBreakerCount + 1`；计数 ≥ `execution.circuitBreakerThreshold`（默认 2）后触发熔断，该窗口后续任务直接 `skipped`。
-- **自动重置**：由 `execution` 配置二选一——`circuitBreakerResetEveryHours` > 0 时每 N 小时归零一次（本仓库 `config.json` 设为 `1`，即每小时；优先），否则按 `circuitBreakerResetAt`（默认 `23:59`，时区 `scheduler.timezone`）每日到点归零；两者都关则不自动重置（见第 7 章）。
-- 其他重置途径：任一任务成功后自动清零；面板「窗口」页「重置熔断」（`POST /api/profiles/:id/breaker/reset`）。
+- 熔断是**窗口级环境健康**保护：只统计环境级终态失败（开窗失败、CDP 失败、浏览器崩溃、钱包扩展未加载、代理/网络错误），任务业务失败、选择器失效、数据源错误、任务超时都不计入。
+- 连续环境级终态失败达到 `execution.circuitBreakerThreshold`（默认 2）后进入 `open`：该窗口后续任务直接 `skipped`，**不会先开窗**。
+- 冷却从 `execution.circuitBreakerCooldownSec`（默认 30 分钟）开始，每次半开探测再失败按 2 倍退避，最多 `execution.circuitBreakerMaxCooldownSec`（默认 2 小时）。
+- 冷却到期进入 `half_open`，用真实任务探测：成功或任务级失败会关闭熔断；环境级失败会重新打开并延长冷却。
+- 每日 `execution.circuitBreakerResetAt`（默认 `23:59`，配置时区）全量重置；任一任务成功或面板「重置熔断」也会清零。
+- `execution.circuitBreakerEnabled=false` 时熔断完全关闭：不做开窗前拦截、不累计环境失败，面板显示「熔断已关闭」；数据库里的历史状态字段仍原样返回，但不会影响执行。
+- 面板窗口页显示“正常 / 环境失败 N/阈值 / 熔断中 · HH:mm 探测 / 探测中 / 熔断已关闭”；失败重跑会跳过熔断中的窗口（仅熔断开启时）。
+
+**接口字段（窗口健康与失败分类）**
+
+- `GET /api/profiles` 返回 `breakerState`（`closed/open/half_open`）、`breakerNextProbeAt`、`breakerReason`、`breakerUpdatedAt`。
+- `POST /api/profiles/:id/breaker/reset` 重置窗口健康状态：`closed`、计数 0、等级 0、清空冷却与原因。
+- `GET /api/batches` 与 `GET /api/batches/:id` 的运行行增加 `failureKind`：`environment/task/timeout/stopped/captcha/breaker`。
+- `rerun-failed` 在熔断开启时把 `open/half_open` 窗口标记为 `circuit-breaker` 不可执行；`circuitBreakerEnabled=false` 时不受历史状态阻塞。
 
 ### 6.5 截图与日志位置
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；看板批次明细可点开截图。
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
 - **运行状态**：`pending → running → success | failed | retry_wait → …`，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过。
+- `runs.failure_kind` 记录每次尝试的失败分类；只有 `environment` 且终态失败才会计入窗口熔断，`task/timeout/stopped` 不计。
 
 ### 6.6 失败自动诊断包
 
@@ -1238,6 +1250,12 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 修复：`runTask` 入口再消费一次取消标记（原有「会话开始前」与「失败 catch」两处之外），关窗失败也能在真正跑任务前拦住、落 `skipped`。
 - 通用经验：**任何「靠副作用（关窗/杀进程）间接生效」的控制动作，都要在真正的执行点再做一次显式状态检查兜底。**
 
+**13）环境失败与任务失败要分开看（2026-10-19 熔断改造）**
+
+- 窗口熔断只认环境失败：开窗失败、CDP 失败、浏览器崩溃、扩展未加载、代理/网络错误。选择器失效、站点业务失败、数据源错误、任务超时属于任务问题，不会熔断窗口。
+- 排障时先看 `runs.failure_kind`：`environment` 查窗口/代理/扩展；`task` 查站点/选择器/数据源；`timeout` 查任务等待预算。
+- 窗口显示“熔断中 · HH:mm 探测”时，不要手动重跑；等半开探测或面板重置熔断。
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）
@@ -1249,7 +1267,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerThreshold`（2）、`maxConcurrentWindows`（4）、**`circuitBreakerResetAt`（`"23:59"`）**、**`circuitBreakerResetEveryHours`（`0`）** | 执行引擎全局默认值（任务级可覆盖部分字段，见第 2 章）。`circuitBreakerThreshold` 是连续失败达阈值即熔断；熔断自动重置二选一：`circuitBreakerResetEveryHours` > 0 时每 N 小时重置一次（优先，如 `1`=每小时），否则按 `circuitBreakerResetAt` 每日时刻重置（本地 `HH:mm`，空串 `""` 关闭），时区沿用 `scheduler.timezone`；`maxConcurrentWindows` 是全局开窗上限（**跨进程**按比特实测的已开窗口数排队等待，满额时先回收「无归属/归属进程已死」的孤儿窗口腾名额，再对在途会话等待；也用于面板/接口开窗校验；与任务级 `concurrency` 双闸门取更严者） |
+| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限，与任务级 `concurrency` 双闸门取更严者。 |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |

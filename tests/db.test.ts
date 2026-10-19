@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createClient } from '@libsql/client'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { AppDb, todayStr } from '../src/infrastructure/db'
@@ -156,6 +156,251 @@ describe('AppDb', () => {
     expect(list[0].lastIp).toBe('9.9.9.9')
     again.close()
     // 注：Windows 下 libsql 关闭连接后文件句柄延迟释放，临时目录交由系统清理（与 upload 夹具同策略）
+  })
+
+  describe('窗口健康状态', () => {
+    const policy = { threshold: 2, cooldownMs: 1800_000, maxCooldownMs: 7200_000 }
+    let healthDb: AppDb
+    let healthDir: string
+
+    // 用到 file: 临时库：client.transaction() 在 file::memory: 下会开新连接读不到内存库
+    beforeEach(async () => {
+      healthDir = mkdtempSync(join(tmpdir(), 'abc-health-'))
+      healthDb = await AppDb.open(join(healthDir, 'health.db'))
+    })
+    afterEach(() => {
+      healthDb.close()
+      try {
+        rmSync(healthDir, { recursive: true, force: true })
+      } catch {
+        // Windows 下 libsql 关闭连接后文件句柄延迟释放，临时目录交由系统清理
+      }
+    })
+
+    it('默认 closed，环境失败达到阈值后 open，成功重置', async () => {
+      const p = await healthDb.upsertProfile('bb-health', '窗口')
+      expect((await healthDb.getWindowHealth(p.id)).state).toBe('closed')
+
+      let h = await healthDb.recordWindowEnvironmentFailure(p.id, 'CDP 连接失败', policy, 1000)
+      expect(h.state).toBe('closed')
+      expect(h.failures).toBe(1)
+      expect((await healthDb.getWindowHealth(p.id)).failures).toBe(1)
+
+      h = await healthDb.recordWindowEnvironmentFailure(p.id, 'CDP 连接失败', policy, 2000)
+      expect(h.state).toBe('open')
+      expect(h.failures).toBe(2)
+      expect(h.nextProbeMs).toBe(2000 + 1800_000)
+      expect(h.reason).toBe('CDP 连接失败')
+      const opened = await healthDb.getWindowHealth(p.id)
+      expect(opened.state).toBe('open')
+      expect(opened.failures).toBe(2)
+      expect(opened.nextProbeMs).toBe(2000 + 1800_000)
+
+      h = await healthDb.recordWindowSuccess(p.id)
+      expect(h.state).toBe('closed')
+      expect(h.failures).toBe(0)
+      expect(h.nextProbeMs).toBeNull()
+      const reset = await healthDb.getWindowHealth(p.id)
+      expect(reset.state).toBe('closed')
+      expect(reset.failures).toBe(0)
+      expect(reset.nextProbeMs).toBeNull()
+    })
+
+    it('半开环境失败：等级 +1，冷却翻倍', async () => {
+      const p = await healthDb.upsertProfile('bb-health-half', '窗口')
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', policy, 1000)
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', policy, 2000)
+      expect(await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: 2000 + 1800_000 })).toBe(true)
+
+      const h = await healthDb.recordWindowEnvironmentFailure(p.id, '探测失败', policy, 2000 + 1800_000 + 1)
+      expect(h.state).toBe('open')
+      expect(h.level).toBe(1)
+      expect(h.nextProbeMs).toBe(2000 + 1800_000 + 1 + 3600_000)
+      const stored = await healthDb.getWindowHealth(p.id)
+      expect(stored.state).toBe('open')
+      expect(stored.level).toBe(1)
+      expect(stored.nextProbeMs).toBe(2000 + 1800_000 + 1 + 3600_000)
+    })
+
+    it('半开连续失败冷却封顶于 maxCooldownMs', async () => {
+      const capped = { threshold: 2, cooldownMs: 1800_000, maxCooldownMs: 5_000_000 }
+      const p = await healthDb.upsertProfile('bb-cap', '窗口')
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', capped, 1000)
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', capped, 2000)
+      const due1 = 2000 + 1800_000
+      expect(await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: due1 })).toBe(true)
+      const first = await healthDb.recordWindowEnvironmentFailure(p.id, 'half-1', capped, due1 + 1)
+      expect(first.level).toBe(1)
+      expect(first.nextProbeMs).toBe(due1 + 1 + 3600_000)
+
+      const due2 = first.nextProbeMs!
+      expect(await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: due2 })).toBe(true)
+      const second = await healthDb.recordWindowEnvironmentFailure(p.id, 'half-2', capped, due2 + 1)
+      expect(second.state).toBe('open')
+      expect(second.level).toBe(2)
+      expect(second.nextProbeMs).toBe(due2 + 1 + capped.maxCooldownMs)
+      const stored = await healthDb.getWindowHealth(p.id)
+      expect(stored.level).toBe(2)
+      expect(stored.nextProbeMs).toBe(due2 + 1 + capped.maxCooldownMs)
+    })
+
+    it('探测租约：未过期不能重复抢占，retry 释放后保持 half_open', async () => {
+      const p = await healthDb.upsertProfile('bb-claim', '窗口')
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', policy, 1000)
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', policy, 2000)
+      const due = 2000 + 1800_000
+      expect(await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: due })).toBe(true)
+      expect(await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: due + 1 })).toBe(false)
+
+      await healthDb.releaseWindowProbe(p.id, 'retry')
+      const h = await healthDb.getWindowHealth(p.id)
+      expect(h.state).toBe('half_open')
+      expect(h.probeStartedMs).toBeNull()
+    })
+
+    it('探测中断：退回 open 并 1 分钟后允许再探测', async () => {
+      const p = await healthDb.upsertProfile('bb-abort', '窗口')
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', policy, 1000)
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', policy, 2000)
+      const due = 2000 + 1800_000
+      await healthDb.claimWindowProbe(p.id, { leaseMs: 60_000, nowMs: due })
+      await healthDb.releaseWindowProbe(p.id, 'aborted', due + 10)
+      const h = await healthDb.getWindowHealth(p.id)
+      expect(h.state).toBe('open')
+      expect(h.nextProbeMs).toBe(due + 10 + 60_000)
+    })
+
+    it('recoverStaleWindowProbes 只回收过期半开探测（退回 open，1 分钟后重探）', async () => {
+      const stale = await healthDb.upsertProfile('bb-probe-stale', '过期')
+      const fresh = await healthDb.upsertProfile('bb-probe-fresh', '新鲜')
+      for (const p of [stale, fresh]) {
+        await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', policy, 1000)
+        await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', policy, 2000)
+      }
+      const due = 2000 + 1800_000
+      expect(await healthDb.claimWindowProbe(stale.id, { leaseMs: 60_000, nowMs: due })).toBe(true)
+      expect(await healthDb.claimWindowProbe(fresh.id, { leaseMs: 60_000, nowMs: due + 40_000 })).toBe(true)
+
+      const nowMs = due + 60_001
+      expect(await healthDb.recoverStaleWindowProbes(60_000, nowMs)).toBe(1)
+
+      const recovered = await healthDb.getWindowHealth(stale.id)
+      expect(recovered.state).toBe('open')
+      expect(recovered.probeStartedMs).toBeNull()
+      expect(recovered.nextProbeMs).toBe(nowMs + 60_000)
+
+      const untouched = await healthDb.getWindowHealth(fresh.id)
+      expect(untouched.state).toBe('half_open')
+      expect(untouched.probeStartedMs).toBe(due + 40_000)
+    })
+
+    it('resetWindowHealth 将单个窗口恢复 closed 且清空计数', async () => {
+      const p = await healthDb.upsertProfile('bb-reset-one', '窗口')
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e1', policy, 1000)
+      await healthDb.recordWindowEnvironmentFailure(p.id, 'e2', policy, 2000)
+      await healthDb.resetWindowHealth(p.id)
+      const h = await healthDb.getWindowHealth(p.id)
+      expect(h.state).toBe('closed')
+      expect(h.failures).toBe(0)
+      expect(h.level).toBe(0)
+      expect(h.nextProbeMs).toBeNull()
+      expect(h.probeStartedMs).toBeNull()
+      expect(h.reason).toBeNull()
+    })
+
+    it('resetAllWindowHealth 重置所有非 closed 或计数 > 0 的窗口', async () => {
+      const a = await healthDb.upsertProfile('bb-reset-a', 'A')
+      const b = await healthDb.upsertProfile('bb-reset-b', 'B')
+      await healthDb.recordWindowEnvironmentFailure(a.id, 'e1', policy, 1000)
+      await healthDb.recordWindowEnvironmentFailure(a.id, 'e2', policy, 2000)
+      await healthDb.recordWindowEnvironmentFailure(b.id, 'e1', policy, 1000)
+      expect(await healthDb.resetAllWindowHealth()).toBe(2)
+      expect((await healthDb.getWindowHealth(a.id)).state).toBe('closed')
+      expect((await healthDb.getWindowHealth(b.id)).failures).toBe(0)
+    })
+
+    it('迁移标记阻止再次清零：重开库保留健康计数', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'abc-health-once-'))
+      const fileUrl = `file:${join(dir, 'health.db').split('\\').join('/')}`
+      try {
+        const first = await AppDb.open(fileUrl)
+        const p = await first.upsertProfile('bb-once', '窗口')
+        const h = await first.recordWindowEnvironmentFailure(p.id, 'CDP 连接失败', policy, 1000)
+        expect(h.failures).toBe(1)
+        first.close()
+
+        const reopened = await AppDb.open(fileUrl)
+        try {
+          const retained = await reopened.getWindowHealth(p.id)
+          expect(retained.state).toBe('closed')
+          expect(retained.failures).toBe(1)
+          expect((await reopened.listProfiles(false))[0].circuitBreakerCount).toBe(1)
+        } finally {
+          reopened.close()
+        }
+      } finally {
+        try {
+          rmSync(dir, { recursive: true, force: true })
+        } catch {
+          // Windows 下文件句柄延迟释放，临时目录交由系统清理
+        }
+      }
+    })
+  })
+
+  describe('runs.failureKind', () => {
+    it('写入、读回并在成功时清空', async () => {
+      const p = await db.upsertProfile('bb-kind', '窗口')
+      const failed = await db.upsertRun(p.id, 't', '2026-10-19', 0, 'failed', { error: 'x', failureKind: 'environment' })
+      expect(failed.failureKind).toBe('environment')
+      expect((await db.getRunById(failed.id))?.failureKind).toBe('environment')
+
+      const ok = await db.upsertRun(p.id, 't', '2026-10-19', 0, 'success', { failureKind: null })
+      expect(ok.failureKind).toBeNull()
+    })
+  })
+
+  it('老库迁移补熔断健康列并一次性清零旧计数', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-breaker-legacy-'))
+    const fileUrl = `file:${join(dir, 'legacy.db').split('\\').join('/')}`
+    const raw = createClient({ url: fileUrl })
+    await raw.execute(`CREATE TABLE profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bitbrowser_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      circuit_breaker_count INTEGER NOT NULL DEFAULT 0
+    )`)
+    await raw.execute(`CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL,
+      task_key TEXT NOT NULL,
+      date TEXT NOT NULL,
+      slot INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      screenshot TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      batch_id INTEGER,
+      diag_path TEXT,
+      UNIQUE(profile_id, task_key, date, slot)
+    )`)
+    await raw.execute(`INSERT INTO profiles (bitbrowser_id, name, circuit_breaker_count) VALUES ('bb-old', '旧窗口', 2)`)
+    raw.close()
+
+    const opened = await AppDb.open(fileUrl)
+    try {
+      const p = (await opened.listProfiles())[0]
+      expect(p.circuitBreakerCount).toBe(0)
+      expect(p.circuitBreakerState).toBe('closed')
+      expect((await opened.getWindowHealth(p.id)).state).toBe('closed')
+      const kind = await opened.upsertRun(p.id, 't', '2026-10-19', 0, 'failed', { failureKind: 'task' })
+      expect(kind.failureKind).toBe('task')
+    } finally {
+      opened.close()
+    }
   })
 
   it('Windows 绝对路径（反斜杠）转换为 file: URL 后可正常读写且落盘持久', async () => {

@@ -46,8 +46,31 @@ describe('TaskStopper', () => {
     const stopped = await stopper.stop(1, 't')
     expect(stopped).toBe(true)
     expect(d.registry.isCancelled(1, 't')).toBe(true)
-    expect(d.db.upsertRun).toHaveBeenCalledWith(1, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ error: '手动停止' }))
+    expect(d.registry.isSessionCancelled(1)).toBe(true)
+    expect(d.db.upsertRun).toHaveBeenCalledWith(1, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ error: '手动停止', failureKind: 'stopped' }))
     expect(d.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(d.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+    // 会话标记可被 runner 消费清理
+    d.registry.clearSession(1)
+    expect(d.registry.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('retry_wait 行且无开窗登记：只置任务级标记，不置会话级标记（防泄漏）', async () => {
+    const d = makeDeps({ existing: run('retry_wait'), open: null })
+    const stopper = makeStopper(d)
+    const stopped = await stopper.stop(1, 't')
+    expect(stopped).toBe(true)
+    expect(d.registry.isCancelled(1, 't')).toBe(true)
+    expect(d.registry.isSessionCancelled(1)).toBe(false)
+    expect(d.db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
+  it('retry_wait 行但窗口仍开着：置会话级标记（有活动会话）', async () => {
+    const d = makeDeps({ existing: run('retry_wait'), open: { http: '127.0.0.1:61234' } })
+    const stopper = makeStopper(d)
+    expect(await stopper.stop(1, 't')).toBe(true)
+    expect(d.registry.isCancelled(1, 't')).toBe(true)
+    expect(d.registry.isSessionCancelled(1)).toBe(true)
     expect(d.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
   })
 
@@ -56,6 +79,7 @@ describe('TaskStopper', () => {
     const stopper = makeStopper(d)
     expect(await stopper.stop(1, 't')).toBe(false)
     expect(d.registry.isCancelled(1, 't')).toBe(false)
+    expect(d.registry.isSessionCancelled(1)).toBe(false)
     expect(d.db.upsertRun).not.toHaveBeenCalled()
     expect(d.closeBrowser).not.toHaveBeenCalled()
   })
@@ -73,7 +97,7 @@ describe('TaskStopper', () => {
     expect(d.closeBrowser).toHaveBeenCalledWith('bb-1')
     expect(d.registry.isCancelled(1, 't')).toBe(true)
     expect(d.registry.isCancelled(2, 't')).toBe(false)
-    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 3, 'skipped', expect.objectContaining({ error: '手动停止', batchId: 5 }))
+    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 3, 'skipped', expect.objectContaining({ error: '手动停止', batchId: 5, failureKind: 'stopped' }))
   })
 
   it('批次停止：运行竞态下尚未落行的窗口置取消标记并补 skipped', async () => {
@@ -82,7 +106,7 @@ describe('TaskStopper', () => {
     const stopper = makeStopper(d, vi.fn().mockReturnValue([{ profileId: 2, taskKey: 't', running: true }]))
     expect(await stopper.stopBatch(5)).toBe(1)
     expect(d.registry.isCancelled(2, 't')).toBe(true)
-    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ batchId: 5 }))
+    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ batchId: 5, failureKind: 'stopped' }))
   })
 
   it('批次停止：排队窗口当天已有终态行时仍补本批次 skipped 行', async () => {
@@ -90,7 +114,8 @@ describe('TaskStopper', () => {
     d.db.getLatestRun.mockResolvedValue(run('success'))
     const stopper = makeStopper(d, vi.fn().mockReturnValue([{ profileId: 2, taskKey: 't', running: false }]))
     expect(await stopper.stopBatch(5)).toBe(1)
-    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ error: '手动停止', batchId: 5 }))
+    expect(d.db.upsertRun).toHaveBeenCalledWith(2, 't', expect.any(String), 0, 'skipped', expect.objectContaining({ error: '手动停止', batchId: 5, failureKind: 'stopped' }))
     expect(d.registry.isCancelled(2, 't')).toBe(false)
+    expect(d.registry.isSessionCancelled(2)).toBe(false)
   })
 })

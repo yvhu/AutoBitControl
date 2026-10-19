@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatDuration, formatDateTime } from './format'
+import { formatDuration, formatDateTime, failureKindLabel } from './format'
 
 describe('formatDateTime 批次时间展示', () => {
   it("'YYYY-MM-DD HH:mm:ss.SSS' → 'YYYY-MM-DD HH:mm'", () => {
@@ -23,4 +23,15 @@ describe('formatDuration 总耗时展示', () => {
     expect(formatDuration(3600)).toBe('1h 0m 0s')
     expect(formatDuration(7451)).toBe('2h 4m 11s')
   })
+})
+
+it('failureKindLabel 中文文案', () => {
+  expect(failureKindLabel('environment')).toBe('环境失败')
+  expect(failureKindLabel('task')).toBe('任务失败')
+  expect(failureKindLabel('timeout')).toBe('超时')
+  expect(failureKindLabel('stopped')).toBe('手动停止')
+  expect(failureKindLabel('captcha')).toBe('验证码')
+  expect(failureKindLabel('breaker')).toBe('熔断跳过')
+  expect(failureKindLabel(null)).toBe('—')
+  expect(failureKindLabel(undefined)).toBe('—')
 })

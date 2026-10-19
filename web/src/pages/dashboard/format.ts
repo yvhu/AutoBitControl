@@ -13,3 +13,16 @@ export function formatDuration(sec: number | null): string {
   const h = Math.floor(m / 60)
   return `${h}h ${m % 60}m ${s}s`
 }
+
+/** 失败类型中文文案（未知/空为 —） */
+export function failureKindLabel(kind: string | null | undefined): string {
+  switch (kind) {
+    case 'environment': return '环境失败'
+    case 'task': return '任务失败'
+    case 'timeout': return '超时'
+    case 'stopped': return '手动停止'
+    case 'captcha': return '验证码'
+    case 'breaker': return '熔断跳过'
+    default: return '—'
+  }
+}

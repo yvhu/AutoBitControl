@@ -24,8 +24,8 @@ export function canTransition(from: RunStatus, to: RunStatus): boolean {
   return (VALID_TRANSITIONS[from] ?? []).includes(to)
 }
 
-/** 失败原因分类：普通错误可重试，验证码失败直接终态 */
-export type FailureKind = 'error' | 'captcha'
+/** 失败原因分类（重试状态机口径）：普通错误可重试，验证码失败直接终态 */
+export type RunFailureKind = 'error' | 'captcha'
 
 /**
  * 失败后的下一状态：
@@ -33,7 +33,7 @@ export type FailureKind = 'error' | 'captcha'
  * 普通错误 → 未达到总尝试上限进 retry_wait，否则 failed 终态
  * 注意：attempts 从 1 计数；调用方（window-runner）传入 retryMax + 1 作为总尝试上限
  */
-export function nextStateAfterFailure(attempts: number, retryMax: number, kind: FailureKind): RunStatus {
+export function nextStateAfterFailure(attempts: number, retryMax: number, kind: RunFailureKind): RunStatus {
   if (kind === 'captcha') return 'captcha_failed'
   return attempts >= retryMax ? 'failed' : 'retry_wait'
 }

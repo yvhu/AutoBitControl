@@ -11,6 +11,25 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { Logger } from '../../infrastructure/logger'
 import { reclaimOrphanWindows } from '../../engine/window-registry'
 
+/** epoch 毫秒转本地墙钟字符串（与 db.localWallNow 同口径，供面板展示下次探测时间） */
+function probeAtText(ms: number | null | undefined): string | null {
+  if (ms == null) return null
+  const d = new Date(ms)
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
+}
+
+/** 窗口记录转面板视图：在原始字段上补充稳定命名的熔断健康字段 */
+function toProfileView(p: ProfileRow, open: boolean) {
+  return {
+    ...p,
+    open,
+    breakerState: p.circuitBreakerState ?? 'closed',
+    breakerNextProbeAt: probeAtText(p.circuitBreakerNextProbeMs),
+    breakerReason: p.circuitBreakerReason ?? null,
+    breakerUpdatedAt: p.circuitBreakerUpdatedAt ?? null,
+  }
+}
+
 /**
  * @swagger
  * /api/profiles:
@@ -36,6 +55,10 @@ import { reclaimOrphanWindows } from '../../engine/window-registry'
  *                       name: { type: string }
  *                       enabled: { type: integer, description: '0/1 开关' }
  *                       circuitBreakerCount: { type: integer }
+ *                       breakerState: { type: string, enum: [closed, open, half_open] }
+ *                       breakerNextProbeAt: { type: string, nullable: true }
+ *                       breakerReason: { type: string, nullable: true }
+ *                       breakerUpdatedAt: { type: string, nullable: true }
  *                       open: { type: boolean, description: '是否已打开（比特浏览器 pid 实测）' }
  *                       remark: { type: string, nullable: true, description: '比特客户端窗口备注' }
  *                       seq: { type: integer, nullable: true, description: '比特客户端排序号' }
@@ -88,7 +111,7 @@ import { reclaimOrphanWindows } from '../../engine/window-registry'
  * @swagger
  * /api/profiles/{id}/breaker/reset:
  *   post:
- *     summary: 重置窗口熔断计数
+ *     summary: 重置窗口熔断健康状态
  *     parameters:
  *       - in: path
  *         name: id
@@ -97,7 +120,7 @@ import { reclaimOrphanWindows } from '../../engine/window-registry'
  *         description: 窗口内部 id
  *     responses:
  *       '200':
- *         description: 已重置
+ *         description: 重置后的窗口视图
  *         content:
  *           application/json:
  *             schema:
@@ -105,7 +128,18 @@ import { reclaimOrphanWindows } from '../../engine/window-registry'
  *               properties:
  *                 code: { type: integer, example: 0 }
  *                 message: { type: string, example: ok }
- *                 data: { nullable: true }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     bitbrowserId: { type: string }
+ *                     name: { type: string }
+ *                     enabled: { type: integer }
+ *                     circuitBreakerCount: { type: integer }
+ *                     breakerState: { type: string, enum: [closed, open, half_open] }
+ *                     breakerNextProbeAt: { type: string, nullable: true }
+ *                     breakerReason: { type: string, nullable: true }
+ *                     breakerUpdatedAt: { type: string, nullable: true }
  *       '404':
  *         description: 窗口不存在（业务码 40402）
  */
@@ -267,7 +301,8 @@ export function profilesRouter(deps: {
   /** 单窗口动作执行（单窗口端点与批量端点共用）；open 返回 already 语义；openIds 为批量预探测的存活集合（缺省逐窗口 isOpen） */
   const applyAction = async (profile: ProfileRow, action: BatchAction, openIds?: Set<string>): Promise<{ already?: boolean }> => {
     if (action === 'resetBreaker') {
-      await deps.db.resetCircuitBreaker(profile.id)
+      await deps.db.resetWindowHealth(profile.id)
+      deps.logger.info({ profile: profile.name }, '手动重置窗口熔断状态')
       return {}
     }
     if (action === 'open') {
@@ -304,7 +339,7 @@ export function profilesRouter(deps: {
     } catch {
       openIds = null
     }
-    const result: Array<ProfileRow & { open: boolean }> = []
+    const result: Array<ReturnType<typeof toProfileView>> = []
     for (const p of profiles) {
       // 打开状态以比特浏览器 pid 实测为准：窗口可能由任务运行/手动打开，未必有 open_windows 登记行，
       // 故不能要求「登记行存在」才算已开（否则真实已开的窗口会显示未打开）；
@@ -314,7 +349,7 @@ export function profilesRouter(deps: {
         const row = await deps.db.getOpenWindow(p.bitbrowserId)
         if (row) await deps.db.clearOpenWindow(p.bitbrowserId)
       }
-      result.push({ ...p, open: alive })
+      result.push(toProfileView(p, alive))
     }
     ok(res, result)
   }))
@@ -327,8 +362,9 @@ export function profilesRouter(deps: {
     ok(res, profile)
   }))
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
-    await applyAction(await find(Number(req.params.id)), 'resetBreaker')
-    ok(res)
+    const profile = await find(Number(req.params.id))
+    await applyAction(profile, 'resetBreaker')
+    ok(res, toProfileView(await find(profile.id), false))
   }))
   router.post('/profiles/:id/open', asyncHandler(async (req, res) => {
     ok(res, await applyAction(await find(Number(req.params.id)), 'open'))

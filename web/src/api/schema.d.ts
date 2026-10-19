@@ -675,6 +675,9 @@ export interface paths {
                                 webPort?: number;
                                 staggerMaxSec?: number;
                                 circuitBreakerThreshold?: number;
+                                circuitBreakerEnabled?: boolean;
+                                circuitBreakerCooldownSec?: number;
+                                circuitBreakerMaxCooldownSec?: number;
                                 maxConcurrentWindows?: number;
                                 version?: string;
                                 datasource?: {
@@ -825,6 +828,10 @@ export interface paths {
                                 /** @description 0/1 开关 */
                                 enabled?: number;
                                 circuitBreakerCount?: number;
+                                breakerState?: "closed" | "open" | "half_open";
+                                breakerNextProbeAt?: string | null;
+                                breakerReason?: string | null;
+                                breakerUpdatedAt?: string | null;
                                 /** @description 是否已打开（open_windows 登记 + 比特浏览器 pid 实测） */
                                 open?: boolean;
                                 /** @description 比特客户端窗口备注 */
@@ -1275,6 +1282,7 @@ export interface paths {
                                     startedAt?: string | null;
                                     finishedAt?: string | null;
                                     batchId?: number | null;
+                                    failureKind?: "environment" | "task" | "timeout" | "stopped" | "captcha" | "breaker" | null;
                                     profileName?: string;
                                     bitbrowserId?: string;
                                     durationSec?: number | null;
@@ -1332,6 +1340,7 @@ export interface paths {
                                     startedAt?: string | null;
                                     finishedAt?: string | null;
                                     batchId?: number | null;
+                                    failureKind?: "environment" | "task" | "timeout" | "stopped" | "captcha" | "breaker" | null;
                                     profileName?: string;
                                     bitbrowserId?: string;
                                     durationSec?: number | null;

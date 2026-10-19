@@ -56,7 +56,9 @@ export default function SettingsPage() {
           items={[
             { key: 'stagger', label: '错峰上限', children: `${s.staggerMaxSec} 秒` },
             { key: 'maxWin', label: '全局窗口上限', children: s.maxConcurrentWindows },
+            { key: 'breakerEnabled', label: '熔断开关', children: s.circuitBreakerEnabled ? '开启' : '关闭' },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },
+            { key: 'breakerCooldown', label: '冷却 / 上限', children: `${s.circuitBreakerCooldownSec / 60} / ${s.circuitBreakerMaxCooldownSec / 60} 分钟` },
             { key: 'version', label: '版本', children: s.version },
           ]}
         />

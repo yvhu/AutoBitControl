@@ -47,9 +47,14 @@ export function createTaskStopper(deps: TaskStopperDeps): TaskStopper {
     const terminal = existing ? TERMINAL.includes(existing.status) : true
     if (!existing || terminal) return false
     registry.request(profileId, taskKey)
-    await db.upsertRun(profileId, taskKey, date, existing.slot, 'skipped', { error: '手动停止', finishedAt: localWallNow() })
-    await deps.closeBrowser(profile.bitbrowserId).catch((e) => logger.warn({ profile: profile.name, err: (e as Error).message }, '停止时关窗失败（窗口可能仍开着）'))
+    // 停止会关窗，同会话其余任务会收到 Target closed：仅在确有活动会话时置会话级标记，
+    // runner 按手动停止结算而非环境失败；纯 retry_wait/无窗口的停止只置任务级标记，
+    // 避免会话标记残留到下一次合法会话导致整窗跳过
     const row = await deps.getOpenWindow(profile.bitbrowserId).catch(() => null)
+    const hasActiveSession = existing.status === 'running' || row !== null
+    if (hasActiveSession) registry.requestSession(profileId)
+    await db.upsertRun(profileId, taskKey, date, existing.slot, 'skipped', { error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' })
+    await deps.closeBrowser(profile.bitbrowserId).catch((e) => logger.warn({ profile: profile.name, err: (e as Error).message }, '停止时关窗失败（窗口可能仍开着）'))
     if (row) await deps.clearOpenWindow(profile.bitbrowserId).catch(() => {})
     logger.info({ profile: profile.name, task: taskKey }, '已请求停止任务')
     return true
@@ -88,7 +93,7 @@ export function createTaskStopper(deps: TaskStopperDeps): TaskStopper {
         // 仅 running 竞态需要取消标记；纯排队项已撤出队列，置标记会残留并误伤下一次合法触发
         if (c.running) registry.request(c.profileId, c.taskKey)
         const slot = await db.nextRunSlot(c.profileId, c.taskKey, date)
-        await db.upsertRun(c.profileId, c.taskKey, date, slot, 'skipped', { batchId, error: '手动停止', finishedAt: localWallNow() })
+        await db.upsertRun(c.profileId, c.taskKey, date, slot, 'skipped', { batchId, error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' })
         stopped++
       }
       if (stopped > 0) logger.info({ batchId, stopped }, '已请求停止批次')

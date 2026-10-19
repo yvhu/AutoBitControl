@@ -73,6 +73,46 @@ function daysAgoStr(days: number): string {
  *     responses:
  *       '200':
  *         description: 批次列表
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     range: { type: string }
+ *                     batches:
+ *                       type: array
+ *                       items: { type: object }
+ *                     unbatched:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           profileId: { type: integer }
+ *                           taskKey: { type: string }
+ *                           date: { type: string }
+ *                           slot: { type: integer }
+ *                           status: { type: string }
+ *                           attempts: { type: integer }
+ *                           error: { type: string, nullable: true }
+ *                           screenshot: { type: string, nullable: true }
+ *                           startedAt: { type: string, nullable: true }
+ *                           finishedAt: { type: string, nullable: true }
+ *                           batchId: { type: integer, nullable: true }
+ *                           diagPath: { type: string, nullable: true }
+ *                           failureKind: { type: string, nullable: true, enum: [environment, task, timeout, stopped, captcha, breaker] }
+ *                           durationSec: { type: integer, nullable: true }
+ *                           inFlight: { type: boolean }
+ *                           profileName: { type: string }
+ *                           bitbrowserId: { type: string }
+ *                     running: { type: integer }
+ *                     taskNames: { type: object, additionalProperties: { type: string } }
+ *                     today: { type: string }
  */
 
 /**
@@ -88,6 +128,40 @@ function daysAgoStr(days: number): string {
  *     responses:
  *       '200':
  *         description: 批次明细
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code: { type: integer, example: 0 }
+ *                 message: { type: string, example: ok }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     batch: { type: object }
+ *                     runs:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           profileId: { type: integer }
+ *                           taskKey: { type: string }
+ *                           date: { type: string }
+ *                           slot: { type: integer }
+ *                           status: { type: string }
+ *                           attempts: { type: integer }
+ *                           error: { type: string, nullable: true }
+ *                           screenshot: { type: string, nullable: true }
+ *                           startedAt: { type: string, nullable: true }
+ *                           finishedAt: { type: string, nullable: true }
+ *                           batchId: { type: integer, nullable: true }
+ *                           diagPath: { type: string, nullable: true }
+ *                           failureKind: { type: string, nullable: true, enum: [environment, task, timeout, stopped, captcha, breaker] }
+ *                           durationSec: { type: integer, nullable: true }
+ *                           inFlight: { type: boolean }
+ *                           profileName: { type: string }
+ *                           bitbrowserId: { type: string }
  */
 export interface BatchesDeps {
   db: AppDb
@@ -95,7 +169,8 @@ export interface BatchesDeps {
   tasks: Map<string, SiteTask>
   stopper: TaskStopper
   getRunById: AppDb['getRunById']
-  circuitBreakerThreshold: number
+  /** 窗口熔断总开关：关闭时不把数据库里的历史 raw 状态当作重跑阻塞原因 */
+  circuitBreakerEnabled: boolean
 }
 
 export function batchesRouter(deps: BatchesDeps): Router {
@@ -168,11 +243,12 @@ export function batchesRouter(deps: BatchesDeps): Router {
       const inFlight = profile
         ? (await deps.db.countInFlightRuns(batch.taskKey, today, profile.id)) > 0 || deps.enqueuer.hasTaskInFlight(batch.taskKey, profile.id)
         : false
+      const breakerBlocked = deps.circuitBreakerEnabled && (profile?.circuitBreakerState ?? 'closed') !== 'closed'
       const blockedReason = !profile
         ? 'profile-missing'
         : profile.enabled !== 1
           ? 'profile-disabled'
-          : profile.circuitBreakerCount >= deps.circuitBreakerThreshold
+          : breakerBlocked
             ? 'circuit-breaker'
             : inFlight
               ? 'in-flight'
@@ -256,7 +332,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
         blocked.push(`${profile.name} 已停用`)
         continue
       }
-      if (profile.circuitBreakerCount >= deps.circuitBreakerThreshold) {
+      if (deps.circuitBreakerEnabled && (profile.circuitBreakerState ?? 'closed') !== 'closed') {
         blocked.push(`${profile.name} 熔断中`)
         continue
       }

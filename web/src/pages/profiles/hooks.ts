@@ -40,12 +40,12 @@ export function useProfiles() {
   })
 }
 
-/** 熔断阈值（来自公开设置，与设置页共用 settings 缓存） */
-export function useBreakerThreshold() {
+/** 熔断展示配置（公开设置，与设置页共用 settings 缓存） */
+export function useBreakerSettings() {
   return useQuery({
     queryKey: ['settings'],
     queryFn: fetchSettings,
-    select: (s) => s.circuitBreakerThreshold,
+    select: (s) => ({ threshold: s.circuitBreakerThreshold, enabled: s.circuitBreakerEnabled }),
   })
 }
 
@@ -94,7 +94,7 @@ export function useResetBreaker() {
   return useMutation({
     mutationFn: (id: number) => resetBreaker(id),
     onSuccess: () => {
-      message.success('已重置熔断计数')
+      message.success('已重置窗口熔断状态')
       queryClient.invalidateQueries({ queryKey: ['profiles'] })
     },
     onError: (e) => message.error(errMsg(e)),

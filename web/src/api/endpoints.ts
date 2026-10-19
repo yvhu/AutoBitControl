@@ -17,7 +17,7 @@ export const setTaskEnabled = (key: string, enabled: boolean) => patch<{ key: st
 export const openProfile = (id: number) => post<{ already: boolean }>(`/api/profiles/${id}/open`, {})
 export const closeProfile = (id: number) => post<null>(`/api/profiles/${id}/close`, {})
 export const patchProfile = (id: number, body: { enabled?: boolean }) => patch<ProfileRow>(`/api/profiles/${id}`, body)
-export const resetBreaker = (id: number) => post<null>(`/api/profiles/${id}/breaker/reset`, {})
+export const resetBreaker = (id: number) => post<ProfileRow>(`/api/profiles/${id}/breaker/reset`, {})
 export const batchProfiles = (action: ProfileBatchAction, ids: number[]) =>
   post<ProfileBatchResult>('/api/profiles/batch', { action, ids })
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})

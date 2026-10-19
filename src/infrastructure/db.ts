@@ -6,6 +6,7 @@
  *           库内字段用 snake_case、读出时映射为 camelCase
  */
 import { createClient, type Client, type Row } from '@libsql/client'
+import type { FailureKind } from './run-errors'
 
 /**
  * 运行状态（状态机转移规则见 engine/state.ts）：
@@ -13,6 +14,27 @@ import { createClient, type Client, type Row } from '@libsql/client'
  * captcha_failed 验证码失败（终态）/ retry_wait 重试等待 / skipped 跳过（终态）
  */
 export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'captcha_failed' | 'retry_wait' | 'skipped'
+
+/** 窗口熔断状态：closed 正常 / open 熔断 / half_open 探测中 */
+export type CircuitBreakerState = 'closed' | 'open' | 'half_open'
+
+/** 窗口健康状态（窗口级环境熔断） */
+export interface WindowHealth {
+  state: CircuitBreakerState
+  failures: number
+  level: number
+  nextProbeMs: number | null
+  probeStartedMs: number | null
+  reason: string | null
+  updatedAt: string | null
+}
+
+/** 健康状态变更策略（来自 execution 配置） */
+export interface CircuitBreakerPolicy {
+  threshold: number
+  cooldownMs: number
+  maxCooldownMs: number
+}
 
 /** batches 表 kind 联合类型 */
 export type BatchKind = 'bulk' | 'single' | 'schedule'
@@ -61,6 +83,12 @@ export interface ProfileRow {
   /** 0/1（SQLite 无布尔，读出保持数字由调用方判断） */
   enabled: number
   circuitBreakerCount: number
+  circuitBreakerState?: CircuitBreakerState
+  circuitBreakerLevel?: number
+  circuitBreakerNextProbeMs?: number | null
+  circuitBreakerProbeStartedMs?: number | null
+  circuitBreakerReason?: string | null
+  circuitBreakerUpdatedAt?: string | null
   /** 比特客户端窗口备注（同步 /browser/list 时更新） */
   remark?: string | null
   /** 比特客户端排序号 */
@@ -93,6 +121,8 @@ export interface RunRow {
   batchId: number | null
   /** 失败诊断产物路径（NULL = 无诊断文件；失败时由框架写入） */
   diagPath: string | null
+  /** 失败分类（NULL = 成功或未分类） */
+  failureKind?: FailureKind | null
   /** JOIN profiles 得到的窗口比特 id（行级执行用） */
   bitbrowserId: string
   status: RunStatus
@@ -172,6 +202,12 @@ export function localWallNow(): string {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
 }
 
+/** epoch 毫秒转本地墙钟字符串（与 localWallNow 同口径，供下次探测时间展示） */
+export function localWallFromMs(ms: number): string {
+  const d = new Date(ms)
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 23).replace('T', ' ')
+}
+
 /** 本地路径转 file: URL：file: 前缀原样透传（测试 file::memory:），其余反斜杠转正斜杠后加 file: 前缀 */
 function toFileUrl(p: string): string {
   if (p.startsWith('file:')) return p
@@ -186,6 +222,12 @@ const SCHEMA = [
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     circuit_breaker_count INTEGER NOT NULL DEFAULT 0,
+    circuit_breaker_state TEXT NOT NULL DEFAULT 'closed',
+    circuit_breaker_level INTEGER NOT NULL DEFAULT 0,
+    circuit_breaker_next_probe_ms INTEGER,
+    circuit_breaker_probe_started_ms INTEGER,
+    circuit_breaker_reason TEXT,
+    circuit_breaker_updated_at TEXT,
     remark TEXT,
     seq INTEGER,
     last_ip TEXT,
@@ -206,6 +248,7 @@ const SCHEMA = [
     finished_at TEXT,
     batch_id INTEGER,
     diag_path TEXT,
+    failure_kind TEXT,
     UNIQUE(profile_id, task_key, date, slot)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date)`,
@@ -220,6 +263,10 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS task_states (
     task_key TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   )`,
   // 定时计划表：计划（时间配置 + 任务列表）与任务代码完全解耦，由面板「定时任务」栏目管理
   `CREATE TABLE IF NOT EXISTS schedules (
@@ -271,8 +318,8 @@ const SCHEMA = [
   )`,
 ]
 
-const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
-const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
+const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, circuit_breaker_state AS circuitBreakerState, circuit_breaker_level AS circuitBreakerLevel, circuit_breaker_next_probe_ms AS circuitBreakerNextProbeMs, circuit_breaker_probe_started_ms AS circuitBreakerProbeStartedMs, circuit_breaker_reason AS circuitBreakerReason, circuit_breaker_updated_at AS circuitBreakerUpdatedAt, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
+const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, r.failure_kind AS failureKind, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
 const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
@@ -323,6 +370,20 @@ export class AppDb {
     for (const [col, type] of extraCols) {
       if (!existing.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
     }
+    // 老库补列：窗口熔断健康状态列（新库 CREATE TABLE 已自带）
+    const profileInfo2 = await this.client.execute(`PRAGMA table_info(profiles)`)
+    const profileCols = new Set(profileInfo2.rows.map((r) => String(r.name)))
+    const newProfileCols: Array<[string, string]> = [
+      ['circuit_breaker_state', "TEXT NOT NULL DEFAULT 'closed'"],
+      ['circuit_breaker_level', 'INTEGER NOT NULL DEFAULT 0'],
+      ['circuit_breaker_next_probe_ms', 'INTEGER'],
+      ['circuit_breaker_probe_started_ms', 'INTEGER'],
+      ['circuit_breaker_reason', 'TEXT'],
+      ['circuit_breaker_updated_at', 'TEXT'],
+    ]
+    for (const [col, type] of newProfileCols) {
+      if (!profileCols.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
+    }
     // 老库补列：open_windows.owner_pid（窗口归属进程号，孤儿回收用；新库 CREATE TABLE 已自带）
     const owInfo = await this.client.execute(`PRAGMA table_info(open_windows)`)
     if (!owInfo.rows.some((r) => String(r.name) === 'owner_pid')) {
@@ -371,6 +432,11 @@ export class AppDb {
     if (!runsInfo3.rows.some((r) => String(r.name) === 'diag_path')) {
       await this.client.execute(`ALTER TABLE runs ADD COLUMN diag_path TEXT`)
     }
+    // 老库补列：runs.failure_kind（失败分类，可空；不参与 UNIQUE，直接 ADD COLUMN 无需重建表）
+    const runsInfo4 = await this.client.execute(`PRAGMA table_info(runs)`)
+    if (!runsInfo4.rows.some((r) => String(r.name) === 'failure_kind')) {
+      await this.client.execute(`ALTER TABLE runs ADD COLUMN failure_kind TEXT`)
+    }
     // 索引放补列块外无条件幂等创建：ALTER 与建索引之间崩溃不会永久丢失索引
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_runs_batch_id ON runs(batch_id)`)
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
@@ -390,6 +456,19 @@ export class AppDb {
       await this.client.execute(`ALTER TABLE airdrop_projects ADD COLUMN task_key TEXT`)
     }
     await this.client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_projects_task_key ON airdrop_projects(task_key) WHERE task_key IS NOT NULL`)
+    // 一次性迁移：旧熔断计数语义废弃，首次升级到健康状态模型时清零全部旧计数（app_meta 打标记保证只执行一次）
+    await this.client.execute(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+    const migrated = await this.client.execute({
+      sql: 'SELECT value FROM app_meta WHERE key = ?',
+      args: ['circuit_breaker_v2_migrated'],
+    })
+    if (migrated.rows.length === 0) {
+      await this.client.execute(`UPDATE profiles SET circuit_breaker_count = 0, circuit_breaker_state = 'closed', circuit_breaker_level = 0, circuit_breaker_next_probe_ms = NULL, circuit_breaker_probe_started_ms = NULL, circuit_breaker_reason = NULL, circuit_breaker_updated_at = NULL`)
+      await this.client.execute({
+        sql: 'INSERT OR IGNORE INTO app_meta (key, value) VALUES (?, ?)',
+        args: ['circuit_breaker_v2_migrated', '1'],
+      })
+    }
   }
 
   close(): void {
@@ -500,6 +579,164 @@ export class AppDb {
     return Number(rs.rowsAffected ?? 0)
   }
 
+  private static toWindowHealth(r: Row | undefined): WindowHealth {
+    if (!r) return { state: 'closed', failures: 0, level: 0, nextProbeMs: null, probeStartedMs: null, reason: null, updatedAt: null }
+    return {
+      state: String(r.state ?? 'closed') as CircuitBreakerState,
+      failures: Number(r.failures ?? 0),
+      level: Number(r.level ?? 0),
+      nextProbeMs: r.nextProbeMs == null ? null : Number(r.nextProbeMs),
+      probeStartedMs: r.probeStartedMs == null ? null : Number(r.probeStartedMs),
+      reason: r.reason == null ? null : String(r.reason),
+      updatedAt: r.updatedAt == null ? null : String(r.updatedAt),
+    }
+  }
+
+  /** 读取窗口健康状态；窗口不存在时按 closed 处理 */
+  async getWindowHealth(profileId: number): Promise<WindowHealth> {
+    const rows = await this.exec(
+      `SELECT circuit_breaker_state AS state, circuit_breaker_count AS failures, circuit_breaker_level AS level,
+              circuit_breaker_next_probe_ms AS nextProbeMs, circuit_breaker_probe_started_ms AS probeStartedMs,
+              circuit_breaker_reason AS reason, circuit_breaker_updated_at AS updatedAt
+       FROM profiles WHERE id = ?`,
+      [profileId],
+    )
+    return AppDb.toWindowHealth(rows[0])
+  }
+
+  /** 记录一次环境级失败；达到阈值或半开失败时打开熔断 */
+  async recordWindowEnvironmentFailure(profileId: number, reason: string, policy: CircuitBreakerPolicy, nowMs = Date.now()): Promise<WindowHealth> {
+    const tx = await this.client.transaction('write')
+    try {
+      const rows = await tx.execute({
+        sql: `SELECT circuit_breaker_state AS state, circuit_breaker_count AS failures, circuit_breaker_level AS level,
+                     circuit_breaker_next_probe_ms AS nextProbeMs, circuit_breaker_probe_started_ms AS probeStartedMs,
+                     circuit_breaker_reason AS reason, circuit_breaker_updated_at AS updatedAt
+              FROM profiles WHERE id = ?`,
+        args: [profileId],
+      })
+      const current = AppDb.toWindowHealth(rows.rows[0])
+      const failures = current.failures + 1
+      let state: CircuitBreakerState = current.state
+      let level = current.level
+      let nextProbeMs = current.nextProbeMs
+      let probeStartedMs = current.probeStartedMs
+
+      if (current.state === 'half_open') {
+        level = Math.min(level + 1, 2)
+        state = 'open'
+        nextProbeMs = nowMs + Math.min(policy.cooldownMs * 2 ** level, policy.maxCooldownMs)
+        probeStartedMs = null
+      } else if (failures >= policy.threshold) {
+        state = 'open'
+        level = 0
+        nextProbeMs = nowMs + policy.cooldownMs
+        probeStartedMs = null
+      }
+
+      const nextReason = state === 'open' ? reason : current.reason
+      const updatedAt = localWallNow()
+      await tx.execute({
+        sql: `UPDATE profiles SET circuit_breaker_count = ?, circuit_breaker_state = ?, circuit_breaker_level = ?,
+                     circuit_breaker_next_probe_ms = ?, circuit_breaker_probe_started_ms = ?,
+                     circuit_breaker_reason = ?, circuit_breaker_updated_at = ? WHERE id = ?`,
+        args: [failures, state, level, nextProbeMs, probeStartedMs, nextReason, updatedAt, profileId],
+      })
+      await tx.commit()
+      return { state, failures, level, nextProbeMs, probeStartedMs, reason: nextReason, updatedAt }
+    } catch (e) {
+      await tx.rollback().catch(() => {})
+      throw e
+    }
+  }
+
+  /** 任务成功：关闭熔断并清空计数/等级/冷却 */
+  async recordWindowSuccess(profileId: number): Promise<WindowHealth> {
+    const updatedAt = localWallNow()
+    await this.exec(
+      `UPDATE profiles SET circuit_breaker_count = 0, circuit_breaker_state = 'closed', circuit_breaker_level = 0,
+              circuit_breaker_next_probe_ms = NULL, circuit_breaker_probe_started_ms = NULL,
+              circuit_breaker_reason = NULL, circuit_breaker_updated_at = ? WHERE id = ?`,
+      [updatedAt, profileId],
+    )
+    return { state: 'closed', failures: 0, level: 0, nextProbeMs: null, probeStartedMs: null, reason: null, updatedAt }
+  }
+
+  /** 原子抢占探测租约；open 到期或 half_open 租约空闲时成功 */
+  async claimWindowProbe(profileId: number, opts: { leaseMs: number; nowMs?: number }): Promise<boolean> {
+    const now = opts.nowMs ?? Date.now()
+    const staleBefore = now - opts.leaseMs
+    const rs = await this.client.execute({
+      sql: `UPDATE profiles SET circuit_breaker_state = 'half_open', circuit_breaker_probe_started_ms = ?, circuit_breaker_updated_at = ?
+            WHERE id = ? AND (
+              (circuit_breaker_state = 'open' AND (circuit_breaker_next_probe_ms IS NULL OR circuit_breaker_next_probe_ms <= ?))
+              OR (circuit_breaker_state = 'half_open' AND (circuit_breaker_probe_started_ms IS NULL OR circuit_breaker_probe_started_ms <= ?))
+            )`,
+      args: [now, localWallNow(), profileId, now, staleBefore],
+    })
+    return Number(rs.rowsAffected) > 0
+  }
+
+  /** 释放探测租约：retry 保持 half_open；aborted 退回 open 并 1 分钟后重试 */
+  async releaseWindowProbe(profileId: number, outcome: 'retry' | 'aborted', nowMs = Date.now()): Promise<void> {
+    const updatedAt = localWallNow()
+    if (outcome === 'retry') {
+      await this.exec(
+        `UPDATE profiles SET circuit_breaker_probe_started_ms = NULL, circuit_breaker_updated_at = ?
+         WHERE id = ? AND circuit_breaker_state = 'half_open'`,
+        [updatedAt, profileId],
+      )
+      return
+    }
+    await this.exec(
+      `UPDATE profiles SET circuit_breaker_state = 'open', circuit_breaker_next_probe_ms = ?,
+              circuit_breaker_probe_started_ms = NULL, circuit_breaker_updated_at = ?
+       WHERE id = ? AND circuit_breaker_state = 'half_open'`,
+      [nowMs + 60_000, updatedAt, profileId],
+    )
+  }
+
+  /** 手动重置单个窗口健康状态 */
+  async resetWindowHealth(profileId: number): Promise<void> {
+    await this.exec(
+      `UPDATE profiles SET circuit_breaker_count = 0, circuit_breaker_state = 'closed', circuit_breaker_level = 0,
+              circuit_breaker_next_probe_ms = NULL, circuit_breaker_probe_started_ms = NULL,
+              circuit_breaker_reason = NULL, circuit_breaker_updated_at = ? WHERE id = ?`,
+      [localWallNow(), profileId],
+    )
+  }
+
+  /** 每日重置所有窗口健康状态；返回变更行数 */
+  async resetAllWindowHealth(): Promise<number> {
+    const rs = await this.client.execute({
+      sql: `UPDATE profiles SET circuit_breaker_count = 0, circuit_breaker_state = 'closed', circuit_breaker_level = 0,
+                   circuit_breaker_next_probe_ms = NULL, circuit_breaker_probe_started_ms = NULL,
+                   circuit_breaker_reason = NULL, circuit_breaker_updated_at = ?
+            WHERE circuit_breaker_state <> 'closed' OR circuit_breaker_count > 0`,
+      args: [localWallNow()],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
+  /**
+   * 启动恢复：过期（或无开始时间）的半开探测退回 open，并安排 1 分钟后重探；
+   * 避免进程重启后把窗口永久卡在 half_open。返回变更行数
+   */
+  async recoverStaleWindowProbes(leaseMs: number, nowMs = Date.now()): Promise<number> {
+    const staleBefore = nowMs - leaseMs
+    const rs = await this.client.execute({
+      sql: `UPDATE profiles
+            SET circuit_breaker_state = 'open',
+                circuit_breaker_probe_started_ms = NULL,
+                circuit_breaker_next_probe_ms = ?,
+                circuit_breaker_updated_at = ?
+            WHERE circuit_breaker_state = 'half_open'
+              AND (circuit_breaker_probe_started_ms IS NULL OR circuit_breaker_probe_started_ms <= ?)`,
+      args: [nowMs + 60_000, localWallNow(), staleBefore],
+    })
+    return Number(rs.rowsAffected ?? 0)
+  }
+
   /**
    * 幂等写入运行记录（无则插入、有则更新），单条 UPSERT 完成
    * @param patch 可选字段补丁（error/screenshot/attempts 等）
@@ -509,8 +746,8 @@ export class AppDb {
    */
   async upsertRun(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow> {
     await this.exec(
-      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id, diag_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO runs (profile_id, task_key, date, slot, status, attempts, error, screenshot, started_at, finished_at, batch_id, diag_path, failure_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_id, task_key, date, slot) DO UPDATE SET
          status = excluded.status,
          attempts = CASE WHEN excluded.attempts = 0 THEN runs.attempts ELSE excluded.attempts END,
@@ -518,8 +755,9 @@ export class AppDb {
          screenshot = excluded.screenshot, started_at = COALESCE(excluded.started_at, runs.started_at),
          finished_at = COALESCE(excluded.finished_at, runs.finished_at),
          batch_id = COALESCE(excluded.batch_id, runs.batch_id),
-         diag_path = COALESCE(excluded.diag_path, runs.diag_path)`,
-      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null, patch.diagPath ?? null],
+         diag_path = COALESCE(excluded.diag_path, runs.diag_path),
+         failure_kind = excluded.failure_kind`,
+      [profileId, taskKey, date, slot, status, patch.attempts ?? 0, patch.error ?? null, patch.screenshot ?? null, patch.startedAt ?? null, patch.finishedAt ?? null, patch.batchId ?? null, patch.diagPath ?? null, patch.failureKind ?? null],
     )
     const rows = await this.exec(`${SELECT_RUN} WHERE r.profile_id = ? AND r.task_key = ? AND r.date = ? AND r.slot = ?`, [profileId, taskKey, date, slot])
     return rows[0] as unknown as RunRow

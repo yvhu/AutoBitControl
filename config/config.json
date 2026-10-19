@@ -16,7 +16,10 @@
     "retryMax": 2,
     "retryBackoffSec": 600,
     "circuitBreakerThreshold": 2,
-    "circuitBreakerResetEveryHours": 1,
+    "circuitBreakerEnabled": true,
+    "circuitBreakerCooldownSec": 1800,
+    "circuitBreakerMaxCooldownSec": 7200,
+    "circuitBreakerResetAt": "23:59",
     "maxConcurrentWindows": 6
   },
   "scheduler": {

@@ -11,7 +11,7 @@ import { AppDb } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
-import { PatchrightDriver, WindowRunner } from './engine/window-runner'
+import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/window-runner'
 import { CoalescingEnqueuer } from './engine/queue'
 import { CancelRegistry } from './engine/cancel-registry'
 import { createTaskStopper } from './engine/task-stopper'
@@ -122,6 +122,9 @@ export async function startApp(): Promise<void> {
     process.exit(1)
   }
   logger.info({ path: cfg.storage.dbPath }, '本地数据库已打开')
+  // 启动恢复：进程重启后残留的过期半开探测退回 open（1 分钟后可重探），避免窗口永久卡在 half_open
+  const recovered = await db.recoverStaleWindowProbes(windowProbeLeaseMs(cfg)).catch(() => 0)
+  if (recovered > 0) logger.info({ recovered }, '已回收过期窗口半开探测')
   const bitbrowser = createBitBrowserClient({ apiBase: cfg.bitbrowser.apiBase, timeoutMs: cfg.bitbrowser.openTimeoutMs })
 
   // 启动时同步窗口列表到 profiles 表（未就绪仅告警，不阻塞启动）
@@ -224,7 +227,7 @@ export async function startApp(): Promise<void> {
   })
   scheduler.start()
 
-  // 熔断每日定时重置：到点归零所有窗口熔断计数（circuitBreakerResetAt 为空则不排程）；
+  // 熔断每日定时重置：到点重置所有窗口健康状态（circuitBreakerResetAt 为空则不排程）；
   // 退出时随 shutdown 一并 stop，取消已挂定时器
   const maintenance = startCircuitBreakerResetSchedule(cfg, db, logger)
 

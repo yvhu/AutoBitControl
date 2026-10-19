@@ -25,7 +25,7 @@ import {
   joinBitbrowserIds,
   profileSorters,
   useBatchProfiles,
-  useBreakerThreshold,
+  useBreakerSettings,
   useCloseProfile,
   useOpenProfile,
   usePatchProfile,
@@ -33,6 +33,7 @@ import {
   useResetBreaker,
   useSyncProfiles,
 } from './hooks'
+import { breakerView } from './breaker'
 
 export default function ProfilesPage() {
   const { message } = App.useApp()
@@ -40,7 +41,7 @@ export default function ProfilesPage() {
   const [search, setSearch] = useState('')
 
   const profiles = useProfiles()
-  const thresholdQ = useBreakerThreshold()
+  const breakerQ = useBreakerSettings()
   const patch = usePatchProfile()
   const open = useOpenProfile()
   const close = useCloseProfile()
@@ -49,7 +50,7 @@ export default function ProfilesPage() {
   const batch = useBatchProfiles()
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([])
 
-  const threshold = thresholdQ.data ?? 0
+  const breaker = breakerQ.data ?? { threshold: 2, enabled: true }
 
   const rows = useMemo(() => filterProfiles(profiles.data ?? [], search), [profiles.data, search])
 
@@ -161,11 +162,12 @@ export default function ProfilesPage() {
       sorter: profileSorters.breaker,
       render: (_, p) => {
         const count = p.circuitBreakerCount
-        const pct = threshold > 0 ? Math.min(100, Math.round((count / threshold) * 100)) : 0
+        const view = breakerView(p, breaker.threshold, breaker.enabled)
+        const pct = breaker.threshold > 0 ? Math.min(100, Math.round((count / breaker.threshold) * 100)) : 0
         return (
           <Space size="small">
-            <Tag color={count > 0 ? 'gold' : 'default'}>
-              {count}/{threshold > 0 ? threshold : '?'}
+            <Tag color={view.color} title={view.title}>
+              {view.text}
             </Tag>
             <Progress
               percent={pct}
@@ -222,7 +224,7 @@ export default function ProfilesPage() {
             <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyId(p.bitbrowserId)}>
               复制ID
             </Button>
-            {p.circuitBreakerCount > 0 && (
+            {(p.circuitBreakerCount > 0 || (p.breakerState && p.breakerState !== 'closed')) && (
               <Button
                 type="link"
                 size="small"
