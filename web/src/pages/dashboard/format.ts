@@ -14,6 +14,13 @@ export function formatDuration(sec: number | null): string {
   return `${h}h ${m % 60}m ${s}s`
 }
 
+/** 预计开始展示：null/非法值/0 → '—'；时间戳 → 本地 HH:mm */
+export function formatEta(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '—'
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** 失败类型中文文案（未知/空为 —） */
 export function failureKindLabel(kind: string | null | undefined): string {
   switch (kind) {

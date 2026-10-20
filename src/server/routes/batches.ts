@@ -9,6 +9,7 @@ import { todayStr, type AppDb, type BatchRow, type ProfileRow, type RunRow } fro
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { TaskStopper } from '../../engine/task-stopper'
 import type { SiteTask } from '../../tasks/base'
+import { staggerNotBefore, type StaggerConfig } from '../../engine/stagger'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 
@@ -108,6 +109,7 @@ function daysAgoStr(days: number): string {
  *                           failureKind: { type: string, nullable: true, enum: [environment, task, timeout, stopped, captcha, breaker] }
  *                           durationSec: { type: integer, nullable: true }
  *                           inFlight: { type: boolean }
+ *                           notBeforeMs: { type: integer, format: int64, nullable: true }
  *                           profileName: { type: string }
  *                           bitbrowserId: { type: string }
  *                     running: { type: integer }
@@ -160,6 +162,7 @@ function daysAgoStr(days: number): string {
  *                           failureKind: { type: string, nullable: true, enum: [environment, task, timeout, stopped, captcha, breaker] }
  *                           durationSec: { type: integer, nullable: true }
  *                           inFlight: { type: boolean }
+ *                           notBeforeMs: { type: integer, format: int64, nullable: true }
  *                           profileName: { type: string }
  *                           bitbrowserId: { type: string }
  */
@@ -171,6 +174,8 @@ export interface BatchesDeps {
   getRunById: AppDb['getRunById']
   /** 窗口熔断总开关：关闭时不把数据库里的历史 raw 状态当作重跑阻塞原因 */
   circuitBreakerEnabled: boolean
+  /** 错峰配置（重跑失败的窗口按勾选顺序铺开） */
+  stagger: StaggerConfig
 }
 
 export function batchesRouter(deps: BatchesDeps): Router {
@@ -348,7 +353,19 @@ export function batchesRouter(deps: BatchesDeps): Router {
     }
     const batchRow = await deps.db.createBatch('bulk', batch.taskKey, 'rerun-failed')
     const profilesToRun = [...chosen.values()].map((run) => profileById.get(run.profileId) as ProfileRow)
-    for (const profile of profilesToRun) await deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id })
+    const startMs = Date.now()
+    const count = profilesToRun.length
+    for (let i = 0; i < profilesToRun.length; i++) {
+      const notBeforeMs = staggerNotBefore({
+        startMs,
+        nowMs: startMs,
+        index: i,
+        count,
+        spreadMs: deps.stagger.spreadSec * 1000,
+        jitterPct: deps.stagger.jitterPct,
+      })
+      await deps.enqueuer.enqueue(profilesToRun[i], batch.taskKey, { batchId: batchRow.id, notBeforeMs })
+    }
     ok(res, { batchId: batchRow.id, queued: profilesToRun.length })
   }))
 

@@ -4,7 +4,7 @@ import StatusPill from '../../components/StatusPill'
 import ConfirmButton from '../../components/ConfirmButton'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
-import { formatDuration, formatDateTime, failureKindLabel } from './format'
+import { formatDuration, formatDateTime, formatEta, failureKindLabel } from './format'
 import { splitBatches, batchProgress, batchTiming, canRerunFailed } from './groupBatches'
 import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
@@ -67,6 +67,13 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
         ) },
         { title: '任务', dataIndex: 'taskKey', width: 130, render: (k: string) => <TaskName info={taskInfo[k]} fallback={k} /> },
         { title: '开始', dataIndex: 'startedAt', width: 110, render: runTime },
+        {
+          title: '预计开始',
+          dataIndex: 'notBeforeMs',
+          width: 90,
+          render: (ms: number | null | undefined, r) =>
+            r.status === 'pending' || r.status === 'retry_wait' ? formatEta(ms) : '—',
+        },
         { title: '耗时', dataIndex: 'durationSec', width: 80, render: (s: number | null) => formatDuration(s) },
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
@@ -178,6 +185,13 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
           <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
         ) },
+        {
+          title: '预计开始',
+          dataIndex: 'notBeforeMs',
+          width: 90,
+          render: (ms: number | null | undefined, r) =>
+            r.status === 'pending' || r.status === 'retry_wait' ? formatEta(ms) : '—',
+        },
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },

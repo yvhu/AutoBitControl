@@ -60,6 +60,7 @@ interface MockDeps {
     bitbrowser: { apiBase: string }
     execution: {
       staggerMaxSec: number
+      staggerJitterPct: number
       circuitBreakerThreshold: number
       circuitBreakerEnabled: boolean
       circuitBreakerCooldownSec: number
@@ -134,7 +135,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { staggerMaxSec: 120, circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
+      execution: { staggerMaxSec: 120, staggerJitterPct: 15, circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
       dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
@@ -364,7 +365,29 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.status).toBe(200)
       expect(res.body.data).toEqual({ batchId: 88, queued: 1 })
       expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'rerun-failed')
-      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88 })
+      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88, notBeforeMs: expect.any(Number) })
+    })
+
+    it('POST /api/batches/:id/rerun-failed 按勾选顺序错峰', async () => {
+      const deps = makeDeps()
+      deps.cfg.execution.staggerMaxSec = 100
+      deps.cfg.execution.staggerJitterPct = 0
+      deps.db.listRunsForBatch.mockResolvedValue([
+        runRow(101, 1, 'failed'),
+        runRow(102, 2, 'failed'),
+        runRow(103, 3, 'failed'),
+      ])
+      deps.db.listProfiles.mockResolvedValue([
+        { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+        { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 1, circuitBreakerCount: 0 },
+      ])
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [103, 101, 102] })
+      expect(res.status).toBe(200)
+      expect(deps.enqueuer.enqueue.mock.calls.map((c) => c[0].bitbrowserId)).toEqual(['bb-3', 'bb-1', 'bb-2'])
+      const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
+      expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
+      expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
     })
 
     it('POST /api/batches/:id/rerun-failed 停用窗口拒绝执行', async () => {
@@ -660,15 +683,31 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-all')
     expect(deps.enqueuer.enqueue).toHaveBeenCalled()
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88 })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
-  it('单窗口触发创建 single 批次', async () => {
+  it('多窗口批量触发按窗口顺序均匀错峰', async () => {
+    const deps = makeDeps()
+    deps.cfg.execution.staggerMaxSec = 100
+    deps.cfg.execution.staggerJitterPct = 0
+    deps.db.listProfiles.mockResolvedValue([
+      { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+      { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 1, circuitBreakerCount: 0 },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
+    expect(res.status).toBe(200)
+    const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
+    expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
+    expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
+  })
+
+  it('单窗口触发创建 single 批次并立即执行', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
     expect(res.status).toBe(200)
     expect(deps.db.createBatch).toHaveBeenCalledWith('single', 't1', 'trigger-single')
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ immediate: true, batchId: 88 })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ immediate: true, batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
   it('触发任务存在在途 run 返回 409（业务码 40902）', async () => {
@@ -702,7 +741,24 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(2)
     expect(deps.enqueuer.enqueue.mock.calls[0][0].bitbrowserId).toBe('bb-1')
     expect(deps.enqueuer.enqueue.mock.calls[1][0].bitbrowserId).toBe('bb-2')
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88 })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
+  })
+
+  it('多窗口测试触发按选择顺序错峰', async () => {
+    const deps = makeDeps()
+    deps.cfg.execution.staggerMaxSec = 100
+    deps.cfg.execution.staggerJitterPct = 0
+    deps.db.listProfiles.mockResolvedValue([
+      { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+      { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 1, circuitBreakerCount: 0 },
+    ])
+    const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-3', 'bb-1', 'bb-2'] })
+    expect(res.status).toBe(200)
+    expect(deps.enqueuer.enqueue.mock.calls.map((c) => c[0].bitbrowserId)).toEqual(['bb-3', 'bb-1', 'bb-2'])
+    const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
+    expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
+    expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
   })
 
   it('多窗口测试触发：重复 id 去重', async () => {
@@ -1016,6 +1072,7 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).get('/api/settings')
     expect(res.body.code).toBe(0)
     expect(res.body.data.bitbrowserApiBase).toBeTruthy()
+    expect(res.body.data.staggerJitterPct).toBe(15)
     expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
     expect(res.body.data.circuitBreakerEnabled).toBe(true)
     expect(res.body.data.circuitBreakerCooldownSec).toBe(1800)

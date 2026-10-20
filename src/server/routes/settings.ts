@@ -12,6 +12,7 @@ export interface PublicSettings {
   bitbrowserApiBase: string
   webPort: number
   staggerMaxSec: number
+  staggerJitterPct: number
   circuitBreakerThreshold: number
   circuitBreakerEnabled: boolean
   circuitBreakerCooldownSec: number
@@ -48,6 +49,7 @@ export interface PublicSettings {
  *                     bitbrowserApiBase: { type: string }
  *                     webPort: { type: integer }
  *                     staggerMaxSec: { type: integer }
+ *                     staggerJitterPct: { type: integer }
  *                     circuitBreakerThreshold: { type: integer }
  *                     circuitBreakerEnabled: { type: boolean }
  *                     circuitBreakerCooldownSec: { type: integer }
@@ -103,6 +105,7 @@ export function settingsRouter(deps: {
       bitbrowserApiBase: deps.cfg.bitbrowser.apiBase,
       webPort: deps.cfg.web.port,
       staggerMaxSec: deps.cfg.execution.staggerMaxSec,
+      staggerJitterPct: deps.cfg.execution.staggerJitterPct,
       circuitBreakerThreshold: deps.cfg.execution.circuitBreakerThreshold,
       circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled,
       circuitBreakerCooldownSec: deps.cfg.execution.circuitBreakerCooldownSec,

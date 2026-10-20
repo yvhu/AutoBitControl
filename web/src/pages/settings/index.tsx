@@ -54,7 +54,7 @@ export default function SettingsPage() {
           size="small"
           column={{ xs: 1, md: 2 }}
           items={[
-            { key: 'stagger', label: '错峰上限', children: `${s.staggerMaxSec} 秒` },
+            { key: 'stagger', label: '错峰铺开时长', children: `${s.staggerMaxSec} 秒（间距抖动 ±${s.staggerJitterPct}%）` },
             { key: 'maxWin', label: '全局窗口上限', children: s.maxConcurrentWindows },
             { key: 'breakerEnabled', label: '熔断开关', children: s.circuitBreakerEnabled ? '开启' : '关闭' },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },

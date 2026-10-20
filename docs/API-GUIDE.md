@@ -67,7 +67,7 @@
 | 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
 | 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；30 分钟起步指数退避到 2 小时；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
-| 错峰 / Stagger | 批量开窗前随机等一小段（默认最多 120 秒），避免所有窗口同一秒一起访问站点 | §7 |
+| 错峰 / Stagger | 批量触发时把窗口按序号均匀铺开（默认总铺开 120 秒）并叠加间距抖动，避免所有窗口同一秒一起访问站点 | §7 |
 | 在途 / in-flight | 某窗口或任务当天已有 `pending/running/retry_wait` 行（已排队或正在跑）；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
 | 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
 | 遮罩 / Mask | 弹窗背后盖住整页的半透明灰层 | §6.3 |
@@ -1157,13 +1157,20 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 运行队列（runs 即队列）
 
-- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（错峰/重试时间）与 `batch_id`。
+- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（错峰到期/重试时间）与 `batch_id`。
 - dispatcher 每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口的多个任务合并为一次窗口会话。
 - 重试只写 `retry_wait + not_before_ms`，不再依赖进程内定时器；进程重启时会把当天崩溃残留的 `running` 行重置为 `pending`，重启后仍可继续。
 - 批次停止会把仍在排队的 `pending/retry_wait` 行直接结算为 `skipped`（手动停止）；运行中的行仍走取消 + 关窗。
-- 面板的 `pending/retry_wait` 行来自数据库；任务页在途、看板实时运行数也只查数据库。
+- 面板的 `pending/retry_wait` 行来自数据库，并显示预计开始时间（`not_before_ms`）。这是最早可调度时间（下限），受并发上限与在途任务影响，实际开始可能更晚；任务页在途、看板实时运行数也只查数据库。
 - `task:run` 单窗口调试在运行前会先入队并原子认领当天该任务行（`claimQueuedRuns`），因此后端 dispatcher 不会同时拾取同一行；它不启动 dispatcher，重试按行内 `not_before_ms` 自行等待。
 - 不要在同一窗口同时运行 `task:run` 与后端：后端重启恢复会把当天崩溃残留的 `running` 行（包括 `task:run` 正在跑的行）重新排队，可能导致双方重复执行。
+
+### 并发阀门与错峰
+
+- 并发由数据库 claim 事务裁决：全局按 `running` 的 distinct 窗口数，任务级按 `running` 中该 task 的 distinct 窗口数。
+- 同一窗口的多个任务共享一次会话；全局窗口额度只算 1。多个后端实例共享同一数据库时也不会突破上限。
+- 错峰为“均匀铺开 + 抖动”：`staggerMaxSec` 是本批窗口的总铺开时长，窗口按序号均匀分布；`staggerJitterPct` 在相邻窗口间距上叠加抖动（占间距百分比），因此个别窗口可能略微超出总铺开时长。`pending/retry_wait` 行可在看板看到预计开始时间；该时间是下限（最早可调度时间），实际开始可能因并发上限或在途任务而延后。
+- 自动重试只使用 `backoffSec`，不叠加初始错峰；单窗口入口（看板行级执行、`task:run`）不等待错峰。
 
 ### 6.6 失败自动诊断包
 
@@ -1277,7 +1284,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `staggerMaxSec`（120 秒）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限，与任务级 `concurrency` 双闸门取更严者。 |
+| `execution` | `staggerMaxSec`（120 秒）、`staggerJitterPct`（15，0-50）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`staggerMaxSec` 为本批窗口错峰的总铺开时长（0 关闭），窗口按序号均匀分布；`staggerJitterPct` 为相邻窗口间距的抖动幅度（占间距百分比，0-50，0 = 完全均匀），抖动可能让个别窗口略微超出总铺开时长。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限，与任务级 `concurrency` 一起由数据库 claim 事务裁决（取更严者）。 |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |

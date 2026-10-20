@@ -674,6 +674,7 @@ export interface paths {
                                 bitbrowserApiBase?: string;
                                 webPort?: number;
                                 staggerMaxSec?: number;
+                                staggerJitterPct?: number;
                                 circuitBreakerThreshold?: number;
                                 circuitBreakerEnabled?: boolean;
                                 circuitBreakerCooldownSec?: number;
@@ -1287,6 +1288,7 @@ export interface paths {
                                     bitbrowserId?: string;
                                     durationSec?: number | null;
                                     inFlight?: boolean;
+                                    notBeforeMs?: number | null;
                                 }[];
                                 running?: number;
                                 taskNames?: { [key: string]: string; };
@@ -1345,6 +1347,7 @@ export interface paths {
                                     bitbrowserId?: string;
                                     durationSec?: number | null;
                                     inFlight?: boolean;
+                                    notBeforeMs?: number | null;
                                 }[];
                             };
                         };

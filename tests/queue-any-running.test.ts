@@ -45,22 +45,22 @@ function makeRunner() {
 }
 
 describe('CoalescingEnqueuer.anyRunning', () => {
-  it('无会话时 false', () => {
+  it('无会话时 false', async () => {
     const { runner } = makeRunner()
-    const q = new CoalescingEnqueuer(db, runner, logger as never, () => 1, 0)
-    expect(q.anyRunning()).toBe(false)
+    const q = new CoalescingEnqueuer(db, runner, logger as never, new Map([['demo', 1]]))
+    expect(await q.anyRunning()).toBe(false)
   })
 
   it('会话运行时 anyRunning=true，结束后 false', async () => {
     const { runner, started, release } = makeRunner()
-    const q = new CoalescingEnqueuer(db, runner, logger as never, () => 1, 0)
+    const q = new CoalescingEnqueuer(db, runner, logger as never, new Map([['demo', 1]]))
     const p = await db.upsertProfile('bb-1', '窗口1')
     await q.enqueue(p, 'demo', { immediate: true })
     await q.tick()
     await vi.waitFor(() => expect(started).toHaveBeenCalled())
-    expect(q.anyRunning()).toBe(true)
+    expect(await q.anyRunning()).toBe(true)
     release()
-    await vi.waitFor(() => expect(q.anyRunning()).toBe(false))
+    await vi.waitFor(async () => expect(await q.anyRunning()).toBe(false))
     q.stop()
   })
 })

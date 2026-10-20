@@ -192,15 +192,17 @@ export async function startApp(): Promise<void> {
     },
   })
   // 双闸门：任务级并发（meta.concurrency）+ 全局窗口上限（execution.maxConcurrentWindows），
-  // enqueuer 内部取更严者控制开窗总数
-  const enqueuer = new CoalescingEnqueuer(db, runner, logger, (key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY, cfg.execution.staggerMaxSec, cfg.execution.maxConcurrentWindows)
+  // 传给 dispatcher 后由 DB claim 事务裁决（runs.status='running' 唯一口径）
+  const limits = new Map([...tasks].map(([key, task]) => [key, Math.max(1, task.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY)]))
+  const enqueuer = new CoalescingEnqueuer(db, runner, logger, limits, cfg.execution.maxConcurrentWindows)
   // dispatcher 常驻：错峰/重试行即使没有新的 enqueue 也要到点被拾取
   enqueuer.start()
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
-  // （建 schedule 批次 + 全部启用窗口入队，不带 immediate 沿用全局错峰）
+  // （建 schedule 批次 + 全部启用窗口入队；错峰按窗口序号均匀铺开）
   const scheduler = new Scheduler({
     db, enqueuer, tasks, logger, timezone: cfg.scheduler.timezone,
+    stagger: { spreadSec: cfg.execution.staggerMaxSec, jitterPct: cfg.execution.staggerJitterPct },
     // 计划级「上传前自动分配」：preview（校验+计划）→ apply（改名+写回）→ 重载数据源
     // （窗口开窗时 accountResolver 才能读到新路径；任一步失败由 Scheduler 捕获并跳过依赖文件的任务）
     fileAssign: {

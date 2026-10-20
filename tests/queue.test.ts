@@ -84,7 +84,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('enqueue 立即写 pending 行；tick 只启动到期窗口', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     await q.enqueue(p, 't1', { immediate: true })
     const rows = await db.listRunsForDate(todayStr())
     expect(rows[0].status).toBe('pending')
@@ -96,7 +96,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('同一窗口 pending 任务合并成一次会话', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     await q.enqueue(p, 't1', { immediate: true })
     await q.enqueue(p, 't2', { immediate: true })
     await q.tick()
@@ -108,7 +108,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('running 窗口不会被重复启动；释放后可启动下一轮', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const { runner, release } = makeGatedRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     await q.enqueue(p, 't1', { immediate: true })
     await q.tick()
     await q.enqueue(p, 't2', { immediate: true })
@@ -124,26 +124,22 @@ describe('CoalescingEnqueuer DB 队列', () => {
     q.stop()
   })
 
-  it('stagger 写入 not_before_ms；未到时间不启动', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-    try {
-      const p = await db.upsertProfile('bb-1', '窗口1')
-      const runner = makeSuccessRunner()
-      const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 60, 2)
-      await q.enqueue(p, 't1')
-      const row = (await db.listRunsForDate(todayStr()))[0]
-      expect(row.notBeforeMs).toBeGreaterThan(Date.now())
-      await q.tick()
-      expect(runner.runWindowTasks).not.toHaveBeenCalled()
-      q.stop()
-    } finally {
-      vi.restoreAllMocks()
-    }
+  it('调用方传入的 notBeforeMs 直接写入；未到时间不启动', async () => {
+    const p = await db.upsertProfile('bb-1', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
+    const notBeforeMs = Date.now() + 60_000
+    await q.enqueue(p, 't1', { notBeforeMs })
+    const row = (await db.listRunsForDate(todayStr()))[0]
+    expect(row.notBeforeMs).toBe(notBeforeMs)
+    await q.tick()
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    q.stop()
   })
 
   it('hasTaskInFlight 走 DB；cancelBatch 结算排队行', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
-    const q = new CoalescingEnqueuer(db, { runWindowTasks: vi.fn() } as never, logger, () => 1, 0, 1)
+    const q = new CoalescingEnqueuer(db, { runWindowTasks: vi.fn() } as never, logger, new Map([['t1', 1]]), 1)
     await q.enqueue(p, 't1', { immediate: true, batchId: 9 })
     expect(await q.hasTaskInFlight('t1')).toBe(true)
     expect(await q.cancelBatch(9)).toBe(1)
@@ -154,7 +150,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('retry_wait 行再次 enqueueRun 时提升为 pending，tick 可调度', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     const date = todayStr()
     await db.enqueueRun(p.id, 't1', date, 7, 0)
     await db.upsertRun(p.id, 't1', date, 0, 'retry_wait', {
@@ -180,7 +176,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('到期的 retry_wait 行被 dispatcher 直接认领执行', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     const date = todayStr()
     await db.enqueueRun(p.id, 't1', date, 7, Date.now())
     await db.upsertRun(p.id, 't1', date, 0, 'retry_wait', {
@@ -199,14 +195,14 @@ describe('CoalescingEnqueuer DB 队列', () => {
     const p1 = await db.upsertProfile('bb-1', '窗口1')
     const p2 = await db.upsertProfile('bb-2', '窗口2')
     const { runner, release } = makeMultiGatedRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 4, 0, 1)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 4], ['t2', 4]]), 1)
     await q.enqueue(p1, 't1', { immediate: true })
     await q.enqueue(p2, 't2', { immediate: true })
     await q.tick()
     await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(1))
     q.stop()
     release(0)
-    await vi.waitFor(() => expect(q.anyRunning()).toBe(false))
+    await vi.waitFor(async () => expect(await q.anyRunning()).toBe(false))
     expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
     q.start()
     await q.tick()
@@ -219,7 +215,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     const p1 = await db.upsertProfile('bb-1', '窗口1')
     const p2 = await db.upsertProfile('bb-2', '窗口2')
     const { runner, release } = makeMultiGatedRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 1, 0, 5)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 5)
     await q.enqueue(p1, 't1', { immediate: true })
     await q.enqueue(p2, 't1', { immediate: true })
     await q.tick()
@@ -234,7 +230,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     const p1 = await db.upsertProfile('bb-1', '窗口1')
     const p2 = await db.upsertProfile('bb-2', '窗口2')
     const { runner, release } = makeMultiGatedRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 4, 0, 1)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 4], ['t2', 4]]), 1)
     await q.enqueue(p1, 't1', { immediate: true })
     await q.enqueue(p2, 't2', { immediate: true })
     await q.tick()
@@ -248,7 +244,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('runner 拒绝时认领行退回 pending，且额度释放后可继续', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const { runner } = makeRejectOnceRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 1, 0, 1)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 1)
     await q.enqueue(p, 't1', { immediate: true })
     await q.tick()
     q.stop()
@@ -261,7 +257,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     })
     // 回队带退避：不能立即被下一 tick 重新认领（持久故障不热循环）
     expect(requeued.notBeforeMs).toBeGreaterThan(Date.now())
-    expect(q.anyRunning()).toBe(false)
+    expect(await q.anyRunning()).toBe(false)
 
     // 退避到期后（测试直接清零 not_before_ms）同一行可再次被认领执行
     await db.upsertRun(p.id, 't1', todayStr(), requeued.slot, 'pending', { notBeforeMs: 0 })
@@ -275,7 +271,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const oldDate = '2000-01-01'
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     await db.enqueueRun(p.id, 'old-pending', oldDate, null, 0)
     await db.enqueueRun(p.id, 'old-retry', oldDate, null, 0)
     await db.upsertRun(p.id, 'old-retry', oldDate, 0, 'retry_wait', { notBeforeMs: 0 })
@@ -301,11 +297,11 @@ describe('CoalescingEnqueuer DB 队列', () => {
         seen.push(...tasks)
       }),
     }
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     // 先跑一次空 tick 建立 lastDate，避免首次 tick 的跨日结算把旧行清掉
     await q.tick()
     const row = await db.enqueueRun(p.id, 't1', oldDate, null, 0)
-    vi.spyOn(db, 'listDueRuns').mockResolvedValueOnce([row])
+    vi.spyOn(db, 'claimDueRuns').mockResolvedValueOnce([row])
 
     await q.tick()
     await vi.waitFor(() => expect(seen).toHaveLength(1))
@@ -316,34 +312,37 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('stop 发生在 tick 等待期间：不再认领或启动会话', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
+    // 先跑一次空 tick 建立 lastDate，确保本轮 tick 直接进入 claimDueRuns
+    await q.tick()
     await q.enqueue(p, 't1', { immediate: true })
 
-    const original = db.listDueRuns.bind(db)
-    let resolveDue!: (rows: RunRow[]) => void
-    const paused = new Promise<RunRow[]>((resolve) => { resolveDue = resolve })
-    vi.spyOn(db, 'listDueRuns').mockImplementationOnce(() => paused)
+    const original = db.claimDueRuns.bind(db)
+    let resolveClaim!: (rows: RunRow[]) => void
+    const paused = new Promise<RunRow[]>((resolve) => { resolveClaim = resolve })
+    let claimStarted!: () => void
+    const started = new Promise<void>((resolve) => { claimStarted = resolve })
+    vi.spyOn(db, 'claimDueRuns').mockImplementationOnce(() => {
+      claimStarted()
+      return paused
+    })
 
     const ticking = q.tick()
+    await started
     q.stop()
-    resolveDue(await original(todayStr(), Date.now()))
+    resolveClaim(await original({ date: todayStr(), nowMs: Date.now(), limits: new Map([['t1', 2], ['t2', 2]]), maxConcurrentWindows: 2 }))
     await ticking
 
     expect(runner.runWindowTasks).not.toHaveBeenCalled()
     expect((await db.listRunsForDate(todayStr()))[0].status).toBe('pending')
   })
 
-  it('tick 认领前被取消的行不会启动（认领只含仍 pending 的行）', async () => {
+  it('tick 前被取消的行不会启动（认领只含仍 pending 的行）', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     await q.enqueue(p, 't1', { immediate: true, batchId: 9 })
-    const original = db.listDueRuns.bind(db)
-    vi.spyOn(db, 'listDueRuns').mockImplementationOnce(async (date, nowMs) => {
-      const rows = await original(date, nowMs)
-      await db.stopQueuedRuns(9)
-      return rows
-    })
+    await db.stopQueuedRuns(9)
     await q.tick()
     expect(runner.runWindowTasks).not.toHaveBeenCalled()
     expect((await db.listRunsForDate(todayStr()))[0].status).toBe('skipped')
@@ -371,9 +370,41 @@ describe('CoalescingEnqueuer DB 队列', () => {
   it('enqueue 的 DB 写失败向调用方 reject（不会产生未处理 rejection）', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const runner = makeSuccessRunner()
-    const q = new CoalescingEnqueuer(db, runner as never, logger, () => 2, 0, 2)
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 2], ['t2', 2]]), 2)
     vi.spyOn(db, 'enqueueRun').mockRejectedValueOnce(new Error('disk full'))
     await expect(q.enqueue(p, 't1', { immediate: true })).rejects.toThrow('disk full')
     q.stop()
   })
+
+  it('取窗口列表失败发生在认领前：不会留下无人执行的 running 行', async () => {
+    const p = await db.upsertProfile('bb-list-fail', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 1)
+    await q.enqueue(p, 't1', { immediate: true })
+    vi.spyOn(db, 'listProfiles').mockRejectedValueOnce(new Error('db down'))
+
+    await q.tick()
+
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    expect((await db.listRunsForDate(todayStr()))[0].status).toBe('pending')
+    q.stop()
+  })
+
+  it('认领后窗口不存在：行按退避回队，不留下 running', async () => {
+    const p = await db.upsertProfile('bb-orphan', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 1)
+    await q.enqueue(p, 't1', { immediate: true })
+    vi.spyOn(db, 'listProfiles').mockResolvedValueOnce([])
+
+    await q.tick()
+
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    const row = (await db.listRunsForDate(todayStr()))[0]
+    expect(row.status).toBe('pending')
+    expect(row.error).toBe('窗口不存在')
+    expect(row.notBeforeMs).toBeGreaterThan(Date.now())
+    q.stop()
+  })
+
 })

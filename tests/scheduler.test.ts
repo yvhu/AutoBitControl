@@ -137,6 +137,7 @@ interface MockDeps extends SchedulerDeps {
   }
   enqueuer: { enqueue: Mock }
   fileAssign: { run: Mock }
+  stagger: { spreadSec: number; jitterPct: number }
 }
 
 function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
@@ -150,6 +151,7 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
     },
     enqueuer: { enqueue: vi.fn().mockResolvedValue(undefined) },
     fileAssign: { run: vi.fn().mockResolvedValue({ renamedCount: 1, updatedRows: 1 }) },
+    stagger: { spreadSec: 120, jitterPct: 15 },
     tasks: new Map([['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }]]),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     timezone: TZ2,
@@ -162,13 +164,41 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
 afterEach(() => vi.restoreAllMocks())
 
 describe('Scheduler', () => {
-  it('到点触发：建 schedule 批次并按启用窗口入队（不带 immediate）', async () => {
+  it('到点触发：建 schedule 批次并按启用窗口入队（单窗口不带 immediate 且不延迟）', async () => {
     const deps = makeDeps()
     deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    const startMs = deps.now!().getTime()
     const s = new Scheduler(deps)
     await s.tick()
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'task-a', '计划#1 每日签到')
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88 })
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88, notBeforeMs: expect.any(Number) })
+    const notBeforeMs = deps.enqueuer.enqueue.mock.calls[0][2].notBeforeMs as number
+    // 错峰起点使用注入时钟（窗口数=1 时不延迟）
+    expect(notBeforeMs).toBe(startMs)
+  })
+
+  it('同一计划多任务共用一组错峰时间，按窗口顺序铺开', async () => {
+    const deps = makeDeps()
+    deps.stagger = { spreadSec: 100, jitterPct: 0 }
+    deps.tasks = new Map([
+      ['task-a', { meta: { key: 'task-a', name: '任务A', url: '' } }],
+      ['task-b', { meta: { key: 'task-b', name: '任务B', url: '' } }],
+    ])
+    deps.db.listSchedules.mockResolvedValue([makeSchedule({ taskKeys: '["task-a","task-b"]' })])
+    deps.db.listProfiles.mockResolvedValue([
+      { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+      { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+      { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 1, circuitBreakerCount: 0 },
+    ])
+    await new Scheduler(deps).tick()
+    const calls = deps.enqueuer.enqueue.mock.calls
+    expect(calls).toHaveLength(6)
+    const forTask = (key: string) => calls.filter((c) => c[1] === key).map((c) => c[2].notBeforeMs as number)
+    const a = forTask('task-a')
+    const b = forTask('task-b')
+    expect(a).toEqual(b)
+    expect(a[1] - a[0]).toBe(50_000)
+    expect(a[2] - a[1]).toBe(50_000)
   })
 
   it('同一分钟只触发一次（去重 Map）', async () => {

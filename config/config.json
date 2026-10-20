@@ -11,6 +11,7 @@
   },
   "execution": {
     "staggerMaxSec": 120,
+    "staggerJitterPct": 15,
     "windowTimeoutMs": 900000,
     "taskTimeoutMs": 180000,
     "retryMax": 2,

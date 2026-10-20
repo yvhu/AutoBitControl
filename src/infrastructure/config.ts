@@ -23,8 +23,10 @@ export interface BitBrowserConfig {
 
 /** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；并发为任务级 meta.concurrency + 全局窗口上限 maxConcurrentWindows 双闸门） */
 export interface ExecutionConfig {
-  /** 窗口会话启动随机错峰上限（秒，0 = 关闭）：批量触发时各窗口在 [0, staggerMaxSec] 内随机延迟后开窗 */
+  /** 本批窗口错峰总铺开时长（秒，0 = 关闭）：窗口按顺序均匀分布在该区间内，并叠加 staggerJitterPct 抖动 */
   staggerMaxSec: number
+  /** 错峰抖动幅度（占窗口间距的百分比，0-50，默认 15）：0 = 完全均匀，越大越分散 */
+  staggerJitterPct: number
   windowTimeoutMs: number
   taskTimeoutMs: number
   retryMax: number
@@ -120,8 +122,10 @@ const defaults: AppConfig = {
     retryBackoffMs: [5000, 30000, 120000],
   },
   execution: {
-    // 窗口会话启动随机错峰上限（秒）：打散批量触发时各窗口的开窗起点，避免同时冲击网络/站点；0 = 关闭（单位秒，建议 0-600）
+    // 本批窗口错峰总铺开时长（秒）：批量触发时各窗口按顺序均匀分布在该区间内，避免同时冲击网络/站点；0 = 关闭
     staggerMaxSec: 120,
+    // 错峰抖动幅度（占窗口间距的百分比，0-50）：打散均匀节奏的相邻窗口；取值非法时回退 15
+    staggerJitterPct: 15,
     // 单窗口会话超时 15 分钟（开窗+全部任务），防止异常卡死占用并发槽位
     windowTimeoutMs: 900000,
     // 单任务默认超时 3 分钟（任务 meta.timeoutSec 可覆盖）
@@ -260,6 +264,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (!Number.isFinite(cb.circuitBreakerMaxCooldownSec) || cb.circuitBreakerMaxCooldownSec < cb.circuitBreakerCooldownSec) {
     cb.circuitBreakerMaxCooldownSec = Math.max(cb.circuitBreakerCooldownSec, 7200)
   }
+  // 错峰总铺开时长：非法/负数回退默认 120，不阻止启动
+  if (!Number.isFinite(cb.staggerMaxSec) || cb.staggerMaxSec < 0) cb.staggerMaxSec = 120
+  // 错峰抖动：0-50 合法，其余（含非数字/越界）回退默认 15，不阻止启动
+  if (!Number.isFinite(cb.staggerJitterPct) || cb.staggerJitterPct < 0 || cb.staggerJitterPct > 50) cb.staggerJitterPct = 15
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]

@@ -13,7 +13,32 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
     expect(cfg.execution.staggerMaxSec).toBe(120)
+    expect(cfg.execution.staggerJitterPct).toBe(15)
     expect(cfg.execution.maxConcurrentWindows).toBe(4)
+  })
+
+  it('staggerMaxSec 非法值（非有限数字或负数）回退 120', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 0 } }))
+    expect(loadConfig({ rootDir: dir }).execution.staggerMaxSec).toBe(0)
+    for (const value of [-1, '120', null]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: value } }))
+      expect(loadConfig({ rootDir: dir }).execution.staggerMaxSec).toBe(120)
+    }
+  })
+
+  it('staggerJitterPct 校验 0-50，非法值回退 15', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    for (const value of [0, 50]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerJitterPct: value } }))
+      expect(loadConfig({ rootDir: dir }).execution.staggerJitterPct).toBe(value)
+    }
+    for (const value of [-1, 51, '15']) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerJitterPct: value } }))
+      expect(loadConfig({ rootDir: dir }).execution.staggerJitterPct).toBe(15)
+    }
   })
 
   it('config.json 与 config.local.json 深度合并，local 覆盖', () => {

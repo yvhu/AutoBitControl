@@ -71,8 +71,10 @@ export function createApp(deps: ServerDeps): express.Express {
 
   const api = express.Router()
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
-  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled }))
-  api.use(tasksRouter(deps))
+  // 错峰配置：触发入口按窗口序号计算 not_before_ms（spreadSec = 本批总铺开时长）
+  const stagger = { spreadSec: deps.cfg.execution.staggerMaxSec, jitterPct: deps.cfg.execution.staggerJitterPct ?? 15 }
+  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled, stagger }))
+  api.use(tasksRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stagger }))
   api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, logger: deps.logger }))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
