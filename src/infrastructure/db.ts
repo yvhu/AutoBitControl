@@ -326,6 +326,12 @@ const SCHEMA = [
 
 const SELECT_PROFILE = `SELECT id, bitbrowser_id AS bitbrowserId, name, enabled, circuit_breaker_count AS circuitBreakerCount, circuit_breaker_state AS circuitBreakerState, circuit_breaker_level AS circuitBreakerLevel, circuit_breaker_next_probe_ms AS circuitBreakerNextProbeMs, circuit_breaker_probe_started_ms AS circuitBreakerProbeStartedMs, circuit_breaker_reason AS circuitBreakerReason, circuit_breaker_updated_at AS circuitBreakerUpdatedAt, remark, seq, last_ip AS lastIp, last_country AS lastCountry, core_version AS coreVersion FROM profiles`
 const SELECT_RUN = `SELECT r.id, r.profile_id AS profileId, r.task_key AS taskKey, r.date, r.slot, r.status, r.attempts, r.error, r.screenshot, r.started_at AS startedAt, r.finished_at AS finishedAt, r.batch_id AS batchId, r.diag_path AS diagPath, r.failure_kind AS failureKind, r.not_before_ms AS notBeforeMs, r.queued_at AS queuedAt, p.name AS profileName, p.bitbrowser_id AS bitbrowserId FROM runs r JOIN profiles p ON p.id = r.profile_id`
+/** 到期行统一口径：当天、待执行、已到期且为最新 slot（claim 与未注册任务结算共用，避免 SQL 漂移） */
+const DUE_RUN_CONDITION = `r.date = ? AND r.status IN ('pending','retry_wait') AND r.not_before_ms <= ?
+  AND NOT EXISTS (
+    SELECT 1 FROM runs r2
+    WHERE r2.profile_id = r.profile_id AND r2.task_key = r.task_key AND r2.date = r.date AND r2.slot > r.slot
+  )`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
 const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
@@ -784,6 +790,27 @@ export class AppDb {
     return rows[0] as unknown as RunRow
   }
 
+  /**
+   * 条件写入运行记录：仅当该轮次仍为 running 时更新（CAS），避免停止已结算的 skipped 行被覆盖
+   * @returns 更新后的行；条件不满足（已终态/已被 stop 结算）时返回当前行（可能为 skipped）
+   * patch 仅支持 error/screenshot/finishedAt/diagPath/failureKind/notBeforeMs/attempts；
+   * startedAt/batchId/queuedAt 不会被修改（attempts=0 保留旧值，finishedAt/diagPath COALESCE）
+   */
+  async updateRunIfRunning(profileId: number, taskKey: string, date: string, slot: number, status: RunStatus, patch: Partial<RunRow> = {}): Promise<RunRow | null> {
+    const attempts = patch.attempts ?? 0
+    await this.exec(
+      `UPDATE runs SET status = ?,
+         attempts = CASE WHEN ? = 0 THEN attempts ELSE ? END,
+         error = ?, screenshot = ?,
+         finished_at = COALESCE(?, finished_at),
+         diag_path = COALESCE(?, diag_path),
+         failure_kind = ?, not_before_ms = ?
+       WHERE profile_id = ? AND task_key = ? AND date = ? AND slot = ? AND status = 'running'`,
+      [status, attempts, attempts, patch.error ?? null, patch.screenshot ?? null, patch.finishedAt ?? null, patch.diagPath ?? null, patch.failureKind ?? null, patch.notBeforeMs ?? 0, profileId, taskKey, date, slot],
+    )
+    return this.getRun(profileId, taskKey, date, slot)
+  }
+
   /** 创建批次（每次触发动作一行）；createdAt 缺省当前本地墙钟时间 */
   async createBatch(kind: BatchKind, taskKey: string, source: string, createdAt = localWallNow()): Promise<BatchRow> {
     const rs = await this.client.execute({
@@ -892,7 +919,7 @@ export class AppDb {
     return Number(rows[0]?.nextSlot ?? 0)
   }
 
-  /** 入队：无最新行或最新行已终态时新建 pending；retry_wait 提升为 pending；其余非终态复用并更新批次/时间 */
+  /** 入队：running no-op（原样返回，不篡改批次/时间）；无最新行或最新行已终态时新建 pending；retry_wait 提升为 pending；其余非终态复用/更新批次与时间 */
   async enqueueRun(profileId: number, taskKey: string, date: string, batchId: number | null, notBeforeMs: number): Promise<RunRow> {
     const tx = await this.client.transaction('write')
     try {
@@ -902,6 +929,11 @@ export class AppDb {
       })
       const latest = latestRows.rows[0] as unknown as RunRow | undefined
       const terminal = latest ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(latest.status) : true
+      if (latest && latest.status === 'running') {
+        // 已在执行的会话持有该行：再入队不改批次/开始时间，原样返回由调用方提示
+        await tx.commit()
+        return latest
+      }
       if (latest && latest.status === 'retry_wait') {
         // 重试到期重新入队：retry_wait 行必须提升回 pending，否则 dispatcher（只调度 pending）永远看不到
         await tx.execute({
@@ -914,8 +946,6 @@ export class AppDb {
         return (await this.getRunById(latest.id))!
       }
       if (latest && !terminal) {
-        // TODO: 最新行已是 running 时这里会静默更新批次/时间（dispatcher 认领后通常不会再入队）；
-        // 若后续需要冲突提示，可细分 running 并返回冲突信号，由调用方决定是否报错
         await tx.execute({
           sql: `UPDATE runs SET not_before_ms = ?, batch_id = COALESCE(?, batch_id), queued_at = COALESCE(queued_at, ?) WHERE id = ?`,
           args: [notBeforeMs, batchId, localWallNow(), latest.id],
@@ -992,24 +1022,30 @@ export class AppDb {
     return rows[0]?.v == null ? null : Number(rows[0].v)
   }
 
-  /** 到期且为最新 slot 的 pending/retry_wait 行 */
-  async listDueRuns(date: string, nowMs: number): Promise<RunRow[]> {
-    return (await this.exec(
-      `${SELECT_RUN}
-       WHERE r.date = ? AND r.status IN ('pending','retry_wait') AND r.not_before_ms <= ?
-         AND NOT EXISTS (
-           SELECT 1 FROM runs r2
-           WHERE r2.profile_id = r.profile_id AND r2.task_key = r.task_key AND r2.date = r.date AND r2.slot > r.slot
-         )
-       ORDER BY r.profile_id, r.not_before_ms, r.id`,
+  /**
+   * 结算到期但任务已不在注册表中的行：limits 无对应 key 时 claim 永远不会认领，
+   * 直接置 skipped 避免永久 pending；只处理当天到期的最新增量行
+   */
+  async settleUnregisteredRuns(date: string, nowMs: number, limits: Map<string, number>): Promise<number> {
+    const due = (await this.exec(
+      `${SELECT_RUN} WHERE ${DUE_RUN_CONDITION} ORDER BY r.profile_id, r.not_before_ms, r.id`,
       [date, nowMs],
     )) as unknown as RunRow[]
+    const ids = due.filter((row) => !limits.has(row.taskKey)).map((row) => row.id)
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(',')
+    const rs = await this.client.execute({
+      sql: `UPDATE runs SET status = 'skipped', error = '任务未注册', finished_at = ?, failure_kind = NULL
+            WHERE id IN (${placeholders}) AND status IN ('pending','retry_wait')`,
+      args: [localWallNow(), ...ids],
+    })
+    return Number(rs.rowsAffected ?? 0)
   }
 
-  /** 某窗口当天是否有 running 行 */
-  async hasRunningRunsForProfile(profileId: number, date: string): Promise<boolean> {
-    const rows = await this.exec(`SELECT COUNT(*) AS c FROM runs WHERE profile_id = ? AND date = ? AND status = 'running'`, [profileId, date])
-    return Number(rows[0]?.c ?? 0) > 0
+  /** 该窗口是否有 running 行（任意日期/任务；面板手动关窗前判定是否需要中止会话） */
+  async hasRunningRun(profileId: number): Promise<boolean> {
+    const rows = await this.exec(`SELECT 1 AS v FROM runs WHERE profile_id = ? AND status = 'running' LIMIT 1`, [profileId])
+    return rows.length > 0
   }
 
   /** 处于 running 的窗口数（COUNT DISTINCT profile_id；会话级额度口径，跨午夜旧会话同样计入） */
@@ -1030,15 +1066,9 @@ export class AppDb {
     const { date, nowMs, limits, maxConcurrentWindows } = opts
     const tx = await this.client.transaction('write')
     try {
-      // 1. 当天到期且为最新 slot 的待执行行（与 listDueRuns 同口径）
+      // 1. 当天到期且为最新 slot 的待执行行（统一到期口径）
       const dueRs = await tx.execute({
-        sql: `${SELECT_RUN}
-              WHERE r.date = ? AND r.status IN ('pending','retry_wait') AND r.not_before_ms <= ?
-                AND NOT EXISTS (
-                  SELECT 1 FROM runs r2
-                  WHERE r2.profile_id = r.profile_id AND r2.task_key = r.task_key AND r2.date = r.date AND r2.slot > r.slot
-                )
-              ORDER BY r.profile_id, r.not_before_ms, r.id`,
+        sql: `${SELECT_RUN} WHERE ${DUE_RUN_CONDITION} ORDER BY r.profile_id, r.not_before_ms, r.id`,
         args: [date, nowMs],
       })
       const due = dueRs.rows as unknown as RunRow[]

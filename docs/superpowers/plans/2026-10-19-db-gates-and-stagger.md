@@ -50,7 +50,7 @@
 
 **Interfaces:**
 - `AppDb.claimDueRuns(opts: { date: string; nowMs: number; limits: Map<string, number>; maxConcurrentWindows: number }): Promise<RunRow[]>`
-- `AppDb.countRunningProfiles(date: string): Promise<number>`
+- `AppDb.countRunningProfiles(): Promise<number>`（无日期参数；全库 `running` 的 distinct 窗口数，跨午夜旧会话同样计入）
 
 **Steps:**
 
@@ -95,8 +95,8 @@ it('claimDueRuns 不改写终态行', async () => {
 
 在一个 `client.transaction('write')` 中：
 
-1. 查当天到期、最新 slot 的 pending/retry_wait（复用 `listDueRuns` 的 SQL）。
-2. 查 `running` 的 `profile_id/task_key`，构建 `runningProfiles`、`taskActive`、`globalActive`。
+1. 查当天到期、最新 slot 的 pending/retry_wait（复用 `DUE_RUN_CONDITION`）。
+2. 查 `running` 的 `profile_id/task_key`（**不按日期过滤**：跨午夜仍在运行的旧会话继续占额度），构建 `runningProfiles`、`taskActive`、`globalActive`。
 3. 按 profile 分组；跳过已有 running 的窗口；`globalActive >= max` 停止；过滤 `taskActive < limits.get(taskKey)`。
 4. 选中窗口的 eligible 行，更新 `globalActive/taskActive`。
 5. 条件 UPDATE 选中行：
@@ -123,8 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_runs_status_date_task ON runs(status, date, task_
 - [ ] **增加 `countRunningProfiles`**
 
 ```ts
-async countRunningProfiles(date: string): Promise<number> {
-  const rows = await this.exec(`SELECT COUNT(DISTINCT profile_id) AS c FROM runs WHERE date = ? AND status = 'running'`, [date])
+async countRunningProfiles(): Promise<number> {
+  const rows = await this.exec(`SELECT COUNT(DISTINCT profile_id) AS c FROM runs WHERE status = 'running'`)
   return Number(rows[0]?.c ?? 0)
 }
 ```
@@ -139,13 +139,12 @@ async countRunningProfiles(date: string): Promise<number> {
 
 **Files:**
 - Modify: `src/engine/queue.ts`
-- Test: `tests/queue.test.ts`、`tests/queue-any-running.test.ts`
+- Test: `tests/queue.test.ts`
 
 **Interfaces:**
 - `CoalescingEnqueuer(db, runner, logger, limits: Map<string, number>, maxConcurrentWindows, tickMs?)`
 - `enqueue(profile, taskKey, opts?: { immediate?: boolean; batchId?: number; notBeforeMs?: number })`
 - `tick()` 只调用 `claimDueRuns`，不再做内存 gate 过滤
-- `anyRunning()` → `db.countRunningProfiles(today) > 0`
 
 **Steps:**
 
@@ -169,6 +168,8 @@ async tick(): Promise<void> {
   this.ticking = true
   try {
     const date = todayStr()
+    // 先取窗口列表：读取失败时尚未认领任何行，不会留下无人执行的 running 行
+    const profiles = new Map((await this.db.listProfiles(false)).map((p) => [p.id, p]))
     const claimed = await this.db.claimDueRuns({
       date,
       nowMs: Date.now(),
@@ -176,7 +177,6 @@ async tick(): Promise<void> {
       maxConcurrentWindows: this.maxConcurrentWindows,
     })
     if (claimed.length === 0) return
-    const profiles = new Map((await this.db.listProfiles(false)).map((p) => [p.id, p]))
     const groups = new Map<number, RunRow[]>()
     for (const row of claimed) {
       const list = groups.get(row.profileId) ?? []
@@ -235,19 +235,9 @@ enqueuer = new CoalescingEnqueuer(db, runner, logger, limits, cfg.execution.maxC
 
 删除原来的 `(key) => tasks.get(key)?.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY` 回调和 `staggerMaxSec` 参数（错峰由触发入口计算后传入）。
 
-- [ ] **`anyRunning` 改 DB**
-
-```ts
-async anyRunning(): Promise<boolean> {
-  return (await this.db.countRunningProfiles(todayStr())) > 0
-}
-```
-
-调用方如有同步依赖，改为 `await`（当前无生产调用方）。
-
 - [ ] **跑测试与类型检查**
 
-`npx vitest run tests/queue.test.ts tests/queue-any-running.test.ts`、`npm run typecheck`
+`npx vitest run tests/queue.test.ts`、`npm run typecheck`
 
 ---
 
@@ -419,8 +409,9 @@ export function formatEta(ms: number | null | undefined): string {
 
 - 并发由数据库 claim 事务裁决：全局按 `running` 的 distinct 窗口数，任务级按 `running` 中该 task 的 distinct 窗口数。
 - 同一窗口的多个任务共享一次会话；全局窗口额度只算 1。
-- 错峰按窗口序号均匀铺开 `staggerMaxSec`，并叠加 `staggerJitterPct` 抖动；`pending/retry_wait` 行可在看板看到预计开始时间。
+- 错峰按窗口序号均匀铺开 `staggerMaxSec`，并叠加 `staggerJitterPct` 抖动；`pending/retry_wait` 行可在看板看到预计开始时间（下界，实际受并发/在途影响可能更晚）。
 - 自动重试只使用 `backoffSec`，不叠加初始错峰。
+- 跨午夜：旧日期的 `pending/retry_wait` 不补跑，统一结算为 `skipped`（跨日未执行）；旧日期 running 会话仅在进程存活期间按认领日期跑完并继续占额度，进程重启时 `recoverRuns` 调 `settleOldRunningRuns` 结算为 `failed`（跨日崩溃残留），不续跑、不补跑。
 ```
 
 - [ ] **AGENTS**

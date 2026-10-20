@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createClient } from '@libsql/client'
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Worker } from 'node:worker_threads'
@@ -659,19 +659,16 @@ describe('runs 即队列', () => {
   let qdb: AppDb
   let qdir: string
   // Windows 上 libsql 的文件句柄要等进程退出才释放，测试内删不掉；
-  // 用固定前缀在下一轮运行开始时清理上次遗留的临时库
-  const QUEUE_TMP_PREFIX = 'abc-queue-'
+  // 前缀带 pid/时间戳，只清理本进程本轮产生的目录，避免误删并行测试进程的临时库
+  const QUEUE_TMP_PREFIX = `abc-queue-${process.pid}-${Date.now()}-`
   const removeDirQuietly = (dir: string): void => {
     try {
       rmSync(dir, { recursive: true, force: true })
     } catch {
-      // 当前进程仍持有句柄，留待下次运行前清理
+      // 当前进程仍持有句柄，目录留在系统临时区由系统清理
     }
   }
   beforeEach(async () => {
-    for (const name of readdirSync(tmpdir())) {
-      if (name.startsWith(QUEUE_TMP_PREFIX)) removeDirQuietly(join(tmpdir(), name))
-    }
     qdir = mkdtempSync(join(tmpdir(), QUEUE_TMP_PREFIX))
     const url = `file:${join(qdir, 'queue.db').split('\\').join('/')}`
     qdb = await AppDb.open(url)
@@ -696,25 +693,40 @@ describe('runs 即队列', () => {
     expect(b.batchId).toBe(8)
   })
 
-  it('listDueRuns 只返回到期、最新 slot 的行', async () => {
-    const p = await qdb.upsertProfile('bb-due', '窗口')
-    await qdb.enqueueRun(p.id, 'a', '2026-10-19', 1, 1000)
-    await qdb.enqueueRun(p.id, 'b', '2026-10-19', 1, 5000)
-    const due = await qdb.listDueRuns('2026-10-19', 2000)
-    expect(due.map((r) => r.taskKey)).toEqual(['a'])
+  it('enqueueRun 遇到最新行 running 时不改写批次/时间', async () => {
+    const p = await qdb.upsertProfile('bb-enq-running', '窗口')
+    const date = '2026-10-19'
+    const queued = await qdb.enqueueRun(p.id, 'a', date, 7, 1000)
+    await qdb.claimQueuedRuns([queued.id], 1000)
 
-    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'success')
-    await qdb.enqueueRun(p.id, 'a', '2026-10-19', 2, 1500)
-    const due2 = await qdb.listDueRuns('2026-10-19', 2000)
-    expect(due2.filter((r) => r.taskKey === 'a').map((r) => r.slot)).toEqual([1])
+    const again = await qdb.enqueueRun(p.id, 'a', date, 8, 2000)
+    expect(again.status).toBe('running')
+    expect(again.batchId).toBe(7)
+    expect(again.notBeforeMs).toBe(1000)
   })
 
-  it('listDueRuns 对同一任务多轮 pending 只返回到期的最新 slot', async () => {
-    const p = await qdb.upsertProfile('bb-latest', '窗口')
-    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'pending', { notBeforeMs: 1000 })
-    await qdb.upsertRun(p.id, 'a', '2026-10-19', 1, 'pending', { notBeforeMs: 1000 })
-    const due = await qdb.listDueRuns('2026-10-19', 2000)
-    expect(due.map((r) => r.slot)).toEqual([1])
+  it('updateRunIfRunning 仅在 running 时更新；0 行返回当前行且保留 attempts/batchId/started_at', async () => {
+    const p = await qdb.upsertProfile('bb-cas', '窗口')
+    const date = '2026-10-19'
+    const batch = await qdb.createBatch('single', 't', 'trigger-single')
+    await qdb.upsertRun(p.id, 't', date, 0, 'running', { attempts: 2, batchId: batch.id, startedAt: '2026-10-19 10:00:00.000' })
+
+    const updated = await qdb.updateRunIfRunning(p.id, 't', date, 0, 'success', { finishedAt: '2026-10-19 10:01:00.000' })
+    expect(updated?.status).toBe('success')
+    expect(updated?.attempts).toBe(2)
+    expect(updated?.batchId).toBe(batch.id)
+    expect(updated?.startedAt).toBe('2026-10-19 10:00:00.000')
+
+    // 已终态：CAS 不命中，返回当前行（success），不会被迟到的失败结果覆盖
+    const late = await qdb.updateRunIfRunning(p.id, 't', date, 0, 'failed', { error: '迟到失败' })
+    expect(late?.status).toBe('success')
+    expect(late?.error).toBeNull()
+    expect(late?.attempts).toBe(2)
+    expect(late?.batchId).toBe(batch.id)
+    expect(late?.startedAt).toBe('2026-10-19 10:00:00.000')
+
+    // 行不存在返回 null（调用方按空结果处理）
+    expect(await qdb.updateRunIfRunning(p.id, 't', date, 9, 'failed')).toBeNull()
   })
 
   it('minPendingNotBefore 无 pending 返回 null，有则取 pending 最小值', async () => {
@@ -726,11 +738,19 @@ describe('runs 即队列', () => {
     expect(await qdb.minPendingNotBefore(p.id, '2026-10-19')).toBe(1000)
   })
 
-  it('hasRunningRunsForProfile 无 running 返回 false，有则 true', async () => {
-    const p = await qdb.upsertProfile('bb-running', '窗口')
-    expect(await qdb.hasRunningRunsForProfile(p.id, '2026-10-19')).toBe(false)
-    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'running')
-    expect(await qdb.hasRunningRunsForProfile(p.id, '2026-10-19')).toBe(true)
+  it('settleUnregisteredRuns 只结算无 limit 的到期行', async () => {
+    const p = await qdb.upsertProfile('bb-unregistered', '窗口')
+    const date = '2026-10-19'
+    await qdb.enqueueRun(p.id, 'known', date, null, 0)
+    await qdb.enqueueRun(p.id, 'ghost', date, null, 0)
+    await qdb.enqueueRun(p.id, 'future-ghost', date, null, 5000)
+
+    expect(await qdb.settleUnregisteredRuns(date, 1000, new Map([['known', 1]]))).toBe(1)
+    const ghost = await qdb.getLatestRun(p.id, 'ghost', date)
+    expect(ghost?.status).toBe('skipped')
+    expect(ghost?.error).toBe('任务未注册')
+    expect((await qdb.getLatestRun(p.id, 'known', date))?.status).toBe('pending')
+    expect((await qdb.getLatestRun(p.id, 'future-ghost', date))?.status).toBe('pending')
   })
 
   it('stopQueuedRuns 把 pending/retry_wait 结算为 skipped', async () => {
@@ -932,38 +952,50 @@ describe('runs 即队列', () => {
       }
       const results: Array<Array<{ id: number; profileId: number }>> = []
       let readyCount = 0
+      const WORKER_WATCHDOG_MS = 10_000
       const workers = [0, 1].map(() => new Worker(workerUrl, { workerData }))
+      let watchdog: ReturnType<typeof setTimeout> | undefined
       try {
-        await Promise.all(
-          workers.map(
-            (worker) =>
-              new Promise<void>((resolve, reject) => {
-                worker.on('message', (msg: { type: string; rows?: Array<{ id: number; profileId: number }>; message?: string }) => {
-                  if (msg.type === 'ready') {
-                    readyCount++
-                    if (readyCount === 2) {
-                      Atomics.store(signal, 0, 1)
-                      Atomics.notify(signal, 0, 2)
+        // 主线程 watchdog：worker 未就绪或一直不退出时主动失败，finally 里 terminate 收尾
+        await Promise.race([
+          Promise.all(
+            workers.map(
+              (worker) =>
+                new Promise<void>((resolve, reject) => {
+                  worker.on('message', (msg: { type: string; rows?: Array<{ id: number; profileId: number }>; message?: string }) => {
+                    if (msg.type === 'ready') {
+                      readyCount++
+                      if (readyCount === 2) {
+                        Atomics.store(signal, 0, 1)
+                        Atomics.notify(signal, 0, 2)
+                      }
+                    } else if (msg.type === 'result') {
+                      results.push(msg.rows ?? [])
+                    } else if (msg.type === 'error') {
+                      reject(new Error(msg.message ?? 'claim worker 执行失败'))
                     }
-                  } else if (msg.type === 'result') {
-                    results.push(msg.rows ?? [])
-                  } else if (msg.type === 'error') {
-                    reject(new Error(msg.message ?? 'claim worker 执行失败'))
-                  }
-                })
-                worker.on('error', reject)
-                worker.on('exit', (code) => {
-                  if (code === 0) resolve()
-                  else reject(new Error(`claim worker 退出码 ${code}`))
-                })
-              }),
+                  })
+                  worker.on('error', reject)
+                  worker.on('exit', (code) => {
+                    if (code === 0) resolve()
+                    else reject(new Error(`claim worker 退出码 ${code}`))
+                  })
+                }),
+            ),
           ),
-        )
+          new Promise<never>((_, reject) => {
+            watchdog = setTimeout(
+              () => reject(new Error(`并发认领 worker 超时（${WORKER_WATCHDOG_MS}ms）`)),
+              WORKER_WATCHDOG_MS,
+            )
+          }),
+        ])
 
         const all = results.flat()
         expect(all).toHaveLength(1)
         expect(new Set(all.map((r) => r.id)).size).toBe(all.length)
       } finally {
+        if (watchdog) clearTimeout(watchdog)
         await Promise.all(workers.map((worker) => worker.terminate()))
       }
     })
@@ -1011,6 +1043,24 @@ describe('runs 即队列', () => {
         maxConcurrentWindows: 1,
       })
       expect(capped).toHaveLength(0)
+      expect((await qdb.getLatestRun(p2.id, 'A', DATE))?.status).toBe('pending')
+    })
+
+    it('跨午夜：昨天的 running 同任务仍占今天任务额度', async () => {
+      const OLD = '2026-10-18'
+      const p1 = await qdb.upsertProfile('bb-tq1', '窗口1')
+      const p2 = await qdb.upsertProfile('bb-tq2', '窗口2')
+      const oldRunning = await qdb.enqueueRun(p1.id, 'A', OLD, null, 0)
+      await qdb.claimQueuedRuns([oldRunning.id], 500)
+
+      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
+      const claimed = await qdb.claimDueRuns({
+        date: DATE,
+        nowMs: 1000,
+        limits: new Map([['A', 1]]),
+        maxConcurrentWindows: 5,
+      })
+      expect(claimed).toHaveLength(0)
       expect((await qdb.getLatestRun(p2.id, 'A', DATE))?.status).toBe('pending')
     })
   })

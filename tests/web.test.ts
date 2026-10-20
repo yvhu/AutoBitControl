@@ -22,6 +22,7 @@ interface MockDeps {
     clearOpenWindow: Mock
     listOpenWindows: Mock
     countInFlightRuns: Mock
+    hasRunningRun: Mock
     getLatestRun: Mock
     createBatch: Mock
     getBatch: Mock
@@ -72,6 +73,7 @@ interface MockDeps {
   }
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
   getRunById: Mock
+  cancelSession: Mock
   datasource: {
     summary: Mock
     reload: Mock
@@ -99,6 +101,7 @@ function makeDeps(): MockDeps {
       clearOpenWindow: vi.fn().mockResolvedValue(undefined),
       listOpenWindows: vi.fn().mockResolvedValue([]),
       countInFlightRuns: vi.fn().mockResolvedValue(0),
+      hasRunningRun: vi.fn().mockResolvedValue(false),
       getLatestRun: vi.fn().mockResolvedValue(null),
       createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
       getBatch: vi.fn().mockResolvedValue({ id: 2, kind: 'bulk', taskKey: 't1', source: 'trigger-all', createdAt: '2026-09-04 09:00:00.000' }),
@@ -148,6 +151,7 @@ function makeDeps(): MockDeps {
       openPids: vi.fn().mockResolvedValue(new Set()),
     },
     getRunById: vi.fn().mockResolvedValue(null),
+    cancelSession: vi.fn(),
     datasource: {
       summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
       reload: vi.fn().mockResolvedValue(undefined),
@@ -221,7 +225,7 @@ describe('server API（RESTful + envelope）', () => {
     it('GET /api/batches/:id 返回批次明细并附加 durationSec/inFlight', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
-        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-09-04 09:00:00.000', finishedAt: '2026-09-04 09:01:05.000', batchId: 2, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' },
+        { id: 1, profileId: 1, taskKey: 't1', date: '2026-09-04', slot: 0, status: 'success', attempts: 1, error: null, screenshot: null, startedAt: '2026-09-04 09:00:00.000', finishedAt: '2026-09-04 09:01:05.000', batchId: 2, diagPath: null, notBeforeMs: 1760000000000, profileName: '窗口1', bitbrowserId: 'bb-1' },
       ])
       deps.db.countInFlightRuns.mockResolvedValue(0)
       const res = await request(createApp(deps as never)).get('/api/batches/2')
@@ -229,6 +233,8 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.data.runs[0].durationSec).toBe(65)
       expect(res.body.data.runs[0].inFlight).toBe(false)
       expect(res.body.data.runs[0].bitbrowserId).toBe('bb-1')
+      // 看板 ETA 依赖该字段：运行行必须原样透出 notBeforeMs
+      expect(res.body.data.runs[0].notBeforeMs).toBe(1760000000000)
     })
 
     it('GET /api/batches/abc 返回 400（业务码 40000）', async () => {
@@ -880,6 +886,24 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.db.resetWindowHealth).toHaveBeenCalledWith(1)
   })
 
+  it('POST /api/profiles/:id/breaker/reset 返回 bitbrowser.isOpen 实测的 open', async () => {
+    const deps = makeDeps()
+    deps.bitbrowser.isOpen.mockResolvedValue(true)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/breaker/reset')
+    expect(res.body.data.open).toBe(true)
+    expect(deps.bitbrowser.isOpen).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('POST /api/profiles/:id/breaker/reset 探测失败仍 200 且 open=false', async () => {
+    const deps = makeDeps()
+    deps.bitbrowser.isOpen.mockRejectedValue(new Error('本地 API 不可用'))
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/breaker/reset')
+    expect(res.status).toBe(200)
+    expect(res.body.code).toBe(0)
+    expect(res.body.data.open).toBe(false)
+    expect(deps.db.resetWindowHealth).toHaveBeenCalledWith(1)
+  })
+
   it('GET /api/profiles 返回熔断健康字段', async () => {
     const deps = makeDeps()
     deps.db.listProfiles.mockResolvedValue([
@@ -967,6 +991,25 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(deps.bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
     expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
+  it('POST /api/profiles/:id/close 有 running 行时先置会话取消标记再关窗', async () => {
+    const deps = makeDeps()
+    deps.db.hasRunningRun.mockResolvedValue(true)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.db.hasRunningRun).toHaveBeenCalledWith(1)
+    expect(deps.cancelSession).toHaveBeenCalledWith(1)
+    expect(deps.cancelSession.mock.invocationCallOrder[0]).toBeLessThan(deps.bitbrowser.closeBrowser.mock.invocationCallOrder[0])
+  })
+
+  it('POST /api/profiles/:id/close 无 running 行不置会话取消标记', async () => {
+    const deps = makeDeps()
+    deps.db.hasRunningRun.mockResolvedValue(false)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.db.hasRunningRun).toHaveBeenCalledWith(1)
+    expect(deps.cancelSession).not.toHaveBeenCalled()
   })
 
   it('POST /api/profiles/batch action=open 逐项开窗并汇总', async () => {

@@ -66,7 +66,10 @@ export class CoalescingEnqueuer {
   ): Promise<void> {
     const date = todayStr()
     const notBeforeMs = opts.notBeforeMs ?? (opts.immediate ? Date.now() : await this.pickNotBefore(profile.id, date))
-    await this.db.enqueueRun(profile.id, taskKey, date, opts.batchId ?? null, notBeforeMs)
+    const row = await this.db.enqueueRun(profile.id, taskKey, date, opts.batchId ?? null, notBeforeMs)
+    if (row.status === 'running') {
+      this.logger.warn({ profile: profile.name, task: taskKey }, '任务已在运行，本次入队忽略')
+    }
     this.requestDispatch()
   }
 
@@ -108,13 +111,22 @@ export class CoalescingEnqueuer {
         }
       }
       if (this.stopped) return
+      const nowMs = Date.now()
+      // 任务从注册表移除后其到期行永远不会被认领：claim 前先结算，避免永久 pending
+      try {
+        const settled = await this.db.settleUnregisteredRuns(date, nowMs, this.limits)
+        if (settled > 0) this.logger.warn({ count: settled, date }, '已结算未注册任务的到期行')
+      } catch (e) {
+        this.logger.warn({ err: (e as Error).message, date }, '未注册任务结算失败（下轮重试）')
+      }
+      if (this.stopped) return
       // 先取窗口列表：读取失败时尚未认领任何行，不会留下无人执行的 running 行
       const profiles = new Map((await this.db.listProfiles(false)).map((p) => [p.id, p]))
       if (this.stopped) return
       // 到期查询 + 额度统计 + 条件认领在同一写事务内完成，多 dispatcher 共享库也不会突破上限
       const claimed = await this.db.claimDueRuns({
         date,
-        nowMs: Date.now(),
+        nowMs,
         limits: this.limits,
         maxConcurrentWindows: this.maxConcurrentWindows,
       })
@@ -188,16 +200,6 @@ export class CoalescingEnqueuer {
     } catch (e) {
       this.logger.warn({ err: (e as Error).message }, logMessage)
     }
-  }
-
-  /** 某任务是否在途（DB 唯一口径） */
-  async hasTaskInFlight(taskKey: string, profileId?: number): Promise<boolean> {
-    return (await this.db.countInFlightRuns(taskKey, todayStr(), profileId)) > 0
-  }
-
-  /** 是否有活跃窗口会话（DB 唯一口径，含跨午夜旧会话与 task:run 直接认领的行） */
-  async anyRunning(): Promise<boolean> {
-    return (await this.db.countRunningProfiles()) > 0
   }
 
   /** 取消批次中仍在排队的行，返回结算数量 */

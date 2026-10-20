@@ -70,8 +70,11 @@ export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): {
 }
 
 export async function startApp(): Promise<void> {
-  const cfg = loadConfig()
+  // 配置校验告警：非法/越界值已在 loadConfig 内回退或截断，这里统一输出提示用户修配置
+  const configWarnings: string[] = []
+  const cfg = loadConfig({ warnings: configWarnings })
   const logger = createLogger(cfg)
+  for (const warning of configWarnings) logger.warn(warning)
 
   // 单实例守卫：同一数据库文件同时只允许一个后端实例——
   // 2026-09-08 事故：旧 npm start 与新 dev 两进程并存，各自调度器重复触发计划、
@@ -182,7 +185,8 @@ export async function startApp(): Promise<void> {
     // 关闭时清除）；若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
     reuseOpen: async (id) => {
       const row = await db.getOpenWindow(id)
-      return row ? { http: row.http } : null
+      if (!row || !row.http.trim()) return null
+      return { http: row.http }
     },
     // 数据源行解析：有窗口列按窗口名/ID 匹配，无窗口列按窗口列表顺序取行（list 顺序=面板顺序）
     accountResolver: async (profile) => {
@@ -250,6 +254,8 @@ export async function startApp(): Promise<void> {
     fileAssignService,
     getRunById: (id) => db.getRunById(id),
     stopper,
+    // 面板手动关窗前：若窗口有在途 running 行，置会话标记让 runner 按手动停止结算
+    cancelSession: (id) => cancelRegistry.requestSession(id),
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {

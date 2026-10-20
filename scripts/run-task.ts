@@ -61,8 +61,9 @@ async function main(): Promise<void> {
     // 登记残留但 pid 已死 → 清行后按正常开窗流程走
     const row = await db.getOpenWindow(profileId).catch(() => null)
     const wasOpen = row ? await bitbrowser.isOpen(profileId) : false
-    reuse = row && wasOpen ? { http: row.http } : null
-    if (row && !wasOpen) await db.clearOpenWindow(profileId).catch(() => {})
+    const hasHttp = !!row?.http.trim()
+    reuse = row && wasOpen && hasHttp ? { http: row.http } : null
+    if (row && (!wasOpen || !hasHttp)) await db.clearOpenWindow(profileId).catch(() => {})
     // runManual 直接返回本轮最终运行行（内存传递，不做执行后再读库的竞态判定）
     if (lastBatchId === null) {
       lastBatchId = (await db.createBatch('single', taskKey, 'task-run')).id

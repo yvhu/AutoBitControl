@@ -59,6 +59,8 @@ export interface ServerDeps {
   getRunById(id: number): Promise<import('../infrastructure/db').RunRow | null>
   /** 任务停止器（批次级/行级停止路由；app.ts 注入） */
   stopper: TaskStopper
+  /** 置窗口会话取消标记（面板手动关窗前中止在途会话；app.ts 注入 CancelRegistry.requestSession） */
+  cancelSession(profileId: number): void
 }
 
 /**
@@ -75,7 +77,7 @@ export function createApp(deps: ServerDeps): express.Express {
   const stagger = { spreadSec: deps.cfg.execution.staggerMaxSec, jitterPct: deps.cfg.execution.staggerJitterPct ?? 15 }
   api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled, stagger }))
   api.use(tasksRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stagger }))
-  api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, logger: deps.logger }))
+  api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, cancelSession: deps.cancelSession, logger: deps.logger }))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())

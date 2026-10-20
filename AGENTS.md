@@ -116,7 +116,8 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec
-- 运行队列以 `runs` 表为准：触发即写 `pending + not_before_ms`；dispatcher 每秒按 DB 调度（同一窗口任务合并为一次会话）；并发阀门由 `claimDueRuns` DB 事务裁决（running 窗口/任务计数），dispatcher 不再维护内存 gates。重试/错峰不再挂进程内定时器；`task:run` 不启动 dispatcher，按行内 `not_before_ms` 自行等待
+- 运行队列以 `runs` 表为准：触发即写 `pending + not_before_ms`；dispatcher 每秒按 DB 调度（同一窗口任务合并为一次会话）；并发阀门由 `claimDueRuns` DB 事务裁决（running 窗口/任务计数，计数不按日期，跨午夜旧会话仍占额度），dispatcher 不再维护内存 gates。重试/错峰不再挂进程内定时器；`task:run` 不启动 dispatcher，按行内 `not_before_ms` 自行等待
+- 跨午夜错峰尾巴：旧日期的 `pending/retry_wait` 不补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）；旧日期已在运行的会话仅在进程存活期间继续跑完并按认领日期落终态（仍占额度），进程重启时 `recoverRuns` 调用 `settleOldRunningRuns` 把旧日期残留 `running` 结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。看板 ETA（`not_before_ms`）只是最早可调度下界，受并发上限/在途任务影响可能更晚
 - 批量触发（任务页「立即触发」）、`rerun-failed` 与定时触发（定时计划）按窗口序号均匀铺开 `execution.staggerMaxSec`（默认 120 秒，0 关闭）并叠加 `execution.staggerJitterPct`（默认 15%）间距抖动；`staggerMaxSec` 是本批总铺开时长，抖动可能让个别窗口略微超出。自动重试只使用 `now + backoffSec`，不叠加初始错峰；单窗口入口（看板行级执行、task:run 脚本）不等待
 - 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/API-GUIDE.md` 第 6.7 节（真机经验））
 - 双后端实例会互相踩踏（2026-09-08 事故：旧 npm start 与新 dev 并存，定时计划双触发、同窗口双 CDP 会话、领水额度打乱）。已有单实例锁 `data/app.lock`（startApp 启动取锁，PID 存活检测自动接管残留锁）；报「检测到另一个后端实例正在运行」时先杀残留进程，确认无残留再删锁文件

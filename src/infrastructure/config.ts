@@ -203,12 +203,15 @@ export interface LoadConfigOptions {
   rootDir?: string
   /** 环境变量表（测试可注入，默认 process.env） */
   env?: Record<string, string>
+  /** 告警收集器（可选）：校验修正/废弃配置项时 push 中文告警，由调用方（app）统一输出 */
+  warnings?: string[]
 }
 
 /**
  * 加载最终配置：默认值 ← config.json ← config.local.json ← 环境变量，逐层覆盖
  * @param opts.rootDir 项目根目录，缺省为 src 上两级
  * @param opts.env 环境变量来源，缺省为 process.env
+ * @param opts.warnings 可选告警收集数组（非法值回退、越界截断、废弃项）
  * @returns 合并后的完整配置（存储路径已解析为绝对路径）
  */
 export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
@@ -256,18 +259,35 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (env.AI_MODEL) cfg.ai.model = env.AI_MODEL
   // 熔断每日重置时刻：CIRCUIT_BREAKER_RESET_AT 优先级高于配置文件（空串可显式关闭自动重置，与配置文件 "" 语义一致）
   if (env.CIRCUIT_BREAKER_RESET_AT !== undefined) cfg.execution.circuitBreakerResetAt = env.CIRCUIT_BREAKER_RESET_AT
-  // 熔断参数校验：非法值回落默认，冷却上限不得小于首次冷却（配置层无 logger，静默修正）
+  // 熔断参数校验：非法值回落默认，冷却上限不得小于首次冷却（配置层无 logger，告警交由调用方输出）
   const cb = cfg.execution
+  const warnings = opts.warnings
   if (typeof cb.circuitBreakerEnabled !== 'boolean') cb.circuitBreakerEnabled = true
   if (!Number.isInteger(cb.circuitBreakerThreshold) || cb.circuitBreakerThreshold < 1) cb.circuitBreakerThreshold = 2
   if (!Number.isFinite(cb.circuitBreakerCooldownSec) || cb.circuitBreakerCooldownSec < 60) cb.circuitBreakerCooldownSec = 1800
   if (!Number.isFinite(cb.circuitBreakerMaxCooldownSec) || cb.circuitBreakerMaxCooldownSec < cb.circuitBreakerCooldownSec) {
     cb.circuitBreakerMaxCooldownSec = Math.max(cb.circuitBreakerCooldownSec, 7200)
   }
-  // 错峰总铺开时长：非法/负数回退默认 120，不阻止启动
-  if (!Number.isFinite(cb.staggerMaxSec) || cb.staggerMaxSec < 0) cb.staggerMaxSec = 120
+  // 错峰总铺开时长：0-3600 合法；非法/负数回退默认 120，超过上限截断 3600（均告警），不阻止启动
+  if (!Number.isFinite(cb.staggerMaxSec) || cb.staggerMaxSec < 0) {
+    warnings?.push(`execution.staggerMaxSec=${String(cb.staggerMaxSec)} 非法（应为 0-3600 的秒数），已回退默认 120`)
+    cb.staggerMaxSec = 120
+  } else if (cb.staggerMaxSec > 3600) {
+    warnings?.push(`execution.staggerMaxSec=${cb.staggerMaxSec} 超出上限 3600 秒，已截断为 3600`)
+    cb.staggerMaxSec = 3600
+  }
   // 错峰抖动：0-50 合法，其余（含非数字/越界）回退默认 15，不阻止启动
   if (!Number.isFinite(cb.staggerJitterPct) || cb.staggerJitterPct < 0 || cb.staggerJitterPct > 50) cb.staggerJitterPct = 15
+  // 全局窗口上限：必须是正整数（负数/0/小数/非数字 → 回退 4 并告警），避免并发闸门失效
+  if (!Number.isInteger(cb.maxConcurrentWindows) || cb.maxConcurrentWindows < 1) {
+    warnings?.push(`execution.maxConcurrentWindows=${String(cb.maxConcurrentWindows)} 非法（必须为正整数），已回退默认 4`)
+    cb.maxConcurrentWindows = 4
+  }
+  // 旧配置项 circuitBreakerResetEveryHours 已废弃：存在即告警（取值被忽略，由 circuitBreakerResetAt 取代）
+  const legacyResetHours = (cb as unknown as Record<string, unknown>).circuitBreakerResetEveryHours
+  if (legacyResetHours !== undefined) {
+    warnings?.push(`execution.circuitBreakerResetEveryHours 已废弃并被忽略（请改用 execution.circuitBreakerResetAt 指定每日重置时刻，当前值 ${cb.circuitBreakerResetAt || '（已关闭）'}）`)
+  }
   // 存储路径统一解析为绝对路径，避免工作目录变化导致数据散落
   for (const key of ['dbPath', 'screenshotDir', 'logDir'] as const) {
     const p = cfg.storage[key]

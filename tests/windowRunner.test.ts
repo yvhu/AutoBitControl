@@ -23,7 +23,7 @@ function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
 const closedHealth = { state: 'closed' as const, failures: 0, level: 0, nextProbeMs: null, probeStartedMs: null, reason: null, updatedAt: null }
 
 function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
-  return {
+  const db = {
     upsertRun: vi.fn(async (profileId: number, taskKey: string, date: string, slot: number, status: string, patch: Record<string, unknown> = {}) => ({
       id: 1,
       profileId,
@@ -78,6 +78,12 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     listOpenWindows: vi.fn().mockResolvedValue([]),
     ...over,
   } as unknown as AppDb
+  // 条件更新默认委托 upsertRun：既有用例仍通过 upsertRun 断言状态序列，竞态用例单独覆盖
+  const mutable = db as unknown as Record<string, unknown>
+  if (typeof mutable.updateRunIfRunning !== 'function') {
+    mutable.updateRunIfRunning = vi.fn((...args: unknown[]) => (mutable.upsertRun as (...a: unknown[]) => unknown)(...args))
+  }
+  return db
 }
 
 const okPage = {
@@ -448,6 +454,27 @@ describe('WindowRunner', () => {
     expect(statuses(db)).toContain('success')
     expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('reuseOpen 返回空 http 时忽略复用并正常开窗（避免 http:// Invalid URL）', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, reuseOpen: vi.fn().mockResolvedValue({ http: '' }) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(statuses(db)).toContain('success')
+  })
+
+  it('复用地址 CDP 失败时清除 open_windows 登记，避免下次继续复用坏地址', async () => {
+    const db = makeDb()
+    const runner = makeRunner({
+      db,
+      reuseOpen: vi.fn().mockResolvedValue({ http: '127.0.0.1:27240' }),
+      driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')) }),
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
   })
 
   it('新轮次使用 nextRunSlot（终态行后开新轮），续跑沿用原 slot', async () => {
@@ -927,6 +954,14 @@ describe('批次透传与 pending 预写', () => {
       clearOpenWindow: async () => undefined,
       listOpenWindows: async () => [],
     }
+    // 条件更新：仅 running 行可被结算；否则返回当前行（可能是 stop 写入的 skipped）
+    Object.assign(db, {
+      updateRunIfRunning: async (profileId: number, taskKey: string, date: string, slot: number, status: string, patch: Partial<RunRow> = {}) => {
+        const existing = rows.find(r => r.profileId === profileId && r.taskKey === taskKey && r.date === date && r.slot === slot)
+        if (!existing || existing.status !== 'running') return existing ?? null
+        return db.upsertRun(profileId, taskKey, date, slot, status, patch)
+      },
+    })
     return db as unknown as AppDb
   }
 
@@ -1111,5 +1146,45 @@ describe('runs 即队列端到端交接', () => {
     expect(row?.failureKind).toBe('stopped')
     expect(task.run).not.toHaveBeenCalled()
     expect(registry.isCancelled(profile.id, 'ok-task')).toBe(false)
+  })
+
+  it('任务运行中停止先结算 skipped：成功写入不覆盖 stop 结果', async () => {
+    const profile = await realDb.upsertProfile('bb-1', '窗口1')
+    const date = todayStr()
+    const queued = await realDb.enqueueRun(profile.id, 'ok-task', date, null, Date.now())
+    const claimed = await realDb.claimQueuedRuns([queued.id], Date.now())
+
+    class StopWhileRunningTask implements SiteTask {
+      meta = { key: 'ok-task', name: 'OK', url: 'https://x.io' }
+      run = vi.fn(async () => {
+        // 模拟 TaskStopper：任务仍返回成功，但 stop 已把 running 行结算为 skipped
+        await realDb.stopRunningRun(profile.id, 'ok-task', date, claimed[0].slot)
+      })
+    }
+    const task = new StopWhileRunningTask()
+    const runner = makeRunner({ db: realDb, tasks: new Map([['ok-task', task]]) })
+    const results = await runner.runWindowTasks(profile, claimed.map((r) => ({ taskKey: r.taskKey, date: r.date })))
+
+    const row = await realDb.getRun(profile.id, 'ok-task', date, claimed[0].slot)
+    expect(row?.status).toBe('skipped')
+    expect(row?.failureKind).toBe('stopped')
+    expect(results.get('ok-task')?.status).toBe('skipped')
+    expect(task.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('最新行已是 stopped skipped：重复结算不新开 slot', async () => {
+    const profile = await realDb.upsertProfile('bb-1', '窗口1')
+    const date = todayStr()
+    await realDb.upsertRun(profile.id, 'ok-task', date, 0, 'skipped', { error: '手动停止', failureKind: 'stopped', finishedAt: '2026-10-20 10:00:00.000' })
+
+    const registry = new CancelRegistry()
+    registry.requestSession(profile.id)
+    const runner = makeRunner({ db: realDb, tasks: new Map([['ok-task', new OkTask()]]), cancelRegistry: registry })
+    const results = await runner.runWindowTasks(profile, [{ taskKey: 'ok-task' }])
+
+    const rows = await realDb.listRunsForDate(date)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].slot).toBe(0)
+    expect(results.get('ok-task')?.status).toBe('skipped')
   })
 })

@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { AppDb, localWallNow, todayStr, type ProfileRow, type RunRow } from '../src/infrastructure/db'
 import { CoalescingEnqueuer, type SessionTask } from '../src/engine/queue'
 
-const logger = { info: () => {}, warn: () => {}, error: () => {} } as never
+function makeLogger() {
+  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
+}
+const logger = makeLogger() as never
 const TERMINAL = ['success', 'failed', 'captcha_failed', 'skipped']
 let db: AppDb
 let dir: string
@@ -137,13 +140,47 @@ describe('CoalescingEnqueuer DB 队列', () => {
     q.stop()
   })
 
-  it('hasTaskInFlight 走 DB；cancelBatch 结算排队行', async () => {
+  it('cancelBatch 结算排队行', async () => {
     const p = await db.upsertProfile('bb-1', '窗口1')
     const q = new CoalescingEnqueuer(db, { runWindowTasks: vi.fn() } as never, logger, new Map([['t1', 1]]), 1)
     await q.enqueue(p, 't1', { immediate: true, batchId: 9 })
-    expect(await q.hasTaskInFlight('t1')).toBe(true)
     expect(await q.cancelBatch(9)).toBe(1)
-    expect(await q.hasTaskInFlight('t1')).toBe(false)
+    expect((await db.getLatestRun(p.id, 't1', todayStr()))?.status).toBe('skipped')
+    q.stop()
+  })
+
+  it('enqueue 遇到最新行 running 时不改写并入并告警', async () => {
+    const p = await db.upsertProfile('bb-running', '窗口1')
+    const log = makeLogger()
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, log as never, new Map([['t1', 1]]), 1)
+    await q.enqueue(p, 't1', { immediate: true, batchId: 7 })
+    const before = (await db.listRunsForDate(todayStr()))[0]
+    await db.claimQueuedRuns([before.id], Date.now())
+
+    await q.enqueue(p, 't1', { immediate: true, batchId: 9, notBeforeMs: 999 })
+    const after = (await db.listRunsForDate(todayStr()))[0]
+    expect(after.status).toBe('running')
+    expect(after.batchId).toBe(7)
+    expect(after.notBeforeMs).toBe(before.notBeforeMs)
+    expect(log.warn).toHaveBeenCalled()
+    q.stop()
+  })
+
+  it('tick 先结算未注册任务的到期行并告警', async () => {
+    const p = await db.upsertProfile('bb-ghost', '窗口1')
+    const log = makeLogger()
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, log as never, new Map([['t1', 1]]), 1)
+    await db.enqueueRun(p.id, 'ghost', todayStr(), null, 0)
+
+    await q.tick()
+
+    const row = await db.getLatestRun(p.id, 'ghost', todayStr())
+    expect(row?.status).toBe('skipped')
+    expect(row?.error).toBe('任务未注册')
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }), '已结算未注册任务的到期行')
     q.stop()
   })
 
@@ -202,7 +239,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     await vi.waitFor(() => expect(runner.runWindowTasks).toHaveBeenCalledTimes(1))
     q.stop()
     release(0)
-    await vi.waitFor(async () => expect(await q.anyRunning()).toBe(false))
+    await vi.waitFor(async () => expect((await db.getLatestRun(p1.id, 't1', todayStr()))?.status).toBe('success'))
     expect(runner.runWindowTasks).toHaveBeenCalledTimes(1)
     q.start()
     await q.tick()
@@ -257,7 +294,7 @@ describe('CoalescingEnqueuer DB 队列', () => {
     })
     // 回队带退避：不能立即被下一 tick 重新认领（持久故障不热循环）
     expect(requeued.notBeforeMs).toBeGreaterThan(Date.now())
-    expect(await q.anyRunning()).toBe(false)
+    expect(await db.countRunningProfiles()).toBe(0)
 
     // 退避到期后（测试直接清零 not_before_ms）同一行可再次被认领执行
     await db.upsertRun(p.id, 't1', todayStr(), requeued.slot, 'pending', { notBeforeMs: 0 })

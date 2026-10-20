@@ -41,6 +41,69 @@ describe('loadConfig', () => {
     }
   })
 
+  it('maxConcurrentWindows 非法或 0 回退 4 并产生告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    for (const value of [0, -1, 1.5, '4', null]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { maxConcurrentWindows: value } }))
+      const warnings: string[] = []
+      const cfg = loadConfig({ rootDir: dir, warnings })
+      expect(cfg.execution.maxConcurrentWindows).toBe(4)
+      expect(warnings.some((w) => w.includes('maxConcurrentWindows'))).toBe(true)
+    }
+  })
+
+  it('maxConcurrentWindows 正整数生效且无告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { maxConcurrentWindows: 6 } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.maxConcurrentWindows).toBe(6)
+    expect(warnings).toEqual([])
+  })
+
+  it('staggerMaxSec 超过 3600 截断为 3600 并告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 7200 } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.staggerMaxSec).toBe(3600)
+    expect(warnings.some((w) => w.includes('staggerMaxSec'))).toBe(true)
+  })
+
+  it('staggerMaxSec 非法值回退 120 并告警，0 合法不告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: -1 } }))
+    const badWarnings: string[] = []
+    expect(loadConfig({ rootDir: dir, warnings: badWarnings }).execution.staggerMaxSec).toBe(120)
+    expect(badWarnings.some((w) => w.includes('staggerMaxSec'))).toBe(true)
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 0 } }))
+    const okWarnings: string[] = []
+    expect(loadConfig({ rootDir: dir, warnings: okWarnings }).execution.staggerMaxSec).toBe(0)
+    expect(okWarnings).toEqual([])
+  })
+
+  it('旧配置 circuitBreakerResetEveryHours 产生废弃告警且不影响新配置', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      execution: { circuitBreakerResetEveryHours: 24, circuitBreakerResetAt: '04:00' },
+    }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.circuitBreakerResetAt).toBe('04:00')
+    expect(warnings.some((w) => w.includes('circuitBreakerResetEveryHours'))).toBe(true)
+  })
+
+  it('无废弃配置项时不产生废弃告警', () => {
+    const warnings: string[] = []
+    loadConfig({ rootDir: dir, warnings })
+    expect(warnings).toEqual([])
+  })
+
   it('config.json 与 config.local.json 深度合并，local 覆盖', () => {
     const configDir = join(dir, 'config')
     mkdirSync(configDir, { recursive: true })

@@ -277,7 +277,7 @@ export class WindowRunner {
         const latest = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, t.taskKey, date), null)
         const terminal = latest ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(latest.status) : false
         // 已认领的 running 行必须就地结算：只清标记不落状态会留下永久 running 孤儿行，
-        // 令 hasRunningRunsForProfile 永远命中、该窗口再也无法调度
+        // 该窗口将长期被视为占用、再也无法调度
         results.set(t.taskKey, terminal
           ? latest
           : await this.settleWindowSkip(profile, t.taskKey, date, 'skipped', '手动停止', 'stopped'))
@@ -330,10 +330,13 @@ export class WindowRunner {
       // 第一段 try：开窗（含重试）——失败即整窗口跳过，无浏览器可操作
       try {
         const reused = this.deps.reuseOpen ? await this.deps.reuseOpen(profile.bitbrowserId) : null
-        if (reused) {
+        // 空 http 是 reserveOpenWindow 的占位值（常见于开窗中途崩溃的残留登记）：
+        // 直接复用会拼出 `http://`，patchright 报 Invalid URL。这里忽略该登记，走正常开窗。
+        if (reused && reused.http.trim()) {
           open = { http: reused.http, ws: '' }
           reusedFlag = true
         } else {
+          if (reused) logger.warn({ profile: profile.name, http: reused.http }, 'open_windows 登记缺少调试地址，忽略复用并重新开窗')
           // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http
           await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
           await this.waitForGlobalWindowCapacity()
@@ -381,6 +384,11 @@ export class WindowRunner {
           if (probeClaimed && !probeRetryReleased) {
             await this.safeDb(() => db.releaseWindowProbe(profile.id, 'aborted'), undefined)
             probeClaimed = false
+          }
+          // 复用地址失效（端口已关/空地址）：清掉登记，避免后续每次重试都复用同一个坏地址
+          if (reusedFlag) {
+            await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+            logger.warn({ profile: profile.name, http: open.http }, '复用窗口 CDP 连接失败，已清除 open_windows 登记')
           }
           logger.error({ profile: profile.name, stopped: sessionStopped }, message)
           return results
@@ -607,6 +615,8 @@ export class WindowRunner {
     // 终端结算即排空取消标记：避免停止标记残留，误跳过该 (窗口, 任务) 的下一次合法触发
     this.deps.cancelRegistry?.clear(profile.id, taskKey)
     const existing = await this.safeDb(() => this.deps.db.getLatestRun(profile.id, taskKey, date), null)
+    // 已按手动停止结算过：直接返回，避免同一停止信号重复新开 slot 产生多条 stopped 行
+    if (existing?.status === 'skipped' && (existing.failureKind === 'stopped' || existing.error === '手动停止')) return existing
     const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
     // 非终态行（retry_wait 待续跑 / 预写 pending）直接结算该行——沿用 slot 与 batch_id
     if (existing && !terminal) {
@@ -642,7 +652,11 @@ export class WindowRunner {
       const canceledTerminal = canceled ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(canceled.status) : true
       logger.info({ profile: profile.name, task: taskKey }, '任务已被停止，跳过执行')
       if (canceled && !canceledTerminal) {
-        return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, canceled.slot, 'skipped', { error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' }), null)
+        const patch = { error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' as const }
+        // running 行走 CAS：stop 已先行结算时保留 skipped；pending 预写行仍直接结算
+        return canceled.status === 'running'
+          ? this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, canceled.slot, 'skipped', patch), null)
+          : this.safeDb(() => db.upsertRun(profile.id, taskKey, date, canceled.slot, 'skipped', patch), null)
       }
       return canceled
     }
@@ -654,7 +668,10 @@ export class WindowRunner {
       const existing = await this.safeDb(() => db.getLatestRun(profile.id, taskKey, date), null)
       const terminal = existing ? ['success', 'failed', 'captcha_failed', 'skipped'].includes(existing.status) : false
       if (existing && !terminal) {
-        return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, existing.slot, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt, failureKind: 'task' }), null)
+        const patch = { error: `任务未注册: ${taskKey}`, finishedAt, failureKind: 'task' as const }
+        return existing.status === 'running'
+          ? this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, existing.slot, 'failed', patch), null)
+          : this.safeDb(() => db.upsertRun(profile.id, taskKey, date, existing.slot, 'failed', patch), null)
       }
       const slot = await this.nextSlot(profile, taskKey, date)
       return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: `任务未注册: ${taskKey}`, finishedAt, failureKind: 'task' }), null)
@@ -673,14 +690,20 @@ export class WindowRunner {
     const startAttempt = existing && !terminal ? (existing.attempts > 0 ? existing.attempts + 1 : 1) : 1
     // 超界钳制：历史 attempts 已耗尽重试预算（startAttempt > retryMax + 1）直接落 failed，不进执行循环
     if (startAttempt > retryMax + 1) {
-      return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: '重试次数已耗尽', finishedAt: localWallNow(), failureKind: existing?.failureKind ?? 'task' }), null)
+      const patch = { error: '重试次数已耗尽', finishedAt: localWallNow(), failureKind: existing?.failureKind ?? 'task' }
+      return existing?.status === 'running'
+        ? this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'failed', patch), null)
+        : this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', patch), null)
     }
     // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
     const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
     try {
       mkdirSync(artifacts, { recursive: true })
     } catch (e) {
-      return this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: localWallNow(), failureKind: 'task' }), null)
+      const patch = { error: `截图目录创建失败: ${(e as Error).message}`, finishedAt: localWallNow(), failureKind: 'task' as const }
+      return existing?.status === 'running'
+        ? this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'failed', patch), null)
+        : this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', patch), null)
     }
 
     // TaskContext 提升到循环 try 外：失败 catch 需经它取步骤时间线采集诊断包
@@ -721,7 +744,12 @@ export class WindowRunner {
         const successShot = join(artifacts, `${date}-success.png`)
         const shot = await page.screenshot({ path: successShot }).then(() => successShot).catch(() => null)
         const finishedAt = localWallNow()
-        const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt, failureKind: null }), null)
+        // CAS：任务执行期间 stop 已把 running 结算为 skipped 时不覆盖停止结果
+        const row = await this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt, failureKind: null }), null)
+        if (row && row.status !== 'success') {
+          logger.info({ profile: profile.name, task: taskKey, status: row.status }, '任务已结束但停止先结算，保留停止结果')
+          return row
+        }
         // 成功清空 diag_path：失败轮次残留的诊断路径不应挂在 success 行上，
         // 否则 GET /api/diagnostics/:runId 会为成功行返回失败诊断包（best-effort，失败降级忽略）
         await this.safeDb(() => db.clearRunDiag(profile.id, taskKey, date, slot), undefined)
@@ -731,7 +759,7 @@ export class WindowRunner {
         // 已请求停止（关窗打断等）：任务级或会话级停止都落 skipped（手动停止），不重试、不计熔断、不采诊断
         if (this.deps.cancelRegistry?.isCancelled(profile.id, taskKey) || this.deps.cancelRegistry?.isSessionCancelled(profile.id)) {
           this.deps.cancelRegistry.clear(profile.id, taskKey)
-          const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'skipped', { error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' }), null)
+          const row = await this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'skipped', { error: '手动停止', finishedAt: localWallNow(), failureKind: 'stopped' }), null)
           logger.info({ profile: profile.name, task: taskKey }, '任务被手动停止')
           return row
         }
@@ -765,7 +793,12 @@ export class WindowRunner {
         }
         // 重试不占窗：retry_wait 写入到期时间，dispatcher 到点后直接认领（沿用原 slot/batchId/attempts）
         const notBeforeMs = status === 'retry_wait' ? Date.now() + backoffSec * 1000 : undefined
-        const row = await this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, status, { error: (e as Error).message, screenshot: shot, diagPath, finishedAt: localWallNow(), failureKind, notBeforeMs }), null)
+        // CAS：stop 已先行结算时保留 skipped，不写 retry_wait / failed
+        const row = await this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, status, { error: (e as Error).message, screenshot: shot, diagPath, finishedAt: localWallNow(), failureKind, notBeforeMs }), null)
+        if (row && row.status === 'skipped' && row.failureKind === 'stopped') {
+          logger.info({ profile: profile.name, task: taskKey }, '任务失败但停止已先行结算，保留停止结果')
+          return row
+        }
         logger.error({ profile: profile.name, task: taskKey, status, err: (e as Error).message }, '任务失败')
         if (status === 'retry_wait') {
           // 退避期不 sleep，立即返回让窗口继续处理下一个任务/正常关窗；

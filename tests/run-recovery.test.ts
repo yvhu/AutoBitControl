@@ -9,11 +9,14 @@ describe('recoverRuns', () => {
     const requeueStaleRunning = vi.fn().mockResolvedValue(1)
     const db = { settleOldQueuedRuns, settleOldRunningRuns, settleSupersededRuns, requeueStaleRunning }
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never
-    const r = await recoverRuns({ db: db as never, logger, now: new Date('2026-10-19T00:00:00Z') })
-    expect(settleOldQueuedRuns).toHaveBeenCalledWith('2026-10-19')
-    expect(settleOldRunningRuns).toHaveBeenCalledWith('2026-10-19')
-    expect(settleSupersededRuns).toHaveBeenCalledWith('2026-10-19')
-    expect(requeueStaleRunning).toHaveBeenCalledWith('2026-10-19', Date.parse('2026-10-19T00:00:00Z'))
+    // 用本地日期构造，避免固定 UTC 时间在非东八区被解读成前一天
+    const now = new Date(2026, 9, 19, 0, 0, 0)
+    const date = '2026-10-19'
+    const r = await recoverRuns({ db: db as never, logger, now })
+    expect(settleOldQueuedRuns).toHaveBeenCalledWith(date)
+    expect(settleOldRunningRuns).toHaveBeenCalledWith(date)
+    expect(settleSupersededRuns).toHaveBeenCalledWith(date)
+    expect(requeueStaleRunning).toHaveBeenCalledWith(date, now.getTime())
     // 旧日期必须先于当天 running 重排（否则旧 running 会被误重置成 pending）
     expect(settleOldRunningRuns.mock.invocationCallOrder[0]).toBeLessThan(requeueStaleRunning.mock.invocationCallOrder[0])
     expect(r).toEqual({ oldQueued: 3, oldRunning: 2, superseded: 4, requeued: 1 })

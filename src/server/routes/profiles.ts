@@ -254,6 +254,8 @@ export function profilesRouter(deps: {
   }
   /** 同时打开窗口上限（execution.maxConcurrentWindows）；打开前校验，达上限拒绝 */
   maxConcurrentWindows: number
+  /** 置窗口会话取消标记（手动关窗前中止在途会话；由 app 注入 CancelRegistry.requestSession） */
+  cancelSession(profileId: number): void
   /** 日志器（孤儿回收打点用） */
   logger: Logger
 }): Router {
@@ -309,7 +311,8 @@ export function profilesRouter(deps: {
       // 已有登记且 pid 实测存活 → 直接复用（already），避免重复开窗
       const row = await deps.db.getOpenWindow(profile.bitbrowserId)
       const alive = openIds ? openIds.has(profile.bitbrowserId) : await deps.bitbrowser.isOpen(profile.bitbrowserId)
-      if (row && alive) return { already: true }
+      // 空 http 是残留占位登记，不能当作「已打开」直接返回，否则任务仍会复用空地址
+      if (row?.http.trim() && alive) return { already: true }
       await ensureWindowCapacity()
       // 先预留归属登记（避免「已开未登记」竞态被孤儿回收误关），开成功后补 http
       await deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
@@ -322,7 +325,10 @@ export function profilesRouter(deps: {
       }
       return { already: false }
     }
-    // close：无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略
+    // close：有在途 running 行时先置会话取消标记（关窗会打断任务，runner 按手动停止结算）；
+    // 无 running 不置，避免标记泄漏到该窗口的下一次合法会话
+    if (await deps.db.hasRunningRun(profile.id)) deps.cancelSession(profile.id)
+    // 无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略
     const row = await deps.db.getOpenWindow(profile.bitbrowserId)
     await deps.bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
     if (row) await deps.db.clearOpenWindow(profile.bitbrowserId)
@@ -364,7 +370,10 @@ export function profilesRouter(deps: {
   router.post('/profiles/:id/breaker/reset', asyncHandler(async (req, res) => {
     const profile = await find(Number(req.params.id))
     await applyAction(profile, 'resetBreaker')
-    ok(res, toProfileView(await find(profile.id), false))
+    // 重置只清熔断状态，不改窗口开关：open 以比特浏览器 pid 实测为准；
+    // 探测失败（本地 API 短暂不可用）降级为未打开，不让重置接口 500
+    const open = await deps.bitbrowser.isOpen(profile.bitbrowserId).catch(() => false)
+    ok(res, toProfileView(await find(profile.id), open))
   }))
   router.post('/profiles/:id/open', asyncHandler(async (req, res) => {
     ok(res, await applyAction(await find(Number(req.params.id)), 'open'))

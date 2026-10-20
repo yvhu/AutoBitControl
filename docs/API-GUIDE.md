@@ -1152,13 +1152,15 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 - **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；看板批次明细可点开截图。
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
-- **运行状态**：`pending → running → success | failed | retry_wait → …`；`pending` = 已入队待调度，`retry_wait` = 等待退避到期，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过 / 手动停止。
+- **运行状态**：`pending → running → success | failed | retry_wait → …`；`pending` = 已入队待调度，`retry_wait` = 等待退避到期，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过 / 手动停止 / 任务未注册（到期但任务 key 已不在注册表）。
 - `runs.failure_kind` 记录每次尝试的失败分类；只有 `environment` 且终态失败才会计入窗口熔断，`task/timeout/stopped` 不计。
 
 ### 运行队列（runs 即队列）
 
 - 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（错峰到期/重试时间）与 `batch_id`。
 - dispatcher 每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口的多个任务合并为一次窗口会话。
+- 跨午夜错峰尾巴：旧日期的 `pending/retry_wait` 行不会补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）。旧日期已在运行的会话**仅在进程存活期间**继续跑完并按认领日期落终态，其窗口/任务额度不按日期过滤，仍占用新日期的并发上限；进程重启时 `recoverRuns` 会调用 `settleOldRunningRuns` 把旧日期残留的 `running` 行结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。
+- 到期但不在任务注册表中的行会在 claim 前统一结算为 `skipped`（错误「任务未注册」），避免一直停在 `pending`；任务恢复注册后重新触发即可。
 - 重试只写 `retry_wait + not_before_ms`，不再依赖进程内定时器；进程重启时会把当天崩溃残留的 `running` 行重置为 `pending`，重启后仍可继续。
 - 批次停止会把仍在排队的 `pending/retry_wait` 行直接结算为 `skipped`（手动停止）；运行中的行仍走取消 + 关窗。
 - 面板的 `pending/retry_wait` 行来自数据库，并显示预计开始时间（`not_before_ms`）。这是最早可调度时间（下限），受并发上限与在途任务影响，实际开始可能更晚；任务页在途、看板实时运行数也只查数据库。
@@ -1221,6 +1223,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（不等待错峰）；批量触发不带 body。
 - 多窗口测试触发：任务页卡片「测试」→ 弹窗多选启用窗口，等价于「立即触发」的子集（走错峰与并发闸门，受开关限制）；对应 `POST /api/tasks/:key/trigger` + body `{"profileIds":["<id>","<id>"]}`，返回 `scope=selected`。
 - 停止会关闭该窗口（`closeBrowser`），正在跑的会话被中止并按「手动停止」结算；同窗口合并的其他任务会一并失败（立即触发为一窗口一任务，无影响）。
+- 面板手动「关闭窗口」同样会中止在途会话：仅当该窗口存在 `running` 行时才先置会话取消标记再关窗，runner 按「手动停止」结算；无 `running` 不置标记，避免泄漏到下一次合法会话。
 - 批次停止会先在数据库把同批仍在排队的 `pending/retry_wait` 行原子结算为 `skipped`（手动停止，不再开窗）；已被 dispatcher 认领/运行中的行走取消 + 关窗。行级停止对排队行只结算数据库、不关窗，对运行中的行取消并关窗。
 - 停止后可立刻重触发：在途判定与排队都以数据库状态为准；若行恰好刚被 dispatcher 认领为 `running`，行级停止会按运行中分支关窗结算。改任务代码仍需重启后端。
 - 结果核对：`GET /api/batches` 的 `stats`；每窗口今日成功数查 SQLite `runs` 表。
@@ -1284,7 +1287,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `staggerMaxSec`（120 秒）、`staggerJitterPct`（15，0-50）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`staggerMaxSec` 为本批窗口错峰的总铺开时长（0 关闭），窗口按序号均匀分布；`staggerJitterPct` 为相邻窗口间距的抖动幅度（占间距百分比，0-50，0 = 完全均匀），抖动可能让个别窗口略微超出总铺开时长。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限，与任务级 `concurrency` 一起由数据库 claim 事务裁决（取更严者）。 |
+| `execution` | `staggerMaxSec`（120 秒）、`staggerJitterPct`（15，0-50）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`staggerMaxSec` 为本批窗口错峰的总铺开时长（0-3600 秒，0 关闭；>3600 截断为 3600，非法回退 120，均启动告警），窗口按序号均匀分布；`staggerJitterPct` 为相邻窗口间距的抖动幅度（占间距百分比，0-50，0 = 完全均匀），抖动可能让个别窗口略微超出总铺开时长。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限（必须正整数；非法/0 回退 4 并启动告警），与任务级 `concurrency` 一起由数据库 claim 事务裁决（取更严者）。旧配置 `circuitBreakerResetEveryHours` 已废弃：存在时启动告警并忽略，请改用 `circuitBreakerResetAt`。 |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |
