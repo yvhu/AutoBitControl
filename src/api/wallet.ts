@@ -39,6 +39,8 @@ export interface ConnectOptions {
   attempts?: number
   /** 每轮内无动作时补点连接按钮前的等待毫秒数（缺省 8000） */
   reclickAfterMs?: number
+  /** 点连接后至少观察钱包弹窗的毫秒数（缺省 15000）：避免未连接按钮常显时瞬间跑完推进轮次、错过稍后弹出的弹窗 */
+  observeMs?: number
   /**
    * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 false：
    * 交易一律交任务显式 confirmTransaction（安全边界）；仅「无真实链上交易的 0 撸站点」
@@ -66,6 +68,7 @@ export async function connectWallet(ctx: TaskContext, opts: ConnectOptions): Pro
     refreshEveryMs: opts.refreshEveryMs,
     attempts: opts.attempts,
     reclickAfterMs: opts.reclickAfterMs,
+    observeMs: opts.observeMs,
     autoConfirmTransaction: opts.autoConfirmTransaction,
   })
 }
@@ -95,6 +98,7 @@ export interface WalletActionOptions {
 function buildWalletActions(ctx: TaskContext, walletKey?: string): WalletActions {
   return new WalletActions({
     page: ctx.page,
+    profileName: ctx.profile?.name,
     walletKey,
     wallets: ctx.wallets,
     walletPasswords: ctx.walletPasswords,

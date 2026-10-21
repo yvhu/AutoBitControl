@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WalletActions, type LoginFlowOptions, type WalletActionsDeps } from '../src/automation/wallet'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { WALLET_LIST_REVEAL_SELECTORS } from '../src/automation/wallet/heuristics'
-import { waitForPopup } from '../src/automation/wallet/popup'
+import { findOpenPopup, waitForPopup } from '../src/automation/wallet/popup'
 
-vi.mock('../src/automation/wallet/popup', () => ({ waitForPopup: vi.fn() }))
+vi.mock('../src/automation/wallet/popup', () => ({ findOpenPopup: vi.fn(), waitForPopup: vi.fn() }))
 
 /** 永不落定的 waitForPopup：用于「无扩展弹窗」场景，避免与页面竞速抢先落定 */
 const neverPopup = (): Promise<never> => new Promise<never>(() => {})
@@ -98,6 +98,8 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
   beforeEach(() => {
     vi.mocked(waitForPopup).mockReset()
     vi.mocked(waitForPopup).mockImplementation(neverPopup)
+    vi.mocked(findOpenPopup).mockReset()
+    vi.mocked(findOpenPopup).mockReturnValue(null)
   })
 
   it('已连接 → 直接返回 skipped=true，不检查扩展就绪、不点任何按钮', async () => {
@@ -154,7 +156,7 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     const { deps, page } = makeDeps(makeAdapter(), state)
     // 不传 connect，且假页面找不到连接按钮 → clickConnect 返回 false，连接流程未启动
     await expect(new WalletActions(deps).ensureConnected({
-      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, attempts: 1,
+      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, attempts: 1, observeMs: 20, waitConnectedMs: 20,
     })).rejects.toThrow('登录未完成')
     expect(page.clicks).not.toContain(REVEAL)
   })
@@ -237,6 +239,33 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     expect(Date.now() - started).toBeLessThan(1500)
   })
 
+  it('弹窗在推进阶段结束后才出现：recover 期间继续监听并处理（不再干等）', async () => {
+    const state: FakeState = {
+      [DISCONNECTED_TEXT]: true,
+      onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
+    }
+    const popup = { url: () => 'chrome-extension://x/home.html' }
+    const adapter = makeAdapter({
+      classifyPopup: vi.fn(async () => 'connect'),
+      handleLoginPopup: vi.fn(async () => { state[CONNECTED_TEXT] = true; return true }),
+    })
+    const startedAt = Date.now()
+    let popupSeen = false
+    // 前 100ms 不返回（模拟弹窗迟到），之后返回一次弹窗（处理完即视为已关闭）
+    vi.mocked(findOpenPopup).mockImplementation(() => {
+      if (popupSeen) return null
+      if (Date.now() - startedAt >= 100) { popupSeen = true; return popup as never }
+      return null
+    })
+    const { deps } = makeDeps(adapter, state)
+    const r = await new WalletActions(deps).ensureConnected({
+      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL,
+      attempts: 1, reclickAfterMs: 30, observeMs: 20, waitConnectedMs: 3000,
+    })
+    expect(r.skipped).toBe(false)
+    expect(adapter.handleLoginPopup).toHaveBeenCalledWith(popup, 'pw')
+  })
+
   it('tx 弹窗绝不被登录流程处理：只告警、不点确认，最终超时报错', async () => {
     const state: FakeState = {
       [DISCONNECTED_TEXT]: true,
@@ -249,6 +278,7 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     const { deps } = makeDeps(adapter, state)
     await expect(new WalletActions(deps).ensureConnected({
       connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL, attempts: 1, reclickAfterMs: 30,
+      observeMs: 20, waitConnectedMs: 20,
     })).rejects.toThrow('登录未完成')
     expect(adapter.handleLoginPopup).not.toHaveBeenCalled()
     expect(adapter.confirmTx).not.toHaveBeenCalled()

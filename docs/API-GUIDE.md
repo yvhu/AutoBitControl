@@ -578,6 +578,7 @@ interface ConnectOptions {
   refreshEveryMs?: number
   attempts?: number
   reclickAfterMs?: number
+  observeMs?: number
   autoConfirmTransaction?: boolean
 }
 
@@ -599,6 +600,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 | `refreshEveryMs` | `number` | 否 | `25000` | 等待连接期间周期刷新间隔（毫秒） |
 | `attempts` | `number` | 否 | `2` | 整体重试轮数（第二轮起先刷新页面重来） |
 | `reclickAfterMs` | `number` | 否 | `8000` | 一轮内无动作时补点连接按钮前的等待毫秒数 |
+| `observeMs` | `number` | 否 | `15000` | 点连接后至少观察钱包弹窗的毫秒数（不超过 `waitConnectedMs`）；避免未连接按钮常显时瞬间跑完推进轮次、错过稍后弹出的弹窗 |
 | `autoConfirmTransaction` | `boolean` | 否 | `false` | 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认；仅「无真实链上交易的 0 撸站点」按需开启 |
 
 **示例**：`await connectWallet(ctx, { wallet: 'metamask' })` 即可跑通常见站点。完整示例见第 4 章。
@@ -609,6 +611,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 - 内部会先做扩展就绪检查（`ready`）：扩展未加载会快速失败，重试会重启浏览器窗口恢复。
 - **静默连接**（扩展已授权站点，点了却不弹钱包弹窗）不判失败，以已连接标志为准。
 - **安全边界**：登录阶段只自动处理解锁/连接/签名，**绝不自动确认交易**（交易弹窗会告警并跳过，由任务显式 `confirmTransaction`）。仅当任务显式传 `autoConfirmTransaction: true`（无真实链上交易的 0 撸站点，站点把授权确认混入登录弹窗）时，tx 弹窗才会被自动确认。
+- 点连接后至少观察 `observeMs`（默认 15s）：期间持续监听扩展弹窗，即使页面上「未连接」按钮一直可见也不会提前结束。`recover` 阶段同样继续监听/处理迟到的钱包弹窗；钱包交互完成后会主动刷新一次再等已连接标志。
 - 失败最终抛 `登录未完成（等待已连接标志超时）`。
 
 #### `signMessage(ctx, opts?)`
@@ -1287,8 +1290,9 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 - 现象：MetaMask 弹窗窗口已经出现，但要过几秒才输入密码；授权/签名弹窗出现后也要等一阵才点确认。
 - 根因：`waitForPopup` 只按 URL 命中就返回，此时 DOM 可能还没渲染；分类被误判成 `unknown` 后又要空跑一整轮 3 秒竞速。确认前有固定 `sleep(2000)`；点完只等 `close` 事件 15 秒（事件漏收必等满）。另外 MetaMask `unlock()` 只把 `confirm-btn` 当作“已解锁”，解锁后的签名/交易页会空轮询到 45 秒预算。
-- 现状：弹窗先等 UI 就绪（`isPopupReady` 100ms 轮询、最多 1 秒）再分类；`confirm()` 去掉固定 2 秒，按钮可见立即点；点完用 `isClosed()` 100ms 轮询与 close 事件并行（3 秒上限）；`unlock()` 识别连接/授权/签名页全部元素，解锁页没 detach 但已切到确认页也算成功。**MetaMask 与 Petra 统一走 `src/automation/wallet/popup-wait.ts` 的等待原语（200ms 轮询、3 秒关闭判定），新增钱包适配器直接复用，不要再各写一套 sleep/超时。** 钱包动作会打 `step: wallet` 耗时日志（`popupWaitMs/unlockMs/actionMs`、`classifyMs/handleMs`），真机可直接看每段耗时。
-- 通用经验：**等 UI 用短轮询，别用固定 sleep；成功判定不要只依赖事件（事件会漏收），要有状态兜底。**
+- 现状：弹窗先等 UI 就绪（`isPopupReady` 100ms 轮询、最多 1 秒）再分类；`confirm()` 去掉固定 2 秒，按钮可见立即点；点完用 `isClosed()` 100ms 轮询与 close 事件并行（3 秒上限）；`unlock()` 识别连接/授权/签名页全部元素，解锁页没 detach 但已切到确认页也算成功。**MetaMask 与 Petra 统一走 `src/automation/wallet/popup-wait.ts` 的等待原语（200ms 轮询、3 秒关闭判定），新增钱包适配器直接复用，不要再各写一套 sleep/超时。** 钱包动作会打 `step: wallet` 耗时日志（`popupWaitMs/unlockMs/actionMs`、`classifyMs/handleMs`，含窗口名），真机可直接看每段耗时。
+- 第二轮真机（2026-10-21 21:00 定时批次）发现新的慢点：点连接后页面「未连接」按钮一直可见，`advanceRound` 的 8 次推进瞬间跑完就进入 90 秒 `recover`；`recover` 只查页面 `0x`、不看扩展弹窗，导致弹窗明明开着却没人处理，直到超时后 reload 重试。修复：`raceRound` 每轮先用 `findOpenPopup` 处理已打开的弹窗（避免未连接按钮抢先命中）；点连接后至少观察 `observeMs`（默认 15s）；`recover` 改为带弹窗监听的 `recoverWithPopups`；钱包交互完成后主动刷新一次；无钱包交互时不再空等 90 秒，直接 reload 重试（最后一轮保留 30s 短 recover）。
+- 通用经验：**等 UI 用短轮询，别用固定 sleep；成功判定不要只依赖事件（事件会漏收），要有状态兜底。** 另外，**“等待页面上某个登录标志”的循环必须同时监听钱包弹窗**，否则弹窗迟到时整段等待都是盲区。
 
 ---
 

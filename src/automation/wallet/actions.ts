@@ -20,6 +20,8 @@ export type WalletIntent = 'connect' | 'sign' | 'confirmTx'
 export interface WalletActionsDeps {
   /** 当前任务页面（钱包弹窗将在其所在浏览器上下文中出现） */
   page: Page
+  /** 当前窗口名（日志归因用；未注入时日志省略该字段） */
+  profileName?: string
   /** 当前任务配置的钱包类型；未配置时钱包相关操作按「无钱包」处理 */
   walletKey?: string
   /** 钱包适配器注册表（按 walletKey 取适配器），未注入时调用相关方法会抛错 */

@@ -21,7 +21,7 @@ import { WalletActions } from '../src/automation'
 import { WalletRegistry } from '../src/automation/wallet/types'
 import { PetraAdapter } from '../src/automation/wallet/petra'
 
-vi.mock('../src/automation/wallet/popup', () => ({ waitForPopup: vi.fn() }))
+vi.mock('../src/automation/wallet/popup', () => ({ findOpenPopup: vi.fn(), waitForPopup: vi.fn() }))
 import { waitForPopup } from '../src/automation/wallet/popup'
 
 /** 登录态判定用选择器（与任务实现一致，测试按选择器分流 visible 行为） */

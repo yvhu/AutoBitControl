@@ -21,6 +21,27 @@ export function matchesWalletUrl(url: string, patterns: string[]): boolean {
 }
 
 /**
+ * 立即查找已打开的钱包弹窗（不等待）：扫描浏览器全部 context 的现有页面。
+ * 用途：竞速循环每轮先看“弹窗是否已经开着”，避免页面上的未连接按钮抢先命中，
+ * 导致屏幕上明明开着的弹窗一直没人处理（真机 2026-10-21）。
+ * @param context 起始浏览器上下文（其所属浏览器的全部 context 都会被扫描）
+ * @param patterns 钱包弹窗 URL 正则列表
+ * @returns 命中的弹窗页面；没有返回 null
+ */
+export function findOpenPopup(context: BrowserContext, patterns: string[]): Page | null {
+  // 测试 mock 的 context 可能没有 pages()，按“无弹窗”处理
+  if (typeof context.pages !== 'function') return null
+  const browser = typeof context.browser === 'function' ? context.browser() : undefined
+  const contexts = browser ? browser.contexts() : [context]
+  for (const c of contexts) {
+    for (const p of c.pages()) {
+      if (matchesWalletUrl(p.url(), patterns)) return p
+    }
+  }
+  return null
+}
+
+/**
  * 等待钱包弹窗出现并返回该页面。
  * 执行流程：先扫描浏览器全部 context（比特浏览器部分弹窗会开在别的 context，不能只看当前 context），
  * 已存在匹配页则直接返回；否则同时挂两条兜底——监听新页面 'page' 事件，以及每 100ms 轮询一次全部页面，
@@ -31,18 +52,7 @@ export function matchesWalletUrl(url: string, patterns: string[]): boolean {
  * @returns 命中的弹窗页面；超时返回 null，由调用方决定后续
  */
 export async function waitForPopup(context: BrowserContext, patterns: string[], timeoutMs: number): Promise<Page | null> {
-  const find = (): Page | undefined => {
-    // context.browser 可能缺失（测试 mock）或返回 null（独立 context），任一情况回退到 [context]
-    const browser = context.browser?.()
-    const contexts = browser ? browser.contexts() : [context]
-    for (const c of contexts) {
-      for (const p of c.pages()) {
-        if (matchesWalletUrl(p.url(), patterns)) return p
-      }
-    }
-    return undefined
-  }
-  const existing = find()
+  const existing = findOpenPopup(context, patterns)
   if (existing) return existing
   return new Promise(resolve => {
     let settled = false
@@ -62,7 +72,7 @@ export async function waitForPopup(context: BrowserContext, patterns: string[], 
     }
     context.on('page', handler)
     timer = setInterval(() => {
-      const p = find()
+      const p = findOpenPopup(context, patterns)
       if (p) finish(p)
     }, 100)
     timeoutHandle = setTimeout(() => finish(null), timeoutMs)
