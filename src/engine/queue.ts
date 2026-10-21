@@ -112,6 +112,9 @@ export class CoalescingEnqueuer {
       }
       if (this.stopped) return
       const nowMs = Date.now()
+      // 空转短路：绝大多数 tick 没有到期行，先用单行 EXISTS 判断（不分配多行结果、不开写事务），
+      // 避免每秒一次的全窗口读取与事务在长时间运行中累积原生内存
+      if (!(await this.db.hasDueRuns(date, nowMs))) return
       // 任务从注册表移除后其到期行永远不会被认领：claim 前先结算，避免永久 pending
       try {
         const settled = await this.db.settleUnregisteredRuns(date, nowMs, this.limits)

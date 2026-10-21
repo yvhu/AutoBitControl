@@ -338,6 +338,8 @@ describe('CoalescingEnqueuer DB 队列', () => {
     // 先跑一次空 tick 建立 lastDate，避免首次 tick 的跨日结算把旧行清掉
     await q.tick()
     const row = await db.enqueueRun(p.id, 't1', oldDate, null, 0)
+    // 旧日期行不参与当天到期判断（跨日结算后不会再被调度），这里直接模拟认领结果
+    vi.spyOn(db, 'hasDueRuns').mockResolvedValueOnce(true)
     vi.spyOn(db, 'claimDueRuns').mockResolvedValueOnce([row])
 
     await q.tick()

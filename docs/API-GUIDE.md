@@ -1276,6 +1276,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 排障时先看 `runs.failure_kind`：`environment` 查窗口/代理/扩展；`task` 查站点/选择器/数据源；`timeout` 查任务等待预算。
 - 窗口显示“熔断中 · HH:mm 探测”时，不要手动重跑；等半开探测或面板重置熔断。
 
+**14）定时任务一触发进程就崩（2026-10-21 本地库原生内存泄漏）**
+
+- 现象：到点后日志只打一行「定时触发已入队」，几秒内后端退出（Windows 退出码 `3221225477` = `0xC0000005`），面板请求 `ECONNRESET`；手动单窗口执行看起来正常（短时内存涨幅不明显）。
+- 根因：`@libsql/client` 本地 client 每次 `execute` 都新建 prepared statement 且不释放（约 3.8KB/条），`transaction()` 每次新开一条原生连接且从不关闭（约 178KB/次）；dispatcher 每秒一次 claim 事务，跑十几小时后原生内存涨到数 GB，定时触发瞬间再叠加百余次入队事务即崩，进程退出时还会触发本次崩溃（实测 2000 次事务后退出必现 `0xC0000005`）。
+- 修复：本地库统一走 `src/infrastructure/sqlite-client.ts`（单连接 + prepared statement 缓存 + 显式 BEGIN/COMMIT），dispatcher 无到期行时用单行 `EXISTS` 短路、不开写事务；实测 2 万次空 tick RSS 持平，1 万次 claim+enqueue 无崩溃。
+- 通用经验：**长驻进程引入原生绑定前先做内存压测**（重复调用 1 万次看 RSS 是否线性增长）；换客户端/驱动后要验证「进程退出码是否正常」。崩溃前未落盘的 WAL 写会丢失，面板里后加的计划/记录可能需要重建。
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）

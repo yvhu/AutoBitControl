@@ -860,6 +860,17 @@ describe('runs 即队列', () => {
   describe('claimDueRuns DB 并发阀门', () => {
     const DATE = '2026-10-19'
 
+    it('hasDueRuns 空转短路：无到期行为 false，有到期 pending 行为 true', async () => {
+      const p = await qdb.upsertProfile('bb-d1', '窗口1')
+      expect(await qdb.hasDueRuns(DATE, 1000)).toBe(false)
+
+      await qdb.enqueueRun(p.id, 'A', DATE, null, Date.now() + 60_000)
+      expect(await qdb.hasDueRuns(DATE, Date.now())).toBe(false)
+
+      await qdb.enqueueRun(p.id, 'A', DATE, null, 0)
+      expect(await qdb.hasDueRuns(DATE, Date.now())).toBe(true)
+    })
+
     it('claimDueRuns 遵守全局上限并合并同窗口任务', async () => {
       const p1 = await qdb.upsertProfile('bb-g1', '窗口1')
       const p2 = await qdb.upsertProfile('bb-g2', '窗口2')

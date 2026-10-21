@@ -1,11 +1,13 @@
 /**
  * 持久层（infrastructure）：本地 SQLite 数据访问（profiles 窗口 / runs 运行记录）
- * 依赖方向：仅依赖 @libsql/client，被 engine/server 层依赖；RunStatus 类型被全局引用
- * 设计思路：数据层走本地文件（libsql 本地引擎，file: URL；file::memory: 供测试使用）；
+ * 依赖方向：依赖 @libsql/client 的行类型与本地 sqlite-client（原生 libsql 封装），被 engine/server 层依赖；RunStatus 类型被全局引用
+ * 设计思路：数据层走本地文件（file: URL；file::memory: 供测试使用），经 sqlite-client 单连接 + 语句缓存访问
+ *           （不用 @libsql/client 本地 client：其每次 execute/transaction 都泄漏原生内存，长跑必崩）；
  *           UNIQUE(profile_id, task_key, date) 保证每窗口每天每任务一行；
  *           库内字段用 snake_case、读出时映射为 camelCase
  */
-import { createClient, type Client, type Row } from '@libsql/client'
+import type { Row } from '@libsql/client'
+import { LocalSqliteClient } from './sqlite-client'
 import type { FailureKind } from './run-errors'
 
 /**
@@ -346,24 +348,23 @@ type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
  * 设计权衡：不用 ORM——表结构固定、查询简单，原生 SQL 更可控且无额外依赖
  */
 export class AppDb {
-  private constructor(private client: Client) {}
+  private constructor(private client: LocalSqliteClient) {}
 
   /**
-   * 打开数据库（创建 client 并执行建表迁移）
+   * 打开数据库（创建本地客户端并执行建表迁移）
    * @param dbPath 本地数据库文件路径（绝对或相对；file: 前缀原样透传）
    * @returns 就绪的 AppDb 实例（磁盘/权限错误时抛错，由调用方处理退出）
    */
   static async open(dbPath: string): Promise<AppDb> {
-    // timeout 由 @libsql/core 应用到每个本地连接（含 transaction() 内部新建的连接）；
-    // PRAGMA busy_timeout 只作用于当前连接，事务连接会丢失该设置
-    const client = createClient({ url: toFileUrl(dbPath), timeout: 5000 })
+    // 单连接 + 5 秒 busy_timeout：多进程（task:run）共用同一库文件时写锁排队，不立即报 SQLITE_BUSY
+    const client = new LocalSqliteClient(toFileUrl(dbPath), { timeoutMs: 5000 })
     const db = new AppDb(client)
     await db.migrate()
     return db
   }
 
   async migrate(): Promise<void> {
-    // busy_timeout 由 open() 的 client timeout 配置统一承担（覆盖事务连接），此处不再重复设置
+    // busy_timeout 由 LocalSqliteClient 的 Database timeout 选项统一承担（单连接，无事务连接丢失问题）
     // WAL 日志模式：面板进程与 task:run 脚本可能同时开同一文件，读写不互锁（库级设置，幂等；
     // file::memory: 上执行无副作用）
     await this.client.execute('PRAGMA journal_mode=WAL')
@@ -1046,6 +1047,19 @@ export class AppDb {
   async hasRunningRun(profileId: number): Promise<boolean> {
     const rows = await this.exec(`SELECT 1 AS v FROM runs WHERE profile_id = ? AND status = 'running' LIMIT 1`, [profileId])
     return rows.length > 0
+  }
+
+  /**
+   * 当天是否有到期待执行行（dispatcher 空转短路用）：
+   * 用单行 EXISTS（底层走 .get，不会像多行查询那样每次分配原生结果数组），
+   * 无到期行时 dispatcher 直接返回，不读窗口列表、不写事务
+   */
+  async hasDueRuns(date: string, nowMs: number): Promise<boolean> {
+    const row = await this.client.getFirst({
+      sql: `SELECT EXISTS (SELECT 1 FROM runs r WHERE ${DUE_RUN_CONDITION}) AS v`,
+      args: [date, nowMs],
+    })
+    return Number(row?.v ?? 0) === 1
   }
 
   /** 处于 running 的窗口数（COUNT DISTINCT profile_id；会话级额度口径，跨午夜旧会话同样计入） */
