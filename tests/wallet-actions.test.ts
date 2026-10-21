@@ -59,7 +59,7 @@ function makeActions(walletPasswords: Record<string, string>, walletSession?: ne
     wallets: reg,
     walletPasswords,
     walletSession,
-    log: {} as never,
+    log: { info: vi.fn(), warn: vi.fn() } as never,
     recover: async () => false,
   })
 }

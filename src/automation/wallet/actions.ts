@@ -82,6 +82,7 @@ export class WalletActions {
     if (!key) throw new Error('任务未配置钱包')
     if (!this.deps.wallets) throw new Error('钱包注册表未注入')
     const adapter = this.deps.wallets.get(key)
+    const startedAt = Date.now()
     const popupPromise = waitForPopup(this.deps.page.context(), adapter.extensionUrlPatterns, 60000)
     if (opts.reclick) {
       const start = Date.now()
@@ -96,10 +97,23 @@ export class WalletActions {
       if (!appeared) await this.deps.page.locator(opts.reclick.selector).first().click({ timeout: 5000 }).catch(() => {})
     }
     const popup = (await popupPromise) as PopupPage | null
-    if (!popup) return { popupFailed: true }
+    const popupWaitMs = Date.now() - startedAt
+    if (!popup) {
+      this.deps.log.info({ step: 'wallet', intent, wallet: key, popupWaitMs, popup: false }, '钱包动作耗时（弹窗未出现）')
+      return { popupFailed: true }
+    }
     const password = this.deps.walletPasswords[key]
-    if (password && adapter.unlock) await adapter.unlock(popup, password)
-    await adapter[intent](popup)
+    const unlockStart = Date.now()
+    try {
+      if (password && adapter.unlock) await adapter.unlock(popup, password)
+      const unlockMs = Date.now() - unlockStart
+      const actionStart = Date.now()
+      await adapter[intent](popup)
+      this.deps.log.info({ step: 'wallet', intent, wallet: key, popupWaitMs, unlockMs, actionMs: Date.now() - actionStart }, '钱包动作耗时')
+    } catch (e) {
+      this.deps.log.warn({ step: 'wallet', intent, wallet: key, popupWaitMs, unlockMs: Date.now() - unlockStart, err: (e as Error).message }, '钱包动作失败耗时')
+      throw e
+    }
     return { popupFailed: false }
   }
 

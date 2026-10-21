@@ -1283,6 +1283,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 修复：本地库统一走 `src/infrastructure/sqlite-client.ts`（单连接 + prepared statement 缓存 + 显式 BEGIN/COMMIT），dispatcher 无到期行时用单行 `EXISTS` 短路、不开写事务；实测 2 万次空 tick RSS 持平，1 万次 claim+enqueue 无崩溃。
 - 通用经验：**长驻进程引入原生绑定前先做内存压测**（重复调用 1 万次看 RSS 是否线性增长）；换客户端/驱动后要验证「进程退出码是否正常」。崩溃前未落盘的 WAL 写会丢失，面板里后加的计划/记录可能需要重建。
 
+**15）钱包弹窗出现后不要空等（2026-10-21 弹窗耗时优化）**
+
+- 现象：MetaMask 弹窗窗口已经出现，但要过几秒才输入密码；授权/签名弹窗出现后也要等一阵才点确认。
+- 根因：`waitForPopup` 只按 URL 命中就返回，此时 DOM 可能还没渲染；分类被误判成 `unknown` 后又要空跑一整轮 3 秒竞速。确认前有固定 `sleep(2000)`；点完只等 `close` 事件 15 秒（事件漏收必等满）。另外 MetaMask `unlock()` 只把 `confirm-btn` 当作“已解锁”，解锁后的签名/交易页会空轮询到 45 秒预算。
+- 现状：弹窗先等 UI 就绪（`isPopupReady` 100ms 轮询、最多 1 秒）再分类；`confirm()` 去掉固定 2 秒，按钮可见立即点；点完用 `isClosed()` 100ms 轮询与 close 事件并行（3 秒上限）；`unlock()` 识别连接/授权/签名页全部元素，解锁页没 detach 但已切到确认页也算成功。**MetaMask 与 Petra 统一走 `src/automation/wallet/popup-wait.ts` 的等待原语（200ms 轮询、3 秒关闭判定），新增钱包适配器直接复用，不要再各写一套 sleep/超时。** 钱包动作会打 `step: wallet` 耗时日志（`popupWaitMs/unlockMs/actionMs`、`classifyMs/handleMs`），真机可直接看每段耗时。
+- 通用经验：**等 UI 用短轮询，别用固定 sleep；成功判定不要只依赖事件（事件会漏收），要有状态兜底。**
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）

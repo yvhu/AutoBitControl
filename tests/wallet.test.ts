@@ -155,9 +155,52 @@ describe('MetaMaskAdapter 解锁轮询', () => {
     await adapter.unlock!(popup, 'secret123')
     expect(filled).toEqual([])
   })
+
+  it('已解锁的签名页：识别 signature-request 直接返回，不再空等解锁轮询', async () => {
+    const adapter = new MetaMaskAdapter({ unlockWaitMs: 5000 })
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'signature-request-sign-button'
+        ? makeLocator({ isVisible: async () => true, count: async () => 1 })
+        : makeLocator({ count: async () => 0 }),
+    })
+    const started = Date.now()
+    await adapter.unlock!(popup, 'secret123')
+    expect(Date.now() - started).toBeLessThan(800)
+  })
 })
 
 describe('MetaMaskAdapter 连接确认', () => {
+  it('确认按钮已可见：立即点击（不再固定等 2 秒）', async () => {
+    const adapter = new MetaMaskAdapter()
+    let clicks = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({ count: async () => 1, click: async () => { clicks++ } })
+        : makeLocator({ count: async () => 0 }),
+      waitForEvent: async () => {},
+    })
+    const started = Date.now()
+    await adapter.connect(popup)
+    expect(clicks).toBe(1)
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('close 事件漏收：isClosed 轮询命中即返回，不空等 15 秒', async () => {
+    const adapter = new MetaMaskAdapter()
+    let closedChecks = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({ count: async () => 1, click: async () => {} })
+        : makeLocator({ count: async () => 0 }),
+      // close 事件永不落定，只能靠 isClosed 轮询发现窗口已关
+      waitForEvent: () => new Promise<void>(() => {}),
+      isClosed: () => ++closedChecks >= 3,
+    })
+    const started = Date.now()
+    await adapter.connect(popup)
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
   it('确认按钮延迟渲染：等到出现点击，弹窗关闭即成功', async () => {
     const adapter = new MetaMaskAdapter()
     let clicks = 0
@@ -273,6 +316,32 @@ describe('PetraAdapter', () => {
     })
     await adapter.connect(popup)
     expect(clicked.count).toBeGreaterThan(0)
+  })
+
+  it('确认按钮已可见：立即点击（不再固定等 2 秒）', async () => {
+    const adapter = new PetraAdapter()
+    let clicks = 0
+    const popup = makePopup({
+      locator: () => makeLocator({ count: async () => 1, click: async () => { clicks++ } }),
+      waitForEvent: async () => {},
+    })
+    const started = Date.now()
+    await adapter.connect(popup)
+    expect(clicks).toBe(1)
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('close 事件漏收：isClosed 轮询命中即返回，不空等 15 秒', async () => {
+    const adapter = new PetraAdapter()
+    let closedChecks = 0
+    const popup = makePopup({
+      locator: () => makeLocator({ count: async () => 1, click: async () => {} }),
+      waitForEvent: () => new Promise<void>(() => {}),
+      isClosed: () => ++closedChecks >= 3,
+    })
+    const started = Date.now()
+    await adapter.connect(popup)
+    expect(Date.now() - started).toBeLessThan(1500)
   })
 })
 

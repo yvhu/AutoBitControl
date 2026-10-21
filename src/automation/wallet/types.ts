@@ -95,6 +95,13 @@ export interface WalletAdapter {
    */
   classifyPopup(popup: PopupPage): Promise<PopupKind>
   /**
+   * 弹窗 UI 是否已渲染到可操作状态（可选）：密码框或任一确认/授权元素可见即视为就绪。
+   * 登录流程在分类前会短轮询它，避免弹窗窗口已出现、DOM 还没渲染时把意图误判成 unknown 再空跑一轮竞速。
+   * 未实现时调用方跳过就绪检查。
+   * @param popup 钱包弹窗页
+   */
+  isPopupReady?(popup: PopupPage): Promise<boolean>
+  /**
    * 登录自适应入口：按分类自动处理 unlock/connect/sign，绝不自动确认交易（tx）。
    * unlock 需提供密码；无密码或分类为 tx/unknown 时不做任何点击并返回 false，由调用方决定等待或放弃。
    * @param popup 钱包弹窗页

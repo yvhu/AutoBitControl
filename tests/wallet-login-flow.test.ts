@@ -211,6 +211,32 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     expect(adapter.sign).not.toHaveBeenCalled()
   })
 
+  it('弹窗未渲染完：先等就绪再分类，不再空跑一整轮竞速', async () => {
+    const state: FakeState = {
+      [DISCONNECTED_TEXT]: true,
+      onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
+    }
+    const popup = { url: () => 'chrome-extension://x/home.html' }
+    let readyChecks = 0
+    const adapter = makeAdapter({
+      isPopupReady: vi.fn(async () => { readyChecks++; return readyChecks > 2 }),
+      classifyPopup: vi.fn(async () => 'connect'),
+      handleLoginPopup: vi.fn(async () => { state[CONNECTED_TEXT] = true; return true }),
+    })
+    vi.mocked(waitForPopup).mockReset()
+    vi.mocked(waitForPopup).mockResolvedValueOnce(popup as never).mockImplementation(neverPopup)
+    const { deps } = makeDeps(adapter, state)
+    const started = Date.now()
+    const r = await new WalletActions(deps).ensureConnected({
+      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL,
+      attempts: 1, reclickAfterMs: 30,
+    })
+    expect(r.skipped).toBe(false)
+    expect(readyChecks).toBeGreaterThan(2)
+    expect(adapter.classifyPopup).toHaveBeenCalledWith(popup)
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
   it('tx 弹窗绝不被登录流程处理：只告警、不点确认，最终超时报错', async () => {
     const state: FakeState = {
       [DISCONNECTED_TEXT]: true,

@@ -7,11 +7,10 @@
  *   Petra 在本环境不注入页面 provider（window.petra 恒不存在），扩展就绪判定只靠 CDP 扩展页探测
  */
 import type { WalletAdapter, PopupPage } from './types'
+import { POPUP_POLL_MS, sleep, waitForPopupClose } from './popup-wait'
 
 /** 确认按钮文案候选（Petra UI 无稳定 testid，按文案匹配；Sign In 为签名确认主按钮） */
 const CONFIRM_TEXTS = ['Sign In', 'Connect', 'Approve', 'Confirm', 'Sign']
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /**
  * Petra 钱包适配器：与 MetaMask 同构的四类交互（解锁/连接/签名/交易确认），但定位方式不同。
@@ -71,22 +70,29 @@ export class PetraAdapter implements WalletAdapter {
         } catch {
           await pw.press?.('Enter').catch(() => {})
         }
-        // 等密码框消失（waitFor detached 对从未出现的元素立即成功——密码框已确认存在，此判定安全）
+        // 等密码框消失；若没 detach 但已切到确认页（Sign In/Connect 等可见），也视为解锁成功
         try {
           await pw.waitFor?.({ state: 'detached', timeout: 30000 })
         } catch {
-          throw new Error('Petra 解锁失败（密码错误或解锁页未离开）')
+          if (await this.locatorVisible(popup, 'input[type="password"]')) {
+            throw new Error('Petra 解锁失败（密码错误或解锁页未离开）')
+          }
+          let ready = false
+          for (const text of CONFIRM_TEXTS) {
+            if (await this.locatorVisible(popup, `button:has-text("${text}")`)) { ready = true; break }
+          }
+          if (!ready) throw new Error('Petra 解锁失败（密码错误或解锁页未离开）')
         }
         return
       }
-      await sleep(500)
+      await sleep(POPUP_POLL_MS)
     }
     throw new Error('Petra 弹窗状态未出现（解锁框轮询超时未渲染）')
   }
 
   /**
    * 轮询等待确认按钮出现。
-   * 每 500ms 一轮，按 CONFIRM_TEXTS 文案逐个用 button:has-text 定位；弹窗关闭或超时返回 null。
+   * 每 200ms 一轮，按 CONFIRM_TEXTS 文案逐个用 button:has-text 定位；弹窗关闭或超时返回 null。
    * @param popup 钱包弹窗页
    * @param timeoutMs 最长等待毫秒数
    * @returns 命中的确认按钮定位器；未找到返回 null
@@ -103,7 +109,7 @@ export class PetraAdapter implements WalletAdapter {
       } catch {
         if (popup.isClosed?.()) return null
       }
-      await sleep(500)
+      await sleep(POPUP_POLL_MS)
     }
     return null
   }
@@ -130,6 +136,16 @@ export class PetraAdapter implements WalletAdapter {
     if (await this.locatorVisible(popup, 'button:has-text("Approve")') || await this.locatorVisible(popup, 'button:has-text("Confirm")')) return 'tx'
     if (await this.locatorVisible(popup, 'button:has-text("Sign In")') || await this.locatorVisible(popup, 'button:has-text("Sign")')) return 'sign'
     return 'unknown'
+  }
+
+  /** 弹窗 UI 是否已渲染到可操作状态：密码框或任一确认按钮可见（登录流程分类前短轮询用） */
+  async isPopupReady(popup: PopupPage): Promise<boolean> {
+    if (popup.isClosed?.()) return true
+    if (await this.locatorVisible(popup, 'input[type="password"]')) return true
+    for (const text of CONFIRM_TEXTS) {
+      if (await this.locatorVisible(popup, `button:has-text("${text}")`)) return true
+    }
+    return false
   }
 
   /**
@@ -164,22 +180,20 @@ export class PetraAdapter implements WalletAdapter {
 
   /**
    * 点击确认按钮至弹窗关闭。
-   * 执行流程：先等 2s 让弹窗沉降，然后最多 3 轮——每轮等确认按钮出现并点击，
-   * 成功判定为弹窗 close 事件（真机实测点 Sign In 后弹窗 1-5s 内关闭），
-   * 若事件没来但弹窗已关闭也返回；3 轮仍未关闭则抛错。
+   * 执行流程：最多 3 轮——每轮等确认按钮出现并点击，
+   * 成功判定为弹窗关闭（close 事件与 isClosed 轮询并行，事件漏收也不会空等）；
+   * 3 轮仍未关闭则抛错。
    * @param popup 钱包弹窗页
    * @throws 3 轮后弹窗仍未关闭
    */
   private async confirm(popup: PopupPage): Promise<void> {
-    await sleep(2000)
     for (let i = 0; i < 3; i++) {
       if (popup.isClosed?.()) return
+      // 不再固定等 2 秒：按钮已渲染就立刻点（waitConfirmBtn 内部 200ms 轮询）
       const btn = await this.waitConfirmBtn(popup, 10000)
       if (!btn) break
       await btn.click()
-      const closed = await popup.waitForEvent('close', { timeout: 15000 }).then(() => true).catch(() => false)
-      if (closed) return
-      if (popup.isClosed?.()) return
+      if (await waitForPopupClose(popup)) return
     }
     throw new Error('Petra 连接确认未完成（弹窗未关闭）')
   }

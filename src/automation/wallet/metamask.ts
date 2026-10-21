@@ -4,17 +4,25 @@
  * 设计思路：全部用官方 data-testid 定位（与 UI 语言无关——实测中文版 MetaMask
  * 按钮文案为「登录/连接/取消」，英文正则匹配不到）；
  * 弹窗 UI 渲染有延迟（多窗口并发时尤甚），解锁与连接确认均改为轮询等待状态出现，
- * 不能单次 count 判「已解锁」；连接确认成功判定 = close 事件 或 连接页先存在后消失
+ * 不能单次 count 判「已解锁」；连接确认成功判定 = 弹窗关闭 或 连接页先存在后消失
  */
 import type { WalletAdapter, PopupPage } from './types'
+import { POPUP_POLL_MS, sleep, waitForPopupClose } from './popup-wait'
 
 /** 连接确认按钮 testid 候选（多版本兼容，与 UI 语言无关） */
 const CONFIRM_TESTIDS = ['confirm-btn', 'confirm-footer-button', 'permissions-connect-button', 'signature-request-sign-button']
 
+/**
+ * “已解锁/可操作”判定：除了解锁页，连接/授权/签名页的任一元素都说明钱包已经解锁。
+ * 旧实现只认 confirm-btn，解锁后的签名/交易弹窗会被误判成“还没解锁”而空轮询满预算。
+ */
+const UNLOCKED_TESTIDS = [...CONFIRM_TESTIDS, 'connect-page', 'signature-request']
+
+/** close 不可靠时的兜底：确认连接页消失（先 count 确认存在） */
+const CONNECT_PAGE_GONE_MS = 5000
+
 /** 确认按钮角色名回退（英文/中文双覆盖） */
 const CONFIRM_ROLE = /connect|next|confirm|approve|sign|unlock|连接|确认|签名|下一步|批准|登录/i
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /**
  * MetaMask 钱包适配器：把「解锁 / 连接 / 签名 / 交易确认」四类交互翻译成对 MetaMask 弹窗的操作。
@@ -44,9 +52,9 @@ export class MetaMaskAdapter implements WalletAdapter {
   /**
    * 解锁钱包弹窗。
    * 之所以要轮询而不是单次判断，是因为弹窗 UI 渲染有延迟（多窗口并发时尤其明显），
-   * 一开始可能既没有解锁框也没有连接按钮。循环内每 500ms 检查三种状态：
-   * ① 出现密码框 → 填入密码、点提交，再等解锁页 detached 消失后返回；
-   * ② 出现连接确认按钮 → 说明弹窗本就已解锁，直接返回；
+   * 一开始可能既没有解锁框也没有连接/授权元素。循环内每 200ms 检查状态：
+   * ① 出现密码框 → 填入密码、点提交，再等解锁页消失后返回；
+   * ② 出现连接/授权/签名元素 → 说明弹窗本就已解锁，直接返回；
    * ③ 弹窗已被关闭 → 直接返回。直到预算用尽仍无任何状态则抛错。
    * @param popup 钱包弹窗页
    * @param password 解锁密码
@@ -66,24 +74,30 @@ export class MetaMaskAdapter implements WalletAdapter {
       if (pwCount > 0) {
         await pw.fill(password)
         await popup.getByTestId('unlock-submit').first().click()
-        // 等解锁页消失（waitFor detached 对从未出现的元素立即成功——解锁框已确认存在，此判定安全）；
-        // 30s 预算：正确密码下解锁页通常秒离，慢渲染（多窗口并发）时放宽
+        // 等解锁页消失；若解锁页没 detach 但已切到确认页（仍留在 DOM 里），也视为解锁成功
         try {
           await popup.getByTestId('unlock-page').first().waitFor?.({ state: 'detached', timeout: 30000 })
         } catch {
+          const unlockStillVisible = await this.testIdVisible(popup, ['unlock-page', 'unlock-password'])
+          if (!unlockStillVisible && (await this.testIdVisible(popup, UNLOCKED_TESTIDS))) return
           throw new Error('MetaMask 解锁失败（密码错误或解锁页未离开）')
         }
         return
       }
-      const confirm = popup.getByTestId('confirm-btn').first()
-      try {
-        if (((await confirm.count?.()) ?? 0) > 0) return
-      } catch {
-        if (popup.isClosed?.()) return
-      }
-      await sleep(500)
+      // 已解锁：连接/授权/签名页任一可见即返回（不再只认 confirm-btn）
+      if (await this.testIdVisible(popup, UNLOCKED_TESTIDS)) return
+      await sleep(POPUP_POLL_MS)
     }
     throw new Error('MetaMask 弹窗状态未出现（解锁框/连接确认轮询超时均未渲染）')
+  }
+
+  /**
+   * 弹窗 UI 是否已渲染到可操作状态：密码框、解锁页或任一授权/签名元素可见。
+   * 登录流程会先等它就绪再分类，避免弹窗窗口已出现、DOM 还没渲染时被误判成 unknown 再空跑一轮竞速。
+   */
+  async isPopupReady(popup: PopupPage): Promise<boolean> {
+    if (popup.isClosed?.()) return true
+    return this.testIdVisible(popup, ['unlock-password', 'unlock-page', ...UNLOCKED_TESTIDS])
   }
 
   /** 处理「站点请求连接钱包」的弹窗：三种意图在 MetaMask 里按钮布局一致，统一委托 confirm */
@@ -153,13 +167,11 @@ export class MetaMaskAdapter implements WalletAdapter {
    * 然后最多 3 轮——每轮先探一下解锁框，若存在说明钱包已锁定且没配密码（配了的话 unlock 已提前解锁），
    * 立即抛明确错误，避免角色名回退误点到「解锁」按钮而空转；否则等确认按钮出现并点击，
    * 再等「弹窗 close 事件」或「连接页先存在后消失」作为成功信号（比特浏览器后台/最小化时 close 事件不可靠，
-   * 故用连接页消失兜底）。任一步成功即返回；3 轮结束仍未完成则抛错。
+   * 故用 isClosed 轮询与连接页消失兜底）。任一步成功即返回；3 轮结束仍未完成则抛错。
    * @param popup 钱包弹窗页
    * @throws 钱包已锁定但未配置解锁密码；或 3 轮后弹窗仍未关闭
    */
   private async confirm(popup: PopupPage): Promise<void> {
-    // 弹窗 UI 沉降：等初始渲染完成再开始交互，避免点击落在未挂载完成的界面上被吞掉
-    await sleep(2000)
     for (let i = 0; i < 3; i++) {
       if (popup.isClosed?.()) break
       const lockLoc = popup.getByTestId('unlock-password').first()
@@ -170,16 +182,18 @@ export class MetaMaskAdapter implements WalletAdapter {
         if (popup.isClosed?.()) break
       }
       if (locked) throw new Error('MetaMask 已锁定且未配置解锁密码（请在 config/.env 配置 WALLET_PASSWORDS 或 config.local.json 的 wallet.passwords）')
+      // 不再固定等 2 秒：按钮已渲染就立刻点（waitConfirmBtn 内部 200ms 轮询）
       const btn = await this.waitConfirmBtn(popup, 10000)
       if (!btn) break
       await btn.click()
-      const closed = await popup.waitForEvent('close', { timeout: 15000 }).then(() => true).catch(() => false)
-      if (closed) return
-      // close 事件没来：连接页若已消失（先确认过存在——detached 对从未出现的元素立即成功，必须 count 校验）
+      if (popup.isClosed?.()) return
+      // close 事件与 isClosed 轮询并行：事件漏收时 100ms 内也能发现窗口已关
+      if (await waitForPopupClose(popup)) return
+      // 弹窗未关但连接页已消失也判成功（先 count 确认存在——detached 对从未出现的元素立即成功）
       const cp = popup.getByTestId('connect-page').first()
       try {
         if (cp.count && (await cp.count()) > 0) {
-          await cp.waitFor?.({ state: 'detached', timeout: 15000 })
+          await cp.waitFor?.({ state: 'detached', timeout: CONNECT_PAGE_GONE_MS })
           return
         }
       } catch {
@@ -191,7 +205,7 @@ export class MetaMaskAdapter implements WalletAdapter {
 
   /**
    * 轮询等待确认按钮渲染出来。
-   * 每 500ms 检查一轮：先按一组 data-testid 候选找（多版本兼容、与语言无关），
+   * 每 200ms 检查一轮：先按一组 data-testid 候选找（多版本兼容、与语言无关），
    * 找不到再用按钮角色名正则兜底；弹窗中途关闭或超时则返回 null。
    * @param popup 钱包弹窗页
    * @param timeoutMs 最长等待毫秒数
@@ -211,7 +225,7 @@ export class MetaMaskAdapter implements WalletAdapter {
       } catch {
         if (popup.isClosed?.()) return null
       }
-      await sleep(500)
+      await sleep(POPUP_POLL_MS)
     }
     return null
   }

@@ -52,6 +52,10 @@ const INITIAL_RACE_MS = 20000
 const SHORT_RACE_MS = 3000
 /** 单轮内最多推进次数：防止「站内钱包项反复可见/扩展弹窗持续存在」等异常导致死循环 */
 const MAX_STEPS = 8
+/** 弹窗就绪轮询间隔（毫秒）：密码框/确认按钮渲染出来即分类，不再白等一整轮竞速 */
+const POPUP_READY_POLL_MS = 100
+/** 弹窗就绪最长轮询时间（毫秒）：够慢渲染的扩展弹窗完成首屏即可 */
+const POPUP_READY_WAIT_MS = 1000
 
 /** 单轮竞速结果：命中的语义键（含扩展弹窗）或 none */
 type RoundResult =
@@ -225,26 +229,59 @@ async function advanceRound(
 }
 
 /**
- * 处理扩展弹窗：先分类再决定是否自动处理。
+ * 处理扩展弹窗：先等 UI 就绪再分类，避免“窗口已出现但页面还没渲染”被误判成 unknown。
  * tx 弹窗默认绝不自动确认（安全边界）——告警后返回 false，由任务显式 confirmTransaction；
  * 仅当 autoConfirmTransaction=true（0 撸站点，站点把授权确认混入登录弹窗）时自动确认 tx；
  * unlock/connect/sign 交给适配器 handleLoginPopup 自动完成。
  * @returns 是否实际处理了弹窗
  */
 async function handlePopup(deps: WalletActions['deps'], adapter: WalletAdapter, popup: PopupPage, autoConfirmTransaction: boolean): Promise<boolean> {
+  const startedAt = Date.now()
+  const ready = await waitPopupReady(adapter, popup)
+  const classifyStart = Date.now()
   const kind = await adapter.classifyPopup(popup).catch(() => 'unknown' as const)
+  const classifyMs = Date.now() - classifyStart
+  const logTiming = (handled: boolean): void => {
+    deps.log.info({
+      step: 'wallet',
+      wallet: adapter.key,
+      kind,
+      ready,
+      classifyMs,
+      handleMs: Date.now() - classifyStart - classifyMs,
+      handled,
+    }, '钱包弹窗处理耗时')
+  }
   if (kind === 'tx') {
     if (!autoConfirmTransaction) {
       deps.log.warn({ step: 'connect', kind, wallet: adapter.key, url: popup.url?.() }, '检测到交易确认弹窗，登录流程不自动处理（交由任务显式确认）')
+      logTiming(false)
       return false
     }
     deps.log.info({ step: 'connect', kind, wallet: adapter.key, url: popup.url?.() }, '检测到交易/授权确认弹窗，已按任务配置自动确认（autoConfirmTransaction）')
     await adapter.confirmTx(popup).catch(() => {})
+    logTiming(true)
     return true
   }
   const handled = await adapter.handleLoginPopup(popup, deps.walletPasswords?.[adapter.key]).catch(() => false)
   if (!handled) deps.log.warn({ step: 'connect', kind, wallet: adapter.key }, '钱包弹窗未识别（unknown/缺密码），继续等待连接标志')
+  logTiming(handled)
   return handled
+}
+
+/**
+ * 等弹窗 UI 就绪：适配器未实现 isPopupReady 时视为就绪；
+ * 否则 100ms 轮询，最多 1 秒——密码框/确认按钮一出现立刻返回，避免分类空转。
+ */
+async function waitPopupReady(adapter: WalletAdapter, popup: PopupPage): Promise<boolean> {
+  if (!adapter.isPopupReady) return true
+  const deadline = Date.now() + POPUP_READY_WAIT_MS
+  while (Date.now() < deadline) {
+    if (popup.isClosed?.()) return true
+    if (await adapter.isPopupReady(popup).catch(() => false)) return true
+    await new Promise((resolve) => setTimeout(resolve, POPUP_READY_POLL_MS))
+  }
+  return adapter.isPopupReady(popup).catch(() => false)
 }
 
 /**
