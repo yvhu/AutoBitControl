@@ -5,13 +5,12 @@
  * 设计思路：无 cron 库——到点判断走 schedule.ts 的墙上时钟匹配；
  * 错过即跳过（无锚点持久化，重启后从当前时间自然重算）；
  * 每分钟去重 Map（内存态，重启同分钟可能重复触发一次，由队列合并与在途守卫兜底）；
- * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（按窗口序号传入 notBeforeMs 错峰）
+ * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期，不做错峰）
  */
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 import type { TaskMeta } from './task'
 import type { ApplyResult, FileAssignConfig } from '../tools/file-assign/types'
-import { staggerNotBefore, type StaggerConfig } from './stagger'
 import { wallClockIn, isDueMinute, type ScheduleConfig, type ScheduleMode } from './schedule'
 
 /** 一次触发的任务级结果（面板「立即运行」与日志共用） */
@@ -33,7 +32,7 @@ export interface SchedulerDeps {
     listProfiles(enabledOnly: boolean): Promise<ProfileRow[]>
   }
   enqueuer: {
-    enqueue(profile: ProfileRow, taskKey: string, opts?: { immediate?: boolean; batchId?: number; notBeforeMs?: number }): Promise<void>
+    enqueue(profile: ProfileRow, taskKey: string, opts?: { batchId?: number; notBeforeMs?: number }): Promise<void>
   }
   /** 任务注册表最小视图（engine 不得 import tasks 层，SiteTask 结构兼容） */
   tasks: Map<string, { meta: TaskMeta }>
@@ -44,8 +43,6 @@ export interface SchedulerDeps {
   }
   /** 固定时区（配置 scheduler.timezone） */
   timezone: string
-  /** 错峰配置（同一计划的所有任务共用一组窗口时间） */
-  stagger: StaggerConfig
   /** tick 间隔（毫秒，默认 15000） */
   tickMs?: number
   /** 当前时间来源（测试注入固定时钟；默认 Date.now） */
@@ -191,21 +188,8 @@ export class Scheduler {
         ...(assignCount !== undefined ? { renamedCount: assignCount } : {}),
       }
     }
-    // 第二遍：建批次入队
-    // 错峰 plan 在任务循环之前算一次：同一窗口的多个任务共用同一 notBefore，避免任务间抖动不一致
+    // 第二遍：建批次入队（触发即 pending，不再按窗口顺序错峰）
     const profiles = await this.deps.db.listProfiles(true)
-    const startMs = this.deps.now ? this.deps.now().getTime() : Date.now()
-    const count = profiles.length
-    const notBeforeByIndex = profiles.map((_, index) =>
-      staggerNotBefore({
-        startMs,
-        nowMs: startMs,
-        index,
-        count,
-        spreadMs: this.deps.stagger.spreadSec * 1000,
-        jitterPct: this.deps.stagger.jitterPct,
-      }),
-    )
     for (const key of passing) {
       if (assignFailed && this.deps.tasks.get(key)?.meta.requiresFileAssign) {
         this.deps.logger.warn({ schedule: schedule.name, task: key, reason: 'file-assign-failed' }, '定时触发跳过任务')
@@ -213,8 +197,8 @@ export class Scheduler {
         continue
       }
       const batch = await this.deps.db.createBatch('schedule', key, `计划#${schedule.id} ${schedule.name}`)
-      for (let i = 0; i < profiles.length; i++) {
-        await this.deps.enqueuer.enqueue(profiles[i], key, { batchId: batch.id, notBeforeMs: notBeforeByIndex[i] })
+      for (const profile of profiles) {
+        await this.deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
       }
       result.taskKeys.push(key)
       this.deps.logger.info({ schedule: schedule.name, task: key }, `定时触发已入队`)

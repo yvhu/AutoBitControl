@@ -3,10 +3,12 @@
  * 依赖方向：仅依赖 api/endpoints 与 types；数据由 react-query 缓存（staleTime 无限），重开不重复请求
  */
 import type { CSSProperties, ReactNode } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Descriptions, Empty, Modal, Spin, Timeline, Typography } from 'antd'
 import { fetchDiagnostics } from '../../api/endpoints'
 import type { DiagBundle } from '../../types'
+import RunArtifactsModal from './RunArtifactsModal'
 
 export interface DiagModalProps {
   runId: number | null
@@ -47,7 +49,7 @@ function StepsTimeline({ steps }: { steps: DiagBundle['steps'] }) {
   )
 }
 
-function DiagContent({ diag, screenshot }: { diag: DiagBundle; screenshot?: string | null }) {
+function DiagContent({ diag, screenshot, onOpenAllScreenshots }: { diag: DiagBundle; screenshot?: string | null; onOpenAllScreenshots: () => void }) {
   return (
     <div>
       <Descriptions column={1} size="small" bordered>
@@ -84,13 +86,19 @@ function DiagContent({ diag, screenshot }: { diag: DiagBundle; screenshot?: stri
           <Button type="link" onClick={() => window.open(`/api/screenshots?path=${encodeURIComponent(screenshot)}`, '_blank')}>
             🖼 查看截图
           </Button>
+          <Button type="link" onClick={onOpenAllScreenshots}>查看全部截图</Button>
         </div>
-      ) : null}
+      ) : (
+        <div style={{ marginTop: 12 }}>
+          <Button type="link" onClick={onOpenAllScreenshots}>查看全部截图</Button>
+        </div>
+      )}
     </div>
   )
 }
 
 export default function DiagModal({ runId, open, onClose, screenshot }: DiagModalProps) {
+  const [galleryOpen, setGalleryOpen] = useState(false)
   const query = useQuery({
     queryKey: ['diag', runId],
     queryFn: () => fetchDiagnostics(runId as number),
@@ -105,12 +113,13 @@ export default function DiagModal({ runId, open, onClose, screenshot }: DiagModa
   } else if (query.isError || !query.data) {
     content = <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="诊断不可用" />
   } else {
-    content = <DiagContent diag={query.data} screenshot={screenshot} />
+    content = <DiagContent diag={query.data} screenshot={screenshot} onOpenAllScreenshots={() => setGalleryOpen(true)} />
   }
 
   return (
     <Modal open={open} title="失败诊断" onCancel={onClose} footer={null} width={720}>
       {content}
+      <RunArtifactsModal runId={runId} open={galleryOpen} onClose={() => setGalleryOpen(false)} />
     </Modal>
   )
 }

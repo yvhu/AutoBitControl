@@ -58,26 +58,19 @@ export class CoalescingEnqueuer {
     this.dispatchScheduled = false
   }
 
-  /** 入队：写 pending 行；notBeforeMs 由触发入口计算（错峰），缺省沿用同窗口 pending 时间或立即 */
+  /** 入队：写 pending 行；notBeforeMs 缺省立即到期（只用于重试退避/排队到期，触发不再按窗口铺开） */
   async enqueue(
     profile: ProfileRow,
     taskKey: string,
-    opts: { immediate?: boolean; batchId?: number; notBeforeMs?: number } = {},
+    opts: { batchId?: number; notBeforeMs?: number } = {},
   ): Promise<void> {
     const date = todayStr()
-    const notBeforeMs = opts.notBeforeMs ?? (opts.immediate ? Date.now() : await this.pickNotBefore(profile.id, date))
+    const notBeforeMs = opts.notBeforeMs ?? Date.now()
     const row = await this.db.enqueueRun(profile.id, taskKey, date, opts.batchId ?? null, notBeforeMs)
     if (row.status === 'running') {
       this.logger.warn({ profile: profile.name, task: taskKey }, '任务已在运行，本次入队忽略')
     }
     this.requestDispatch()
-  }
-
-  /** 同一窗口已有 pending 时沿用最早时间；否则立即（错峰由调用方经 notBeforeMs 传入） */
-  private async pickNotBefore(profileId: number, date: string): Promise<number> {
-    const existing = await this.db.minPendingNotBefore(profileId, date)
-    if (existing != null) return existing
-    return Date.now()
   }
 
   /** 尽快跑一次 tick（合并多次 enqueue） */

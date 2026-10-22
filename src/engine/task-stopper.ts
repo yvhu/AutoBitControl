@@ -9,6 +9,10 @@
 import { todayStr, localWallNow, type AppDb } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
 import type { CancelRegistry } from './cancel-registry'
+import { waitForWindowClosed } from './window-registry'
+
+/** 停止任务关窗后等待窗口关闭的总时长（毫秒） */
+const STOP_CLOSE_CONFIRM_TIMEOUT_MS = 10_000
 
 export interface TaskStopperDeps {
   db: AppDb
@@ -16,8 +20,13 @@ export interface TaskStopperDeps {
   logger: Logger
   /** 关闭比特浏览器窗口（中止正在跑的会话；失败忽略） */
   closeBrowser(bitbrowserId: string): Promise<void>
+  /**
+   * 实测窗口是否仍存活（可选：提供后关窗需确认消失才清登记；未提供保持旧的立即清登记行为）。
+   * 实现必须在探测失败时 reject，禁止把探测异常吞成 false，否则会误清仍在关闭中的登记。
+   */
+  isOpen?(bitbrowserId: string): Promise<boolean>
   /** 取开窗登记（停止后清理用） */
-  getOpenWindow(bitbrowserId: string): Promise<{ http: string } | null>
+  getOpenWindow(bitbrowserId: string): Promise<{ http: string; state?: string } | null>
   /** 清开窗登记 */
   clearOpenWindow(bitbrowserId: string): Promise<void>
   /**
@@ -72,8 +81,21 @@ export function createTaskStopper(deps: TaskStopperDeps): TaskStopper {
       return false
     }
     const row = await deps.getOpenWindow(profile.bitbrowserId).catch(() => null)
+    if (row && deps.isOpen) await deps.db.setWindowState(profile.bitbrowserId, 'closing').catch(() => {})
     await deps.closeBrowser(profile.bitbrowserId).catch((e) => logger.warn({ profile: profile.name, err: (e as Error).message }, '停止时关窗失败（窗口可能仍开着）'))
-    if (row) await deps.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+    if (row) {
+      if (!deps.isOpen) {
+        // 旧行为：未注入存活探测时保持立即清登记（兼容既有调用方/测试夹具）
+        await deps.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+      } else {
+        const closed = await waitForWindowClosed(
+          () => deps.isOpen!(profile.bitbrowserId),
+          { timeoutMs: STOP_CLOSE_CONFIRM_TIMEOUT_MS },
+        )
+        if (closed) await deps.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+        else logger.warn({ profile: profile.name }, '停止任务后窗口未确认关闭，保留 closing 登记待 Phase 2 对账')
+      }
+    }
     logger.info({ profile: profile.name, task: taskKey }, '已请求停止任务')
     return true
   }

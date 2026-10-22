@@ -23,13 +23,14 @@ import { join } from 'node:path'
 import { chromium, type Page } from 'patchright'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
-import { AppDb, todayStr, localWallNow, localWallFromMs, type ProfileRow, type RunRow, type CircuitBreakerPolicy, type WindowHealth } from '../infrastructure/db'
+import { AppDb, todayStr, localWallNow, localWallFromMs, type ProfileRow, type RunRow, type CircuitBreakerPolicy, type WindowHealth, type OpenWindowOwnerKind } from '../infrastructure/db'
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure } from './state'
 import { classifyFailure } from './failure'
 import { TaskTimeoutError, type FailureKind } from '../infrastructure/run-errors'
 import { TaskContext } from './task-context'
 import { reclaimOrphanWindows } from './window-registry'
+import { SerialQueue } from './serial-queue'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
 import type { CancelRegistry } from './cancel-registry'
@@ -41,6 +42,10 @@ import { createAiClient, type AiClient } from '../integrations/ai'
  * 此时立即 closeBrowser 多半失败（窗口"正在打开中"），等它开完再补关一次，避免残留孤儿窗口。
  */
 const DELAYED_FALLBACK_CLOSE_MS = 90000
+/** 关窗后等待比特 /browser/pids 移除窗口的时长（毫秒） */
+const CLOSE_CONFIRM_TIMEOUT_MS = 30_000
+/** 关窗后 pids 确认轮询间隔（毫秒） */
+const CLOSE_CONFIRM_POLL_MS = 1000
 /** 跨进程全局窗口上限：等待轮询间隔（毫秒） */
 const CAPACITY_POLL_MS = 5000
 /** 跨进程全局窗口上限：单次等待总预算（毫秒；超出则放行并告警，不无限阻塞会话） */
@@ -112,6 +117,10 @@ export interface WindowRunnerDeps {
   artifactsDir: string
   /** 钱包解锁密码映射（key 为钱包类型，如 metamask/petra，透传给 TaskContext） */
   walletPasswords: Record<string, string>
+  /** 比特 open/close 串行队列（避免异步开窗/关闭互相踩踏与 API 限频；未注入时用无冷却队列兜底） */
+  openCloseQueue?: SerialQueue
+  /** 本 runner 开窗登记的归属类型（app 留空=manual，task:run 脚本传 taskrun；默认 manual） */
+  openOwnerKind?: OpenWindowOwnerKind
   /** AI 客户端（透传给 TaskContext；未注入时仅当 cfg.ai.apiKey 非空才构建，缺 key 时为 undefined） */
   ai?: AiClient
   /**
@@ -135,9 +144,15 @@ export interface WindowRunnerDeps {
 export class WindowRunner {
   /** 会话共享的 AI 客户端：显式注入优先；否则仅当 cfg.ai.apiKey 非空才构建（缺 key 时为 undefined，便于任务侧判空） */
   private readonly ai: AiClient | undefined
+  /** 比特 open/close 串行队列：app 注入带冷却的实例，测试/脚本可省略 */
+  private readonly openCloseQueue: SerialQueue
+  /** 本 runner 开窗登记归属类型 */
+  private readonly openOwnerKind: OpenWindowOwnerKind
 
   constructor(private deps: WindowRunnerDeps) {
     this.ai = deps.ai ?? (deps.cfg.ai.apiKey ? createAiClient(deps.cfg.ai) : undefined)
+    this.openCloseQueue = deps.openCloseQueue ?? new SerialQueue(0)
+    this.openOwnerKind = deps.openOwnerKind ?? 'manual'
   }
 
   /**
@@ -338,11 +353,11 @@ export class WindowRunner {
         } else {
           if (reused) logger.warn({ profile: profile.name, http: reused.http }, 'open_windows 登记缺少调试地址，忽略复用并重新开窗')
           // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http
-          await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
+          await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid, this.openOwnerKind)
           await this.waitForGlobalWindowCapacity()
           try {
             open = await this.openWithRetry(profile.bitbrowserId)
-            await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid)
+            await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open')
           } catch (e) {
             await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
             throw e
@@ -472,10 +487,11 @@ export class WindowRunner {
       } finally {
         // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）
         if (connected) await connected.close().catch(() => {})
-        // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口；关窗失败记日志，便于发现残留
+        // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口；
+        // 只有确认 pids 已消失才清登记，超时/失败保留 closing 行交由 Phase 2 对账
         if (!reusedFlag && open) {
-          await this.closeWindowSafely(profile.bitbrowserId, '会话结束')
-          await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+          const closed = await this.closeWindowSafely(profile.bitbrowserId, '会话结束')
+          if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
         }
         // 探测租约兜底释放：异常路径（任务循环抛出等）不能把窗口永久卡在 half_open
         if (probeClaimed && !probeRetryReleased) {
@@ -522,7 +538,7 @@ export class WindowRunner {
     let lastErr: Error | null = null
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await this.deps.bitbrowser.openBrowser(id)
+        return await this.openCloseQueue.run(() => this.deps.bitbrowser.openBrowser(id))
       } catch (e) {
         lastErr = e as Error
         this.deps.logger.warn({ id, attempt: attempt + 1 }, `开窗失败: ${lastErr.message}`)
@@ -534,16 +550,34 @@ export class WindowRunner {
   }
 
   /**
-   * 关窗（容错）：失败只告警返回，不抛错。用于会话结束 / 开窗重试清理 / 兜底关窗。
-   * 之前用 `.catch(() => {})` 完全静默，导致关窗失败产生的残留窗口无法从日志发现。
+   * 关窗（容错）：失败只告警返回 false，不抛错。用于会话结束 / 开窗重试清理 / 兜底关窗。
+   * 流程：登记 closing → 串行队列调用比特关窗 → 轮询 /browser/pids 确认窗口消失。
+   * 只有确认消失才返回 true（调用方据此清登记）；关窗失败/确认超时返回 false，
+   * 保留 closing 行交由 Phase 2 对账，避免把仍在关闭中的窗口误判为孤儿。
    * @param bitbrowserId 窗口 ID
    * @param reason 触发场景（日志用）
    */
-  private async closeWindowSafely(bitbrowserId: string, reason: string): Promise<void> {
+  private async closeWindowSafely(bitbrowserId: string, reason: string): Promise<boolean> {
     try {
-      await this.deps.bitbrowser.closeBrowser(bitbrowserId)
+      await this.deps.db.setWindowState(bitbrowserId, 'closing').catch(() => {})
+      await this.openCloseQueue.run(() => this.deps.bitbrowser.closeBrowser(bitbrowserId), { cooldown: false })
+      const deadline = Date.now() + CLOSE_CONFIRM_TIMEOUT_MS
+      while (Date.now() < deadline) {
+        let alive: Set<string>
+        try {
+          alive = await this.deps.bitbrowser.openPids([bitbrowserId])
+        } catch (e) {
+          this.deps.logger.warn({ bitbrowserId, reason, err: (e as Error).message }, '关窗后窗口占用探测失败，保留登记待 Phase 2 对账')
+          return false
+        }
+        if (!alive.has(bitbrowserId)) return true
+        await new Promise((resolve) => setTimeout(resolve, CLOSE_CONFIRM_POLL_MS))
+      }
+      this.deps.logger.warn({ bitbrowserId, reason }, '关窗确认超时（窗口可能残留），保留 closing 登记待 Phase 2 对账')
+      return false
     } catch (e) {
       this.deps.logger.warn({ bitbrowserId, reason, err: (e as Error).message }, '关窗失败（窗口可能残留）')
+      return false
     }
   }
 
@@ -553,7 +587,7 @@ export class WindowRunner {
    */
   private scheduleFallbackClose(bitbrowserId: string): void {
     const timer = setTimeout(() => {
-      void this.deps.bitbrowser.closeBrowser(bitbrowserId)
+      void this.openCloseQueue.run(() => this.deps.bitbrowser.closeBrowser(bitbrowserId), { cooldown: false })
         .then(() => this.deps.logger.info({ bitbrowserId }, '开窗失败兜底关窗完成（清理可能半开的窗口）'))
         .catch((e) => this.deps.logger.warn({ bitbrowserId, err: (e as Error).message }, '开窗失败兜底关窗失败（窗口可能残留，请手动清理）'))
     }, DELAYED_FALLBACK_CLOSE_MS)
@@ -582,10 +616,17 @@ export class WindowRunner {
         return
       }
       if (open.size < max) return
-      // 满额先甄别并回收占位者：孤儿/归属进程已死的窗口直接关掉，腾出名额后再重新计数
+      // 满额先甄别并回收占位者：仅 state=open 且归属进程已死的窗口直接关掉，腾出名额后再重新计数
       if (!reclaimedOnce) {
         reclaimedOnce = true
-        const reclaimed = await reclaimOrphanWindows({ db: this.deps.db, bitbrowser: this.deps.bitbrowser }, this.deps.logger)
+        const reclaimed = await reclaimOrphanWindows({
+          db: this.deps.db,
+          bitbrowser: {
+            openPids: (ids) => this.deps.bitbrowser.openPids(ids),
+            // 孤儿回收的 close 也串行化，避免与正常开/关窗并发踩踏比特 API
+            closeBrowser: (id) => this.openCloseQueue.run(() => this.deps.bitbrowser.closeBrowser(id), { cooldown: false }),
+          },
+        }, this.deps.logger)
         if (reclaimed > 0) {
           this.deps.logger.info({ reclaimed, max }, '跨进程窗口满额：已回收孤儿窗口，重新计数')
           continue

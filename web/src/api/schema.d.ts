@@ -673,8 +673,6 @@ export interface paths {
                             data?: {
                                 bitbrowserApiBase?: string;
                                 webPort?: number;
-                                staggerMaxSec?: number;
-                                staggerJitterPct?: number;
                                 circuitBreakerThreshold?: number;
                                 circuitBreakerEnabled?: boolean;
                                 circuitBreakerCooldownSec?: number;

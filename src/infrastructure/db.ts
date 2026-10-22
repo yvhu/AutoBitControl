@@ -103,12 +103,28 @@ export interface ProfileRow {
   coreVersion?: string | null
 }
 
-/** open_windows 表行：窗口打开状态 + 归属进程（owner_pid 供孤儿回收判定归属进程是否存活） */
+/** 窗口生命周期状态：opening = 开窗中，open = 可复用，closing = 关闭中（不再参与窗口池） */
+export type OpenWindowState = 'opening' | 'open' | 'closing'
+/** 窗口归属：pool = 窗口池调度，manual = 面板手动打开，taskrun = 单任务调试脚本 */
+export type OpenWindowOwnerKind = 'pool' | 'manual' | 'taskrun'
+
+/**
+ * open_windows 表行：窗口打开状态 + 归属进程（owner_pid 供孤儿回收判定归属进程是否存活）
+ * 窗口池字段声明为可选，兼容只关心 bitbrowserId/http/ownerPid 的旧调用方夹具；
+ * AppDb 的读取方法均返回 Required<OpenWindowRow>（字段一定存在）。
+ */
 export interface OpenWindowRow {
   bitbrowserId: string
   http: string
   ownerPid: number | null
+  state?: OpenWindowState
+  ownerKind?: OpenWindowOwnerKind
+  lastUsedAt?: string | null
+  tasksDone?: number
 }
+
+/** open_windows 完整行（AppDb 查询返回，窗口池字段保证存在） */
+export type OpenWindowPoolRow = Required<OpenWindowRow>
 
 /** runs 表行：某窗口某任务某天的一次运行记录 */
 export interface RunRow {
@@ -289,12 +305,16 @@ const SCHEMA = [
   )`,
   // 窗口打开状态登记表：主进程（面板打开/关闭）与 task:run 脚本跨进程共享，
   // 一行 = 一个已打开的窗口（http 调试地址供 CDP 复用）；pid 是否存活由调用方实测；
-  // owner_pid = 打开该窗口的进程号（孤儿回收用：无归属行或归属进程已死的存活窗口会被回收）
+  // owner_pid = 打开该窗口的进程号（孤儿回收用：仅 state=open 且归属进程已死的存活窗口会被回收；Phase 1 不回收无登记窗口）
   `CREATE TABLE IF NOT EXISTS open_windows (
     bitbrowser_id TEXT PRIMARY KEY,
     http TEXT NOT NULL,
     opened_at TEXT NOT NULL,
-    owner_pid INTEGER
+    owner_pid INTEGER,
+    state TEXT NOT NULL DEFAULT 'open',
+    owner_kind TEXT NOT NULL DEFAULT 'manual',
+    last_used_at TEXT,
+    tasks_done INTEGER NOT NULL DEFAULT 0
   )`,
   // 空投追踪：状态列（看板列，可自定义）/ 项目 / 待办子项——长期台账，不参与历史清理
   `CREATE TABLE IF NOT EXISTS airdrop_statuses (
@@ -334,6 +354,7 @@ const DUE_RUN_CONDITION = `r.date = ? AND r.status IN ('pending','retry_wait') A
     SELECT 1 FROM runs r2
     WHERE r2.profile_id = r.profile_id AND r2.task_key = r.task_key AND r2.date = r.date AND r2.slot > r.slot
   )`
+const OPEN_WINDOW_COLUMNS = `bitbrowser_id AS bitbrowserId, http, owner_pid AS ownerPid, state, owner_kind AS ownerKind, last_used_at AS lastUsedAt, tasks_done AS tasksDone`
 const SELECT_STATUS = `SELECT s.id, s.name, s.sort_order AS sortOrder, s.created_at AS createdAt, COUNT(p.id) AS projectCount FROM airdrop_statuses s LEFT JOIN airdrop_projects p ON p.status_id = s.id`
 const SELECT_PROJECT = `SELECT p.id, p.name, p.status_id AS statusId, p.priority, p.deadline, p.link, p.note, p.task_key AS taskKey, p.created_at AS createdAt, p.updated_at AS updatedAt, s.name AS statusName FROM airdrop_projects p JOIN airdrop_statuses s ON s.id = p.status_id`
 const SELECT_TODO = `SELECT id, project_id AS projectId, content, done, due_date AS dueDate, priority, created_at AS createdAt FROM airdrop_todos`
@@ -342,6 +363,19 @@ const TODO_ORDER = `done, due_date IS NULL, due_date, CASE priority WHEN 'high' 
 
 /** libsql 支持的绑定值类型（undefined 不允许，调用前须归一为 null） */
 type DbArg = null | string | number | bigint | Uint8Array | ArrayBuffer
+
+/** open_windows 查询行归一化（列别名与 OPEN_WINDOW_COLUMNS 对应） */
+function toOpenWindowRow(r: Row): OpenWindowPoolRow {
+  return {
+    bitbrowserId: String(r.bitbrowserId),
+    http: String(r.http ?? ''),
+    ownerPid: r.ownerPid === null || r.ownerPid === undefined ? null : Number(r.ownerPid),
+    state: String(r.state) as OpenWindowState,
+    ownerKind: String(r.ownerKind) as OpenWindowOwnerKind,
+    lastUsedAt: r.lastUsedAt === null || r.lastUsedAt === undefined ? null : String(r.lastUsedAt),
+    tasksDone: Number(r.tasksDone ?? 0),
+  }
+}
 
 /**
  * 本地 SQLite 访问门面：私有构造 + 异步 open 工厂，保证打开即迁移
@@ -397,10 +431,18 @@ export class AppDb {
     for (const [col, type] of newProfileCols) {
       if (!profileCols.has(col)) await this.client.execute(`ALTER TABLE profiles ADD COLUMN ${col} ${type}`)
     }
-    // 老库补列：open_windows.owner_pid（窗口归属进程号，孤儿回收用；新库 CREATE TABLE 已自带）
+    // 老库补列：open_windows 归属进程与窗口池状态（新库 CREATE TABLE 已自带；PRAGMA 查列后缺哪个补哪个）
     const owInfo = await this.client.execute(`PRAGMA table_info(open_windows)`)
-    if (!owInfo.rows.some((r) => String(r.name) === 'owner_pid')) {
-      await this.client.execute(`ALTER TABLE open_windows ADD COLUMN owner_pid INTEGER`)
+    const owCols = new Set(owInfo.rows.map((r) => String(r.name)))
+    const owNew: Array<[string, string]> = [
+      ['owner_pid', 'INTEGER'],
+      ['state', "TEXT NOT NULL DEFAULT 'open'"],
+      ['owner_kind', "TEXT NOT NULL DEFAULT 'manual'"],
+      ['last_used_at', 'TEXT'],
+      ['tasks_done', 'INTEGER NOT NULL DEFAULT 0'],
+    ]
+    for (const [col, type] of owNew) {
+      if (!owCols.has(col)) await this.client.execute(`ALTER TABLE open_windows ADD COLUMN ${col} ${type}`)
     }
     // 老库重建：runs 表加 slot 列 + 唯一键改为 (profile_id, task_key, date, slot)——
     // SQLite 无法 ALTER 删除表级 UNIQUE 约束，必须建新表迁移数据（事务内完成，中断自动回滚）
@@ -1256,40 +1298,75 @@ export class AppDb {
   }
 
   /** 读窗口打开状态登记（无登记返回 null）；是否真实存活由调用方经比特浏览器 /browser/pids 实测 */
-  async getOpenWindow(bitbrowserId: string): Promise<{ http: string } | null> {
-    const rows = await this.exec('SELECT http FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
-    return rows.length > 0 ? { http: String(rows[0].http) } : null
+  async getOpenWindow(bitbrowserId: string): Promise<{ http: string; state: OpenWindowState } | null> {
+    const rows = await this.exec('SELECT http, state FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
+    return rows.length > 0
+      ? { http: String(rows[0].http), state: String(rows[0].state) as OpenWindowState }
+      : null
   }
 
-  /** 读全部打开状态登记（含 owner_pid；孤儿回收用） */
-  async listOpenWindows(): Promise<OpenWindowRow[]> {
-    const rows = await this.exec('SELECT bitbrowser_id AS bitbrowserId, http, owner_pid AS ownerPid FROM open_windows')
-    return rows.map((r) => ({
-      bitbrowserId: String(r.bitbrowserId),
-      http: String(r.http ?? ''),
-      ownerPid: r.ownerPid === null || r.ownerPid === undefined ? null : Number(r.ownerPid),
-    }))
+  /** 读全部打开状态登记（含 owner_pid 与窗口池状态；孤儿回收用） */
+  async listOpenWindows(): Promise<OpenWindowPoolRow[]> {
+    const rows = await this.exec(`SELECT ${OPEN_WINDOW_COLUMNS} FROM open_windows`)
+    return rows.map(toOpenWindowRow)
+  }
+
+  /** 读窗口池可用窗口（owner_kind = pool 且生命周期为 open） */
+  async listPoolWindows(): Promise<OpenWindowPoolRow[]> {
+    const rows = await this.exec(
+      `SELECT ${OPEN_WINDOW_COLUMNS} FROM open_windows WHERE owner_kind = 'pool' AND state = 'open'`,
+    )
+    return rows.map(toOpenWindowRow)
   }
 
   /**
    * 预留窗口归属登记（开窗前调用）：先占位写 owner_pid，避免「窗口已开、登记未写」的竞态窗口
    * 被其它进程的孤儿回收误关；开成功后用 setOpenWindow 补 http，开失败用 clearOpenWindow 清除。
+   * ownerKind 缺省 manual，保持既有 2 参调用语义。
    */
-  async reserveOpenWindow(bitbrowserId: string, ownerPid: number): Promise<void> {
+  async reserveOpenWindow(
+    bitbrowserId: string,
+    ownerPid: number,
+    ownerKind: OpenWindowOwnerKind = 'manual',
+  ): Promise<void> {
     await this.exec(
-      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid) VALUES (?, '', ?, ?)
-       ON CONFLICT(bitbrowser_id) DO UPDATE SET opened_at = excluded.opened_at, owner_pid = excluded.owner_pid`,
-      [bitbrowserId, localWallNow(), ownerPid],
+      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid, state, owner_kind)
+       VALUES (?, '', ?, ?, 'opening', ?)
+       ON CONFLICT(bitbrowser_id) DO UPDATE SET
+         http = '', opened_at = excluded.opened_at, owner_pid = excluded.owner_pid,
+         state = 'opening', owner_kind = excluded.owner_kind`,
+      [bitbrowserId, localWallNow(), ownerPid, ownerKind],
     )
   }
 
-  /** 登记/更新窗口打开状态（面板打开、task:run 复用探测等场景写入；同 id 覆盖 http/时间/归属进程） */
-  async setOpenWindow(bitbrowserId: string, http: string, ownerPid?: number): Promise<void> {
+  /** 登记/更新窗口打开状态（面板打开、task:run 复用探测等场景写入；同 id 覆盖 http/时间/归属进程/状态） */
+  async setOpenWindow(
+    bitbrowserId: string,
+    http: string,
+    ownerPid?: number,
+    state: OpenWindowState = 'open',
+  ): Promise<void> {
     await this.exec(
-      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid) VALUES (?, ?, ?, ?)
-       ON CONFLICT(bitbrowser_id) DO UPDATE SET http = excluded.http, opened_at = excluded.opened_at, owner_pid = excluded.owner_pid`,
-      [bitbrowserId, http, localWallNow(), ownerPid ?? null],
+      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid, state) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(bitbrowser_id) DO UPDATE SET
+         http = excluded.http, opened_at = excluded.opened_at,
+         owner_pid = excluded.owner_pid, state = excluded.state`,
+      [bitbrowserId, http, localWallNow(), ownerPid ?? null, state],
     )
+  }
+
+  /** 更新窗口生命周期状态（开窗完成/关闭中） */
+  async setWindowState(bitbrowserId: string, state: OpenWindowState): Promise<void> {
+    await this.exec('UPDATE open_windows SET state = ? WHERE bitbrowser_id = ?', [state, bitbrowserId])
+  }
+
+  /** 记录窗口最近使用时间与已完成任务数（窗口池淘汰依据） */
+  async touchWindowUsed(bitbrowserId: string, tasksDone: number): Promise<void> {
+    await this.exec('UPDATE open_windows SET last_used_at = ?, tasks_done = ? WHERE bitbrowser_id = ?', [
+      localWallNow(),
+      tasksDone,
+      bitbrowserId,
+    ])
   }
 
   /** 清除窗口打开状态登记（窗口关闭或 pid 实测已死时调用） */

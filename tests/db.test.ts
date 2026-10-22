@@ -110,13 +110,118 @@ describe('AppDb', () => {
 
   it('open_windows 登记/覆盖读取/清除 roundtrip', async () => {
     expect(await db.getOpenWindow('bb-1')).toBeNull()
-    await db.setOpenWindow('bb-1', '127.0.0.1:61234')
-    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61234' })
+    // 2 参预留沿用旧调用：默认 manual 归属，状态 opening
+    await db.reserveOpenWindow('bb-1', 61234)
+    expect((await db.listOpenWindows())[0]).toMatchObject({ state: 'opening', ownerKind: 'manual' })
+    // 3 参登记沿用旧调用：状态转为 open，ownerKind 保持 manual
+    await db.setOpenWindow('bb-1', '127.0.0.1:61234', 61234)
+    expect((await db.listOpenWindows())[0]).toMatchObject({ state: 'open', ownerKind: 'manual' })
+    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61234', state: 'open' })
     // 同窗口重复登记覆盖 http（幂等 upsert，不产生第二行）
     await db.setOpenWindow('bb-1', '127.0.0.1:61235')
-    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61235' })
+    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61235', state: 'open' })
     await db.clearOpenWindow('bb-1')
     expect(await db.getOpenWindow('bb-1')).toBeNull()
+  })
+
+  describe('open_windows 状态', () => {
+    it('预留/开窗/使用记录/状态更新/池窗口列表', async () => {
+      const db = await AppDb.open('file::memory:')
+      await db.reserveOpenWindow('bb-1', 123, 'pool')
+      let rows = await db.listOpenWindows()
+      expect(rows[0]).toMatchObject({ bitbrowserId: 'bb-1', ownerPid: 123, state: 'opening', ownerKind: 'pool', tasksDone: 0 })
+      // opening 中的窗口不可被窗口池复用
+      expect(await db.listPoolWindows()).toHaveLength(0)
+
+      await db.setOpenWindow('bb-1', '127.0.0.1:9222', 123, 'open')
+      await db.touchWindowUsed('bb-1', 1)
+      rows = await db.listPoolWindows()
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({ state: 'open', ownerKind: 'pool', lastUsedAt: expect.any(String), tasksDone: 1 })
+
+      await db.setWindowState('bb-1', 'closing')
+      expect(await db.listPoolWindows()).toHaveLength(0)
+      await db.clearOpenWindow('bb-1')
+      expect(await db.listOpenWindows()).toHaveLength(0)
+      db.close()
+    })
+
+    it('touchWindowUsed 后重新登记不重置使用记录', async () => {
+      const db = await AppDb.open('file::memory:')
+      await db.setOpenWindow('bb-1', '127.0.0.1:9222', 123)
+      await db.touchWindowUsed('bb-1', 2)
+      const used = (await db.listOpenWindows())[0]
+      expect(used).toMatchObject({ tasksDone: 2, lastUsedAt: expect.any(String) })
+
+      await db.setOpenWindow('bb-1', '127.0.0.1:9223', 123)
+      const updated = (await db.listOpenWindows())[0]
+      expect(updated).toMatchObject({ http: '127.0.0.1:9223', tasksDone: 2, lastUsedAt: expect.any(String) })
+      db.close()
+    })
+  })
+
+  it('老库 open_windows 自动补窗口池列且迁移幂等', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-open-windows-'))
+    const fileUrl = `file:${join(dir, 'app.db').split('\\').join('/')}`
+    // 手工造旧版表：只有登记窗口所需的最小列
+    const raw = createClient({ url: fileUrl })
+    await raw.execute(`CREATE TABLE open_windows (
+      bitbrowser_id TEXT PRIMARY KEY,
+      http TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      owner_pid INTEGER
+    )`)
+    await raw.execute(`INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid)
+      VALUES ('bb-legacy', '127.0.0.1:9222', '2026-10-22 10:00:00', 4321)`)
+    raw.close()
+
+    const legacy = await AppDb.open(fileUrl)
+    const info = await (legacy as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(open_windows)`)
+    expect(info.rows.map((r) => r.name)).toEqual(expect.arrayContaining(['state', 'owner_kind', 'last_used_at', 'tasks_done']))
+    expect((await legacy.listOpenWindows())[0]).toMatchObject({
+      bitbrowserId: 'bb-legacy',
+      ownerPid: 4321,
+      state: 'open',
+      ownerKind: 'manual',
+      lastUsedAt: null,
+      tasksDone: 0,
+    })
+    legacy.close()
+
+    // 第二次打开：重复迁移不报错，旧行保留且默认值不变
+    const again = await AppDb.open(fileUrl)
+    const rows = await again.listOpenWindows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ bitbrowserId: 'bb-legacy', state: 'open', ownerKind: 'manual', tasksDone: 0 })
+    again.close()
+  })
+
+  it('老库 open_windows 无 owner_pid 时迁移补 NULL 并补齐窗口池列', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abc-open-windows-no-owner-'))
+    const fileUrl = `file:${join(dir, 'app.db').split('\\').join('/')}`
+    const raw = createClient({ url: fileUrl })
+    await raw.execute(`CREATE TABLE open_windows (
+      bitbrowser_id TEXT PRIMARY KEY,
+      http TEXT NOT NULL,
+      opened_at TEXT NOT NULL
+    )`)
+    await raw.execute(`INSERT INTO open_windows (bitbrowser_id, http, opened_at)
+      VALUES ('bb-legacy', '127.0.0.1:9222', '2026-10-22 10:00:00')`)
+    raw.close()
+
+    const legacy = await AppDb.open(fileUrl)
+    const info = await (legacy as unknown as { client: { execute: (sql: string) => Promise<{ rows: Array<{ name: string }> }> } }).client.execute(`PRAGMA table_info(open_windows)`)
+    expect(info.rows.map((r) => r.name)).toEqual(expect.arrayContaining(['owner_pid', 'state', 'owner_kind', 'last_used_at', 'tasks_done']))
+    const row = (await legacy.listOpenWindows())[0]
+    expect(row).toMatchObject({
+      bitbrowserId: 'bb-legacy',
+      ownerPid: null,
+      state: 'open',
+      ownerKind: 'manual',
+      lastUsedAt: null,
+      tasksDone: 0,
+    })
+    legacy.close()
   })
 
   it('upsertProfile 带元数据写入并可读回', async () => {

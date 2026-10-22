@@ -12,33 +12,11 @@ describe('loadConfig', () => {
   it('无配置文件时返回默认值', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
-    expect(cfg.execution.staggerMaxSec).toBe(120)
-    expect(cfg.execution.staggerJitterPct).toBe(15)
     expect(cfg.execution.maxConcurrentWindows).toBe(4)
-  })
-
-  it('staggerMaxSec 非法值（非有限数字或负数）回退 120', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 0 } }))
-    expect(loadConfig({ rootDir: dir }).execution.staggerMaxSec).toBe(0)
-    for (const value of [-1, '120', null]) {
-      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: value } }))
-      expect(loadConfig({ rootDir: dir }).execution.staggerMaxSec).toBe(120)
-    }
-  })
-
-  it('staggerJitterPct 校验 0-50，非法值回退 15', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    for (const value of [0, 50]) {
-      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerJitterPct: value } }))
-      expect(loadConfig({ rootDir: dir }).execution.staggerJitterPct).toBe(value)
-    }
-    for (const value of [-1, 51, '15']) {
-      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerJitterPct: value } }))
-      expect(loadConfig({ rootDir: dir }).execution.staggerJitterPct).toBe(15)
-    }
+    // 批量错峰已移除：配置不再包含 stagger 字段
+    const execution = cfg.execution as unknown as Record<string, unknown>
+    expect(execution.staggerMaxSec).toBeUndefined()
+    expect(execution.staggerJitterPct).toBeUndefined()
   })
 
   it('maxConcurrentWindows 非法或 0 回退 4 并产生告警', () => {
@@ -61,29 +39,6 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ rootDir: dir, warnings })
     expect(cfg.execution.maxConcurrentWindows).toBe(6)
     expect(warnings).toEqual([])
-  })
-
-  it('staggerMaxSec 超过 3600 截断为 3600 并告警', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 7200 } }))
-    const warnings: string[] = []
-    const cfg = loadConfig({ rootDir: dir, warnings })
-    expect(cfg.execution.staggerMaxSec).toBe(3600)
-    expect(warnings.some((w) => w.includes('staggerMaxSec'))).toBe(true)
-  })
-
-  it('staggerMaxSec 非法值回退 120 并告警，0 合法不告警', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: -1 } }))
-    const badWarnings: string[] = []
-    expect(loadConfig({ rootDir: dir, warnings: badWarnings }).execution.staggerMaxSec).toBe(120)
-    expect(badWarnings.some((w) => w.includes('staggerMaxSec'))).toBe(true)
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { staggerMaxSec: 0 } }))
-    const okWarnings: string[] = []
-    expect(loadConfig({ rootDir: dir, warnings: okWarnings }).execution.staggerMaxSec).toBe(0)
-    expect(okWarnings).toEqual([])
   })
 
   it('旧配置 circuitBreakerResetEveryHours 产生废弃告警且不影响新配置', () => {
@@ -248,5 +203,206 @@ describe('loadConfig', () => {
     expect(cfg.execution.circuitBreakerCooldownSec).toBe(1800)
     expect(cfg.execution.circuitBreakerMaxCooldownSec).toBe(7200)
     expect(cfg.execution.circuitBreakerResetAt).toBe('23:59')
+  })
+
+  it('windowPool 默认值与覆盖', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: { maxOpenWindows: 6 } } }))
+    const cfg = loadConfig({ rootDir: dir })
+    expect(cfg.execution.windowPool).toMatchObject({
+      enabled: false,
+      maxOpenWindows: 6,
+      memoryReserveMb: 100,
+      perWindowMb: 1024,
+      criticalFreeMb: 1024,
+      resumeFreeMb: 2048,
+      checkIntervalMs: 5000,
+      openCooldownMs: 10000,
+      idleCloseSec: 180,
+      windowMaxTasks: 3,
+      windowMaxLifetimeSec: 600,
+      cohortMaxSec: 1800,
+    })
+  })
+
+  it('health 默认值与非法回退', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: { globalEnvFailureThreshold: 0 } } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.health.globalEnvFailureThreshold).toBe(3)
+    expect(cfg.execution.health.backoffSec).toEqual([30, 60, 120, 300, 600])
+    expect(warnings.some((w) => w.includes('globalEnvFailureThreshold'))).toBe(true)
+  })
+
+  it('windowPool 无配置文件时返回默认值且不告警', () => {
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.windowPool.enabled).toBe(false)
+    expect(cfg.execution.windowPool.maxOpenWindows).toBe(4)
+    expect(cfg.execution.windowPool.cohortMaxSec).toBe(1800)
+    expect(warnings).toEqual([])
+  })
+
+  it('health 无配置文件时返回默认值且不告警', () => {
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.health.bitbrowserProbeMs).toBe(30000)
+    expect(cfg.execution.health.globalEnvFailureWindowSec).toBe(300)
+    expect(cfg.execution.health.globalEnvFailureThreshold).toBe(3)
+    expect(cfg.execution.health.probeEnabled).toBe(true)
+    expect(cfg.execution.health.backoffSec).toEqual([30, 60, 120, 300, 600])
+    expect(warnings).toEqual([])
+  })
+
+  it('windowPool 非法值逐项回退默认并产生告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      execution: {
+        windowPool: {
+          maxOpenWindows: 0,
+          memoryReserveMb: -1,
+          perWindowMb: 64,
+          criticalFreeMb: 4096,
+          resumeFreeMb: 2048,
+          checkIntervalMs: 500,
+          openCooldownMs: -1,
+          idleCloseSec: -1,
+          windowMaxTasks: -1,
+          windowMaxLifetimeSec: -1,
+          cohortMaxSec: -1,
+        },
+      },
+    }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.windowPool).toMatchObject({
+      maxOpenWindows: 4,
+      memoryReserveMb: 100,
+      perWindowMb: 1024,
+      criticalFreeMb: 1024,
+      resumeFreeMb: 2048,
+      checkIntervalMs: 5000,
+      openCooldownMs: 10000,
+      idleCloseSec: 180,
+      windowMaxTasks: 3,
+      windowMaxLifetimeSec: 600,
+      cohortMaxSec: 1800,
+    })
+    for (const key of [
+      'maxOpenWindows',
+      'memoryReserveMb',
+      'perWindowMb',
+      'criticalFreeMb',
+      'resumeFreeMb',
+      'checkIntervalMs',
+      'openCooldownMs',
+      'idleCloseSec',
+      'windowMaxTasks',
+      'windowMaxLifetimeSec',
+      'cohortMaxSec',
+    ]) {
+      expect(warnings.some((w) => w.includes(key))).toBe(true)
+    }
+  })
+
+  it('windowPool enabled 非布尔值回退 false 并告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: { enabled: 'yes' } } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.windowPool.enabled).toBe(false)
+    expect(warnings.some((w) => w.includes('windowPool.enabled'))).toBe(true)
+  })
+
+  it('health 非法 backoffSec（空数组/含非正数）回退默认并告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    for (const bad of [[], [0], [30, -1], [30, 60, 'x']]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: { backoffSec: bad } } }))
+      const warnings: string[] = []
+      const cfg = loadConfig({ rootDir: dir, warnings })
+      expect(cfg.execution.health.backoffSec).toEqual([30, 60, 120, 300, 600])
+      expect(warnings.some((w) => w.includes('backoffSec'))).toBe(true)
+    }
+  })
+
+  it('health probeEnabled 非布尔值回退 true 并告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: { probeEnabled: 1 } } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.health.probeEnabled).toBe(true)
+    expect(warnings.some((w) => w.includes('probeEnabled'))).toBe(true)
+  })
+
+  it('windowPool 段非对象（null/数字）回退默认并告警且不抛错', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    for (const value of [null, 5]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: value } }))
+      const warnings: string[] = []
+      const cfg = loadConfig({ rootDir: dir, warnings })
+      expect(cfg.execution.windowPool).toMatchObject({
+        enabled: false,
+        maxOpenWindows: 4,
+        memoryReserveMb: 100,
+        perWindowMb: 1024,
+        criticalFreeMb: 1024,
+        resumeFreeMb: 2048,
+        checkIntervalMs: 5000,
+        openCooldownMs: 10000,
+        idleCloseSec: 180,
+        windowMaxTasks: 3,
+        windowMaxLifetimeSec: 600,
+        cohortMaxSec: 1800,
+      })
+      expect(warnings.some((w) => w.includes('windowPool'))).toBe(true)
+    }
+  })
+
+  it('health 段非对象（null/数字）回退默认并告警且不抛错', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    for (const value of [null, 5]) {
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: value } }))
+      const warnings: string[] = []
+      const cfg = loadConfig({ rootDir: dir, warnings })
+      expect(cfg.execution.health).toMatchObject({
+        bitbrowserProbeMs: 30000,
+        globalEnvFailureWindowSec: 300,
+        globalEnvFailureThreshold: 3,
+        probeEnabled: true,
+        backoffSec: [30, 60, 120, 300, 600],
+      })
+      expect(warnings.some((w) => w.includes('health'))).toBe(true)
+    }
+  })
+
+  it('resumeFreeMb 小于默认 criticalFreeMb 时最终仍满足 criticalFreeMb < resumeFreeMb', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: { resumeFreeMb: 500 } } }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.windowPool.criticalFreeMb).toBeLessThan(cfg.execution.windowPool.resumeFreeMb)
+    expect(warnings.some((w) => w.includes('criticalFreeMb'))).toBe(true)
+  })
+
+  it('criticalFreeMb 非法且大于恢复水位时回退后仍满足 criticalFreeMb < resumeFreeMb', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      execution: { windowPool: { criticalFreeMb: 4096, resumeFreeMb: 500 } },
+    }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.windowPool.criticalFreeMb).toBeLessThan(cfg.execution.windowPool.resumeFreeMb)
+    expect(warnings.some((w) => w.includes('criticalFreeMb'))).toBe(true)
   })
 })

@@ -7,11 +7,12 @@
 import { loadConfig } from './infrastructure/config'
 import { acquireSingleInstanceLock, singleInstanceLockPath, SingleInstanceError } from './infrastructure/single-instance'
 import { createLogger } from './infrastructure/logger'
-import { AppDb } from './infrastructure/db'
+import { AppDb, type OpenWindowState } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/window-runner'
+import { SerialQueue } from './engine/serial-queue'
 import { CoalescingEnqueuer } from './engine/queue'
 import { CancelRegistry } from './engine/cancel-registry'
 import { createTaskStopper } from './engine/task-stopper'
@@ -45,11 +46,17 @@ async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promi
   return total
 }
 
+/** 只有生命周期为 open 且调试地址非空的登记才允许复用；opening/closing 交给正常开窗流程 */
+export function getReusableWindow(row: { http: string; state: OpenWindowState } | null): { http: string } | null {
+  if (!row || row.state !== 'open' || !row.http.trim()) return null
+  return { http: row.http }
+}
+
 /**
  * 面板依赖的比特浏览器适配：health 探活 + sync 窗口列表同步 + 开窗/关窗/打开状态探测
  * 独立导出便于测试（sync 闭包持有 db 做 upsert，路由层不直接依赖 db）
  */
-export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): {
+export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb, openCloseQueue?: SerialQueue): {
   health(): Promise<boolean>
   sync(): Promise<number>
   openBrowser(id: string): Promise<{ http: string; ws: string }>
@@ -61,9 +68,10 @@ export function buildBitbrowserDeps(bitbrowser: BitBrowserClient, db: AppDb): {
     health: () => bitbrowser.health(),
     // 同步窗口列表到 profiles 表（面板"同步比特浏览器"按钮入口；失败向上抛由统一错误处理器转 500）
     sync: () => syncBrowsersPaged(bitbrowser, db),
-    // 打开/关闭与 pid 探测直接透传真实客户端（窗口路由用）
-    openBrowser: (id) => bitbrowser.openBrowser(id),
-    closeBrowser: (id) => bitbrowser.closeBrowser(id),
+    // 打开/关闭与 pid 探测：开/关窗走全局串行队列（未注入队列时保持直接透传，兼容旧测试/脚本）
+    openBrowser: (id) => openCloseQueue ? openCloseQueue.run(() => bitbrowser.openBrowser(id)) : bitbrowser.openBrowser(id),
+    // 关窗不参与开窗冷却，但仍与开窗共用同一串行链
+    closeBrowser: (id) => openCloseQueue ? openCloseQueue.run(() => bitbrowser.closeBrowser(id), { cooldown: false }) : bitbrowser.closeBrowser(id),
     isOpen: (id) => bitbrowser.isOpen(id),
     openPids: (ids) => bitbrowser.openPids(ids),
   }
@@ -168,6 +176,8 @@ export async function startApp(): Promise<void> {
 
   // 取消标记注册表：进程内「已请求停止」标记，runner / 停止器共用
   const cancelRegistry = new CancelRegistry()
+  // 比特开/关窗串行队列：全局单实例，避免异步开窗/关窗互相踩踏并按配置冷却限频
+  const openCloseQueue = new SerialQueue(cfg.execution.windowPool.openCooldownMs)
   const runner = new WindowRunner({
     cfg,
     db,
@@ -178,16 +188,14 @@ export async function startApp(): Promise<void> {
     logger,
     artifactsDir: cfg.storage.screenshotDir,
     walletPasswords: cfg.wallet.passwords,
+    openCloseQueue,
     // 取消标记：会话开始前过滤「已请求停止」任务，runTask catch 消费（落 skipped 不重试）
     cancelRegistry,
-    // 窗口复用探测：open_windows 表有登记（面板打开/task:run 登记）即复用该窗口，
-    // 本轮会话不重新开窗、结束后不关窗。此处不做 pid 校验（校验在 route/task:run 打开时登记、
-    // 关闭时清除）；若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
-    reuseOpen: async (id) => {
-      const row = await db.getOpenWindow(id)
-      if (!row || !row.http.trim()) return null
-      return { http: row.http }
-    },
+    // 窗口复用探测：仅 state=open 且调试地址非空的 open_windows 登记可复用（面板/task:run 登记），
+    // 本轮会话不重新开窗、结束后不关窗。opening/closing 交给正常开窗流程；Phase 1 不回收
+    // 「存活但无登记」的窗口。此处不做 pid 校验（pid 校验在 route/task:run 打开时登记、关闭时清除）；
+    // 若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
+    reuseOpen: async (id) => getReusableWindow(await db.getOpenWindow(id)),
     // 数据源行解析：有窗口列按窗口名/ID 匹配，无窗口列按窗口列表顺序取行（list 顺序=面板顺序）
     accountResolver: async (profile) => {
       if (!datasource.available) return null
@@ -199,14 +207,13 @@ export async function startApp(): Promise<void> {
   // 传给 dispatcher 后由 DB claim 事务裁决（runs.status='running' 唯一口径）
   const limits = new Map([...tasks].map(([key, task]) => [key, Math.max(1, task.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY)]))
   const enqueuer = new CoalescingEnqueuer(db, runner, logger, limits, cfg.execution.maxConcurrentWindows)
-  // dispatcher 常驻：错峰/重试行即使没有新的 enqueue 也要到点被拾取
+  // dispatcher 常驻：重试退避行即使没有新的 enqueue 也要到点被拾取
   enqueuer.start()
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
-  // （建 schedule 批次 + 全部启用窗口入队；错峰按窗口序号均匀铺开）
+  // （建 schedule 批次 + 全部启用窗口入队，触发即 pending）
   const scheduler = new Scheduler({
     db, enqueuer, tasks, logger, timezone: cfg.scheduler.timezone,
-    stagger: { spreadSec: cfg.execution.staggerMaxSec, jitterPct: cfg.execution.staggerJitterPct },
     // 计划级「上传前自动分配」：preview（校验+计划）→ apply（改名+写回）→ 重载数据源
     // （窗口开窗时 accountResolver 才能读到新路径；任一步失败由 Scheduler 捕获并跳过依赖文件的任务）
     fileAssign: {
@@ -228,7 +235,10 @@ export async function startApp(): Promise<void> {
     db,
     registry: cancelRegistry,
     logger,
-    closeBrowser: (id) => bitbrowser.closeBrowser(id),
+    closeBrowser: (id) => openCloseQueue.run(() => bitbrowser.closeBrowser(id), { cooldown: false }),
+    // 严格存活探测：openPids 失败必须向上抛，不能像 BitBrowserClient.isOpen 那样吞成 false，
+    // 否则停止器会把探测失败误判为「已关闭」并清掉 closing 登记
+    isOpen: async (id) => (await bitbrowser.openPids([id])).has(id),
     getOpenWindow: (id) => db.getOpenWindow(id),
     clearOpenWindow: (id) => db.clearOpenWindow(id),
     // 批次停止先撤队列：排队行已由 dispatcher 落库，DB 原子结算 pending/retry_wait
@@ -242,7 +252,7 @@ export async function startApp(): Promise<void> {
     tasks,
     cfg,
     logger,
-    bitbrowser: buildBitbrowserDeps(bitbrowser, db),
+    bitbrowser: buildBitbrowserDeps(bitbrowser, db, openCloseQueue),
     // 面板数据源展示/重载：闭包包住 datasource（reload = 重新 load 配置路径）
     datasource: {
       summary: () => datasource.summary(),

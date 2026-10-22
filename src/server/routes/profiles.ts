@@ -9,7 +9,10 @@ import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { Logger } from '../../infrastructure/logger'
-import { reclaimOrphanWindows } from '../../engine/window-registry'
+import { reclaimOrphanWindows, waitForWindowClosed } from '../../engine/window-registry'
+
+/** 面板关窗后等待 pids 消失的总时长（毫秒） */
+const PANEL_CLOSE_CONFIRM_TIMEOUT_MS = 15_000
 
 /** epoch 毫秒转本地墙钟字符串（与 db.localWallNow 同口径，供面板展示下次探测时间） */
 function probeAtText(ms: number | null | undefined): string | null {
@@ -272,8 +275,9 @@ export function profilesRouter(deps: {
 
   /**
    * 打开前校验同时打开窗口上限（execution.maxConcurrentWindows）：
-   * 以 /browser/pids 实测全量窗口数为准；满额时先回收孤儿窗口（无归属/归属进程已死）腾名额，
+   * 以 /browser/pids 实测全量窗口数为准；满额时先回收孤儿窗口（仅 state=open 且归属进程已死）腾名额，
    * 仍满才抛 409；探测/回收失败（本地 API 未就绪）放行，避免校验本身阻断。
+   * Phase 1 不回收「存活但无登记」的窗口（可能处于已开未登记窗口期，留给 Phase 2 对账）。
    */
   const ensureWindowCapacity = async (): Promise<void> => {
     const max = deps.maxConcurrentWindows
@@ -311,8 +315,12 @@ export function profilesRouter(deps: {
       // 已有登记且 pid 实测存活 → 直接复用（already），避免重复开窗
       const row = await deps.db.getOpenWindow(profile.bitbrowserId)
       const alive = openIds ? openIds.has(profile.bitbrowserId) : await deps.bitbrowser.isOpen(profile.bitbrowserId)
-      // 空 http 是残留占位登记，不能当作「已打开」直接返回，否则任务仍会复用空地址
-      if (row?.http.trim() && alive) return { already: true }
+      // 空 http 是残留占位登记，不能当作「已打开」直接返回，否则任务仍会复用空地址；
+      // 存活但状态不是 open（如 closing）时先归一到 open，保持与复用规则一致
+      if (row?.http.trim() && alive) {
+        if (row.state !== 'open') await deps.db.setWindowState(profile.bitbrowserId, 'open')
+        return { already: true }
+      }
       await ensureWindowCapacity()
       // 先预留归属登记（避免「已开未登记」竞态被孤儿回收误关），开成功后补 http
       await deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
@@ -328,10 +336,22 @@ export function profilesRouter(deps: {
     // close：有在途 running 行时先置会话取消标记（关窗会打断任务，runner 按手动停止结算）；
     // 无 running 不置，避免标记泄漏到该窗口的下一次合法会话
     if (await deps.db.hasRunningRun(profile.id)) deps.cancelSession(profile.id)
-    // 无论有无登记都调一次关窗（窗口可能由别处打开未登记）；关窗失败忽略
+    // 无论有无登记都调一次关窗（窗口可能由别处打开未登记）；有登记时先标 closing，
+    // 关窗后确认 pids 消失再清行；关窗/探测失败/超时保留登记，交由 Phase 2 对账
     const row = await deps.db.getOpenWindow(profile.bitbrowserId)
-    await deps.bitbrowser.closeBrowser(profile.bitbrowserId).catch(() => {})
-    if (row) await deps.db.clearOpenWindow(profile.bitbrowserId)
+    if (row) await deps.db.setWindowState(profile.bitbrowserId, 'closing').catch(() => {})
+    let closeFailed = false
+    await deps.bitbrowser.closeBrowser(profile.bitbrowserId).catch((e) => {
+      closeFailed = true
+      deps.logger.warn({ bitbrowserId: profile.bitbrowserId, err: (e as Error).message }, '面板关窗失败，保留登记待 Phase 2 对账')
+    })
+    if (row && !closeFailed) {
+      const closed = await waitForWindowClosed(
+        async () => (await deps.bitbrowser.openPids([profile.bitbrowserId])).has(profile.bitbrowserId),
+        { timeoutMs: PANEL_CLOSE_CONFIRM_TIMEOUT_MS },
+      )
+      if (closed) await deps.db.clearOpenWindow(profile.bitbrowserId)
+    }
     return {}
   }
 
@@ -349,11 +369,12 @@ export function profilesRouter(deps: {
     for (const p of profiles) {
       // 打开状态以比特浏览器 pid 实测为准：窗口可能由任务运行/手动打开，未必有 open_windows 登记行，
       // 故不能要求「登记行存在」才算已开（否则真实已开的窗口会显示未打开）；
-      // 探测失败（openIds=null）保守按未开；顺带清理「有登记行但 pid 已死」的残留登记
+      // 探测失败（openIds=null）保守按未开；顺带清理「有登记行但 pid 已死」的残留登记。
+      // state=opening 的预留行不能清：开窗请求已发出但 pid 尚未可见，清掉会让归属登记丢失
       const alive = openIds?.has(p.bitbrowserId) ?? false
       if (!alive && openIds !== null) {
         const row = await deps.db.getOpenWindow(p.bitbrowserId)
-        if (row) await deps.db.clearOpenWindow(p.bitbrowserId)
+        if (row && row.state !== 'opening') await deps.db.clearOpenWindow(p.bitbrowserId)
       }
       result.push(toProfileView(p, alive))
     }

@@ -29,6 +29,7 @@ import { settingsRouter } from './routes/settings'
 import { toolsRouter } from './routes/tools'
 import { airdropRouter } from './routes/airdrop'
 import { diagnosticsRouter } from './routes/diagnostics'
+import { artifactsRouter } from './routes/artifacts'
 import { notFoundHandler, errorHandler } from './http/error'
 
 // 应用版本号：模块加载时读 package.json 一次，供 /api/settings 与面板侧栏展示
@@ -73,10 +74,8 @@ export function createApp(deps: ServerDeps): express.Express {
 
   const api = express.Router()
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
-  // 错峰配置：触发入口按窗口序号计算 not_before_ms（spreadSec = 本批总铺开时长）
-  const stagger = { spreadSec: deps.cfg.execution.staggerMaxSec, jitterPct: deps.cfg.execution.staggerJitterPct ?? 15 }
-  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled, stagger }))
-  api.use(tasksRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stagger }))
+  api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled }))
+  api.use(tasksRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks }))
   api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, cancelSession: deps.cancelSession, logger: deps.logger }))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
@@ -87,6 +86,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(schedulesRouter({ db: deps.db, scheduler: deps.scheduler, tasks: deps.tasks, timezone: deps.cfg.scheduler.timezone }))
   api.use(airdropRouter({ db: deps.db, tasks: deps.tasks }))
   api.use(diagnosticsRouter({ getRunById: deps.getRunById }))
+  api.use(artifactsRouter({ cfg: deps.cfg, getRunById: deps.getRunById }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

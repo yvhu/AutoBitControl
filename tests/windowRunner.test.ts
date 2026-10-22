@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
+import { SerialQueue } from '../src/engine/serial-queue'
 import { CancelRegistry } from '../src/engine/cancel-registry'
 import { AppDb, todayStr, type ProfileRow, type RunRow } from '../src/infrastructure/db'
 import { TaskContext, type SiteTask } from '../src/tasks/base'
@@ -74,6 +75,7 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     clearRunDiag: vi.fn().mockResolvedValue(undefined),
     reserveOpenWindow: vi.fn().mockResolvedValue(undefined),
     setOpenWindow: vi.fn().mockResolvedValue(undefined),
+    setWindowState: vi.fn().mockResolvedValue(undefined),
     clearOpenWindow: vi.fn().mockResolvedValue(undefined),
     listOpenWindows: vi.fn().mockResolvedValue([]),
     ...over,
@@ -129,7 +131,7 @@ const cfg = {
 const artifactsDir = join(tmpdir(), 'abc-window-runner-artifacts')
 const walletPasswords: Record<string, string> = {}
 
-function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>; wallets?: WalletRegistry; cancelRegistry?: CancelRegistry; bitbrowser?: unknown }) {
+function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<string, SiteTask>; cfgOver?: never; reuseOpen?: (bitbrowserId: string) => Promise<{ http: string } | null>; wallets?: WalletRegistry; cancelRegistry?: CancelRegistry; bitbrowser?: unknown; openCloseQueue?: SerialQueue; openOwnerKind?: 'pool' | 'manual' | 'taskrun' }) {
   return new WindowRunner({
     cfg: over.cfgOver ?? cfg,
     db: over.db ?? makeDb(),
@@ -142,6 +144,8 @@ function makeRunner(over: { db?: AppDb; driver?: BrowserDriver; tasks?: Map<stri
     walletPasswords,
     reuseOpen: over.reuseOpen,
     cancelRegistry: over.cancelRegistry,
+    openCloseQueue: over.openCloseQueue,
+    openOwnerKind: over.openOwnerKind,
   })
 }
 
@@ -186,6 +190,98 @@ describe('WindowRunner', () => {
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     expect(statuses(db)).toContain('success')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('开窗成功后登记 state=open', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.setOpenWindow).toHaveBeenCalledWith('bb-1', open.http, process.pid, 'open')
+  })
+
+  it('可指定开窗归属（task:run 脚本登记 taskrun）', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, openOwnerKind: 'taskrun' })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.reserveOpenWindow).toHaveBeenCalledWith('bb-1', process.pid, 'taskrun')
+  })
+
+  it('关窗先标记 closing，确认 pids 消失后清登记', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const setState = db.setWindowState as ReturnType<typeof vi.fn>
+    const clear = db.clearOpenWindow as ReturnType<typeof vi.fn>
+    const close = bitbrowser.closeBrowser as ReturnType<typeof vi.fn>
+    const pids = bitbrowser.openPids as ReturnType<typeof vi.fn>
+    expect(setState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(pids).toHaveBeenCalledWith(['bb-1'])
+    expect(setState.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[0])
+    expect(close.mock.invocationCallOrder[0]).toBeLessThan(clear.mock.invocationCallOrder[0])
+  })
+
+  it('开窗与关窗都经串行队列', async () => {
+    const db = makeDb()
+    const queue = new SerialQueue(0)
+    const runSpy = vi.spyOn(queue, 'run')
+    const runner = makeRunner({ db, openCloseQueue: queue })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(runSpy).toHaveBeenCalledTimes(2)
+    // 开窗保留冷却，关窗不等待开窗冷却
+    expect(runSpy.mock.calls[0][1]).toBeUndefined()
+    expect(runSpy.mock.calls[1][1]).toEqual({ cooldown: false })
+    expect(bitbrowser.openBrowser).toHaveBeenCalledWith('bb-1')
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('关窗时 pids 仍存活：等待其消失后再清登记', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = makeDb()
+      const bb2 = {
+        ...bitbrowser,
+        openPids: vi.fn().mockResolvedValueOnce(new Set(['bb-1'])).mockResolvedValue(new Set<string>()),
+      }
+      const runner = makeRunner({ db, bitbrowser: bb2 })
+      const p = runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+      await vi.advanceTimersByTimeAsync(1000)
+      await p
+      expect(bb2.openPids).toHaveBeenCalledTimes(2)
+      expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('关窗等待 pids 超时：保留 closing 登记不清行', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = makeDb()
+      const bb2 = {
+        ...bitbrowser,
+        openPids: vi.fn().mockResolvedValue(new Set(['bb-1'])),
+      }
+      const runner = makeRunner({ db, bitbrowser: bb2 })
+      const p = runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+      await vi.advanceTimersByTimeAsync(30_000)
+      await p
+      expect(db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+      expect(db.clearOpenWindow).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('开窗失败清除预留登记', async () => {
+    const db = makeDb()
+    const bb2 = {
+      ...bitbrowser,
+      openBrowser: vi.fn().mockRejectedValue(new Error('开窗失败')),
+      openPids: vi.fn().mockResolvedValue(new Set<string>()),
+    }
+    const runner = makeRunner({ db, bitbrowser: bb2 })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
   })
 
   it('runManual 先入队并原子认领任务行，再执行任务', async () => {
@@ -951,6 +1047,7 @@ describe('批次透传与 pending 预写', () => {
       listProfiles: async () => [] as ProfileRow[],
       reserveOpenWindow: async () => undefined,
       setOpenWindow: async () => undefined,
+      setWindowState: async () => undefined,
       clearOpenWindow: async () => undefined,
       listOpenWindows: async () => [],
     }
@@ -1052,6 +1149,41 @@ describe('WindowRunner 跨进程窗口上限与开窗失败兜底关窗', () => 
     }
   })
 
+  it('跨进程上限：孤儿回收的关窗也经 openCloseQueue 串行执行', async () => {
+    const pidsQueue = [
+      new Set(['a']),
+      new Set(['a']),
+      new Set<string>(),
+      new Set<string>(),
+    ]
+    const bbFake = {
+      openBrowser: vi.fn().mockResolvedValue(open),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      openPids: vi.fn(async () => pidsQueue.shift() ?? new Set<string>()),
+    }
+    const db = makeDb({
+      listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' })]),
+      listOpenWindows: vi.fn().mockResolvedValue([
+        { bitbrowserId: 'a', http: '127.0.0.1:60000', ownerPid: 999999999, state: 'open' },
+      ]),
+    })
+    const queue = new SerialQueue(0)
+    const runSpy = vi.spyOn(queue, 'run')
+    const runner = new WindowRunner({
+      cfg: cfgWithCap(1) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
+      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
+      openCloseQueue: queue,
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    // 3 次串行操作：回收孤儿关窗 + 本轮开窗 + 会话结束关窗
+    expect(runSpy).toHaveBeenCalledTimes(3)
+    expect(runSpy.mock.calls[0][1]).toEqual({ cooldown: false })
+    expect(runSpy.mock.calls[1][1]).toBeUndefined()
+    expect(runSpy.mock.calls[2][1]).toEqual({ cooldown: false })
+    expect(bbFake.closeBrowser).toHaveBeenCalledWith('a')
+    expect(bbFake.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
   it('跨进程上限：探测失败（本地 API 未就绪）直接放行开窗', async () => {
     const bbFake = {
       openBrowser: vi.fn().mockResolvedValue(open),
@@ -1074,15 +1206,21 @@ describe('WindowRunner 跨进程窗口上限与开窗失败兜底关窗', () => 
         closeBrowser: vi.fn().mockResolvedValue(undefined),
         openPids: vi.fn().mockResolvedValue(new Set<string>()),
       }
+      const queue = new SerialQueue(0)
+      const runSpy = vi.spyOn(queue, 'run')
       const runner = new WindowRunner({
         cfg: { ...cfgObj, bitbrowser: { ...cfgObj.bitbrowser, maxRetries: 1 } } as never,
         db: makeDb(), bitbrowser: bbFake as never, driver: makeDriver(),
         tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
+        openCloseQueue: queue,
       })
       await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
       const closesAfterFail = bbFake.closeBrowser.mock.calls.length // 开窗重试前清理
       await vi.advanceTimersByTimeAsync(90000)
       expect(bbFake.closeBrowser.mock.calls.length).toBe(closesAfterFail + 1)
+      // 开窗失败后的清理与延迟兜底关窗都不应等待开窗冷却
+      expect(runSpy.mock.calls[0][1]).toBeUndefined()
+      expect(runSpy.mock.calls.slice(1).every((call) => (call[1] as { cooldown?: boolean } | undefined)?.cooldown === false)).toBe(true)
     } finally {
       vi.useRealTimers()
     }

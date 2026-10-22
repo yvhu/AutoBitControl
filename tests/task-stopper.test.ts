@@ -2,7 +2,7 @@
  * task-stopper 单测（注入假库 + 假关窗，不连真机）
  * 覆盖：running 行结算 skipped + 置取消标记 + 关窗、queued 行只结算不关窗、终态行不动、批次停止计数
  */
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { createTaskStopper } from '../src/engine/task-stopper'
 import { CancelRegistry } from '../src/engine/cancel-registry'
 import type { AppDb, ProfileRow, RunRow } from '../src/infrastructure/db'
@@ -17,6 +17,7 @@ function makeDeps(over: { existing?: Partial<RunRow> | null; open?: { http: stri
     stopQueuedRun: vi.fn().mockResolvedValue(true),
     stopRunningRun: vi.fn().mockResolvedValue(true),
     getOpenWindow: vi.fn().mockResolvedValue(over.open ?? null),
+    setWindowState: vi.fn().mockResolvedValue(undefined),
     clearOpenWindow: vi.fn().mockResolvedValue(undefined),
     listRunsForBatch: vi.fn().mockResolvedValue([]),
     nextRunSlot: vi.fn().mockResolvedValue(0),
@@ -29,12 +30,17 @@ function makeDeps(over: { existing?: Partial<RunRow> | null; open?: { http: stri
 
 const run = (status: RunRow['status'], slot = 0): Partial<RunRow> => ({ id: 9, profileId: 1, taskKey: 't', date: '2026-10-13', slot, status, attempts: 1, error: null, screenshot: null, startedAt: null, finishedAt: null, batchId: 5, diagPath: null, profileName: '窗口1', bitbrowserId: 'bb-1' })
 
-function makeStopper(d: ReturnType<typeof makeDeps>, cancelQueued = vi.fn().mockResolvedValue(0)) {
+function makeStopper(
+  d: ReturnType<typeof makeDeps>,
+  cancelQueued = vi.fn().mockResolvedValue(0),
+  isOpen?: (bitbrowserId: string) => Promise<boolean>,
+) {
   return createTaskStopper({
     db: d.db as unknown as AppDb,
     registry: d.registry,
     logger: d.logger,
     closeBrowser: d.closeBrowser,
+    isOpen,
     getOpenWindow: (id) => d.db.getOpenWindow(id),
     clearOpenWindow: (id) => d.db.clearOpenWindow(id),
     cancelQueued,
@@ -42,6 +48,10 @@ function makeStopper(d: ReturnType<typeof makeDeps>, cancelQueued = vi.fn().mock
 }
 
 describe('TaskStopper', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('running 行：置标记 + 结算 skipped（手动停止）+ 关窗 + 清登记', async () => {
     const d = makeDeps({ existing: run('running'), open: { http: '127.0.0.1:61234' } })
     const stopper = makeStopper(d)
@@ -56,6 +66,39 @@ describe('TaskStopper', () => {
     // 会话标记可被 runner 消费清理
     d.registry.clearSession(1)
     expect(d.registry.isSessionCancelled(1)).toBe(false)
+  })
+
+  it('注入 isOpen：关窗后轮询到 false 才清登记', async () => {
+    vi.useFakeTimers()
+    const d = makeDeps({ existing: run('running'), open: { http: '127.0.0.1:61234' } })
+    const isOpen = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+    const stopper = makeStopper(d, vi.fn().mockResolvedValue(0), isOpen)
+    const p = stopper.stop(1, 't')
+    await vi.advanceTimersByTimeAsync(1000)
+    await expect(p).resolves.toBe(true)
+    expect(d.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(isOpen).toHaveBeenCalledTimes(2)
+    expect(d.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('注入 isOpen：超时仍存活则保留 closing 登记', async () => {
+    vi.useFakeTimers()
+    const d = makeDeps({ existing: run('running'), open: { http: '127.0.0.1:61234' } })
+    const isOpen = vi.fn().mockResolvedValue(true)
+    const stopper = makeStopper(d, vi.fn().mockResolvedValue(0), isOpen)
+    const p = stopper.stop(1, 't')
+    await vi.advanceTimersByTimeAsync(10_000)
+    await expect(p).resolves.toBe(true)
+    expect(d.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(d.db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
+  it('注入 isOpen：探测异常则保留 closing 登记', async () => {
+    const d = makeDeps({ existing: run('running'), open: { http: '127.0.0.1:61234' } })
+    const stopper = makeStopper(d, vi.fn().mockResolvedValue(0), vi.fn().mockRejectedValue(new Error('probe boom')))
+    await expect(stopper.stop(1, 't')).resolves.toBe(true)
+    expect(d.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(d.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it('跨午夜停止：按行所属日期能停旧日期 running 行，按今天查找则找不到', async () => {

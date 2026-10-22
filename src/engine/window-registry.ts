@@ -1,22 +1,51 @@
 /**
- * 窗口归属登记与孤儿回收（engine 层）：满额时甄别并回收「无归属 / 归属进程已死」的存活窗口
+ * 窗口归属登记与孤儿回收（engine 层）：满额时甄别并回收「归属进程已死」的存活窗口
  * 依赖方向：仅依赖 infrastructure 类型；被 window-runner（会话开窗）与 profiles 路由（面板开窗）复用
- * 设计思路：open_windows 表登记每个已开窗口的 owner_pid（开窗前预留登记，避免「已开未登记」竞态）；
- *           孤儿 = pid 存活但无登记行（开窗超时/外部残留）或归属进程已死（崩溃残留）→ 直接关闭回收。
+ * 设计思路：open_windows 表登记每个已开窗口的 owner_pid 与生命周期状态（opening/open/closing）；
+ *           本阶段只回收 state=open 且 owner 进程已死的窗口——opening/closing 可能正在被其他进程处理，
+ *           无登记行也可能处于「已开未登记」窗口期，均跳过，避免误关正在打开的窗口。
  */
 import type { Logger } from '../infrastructure/logger'
-import type { OpenWindowRow } from '../infrastructure/db'
+import type { OpenWindowRow, OpenWindowState } from '../infrastructure/db'
+
+/** 回收孤儿窗口时等待 pids 消失的总时长（毫秒） */
+const RECLAIM_CLOSE_CONFIRM_TIMEOUT_MS = 10_000
+/** 回收孤儿窗口时 pids 确认轮询间隔（毫秒） */
+const RECLAIM_CLOSE_CONFIRM_POLL_MS = 1000
 
 /** 孤儿回收所需的最小依赖面（window-runner 的 AppDb/BitBrowserClient 与 profiles 路由的 deps 均满足） */
 export interface WindowRegistryDeps {
   db: {
     listProfiles(enabledOnly: boolean): Promise<Array<{ bitbrowserId: string }>>
     listOpenWindows(): Promise<OpenWindowRow[]>
+    setWindowState(bitbrowserId: string, state: OpenWindowState): Promise<void>
     clearOpenWindow(bitbrowserId: string): Promise<void>
   }
   bitbrowser: {
     openPids(ids: string[]): Promise<Set<string>>
     closeBrowser(id: string): Promise<void>
+  }
+}
+
+/**
+ * 轮询等待窗口关闭：`isAlive` 返回 false 视为已消失。
+ * 探测异常按「未能确认关闭」处理并立即返回 false（保留登记，交由 Phase 2 对账）。
+ */
+export async function waitForWindowClosed(
+  isAlive: () => Promise<boolean>,
+  opts: { timeoutMs: number; pollMs?: number },
+): Promise<boolean> {
+  const pollMs = opts.pollMs ?? 1000
+  const deadline = Date.now() + opts.timeoutMs
+  for (;;) {
+    try {
+      if (!(await isAlive())) return true
+    } catch {
+      return false
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return false
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)))
   }
 }
 
@@ -36,7 +65,9 @@ export function isProcessAlive(pid: number): boolean {
 
 /**
  * 回收孤儿窗口：以比特 /browser/pids 实测的存活窗口为基准。
- * ① 清理死登记行（登记在但 pid 已死）；② 关闭「存活但无登记行」或「归属进程已死」的窗口并清登记。
+ * ① 清理 state=open 的死登记行（登记在但 pid 已死）；
+ * ② 仅关闭「state=open 且归属进程已死」的窗口并清登记；
+ * opening/closing 状态与「存活但无登记行」的窗口一律跳过（可能正在开/关中，避免竞态误关）。
  * 探测失败（本地 API 未就绪）时不动任何窗口，返回 0。
  * @returns 实际回收（关闭）的窗口数
  */
@@ -53,21 +84,37 @@ export async function reclaimOrphanWindows(deps: WindowRegistryDeps, logger: Log
   }
   const rows = await deps.db.listOpenWindows()
   const byId = new Map(rows.map((r) => [r.bitbrowserId, r] as const))
-  // ① 死登记行（pid 已死）→ 清登记（窗口自身无需关，已不在存活集）
+  // ① state=open 的死登记行（pid 已死）→ 清登记（窗口自身无需关，已不在存活集）
   for (const r of rows) {
+    if (r.state !== 'open') continue
     if (!alive.has(r.bitbrowserId)) await deps.db.clearOpenWindow(r.bitbrowserId).catch(() => {})
   }
-  // ② 孤儿（存活但无归属 / 归属进程已死）→ 关窗并清登记
+  // ② 仅回收 state=open 且 owner 进程已死的存活窗口
   let reclaimed = 0
   for (const id of alive) {
     const row = byId.get(id)
-    const ownerDead = row?.ownerPid != null && !isProcessAlive(row.ownerPid)
-    if (!row || ownerDead) {
-      await deps.bitbrowser.closeBrowser(id).catch(() => {})
-      await deps.db.clearOpenWindow(id).catch(() => {})
-      reclaimed++
-      logger.info({ bitbrowserId: id, reason: row ? 'owner-dead' : 'unowned' }, '回收孤儿窗口（关闭无归属/归属进程已死的窗口）')
+    if (!row || row.state !== 'open') continue
+    const ownerDead = row.ownerPid != null && !isProcessAlive(row.ownerPid)
+    if (!ownerDead) continue
+    // 先标记 closing 再关窗；关窗失败/确认超时保留登记，避免丢失残留窗口线索
+    await deps.db.setWindowState(id, 'closing').catch(() => {})
+    try {
+      await deps.bitbrowser.closeBrowser(id)
+    } catch (e) {
+      logger.warn({ bitbrowserId: id, err: (e as Error).message }, '回收孤儿窗口：关窗失败，保留 closing 登记待 Phase 2 对账')
+      continue
     }
+    const closed = await waitForWindowClosed(
+      async () => (await deps.bitbrowser.openPids([id])).has(id),
+      { timeoutMs: RECLAIM_CLOSE_CONFIRM_TIMEOUT_MS, pollMs: RECLAIM_CLOSE_CONFIRM_POLL_MS },
+    )
+    if (!closed) {
+      logger.warn({ bitbrowserId: id }, '回收孤儿窗口：关闭确认超时，保留 closing 登记待 Phase 2 对账')
+      continue
+    }
+    await deps.db.clearOpenWindow(id).catch(() => {})
+    reclaimed++
+    logger.info({ bitbrowserId: id, reason: 'owner-dead' }, '回收孤儿窗口（关闭归属进程已死的窗口）')
   }
   return reclaimed
 }

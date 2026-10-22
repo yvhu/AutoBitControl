@@ -21,12 +21,50 @@ export interface BitBrowserConfig {
   retryBackoffMs: number[]
 }
 
+/** 窗口池配置（Phase 2 启用；默认关闭，不改动现有调度行为）：按内存水位与任务数复用窗口会话 */
+export interface WindowPoolConfig {
+  /** 窗口池总开关（默认 false：窗口池调度未启用；Phase 1 的开/关窗串行与开窗冷却已生效） */
+  enabled: boolean
+  /** Phase 2 窗口池允许同时打开的窗口数上限（旧 maxConcurrentWindows 保留到 Phase 3 移除） */
+  maxOpenWindows: number
+  /** 系统内存保留余量（MB）：可用内存需高于该值才继续开窗 */
+  memoryReserveMb: number
+  /** 单窗口预估内存占用（MB）：用于预估剩余可开窗数 */
+  perWindowMb: number
+  /** 可用内存临界水位（MB）：低于该值不再开新窗口 */
+  criticalFreeMb: number
+  /** 可用内存恢复水位（MB）：低于临界值后可开窗时需回升到该值才恢复 */
+  resumeFreeMb: number
+  /** 内存与健康检查间隔（毫秒） */
+  checkIntervalMs: number
+  /** 两次开窗之间的冷却时长（毫秒） */
+  openCooldownMs: number
+  /** 空闲窗口关闭阈值（秒）：无任务窗口空闲超过该时长即关闭复用 */
+  idleCloseSec: number
+  /** 单窗口最多连续执行的任务数（达到后换窗，规避长会话内存膨胀） */
+  windowMaxTasks: number
+  /** 单窗口最长存活时长（秒）：超时后换窗 */
+  windowMaxLifetimeSec: number
+  /** 单窗口连续占用公平轮转上限（秒）：同一窗口连续占用超过该时长后有其它窗口排队则先轮转 */
+  cohortMaxSec: number
+}
+
+/** 全局健康检查配置（Phase 2 启用；默认值即当前行为） */
+export interface HealthConfig {
+  /** 比特浏览器可用性探测间隔（毫秒） */
+  bitbrowserProbeMs: number
+  /** 全局环境级失败统计窗口（秒）：该窗口内累计失败达到阈值即判全局异常 */
+  globalEnvFailureWindowSec: number
+  /** 全局环境级失败阈值（次）：窗口内达到该次数后暂停开新窗 */
+  globalEnvFailureThreshold: number
+  /** 是否启用比特浏览器可用性探测（默认 true） */
+  probeEnabled: boolean
+  /** 全局异常退避数列（秒）：按失败级别递增取用 */
+  backoffSec: number[]
+}
+
 /** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；并发为任务级 meta.concurrency + 全局窗口上限 maxConcurrentWindows 双闸门） */
 export interface ExecutionConfig {
-  /** 本批窗口错峰总铺开时长（秒，0 = 关闭）：窗口按顺序均匀分布在该区间内，并叠加 staggerJitterPct 抖动 */
-  staggerMaxSec: number
-  /** 错峰抖动幅度（占窗口间距的百分比，0-50，默认 15）：0 = 完全均匀，越大越分散 */
-  staggerJitterPct: number
   windowTimeoutMs: number
   taskTimeoutMs: number
   retryMax: number
@@ -42,6 +80,10 @@ export interface ExecutionConfig {
   circuitBreakerResetAt: string
   /** 全局窗口上限：同时最多开几个窗口会话（机器资源容度；与任务级 concurrency 双闸门取更严者） */
   maxConcurrentWindows: number
+  /** 窗口池配置（Phase 2 使用；enabled=false 时不影响现有调度） */
+  windowPool: WindowPoolConfig
+  /** 全局健康检查配置（Phase 2 使用） */
+  health: HealthConfig
 }
 
 /** Web 面板监听配置 */
@@ -122,10 +164,6 @@ const defaults: AppConfig = {
     retryBackoffMs: [5000, 30000, 120000],
   },
   execution: {
-    // 本批窗口错峰总铺开时长（秒）：批量触发时各窗口按顺序均匀分布在该区间内，避免同时冲击网络/站点；0 = 关闭
-    staggerMaxSec: 120,
-    // 错峰抖动幅度（占窗口间距的百分比，0-50）：打散均匀节奏的相邻窗口；取值非法时回退 15
-    staggerJitterPct: 15,
     // 单窗口会话超时 15 分钟（开窗+全部任务），防止异常卡死占用并发槽位
     windowTimeoutMs: 900000,
     // 单任务默认超时 3 分钟（任务 meta.timeoutSec 可覆盖）
@@ -145,6 +183,31 @@ const defaults: AppConfig = {
     circuitBreakerResetAt: '23:59',
     // 全局窗口上限：所有任务共享的同时开窗总数封顶（默认 4；与任务级 meta.concurrency 双闸门取更严者）
     maxConcurrentWindows: 4,
+    // 窗口池：Phase 2 启用（默认关闭，保持现有调度行为）
+    windowPool: {
+      enabled: false,
+      maxOpenWindows: 4,
+      // 系统保留 100MB 余量，低于临界水位 1GB 停止开窗，回升到 2GB 才恢复
+      memoryReserveMb: 100,
+      perWindowMb: 1024,
+      criticalFreeMb: 1024,
+      resumeFreeMb: 2048,
+      checkIntervalMs: 5000,
+      openCooldownMs: 10000,
+      // 空闲 3 分钟关闭；单窗最多 3 个任务 / 10 分钟；单窗口连续占用 30 分钟后轮转
+      idleCloseSec: 180,
+      windowMaxTasks: 3,
+      windowMaxLifetimeSec: 600,
+      cohortMaxSec: 1800,
+    },
+    // 全局健康：每 30 秒探测比特浏览器；5 分钟内累计 3 次环境级失败即判全局异常，退避 30s 起阶梯到 10 分钟
+    health: {
+      bitbrowserProbeMs: 30000,
+      globalEnvFailureWindowSec: 300,
+      globalEnvFailureThreshold: 3,
+      probeEnabled: true,
+      backoffSec: [30, 60, 120, 300, 600],
+    },
   },
   // 仅监听本机：面板不对外网暴露
   web: { host: '127.0.0.1', port: 3000 },
@@ -268,20 +331,101 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (!Number.isFinite(cb.circuitBreakerMaxCooldownSec) || cb.circuitBreakerMaxCooldownSec < cb.circuitBreakerCooldownSec) {
     cb.circuitBreakerMaxCooldownSec = Math.max(cb.circuitBreakerCooldownSec, 7200)
   }
-  // 错峰总铺开时长：0-3600 合法；非法/负数回退默认 120，超过上限截断 3600（均告警），不阻止启动
-  if (!Number.isFinite(cb.staggerMaxSec) || cb.staggerMaxSec < 0) {
-    warnings?.push(`execution.staggerMaxSec=${String(cb.staggerMaxSec)} 非法（应为 0-3600 的秒数），已回退默认 120`)
-    cb.staggerMaxSec = 120
-  } else if (cb.staggerMaxSec > 3600) {
-    warnings?.push(`execution.staggerMaxSec=${cb.staggerMaxSec} 超出上限 3600 秒，已截断为 3600`)
-    cb.staggerMaxSec = 3600
-  }
-  // 错峰抖动：0-50 合法，其余（含非数字/越界）回退默认 15，不阻止启动
-  if (!Number.isFinite(cb.staggerJitterPct) || cb.staggerJitterPct < 0 || cb.staggerJitterPct > 50) cb.staggerJitterPct = 15
   // 全局窗口上限：必须是正整数（负数/0/小数/非数字 → 回退 4 并告警），避免并发闸门失效
   if (!Number.isInteger(cb.maxConcurrentWindows) || cb.maxConcurrentWindows < 1) {
     warnings?.push(`execution.maxConcurrentWindows=${String(cb.maxConcurrentWindows)} 非法（必须为正整数），已回退默认 4`)
     cb.maxConcurrentWindows = 4
+  }
+  // 窗口池参数校验：非法值逐项回落默认并告警（Phase 2 才消费，此处只保证配置始终合法）
+  // 段级校验：配置写成 null/数字等非对象时整体回退默认，避免后续读字段直接抛 TypeError
+  if (!isPlainObject(cfg.execution.windowPool)) {
+    warnings?.push(`execution.windowPool=${JSON.stringify(cfg.execution.windowPool)} 非法（必须为对象），已回退默认配置`)
+    cfg.execution.windowPool = structuredClone(defaults.execution.windowPool)
+  }
+  const pool = cfg.execution.windowPool
+  if (typeof pool.enabled !== 'boolean') {
+    warnings?.push(`execution.windowPool.enabled=${String(pool.enabled)} 非法（必须为布尔值），已回退默认 false`)
+    pool.enabled = false
+  }
+  if (!Number.isInteger(pool.maxOpenWindows) || pool.maxOpenWindows < 1) {
+    warnings?.push(`execution.windowPool.maxOpenWindows=${String(pool.maxOpenWindows)} 非法（必须为正整数），已回退默认 4`)
+    pool.maxOpenWindows = 4
+  }
+  if (!Number.isFinite(pool.memoryReserveMb) || pool.memoryReserveMb < 0) {
+    warnings?.push(`execution.windowPool.memoryReserveMb=${String(pool.memoryReserveMb)} 非法（必须 >= 0），已回退默认 100`)
+    pool.memoryReserveMb = 100
+  }
+  if (!Number.isFinite(pool.perWindowMb) || pool.perWindowMb < 128) {
+    warnings?.push(`execution.windowPool.perWindowMb=${String(pool.perWindowMb)} 非法（必须 >= 128），已回退默认 1024`)
+    pool.perWindowMb = 1024
+  }
+  if (!Number.isFinite(pool.resumeFreeMb) || pool.resumeFreeMb < 0) {
+    warnings?.push(`execution.windowPool.resumeFreeMb=${String(pool.resumeFreeMb)} 非法（必须 >= 0），已回退默认 2048`)
+    pool.resumeFreeMb = 2048
+  }
+  // 临界水位下限校验（与恢复水位的相对关系由下方不变式统一保证）
+  if (!Number.isFinite(pool.criticalFreeMb) || pool.criticalFreeMb < 0) {
+    warnings?.push(`execution.windowPool.criticalFreeMb=${String(pool.criticalFreeMb)} 非法（必须 >= 0），已回退默认 1024`)
+    pool.criticalFreeMb = 1024
+  }
+  if (!Number.isFinite(pool.checkIntervalMs) || pool.checkIntervalMs < 1000) {
+    warnings?.push(`execution.windowPool.checkIntervalMs=${String(pool.checkIntervalMs)} 非法（必须 >= 1000），已回退默认 5000`)
+    pool.checkIntervalMs = 5000
+  }
+  if (!Number.isFinite(pool.openCooldownMs) || pool.openCooldownMs < 0) {
+    warnings?.push(`execution.windowPool.openCooldownMs=${String(pool.openCooldownMs)} 非法（必须 >= 0），已回退默认 10000`)
+    pool.openCooldownMs = 10000
+  }
+  if (!Number.isFinite(pool.idleCloseSec) || pool.idleCloseSec < 0) {
+    warnings?.push(`execution.windowPool.idleCloseSec=${String(pool.idleCloseSec)} 非法（必须 >= 0），已回退默认 180`)
+    pool.idleCloseSec = 180
+  }
+  if (!Number.isInteger(pool.windowMaxTasks) || pool.windowMaxTasks < 0) {
+    warnings?.push(`execution.windowPool.windowMaxTasks=${String(pool.windowMaxTasks)} 非法（必须为非负整数），已回退默认 3`)
+    pool.windowMaxTasks = 3
+  }
+  if (!Number.isFinite(pool.windowMaxLifetimeSec) || pool.windowMaxLifetimeSec < 0) {
+    warnings?.push(`execution.windowPool.windowMaxLifetimeSec=${String(pool.windowMaxLifetimeSec)} 非法（必须 >= 0），已回退默认 600`)
+    pool.windowMaxLifetimeSec = 600
+  }
+  if (!Number.isFinite(pool.cohortMaxSec) || pool.cohortMaxSec < 0) {
+    warnings?.push(`execution.windowPool.cohortMaxSec=${String(pool.cohortMaxSec)} 非法（必须 >= 0），已回退默认 1800`)
+    pool.cohortMaxSec = 1800
+  }
+  // 滞回不变式：临界水位必须严格低于恢复水位（否则内存水位判断失效）
+  // 用户把 resumeFreeMb 调得比默认临界还小时，逐项校验无法自动满足该关系，此处整体回退两项默认值
+  if (pool.criticalFreeMb >= pool.resumeFreeMb) {
+    warnings?.push(`execution.windowPool.criticalFreeMb=${String(pool.criticalFreeMb)} 必须小于 resumeFreeMb=${String(pool.resumeFreeMb)}（否则内存水位滞回失效），已回退默认 1024/2048`)
+    pool.criticalFreeMb = defaults.execution.windowPool.criticalFreeMb
+    pool.resumeFreeMb = defaults.execution.windowPool.resumeFreeMb
+  }
+  // 全局健康参数校验：非法值逐项回落默认并告警
+  // 段级校验：非对象时整体回退默认，避免后续读字段直接抛 TypeError
+  if (!isPlainObject(cfg.execution.health)) {
+    warnings?.push(`execution.health=${JSON.stringify(cfg.execution.health)} 非法（必须为对象），已回退默认配置`)
+    cfg.execution.health = structuredClone(defaults.execution.health)
+  }
+  const health = cfg.execution.health
+  if (!Number.isFinite(health.bitbrowserProbeMs) || health.bitbrowserProbeMs < 1000) {
+    warnings?.push(`execution.health.bitbrowserProbeMs=${String(health.bitbrowserProbeMs)} 非法（必须 >= 1000），已回退默认 30000`)
+    health.bitbrowserProbeMs = 30000
+  }
+  if (!Number.isFinite(health.globalEnvFailureWindowSec) || health.globalEnvFailureWindowSec < 0) {
+    warnings?.push(`execution.health.globalEnvFailureWindowSec=${String(health.globalEnvFailureWindowSec)} 非法（必须 >= 0），已回退默认 300`)
+    health.globalEnvFailureWindowSec = 300
+  }
+  if (!Number.isInteger(health.globalEnvFailureThreshold) || health.globalEnvFailureThreshold < 1) {
+    warnings?.push(`execution.health.globalEnvFailureThreshold=${String(health.globalEnvFailureThreshold)} 非法（必须 >= 1），已回退默认 3`)
+    health.globalEnvFailureThreshold = 3
+  }
+  if (typeof health.probeEnabled !== 'boolean') {
+    warnings?.push(`execution.health.probeEnabled=${String(health.probeEnabled)} 非法（必须为布尔值），已回退默认 true`)
+    health.probeEnabled = true
+  }
+  // 退避数列必须是非空的正数数组（否则取不到退避时长）
+  if (!Array.isArray(health.backoffSec) || health.backoffSec.length === 0 || health.backoffSec.some((s) => !Number.isFinite(s) || s <= 0)) {
+    warnings?.push(`execution.health.backoffSec=${JSON.stringify(health.backoffSec)} 非法（必须为非空正数数组），已回退默认 [30,60,120,300,600]`)
+    health.backoffSec = [30, 60, 120, 300, 600]
   }
   // 旧配置项 circuitBreakerResetEveryHours 已废弃：存在即告警（取值被忽略，由 circuitBreakerResetAt 取代）
   const legacyResetHours = (cb as unknown as Record<string, unknown>).circuitBreakerResetEveryHours

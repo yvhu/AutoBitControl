@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApp } from '../src/server/app'
-import { buildBitbrowserDeps } from '../src/app'
+import { buildBitbrowserDeps, getReusableWindow } from '../src/app'
+import { SerialQueue } from '../src/engine/serial-queue'
 
 type Mock = ReturnType<typeof vi.fn>
 
@@ -18,6 +19,7 @@ interface MockDeps {
     setTaskEnabled: Mock
     getOpenWindow: Mock
     setOpenWindow: Mock
+    setWindowState: Mock
     reserveOpenWindow: Mock
     clearOpenWindow: Mock
     listOpenWindows: Mock
@@ -60,8 +62,6 @@ interface MockDeps {
     storage: { screenshotDir: string }
     bitbrowser: { apiBase: string }
     execution: {
-      staggerMaxSec: number
-      staggerJitterPct: number
       circuitBreakerThreshold: number
       circuitBreakerEnabled: boolean
       circuitBreakerCooldownSec: number
@@ -97,6 +97,7 @@ function makeDeps(): MockDeps {
       setTaskEnabled: vi.fn().mockResolvedValue(undefined),
       getOpenWindow: vi.fn().mockResolvedValue(null),
       setOpenWindow: vi.fn().mockResolvedValue(undefined),
+      setWindowState: vi.fn().mockResolvedValue(undefined),
       reserveOpenWindow: vi.fn().mockResolvedValue(undefined),
       clearOpenWindow: vi.fn().mockResolvedValue(undefined),
       listOpenWindows: vi.fn().mockResolvedValue([]),
@@ -138,7 +139,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { staggerMaxSec: 120, staggerJitterPct: 15, circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
+      execution: { circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
       scheduler: { timezone: 'Asia/Shanghai' },
       dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
@@ -374,10 +375,8 @@ describe('server API（RESTful + envelope）', () => {
       expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88, notBeforeMs: expect.any(Number) })
     })
 
-    it('POST /api/batches/:id/rerun-failed 按勾选顺序错峰', async () => {
+    it('POST /api/batches/:id/rerun-failed 不铺开：所有窗口入队时间几乎一致', async () => {
       const deps = makeDeps()
-      deps.cfg.execution.staggerMaxSec = 100
-      deps.cfg.execution.staggerJitterPct = 0
       deps.db.listRunsForBatch.mockResolvedValue([
         runRow(101, 1, 'failed'),
         runRow(102, 2, 'failed'),
@@ -392,8 +391,9 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.status).toBe(200)
       expect(deps.enqueuer.enqueue.mock.calls.map((c) => c[0].bitbrowserId)).toEqual(['bb-3', 'bb-1', 'bb-2'])
       const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
-      expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
-      expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
+      const times = opts.map((o) => o.notBeforeMs)
+      expect(times.length).toBeGreaterThan(1)
+      expect(Math.max(...times) - Math.min(...times)).toBeLessThan(1000)
     })
 
     it('POST /api/batches/:id/rerun-failed 停用窗口拒绝执行', async () => {
@@ -692,10 +692,8 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
-  it('多窗口批量触发按窗口顺序均匀错峰', async () => {
+  it('批量触发不铺开：所有窗口入队时间几乎一致', async () => {
     const deps = makeDeps()
-    deps.cfg.execution.staggerMaxSec = 100
-    deps.cfg.execution.staggerJitterPct = 0
     deps.db.listProfiles.mockResolvedValue([
       { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
@@ -704,8 +702,9 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({})
     expect(res.status).toBe(200)
     const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
-    expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
-    expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
+    const times = opts.map((o) => o.notBeforeMs)
+    expect(times.length).toBeGreaterThan(1)
+    expect(Math.max(...times) - Math.min(...times)).toBeLessThan(1000)
   })
 
   it('单窗口触发创建 single 批次并立即执行', async () => {
@@ -713,7 +712,7 @@ describe('server API（RESTful + envelope）', () => {
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
     expect(res.status).toBe(200)
     expect(deps.db.createBatch).toHaveBeenCalledWith('single', 't1', 'trigger-single')
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ immediate: true, batchId: 88, notBeforeMs: expect.any(Number) })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
   it('触发任务存在在途 run 返回 409（业务码 40902）', async () => {
@@ -734,7 +733,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
   })
 
-  it('多窗口测试触发：选中窗口入队不走 immediate，批次 source=trigger-test', async () => {
+  it('多窗口测试触发：选中窗口入队立即到期，批次 source=trigger-test', async () => {
     const deps = makeDeps()
     deps.db.listProfiles.mockResolvedValue([
       { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
@@ -750,10 +749,8 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
-  it('多窗口测试触发按选择顺序错峰', async () => {
+  it('多窗口测试触发不铺开：按选择顺序入队且时间几乎一致', async () => {
     const deps = makeDeps()
-    deps.cfg.execution.staggerMaxSec = 100
-    deps.cfg.execution.staggerJitterPct = 0
     deps.db.listProfiles.mockResolvedValue([
       { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
       { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
@@ -763,8 +760,9 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.status).toBe(200)
     expect(deps.enqueuer.enqueue.mock.calls.map((c) => c[0].bitbrowserId)).toEqual(['bb-3', 'bb-1', 'bb-2'])
     const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
-    expect(opts[1].notBeforeMs - opts[0].notBeforeMs).toBe(50_000)
-    expect(opts[2].notBeforeMs - opts[1].notBeforeMs).toBe(50_000)
+    const times = opts.map((o) => o.notBeforeMs)
+    expect(times.length).toBeGreaterThan(1)
+    expect(Math.max(...times) - Math.min(...times)).toBeLessThan(1000)
   })
 
   it('多窗口测试触发：重复 id 去重', async () => {
@@ -943,10 +941,19 @@ describe('server API（RESTful + envelope）', () => {
 
   it('GET /api/profiles 登记但 pid 已死自动清行并返回 false', async () => {
     const deps = makeDeps()
-    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'open' })
     const res = await request(createApp(deps as never)).get('/api/profiles')
     expect(res.body.data[0].open).toBe(false)
     expect(deps.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('GET /api/profiles 开窗中的登记即使 pid 探测器无结果也不清行', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '', state: 'opening' })
+    const res = await request(createApp(deps as never)).get('/api/profiles')
+    expect(res.status).toBe(200)
+    expect(res.body.data[0].open).toBe(false)
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it('POST /api/profiles/:id/open 调 openBrowser 并登记 open_windows', async () => {
@@ -961,11 +968,23 @@ describe('server API（RESTful + envelope）', () => {
 
   it('POST /api/profiles/:id/open 已打开返回 already 且不重复开窗', async () => {
     const deps = makeDeps()
-    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'open' })
     deps.bitbrowser.isOpen.mockResolvedValue(true)
     const res = await request(createApp(deps as never)).post('/api/profiles/1/open')
     expect(res.body.code).toBe(0)
     expect(res.body.data).toEqual({ already: true })
+    expect(deps.bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(deps.db.setWindowState).not.toHaveBeenCalled()
+  })
+
+  it('POST /api/profiles/:id/open 存活但状态 closing → 归一为 open 后返回 already', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'closing' })
+    deps.bitbrowser.isOpen.mockResolvedValue(true)
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/open')
+    expect(res.body.code).toBe(0)
+    expect(res.body.data).toEqual({ already: true })
+    expect(deps.db.setWindowState).toHaveBeenCalledWith('bb-1', 'open')
     expect(deps.bitbrowser.openBrowser).not.toHaveBeenCalled()
   })
 
@@ -976,13 +995,35 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(40402)
   })
 
-  it('POST /api/profiles/:id/close 清登记并调 closeBrowser', async () => {
+  it('POST /api/profiles/:id/close 标记 closing、确认 pids 消失后清登记', async () => {
     const deps = makeDeps()
-    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234' })
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'open' })
     const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
     expect(res.body.code).toBe(0)
+    expect(deps.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
     expect(deps.bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(deps.bitbrowser.openPids).toHaveBeenCalledWith(['bb-1'])
     expect(deps.db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('POST /api/profiles/:id/close pids 探测异常 → 保留 closing 登记', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'open' })
+    deps.bitbrowser.openPids.mockRejectedValue(new Error('probe boom'))
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
+  it('POST /api/profiles/:id/close 关窗失败 → 保留登记不清行', async () => {
+    const deps = makeDeps()
+    deps.db.getOpenWindow.mockResolvedValue({ http: '127.0.0.1:61234', state: 'open' })
+    deps.bitbrowser.closeBrowser.mockRejectedValue(new Error('close boom'))
+    const res = await request(createApp(deps as never)).post('/api/profiles/1/close')
+    expect(res.body.code).toBe(0)
+    expect(deps.db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+    expect(deps.db.clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it('POST /api/profiles/:id/close 无登记也调一次 closeBrowser', async () => {
@@ -1110,12 +1151,35 @@ describe('server API（RESTful + envelope）', () => {
     expect(db.upsertProfile).toHaveBeenCalledTimes(107)
   })
 
+  it('buildBitbrowserDeps 关窗不等待开窗冷却', async () => {
+    const client = {
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      openBrowser: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234', ws: '' }),
+    }
+    const queue = new SerialQueue(500)
+    const runSpy = vi.spyOn(queue, 'run')
+    const deps = buildBitbrowserDeps(client as never, {} as never, queue)
+    await deps.closeBrowser('bb-1')
+    await deps.openBrowser('bb-1')
+    expect(runSpy.mock.calls[0][1]).toEqual({ cooldown: false })
+    expect(runSpy.mock.calls[1][1]).toBeUndefined()
+  })
+
+  it('getReusableWindow 只复用 state=open 且有调试地址的登记', () => {
+    expect(getReusableWindow({ http: '127.0.0.1:61234', state: 'open' })).toEqual({ http: '127.0.0.1:61234' })
+    expect(getReusableWindow({ http: '127.0.0.1:61234', state: 'opening' })).toBeNull()
+    expect(getReusableWindow({ http: '127.0.0.1:61234', state: 'closing' })).toBeNull()
+    expect(getReusableWindow({ http: '  ', state: 'open' })).toBeNull()
+    expect(getReusableWindow(null)).toBeNull()
+  })
+
   it('GET /api/settings 返回非敏感配置且不含 clientKey', async () => {
     const deps = makeDeps()
     const res = await request(createApp(deps as never)).get('/api/settings')
     expect(res.body.code).toBe(0)
     expect(res.body.data.bitbrowserApiBase).toBeTruthy()
-    expect(res.body.data.staggerJitterPct).toBe(15)
+    expect(res.body.data.staggerMaxSec).toBeUndefined()
+    expect(res.body.data.staggerJitterPct).toBeUndefined()
     expect(res.body.data.circuitBreakerThreshold).toBeTypeOf('number')
     expect(res.body.data.circuitBreakerEnabled).toBe(true)
     expect(res.body.data.circuitBreakerCooldownSec).toBe(1800)

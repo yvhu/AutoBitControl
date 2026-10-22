@@ -11,6 +11,7 @@ import { createBitBrowserClient } from '../src/integrations/bitbrowser'
 import { createAiClient } from '../src/integrations/ai'
 import { WalletRegistry, MetaMaskAdapter, PetraAdapter } from '../src/automation'
 import { PatchrightDriver, WindowRunner } from '../src/engine/window-runner'
+import { SerialQueue } from '../src/engine/serial-queue'
 import { loadTasks } from '../src/tasks'
 
 // 进程级兜底：浏览器窗口中途被关闭/崩溃时，patchright 内部协议错误（如
@@ -62,7 +63,9 @@ async function main(): Promise<void> {
     const row = await db.getOpenWindow(profileId).catch(() => null)
     const wasOpen = row ? await bitbrowser.isOpen(profileId) : false
     const hasHttp = !!row?.http.trim()
-    reuse = row && wasOpen && hasHttp ? { http: row.http } : null
+    // 只复用 state=open 的登记：opening/closing 交给正常开窗流程，避免复用正在切换的窗口
+    const reusableState = row?.state === 'open'
+    reuse = row && wasOpen && hasHttp && reusableState ? { http: row.http } : null
     if (row && (!wasOpen || !hasHttp)) await db.clearOpenWindow(profileId).catch(() => {})
     // runManual 直接返回本轮最终运行行（内存传递，不做执行后再读库的竞态判定）
     if (lastBatchId === null) {
@@ -86,8 +89,13 @@ async function main(): Promise<void> {
       }, delayMs)
     }
   }
+  // 脚本与后端可能同时操作同一比特实例：开/关窗仍走串行队列，但单窗口调试无需开窗冷却
+  const openCloseQueue = new SerialQueue(0)
   runner = new WindowRunner({
     cfg, db, bitbrowser, driver: new PatchrightDriver(), tasks, wallets, logger, artifactsDir: cfg.storage.screenshotDir, walletPasswords: cfg.wallet.passwords, ai,
+    openCloseQueue,
+    // 脚本打开的窗口登记为 taskrun，便于后续对账区分归属
+    openOwnerKind: 'taskrun',
     // 窗口复用：面板已打开的窗口直接接管（不复用则正常开新窗并在会话结束后关闭）
     reuseOpen: () => Promise.resolve(reuse),
     // 数据源行解析：与 app.ts 同逻辑（有窗口列按名匹配，无窗口列按窗口列表顺序取行）

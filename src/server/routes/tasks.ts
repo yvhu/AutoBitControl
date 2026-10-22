@@ -12,7 +12,6 @@ import { todayStr } from '../../infrastructure/db'
 import type { CoalescingEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
 import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
-import { staggerNotBefore, type StaggerConfig } from '../../engine/stagger'
 
 /**
  * @swagger
@@ -125,7 +124,7 @@ import { staggerNotBefore, type StaggerConfig } from '../../engine/stagger'
  *               profileIds:
  *                 type: array
  *                 items: { type: string }
- *                 description: 指定窗口 id 列表（测试入口，手选启用窗口；语义同批量触发，走错峰与并发闸门）
+ *                 description: 指定窗口 id 列表（测试入口，手选启用窗口；语义同批量触发，走并发闸门）
  *     responses:
  *       '200':
  *         description: 入队成功
@@ -146,7 +145,7 @@ import { staggerNotBefore, type StaggerConfig } from '../../engine/stagger'
  *         description: 任务已停用（40901）或执行中（40902）
  */
 
-export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask>; stagger: StaggerConfig }): Router {
+export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   router.get('/tasks', asyncHandler(async (req, res) => {
     const list = []
@@ -185,7 +184,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, ERROR_CODES.TASK_DISABLED, '任务已停用')
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
     const body = (req.body ?? {}) as { bitbrowserId?: string; profileIds?: unknown }
-    // 指定窗口列表：测试入口（手选若干启用窗口；语义等同批量触发，走错峰 + 双闸门）
+    // 指定窗口列表：测试入口（手选若干启用窗口；语义等同批量触发，走双闸门）
     if (body.profileIds !== undefined) {
       if (!Array.isArray(body.profileIds) || body.profileIds.length === 0 || !body.profileIds.every((id) => typeof id === 'string' && id !== '')) {
         throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'profileIds 必须为非空字符串数组')
@@ -205,18 +204,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
       }
       if (busy.length > 0) throw new HttpError(409, ERROR_CODES.TASK_RUNNING, `以下窗口任务执行中，请等待结束再触发: ${busy.join(', ')}`)
       const batch = await deps.db.createBatch('bulk', key, 'trigger-test')
-      const startMs = Date.now()
-      const count = selected.length
-      for (let i = 0; i < selected.length; i++) {
-        const notBeforeMs = staggerNotBefore({
-          startMs,
-          nowMs: startMs,
-          index: i,
-          count,
-          spreadMs: deps.stagger.spreadSec * 1000,
-          jitterPct: deps.stagger.jitterPct,
-        })
-        await deps.enqueuer.enqueue(selected[i], key, { batchId: batch.id, notBeforeMs })
+      for (const profile of selected) {
+        await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
       }
       ok(res, { scope: 'selected' })
       return
@@ -229,7 +218,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
         throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '该窗口任务执行中，请等待结束后再触发')
       }
       const batch = await deps.db.createBatch('single', key, 'trigger-single')
-      await deps.enqueuer.enqueue(profile, key, { immediate: true, batchId: batch.id, notBeforeMs: Date.now() })
+      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
       ok(res, { scope: 'single' })
       return
     }
@@ -239,18 +228,8 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     }
     const batch = await deps.db.createBatch('bulk', key, 'trigger-all')
     const profiles = await deps.db.listProfiles(true)
-    const startMs = Date.now()
-    const count = profiles.length
-    for (let i = 0; i < profiles.length; i++) {
-      const notBeforeMs = staggerNotBefore({
-        startMs,
-        nowMs: startMs,
-        index: i,
-        count,
-        spreadMs: deps.stagger.spreadSec * 1000,
-        jitterPct: deps.stagger.jitterPct,
-      })
-      await deps.enqueuer.enqueue(profiles[i], key, { batchId: batch.id, notBeforeMs })
+    for (const profile of profiles) {
+      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
     }
     ok(res, { scope: 'all' })
   }))

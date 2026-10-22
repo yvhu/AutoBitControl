@@ -10,8 +10,6 @@
     ]
   },
   "execution": {
-    "staggerMaxSec": 120,
-    "staggerJitterPct": 15,
     "windowTimeoutMs": 900000,
     "taskTimeoutMs": 180000,
     "retryMax": 2,
@@ -21,7 +19,34 @@
     "circuitBreakerCooldownSec": 1800,
     "circuitBreakerMaxCooldownSec": 7200,
     "circuitBreakerResetAt": "23:59",
-    "maxConcurrentWindows": 6
+    "maxConcurrentWindows": 6,
+    "windowPool": {
+      "enabled": false,
+      "maxOpenWindows": 4,
+      "memoryReserveMb": 100,
+      "perWindowMb": 1024,
+      "criticalFreeMb": 1024,
+      "resumeFreeMb": 2048,
+      "checkIntervalMs": 5000,
+      "openCooldownMs": 10000,
+      "idleCloseSec": 180,
+      "windowMaxTasks": 3,
+      "windowMaxLifetimeSec": 600,
+      "cohortMaxSec": 1800
+    },
+    "health": {
+      "bitbrowserProbeMs": 30000,
+      "globalEnvFailureWindowSec": 300,
+      "globalEnvFailureThreshold": 3,
+      "probeEnabled": true,
+      "backoffSec": [
+        30,
+        60,
+        120,
+        300,
+        600
+      ]
+    }
   },
   "scheduler": {
     "timezone": "Asia/Shanghai"

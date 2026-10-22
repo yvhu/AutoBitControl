@@ -8,6 +8,7 @@ import { formatDuration, formatDateTime, formatEta, failureKindLabel } from './f
 import { splitBatches, batchProgress, batchTiming, canRerunFailed } from './groupBatches'
 import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
+import RunArtifactsModal from './RunArtifactsModal'
 import RerunFailedModal from './RerunFailedModal'
 
 const RANGE_OPTIONS = [
@@ -51,6 +52,16 @@ function DiagButton({ runId, screenshot }: { runId: number; screenshot: string |
   )
 }
 
+function ScreenshotButton({ runId }: { runId: number }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button type="link" size="small" onClick={(e) => { e.stopPropagation(); setOpen(true) }}>截图</Button>
+      <RunArtifactsModal runId={runId} open={open} onClose={() => setOpen(false)} />
+    </>
+  )
+}
+
 function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
   const trigger = useTriggerTask()
   const stop = useStopRun()
@@ -78,7 +89,7 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 240 }}>{e}</Typography.Text> : '—') },
-        { title: '截图', dataIndex: 'screenshot', width: 80, render: (s: string | null) => (s ? <Button type="link" size="small" onClick={() => window.open(`/api/screenshots?path=${encodeURIComponent(s)}`, '_blank')}>🖼</Button> : '—') },
+        { title: '截图', width: 80, render: (_, r) => <ScreenshotButton runId={r.id} /> },
         { title: '操作', width: 130, render: (_, r) => (
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
@@ -195,6 +206,7 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
         { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
         { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
+        { title: '截图', width: 80, render: (_, r) => <ScreenshotButton runId={r.id} /> },
         { title: '操作', width: 130, render: (_, r) => (
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}

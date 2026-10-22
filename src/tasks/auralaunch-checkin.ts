@@ -2,7 +2,7 @@
  * Auralaunch 签到任务：每日签到 + AI 答题（QUIZ FOR THE DAY）
  * 站点：https://beta.auralaunch.org/incentives
  * 执行流程：打开任务页 → 自适应钱包登录 → （若出现）今日答题弹窗：
- *          读题干+选项 → 问 AI（命中本地缓存则跳过）→ 点击答案 → 提交 → 等弹窗关闭
+ *          读题干+选项 → 问 AI（命中本地缓存则跳过）→ 点击答案 → 截「quiz-answer」存证 → 提交 → 等弹窗关闭
  *          → 若出现「Claim」按钮则点击领取（等成功提示作成功断言 + 存证截图），否则任务结束
  * 设计：run 内直接用 ../api 能力函数；答题答案按「题干」缓存在进程内存，同题跨窗口复用
  * 时间预算：timeoutSec 180s、retry.max 2 次 / 退避 600s、concurrency 4
@@ -101,6 +101,8 @@ export class AuralaunchCheckinTask extends SiteTask {
     if (await waitFor(ctx, { selector: QUIZ_HEADER }, { budgetMs: 5000 })) {
       // 1) 拿答案并点击选项：命中缓存直接点；未命中由 answerQuiz 问 AI 后点击
       await answerQuizCached(ctx, QUIZ_QUESTION, QUIZ_OPTIONS)
+      // 答题存证：点完答案、提交前截（此时弹窗仍显示题干与选中项；提交后弹窗可能立即关闭）
+      await takeScreenshot(ctx, 'quiz-answer')
       // 2) 提交答案
       await click(ctx, QUIZ_SUBMIT)
       // 3) 等弹窗关闭作为提交落定信号；未关闭仅告警，不阻断后续步骤

@@ -67,7 +67,7 @@
 | 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
 | 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；30 分钟起步指数退避到 2 小时；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
-| 错峰 / Stagger | 批量触发时把窗口按序号均匀铺开（默认总铺开 120 秒）并叠加间距抖动，避免所有窗口同一秒一起访问站点 | §7 |
+| 窗口池 / Window Pool | 复用已开窗口，按内存水位、开窗冷却与单窗任务数控制开窗节奏；Phase 1 仅加载配置（开窗冷却已生效、池默认关闭），Phase 2 启用池调度 | §7 |
 | 在途 / in-flight | 某窗口或任务当天已有 `pending/running/retry_wait` 行（已排队或正在跑）；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
 | 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
 | 遮罩 / Mask | 弹窗背后盖住整页的半透明灰层 | §6.3 |
@@ -141,7 +141,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 
 **试跑与验证：**
 
-1. **单窗口真跑**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=my-checkin npm run task:run`（不受开关与错峰限制，运行前先认领当天该任务行；不启动 dispatcher，不要与后端同时在同一窗口运行，打印结果后退出）。
+1. **单窗口真跑**：`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=my-checkin npm run task:run`（不受开关限制，运行前先认领当天该任务行；不启动 dispatcher，不要与后端同时在同一窗口运行，打印结果后退出）。
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
 4. **停止运行**：看板批次卡片头部「停止」停整批（含排队中尚未开窗的行，这些行会直接结算为 `skipped`、不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
@@ -1153,16 +1153,16 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 6.5 截图与日志位置
 
-- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；看板批次明细可点开截图。
+- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；每次运行通常 1–3 张（任务显式截图如 `quiz-answer`/`claim-success`，加上框架自动的 `<日期>-success` / `<日期>-attemptN`）。看板批次明细点「截图」打开画廊，可看该 run 的全部图片（`GET /api/runs/:id/artifacts` 列出目录内 png，`/api/screenshots?path=` 读取原图）；失败诊断弹窗里也能打开同一画廊。
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
 - **运行状态**：`pending → running → success | failed | retry_wait → …`；`pending` = 已入队待调度，`retry_wait` = 等待退避到期，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过 / 手动停止 / 任务未注册（到期但任务 key 已不在注册表）。
 - `runs.failure_kind` 记录每次尝试的失败分类；只有 `environment` 且终态失败才会计入窗口熔断，`task/timeout/stopped` 不计。
 
 ### 运行队列（runs 即队列）
 
-- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（错峰到期/重试时间）与 `batch_id`。
+- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（触发入口写当前时间，即立即到期；失败重试时写入退避到期时间）与 `batch_id`。批量触发、`rerun-failed` 与定时计划都不再按窗口铺开。
 - dispatcher 每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口的多个任务合并为一次窗口会话。
-- 跨午夜错峰尾巴：旧日期的 `pending/retry_wait` 行不会补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）。旧日期已在运行的会话**仅在进程存活期间**继续跑完并按认领日期落终态，其窗口/任务额度不按日期过滤，仍占用新日期的并发上限；进程重启时 `recoverRuns` 会调用 `settleOldRunningRuns` 把旧日期残留的 `running` 行结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。
+- 跨午夜排队残留：旧日期的 `pending/retry_wait` 行不会补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）。旧日期已在运行的会话**仅在进程存活期间**继续跑完并按认领日期落终态，其窗口/任务额度不按日期过滤，仍占用新日期的并发上限；进程重启时 `recoverRuns` 会调用 `settleOldRunningRuns` 把旧日期残留的 `running` 行结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。
 - 到期但不在任务注册表中的行会在 claim 前统一结算为 `skipped`（错误「任务未注册」），避免一直停在 `pending`；任务恢复注册后重新触发即可。
 - 重试只写 `retry_wait + not_before_ms`，不再依赖进程内定时器；进程重启时会把当天崩溃残留的 `running` 行重置为 `pending`，重启后仍可继续。
 - 批次停止会把仍在排队的 `pending/retry_wait` 行直接结算为 `skipped`（手动停止）；运行中的行仍走取消 + 关窗。
@@ -1170,12 +1170,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - `task:run` 单窗口调试在运行前会先入队并原子认领当天该任务行（`claimQueuedRuns`），因此后端 dispatcher 不会同时拾取同一行；它不启动 dispatcher，重试按行内 `not_before_ms` 自行等待。
 - 不要在同一窗口同时运行 `task:run` 与后端：后端重启恢复会把当天崩溃残留的 `running` 行（包括 `task:run` 正在跑的行）重新排队，可能导致双方重复执行。
 
-### 并发阀门与错峰
+### 并发阀门与调度节奏
 
 - 并发由数据库 claim 事务裁决：全局按 `running` 的 distinct 窗口数，任务级按 `running` 中该 task 的 distinct 窗口数。
 - 同一窗口的多个任务共享一次会话；全局窗口额度只算 1。多个后端实例共享同一数据库时也不会突破上限。
-- 错峰为“均匀铺开 + 抖动”：`staggerMaxSec` 是本批窗口的总铺开时长，窗口按序号均匀分布；`staggerJitterPct` 在相邻窗口间距上叠加抖动（占间距百分比），因此个别窗口可能略微超出总铺开时长。`pending/retry_wait` 行可在看板看到预计开始时间；该时间是下限（最早可调度时间），实际开始可能因并发上限或在途任务而延后。
-- 自动重试只使用 `backoffSec`，不叠加初始错峰；单窗口入口（看板行级执行、`task:run`）不等待错峰。
+- 批量触发（任务页「立即触发」）、`rerun-failed`、多窗口测试触发与定时计划都只写 `pending` 并立即到期，不再按窗口铺开；实际开窗节奏由并发阀门（全局 `maxConcurrentWindows` + 任务级 `concurrency`）与开窗串行队列控制。
+- 开窗/关窗统一经进程内 `SerialQueue` 串行执行（两次开窗最小间隔 `execution.windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待）；关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记。`open_windows.state` 区分 `opening/open/closing`，`owner_kind` 区分 `pool/manual/taskrun`，`last_used_at` / `tasks_done` 为 Phase 2 窗口池复用预留（Phase 1 仅测试写入）。
+- `not_before_ms` 用于重试退避与排队到期，不再承担初始错峰；单窗口入口（看板行级执行、`task:run`）同样立即到期。看板显示的预计开始时间是下限（最早可调度时间），实际开始可能因并发上限或在途任务而延后。
 
 ### 6.6 失败自动诊断包
 
@@ -1223,8 +1224,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 **6）运维要点**
 
 - 后端 `tsx src/index.ts` **无 watch**：改完任务代码必须重启 dev 才生效；重启会打断在途窗口会话，批量运行中不要重启。
-- 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（不等待错峰）；批量触发不带 body。
-- 多窗口测试触发：任务页卡片「测试」→ 弹窗多选启用窗口，等价于「立即触发」的子集（走错峰与并发闸门，受开关限制）；对应 `POST /api/tasks/:key/trigger` + body `{"profileIds":["<id>","<id>"]}`，返回 `scope=selected`。
+- 单窗口触发：`POST /api/tasks/:key/trigger` + body `{"bitbrowserId":"<id>"}`（立即入队，不等其他窗口）；批量触发不带 body。
+- 多窗口测试触发：任务页卡片「测试」→ 弹窗多选启用窗口，等价于「立即触发」的子集（只写 pending 立即入队，走并发闸门，受开关限制）；对应 `POST /api/tasks/:key/trigger` + body `{"profileIds":["<id>","<id>"]}`，返回 `scope=selected`。
 - 停止会关闭该窗口（`closeBrowser`），正在跑的会话被中止并按「手动停止」结算；同窗口合并的其他任务会一并失败（立即触发为一窗口一任务，无影响）。
 - 面板手动「关闭窗口」同样会中止在途会话：仅当该窗口存在 `running` 行时才先置会话取消标记再关窗，runner 按「手动停止」结算；无 `running` 不置标记，避免泄漏到下一次合法会话。
 - 批次停止会先在数据库把同批仍在排队的 `pending/retry_wait` 行原子结算为 `skipped`（手动停止，不再开窗）；已被 dispatcher 认领/运行中的行走取消 + 关窗。行级停止对排队行只结算数据库、不关窗，对运行中的行取消并关窗。
@@ -1305,7 +1306,9 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `staggerMaxSec`（120 秒）、`staggerJitterPct`（15，0-50）、`windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。`staggerMaxSec` 为本批窗口错峰的总铺开时长（0-3600 秒，0 关闭；>3600 截断为 3600，非法回退 120，均启动告警），窗口按序号均匀分布；`staggerJitterPct` 为相邻窗口间距的抖动幅度（占间距百分比，0-50，0 = 完全均匀），抖动可能让个别窗口略微超出总铺开时长。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限（必须正整数；非法/0 回退 4 并启动告警），与任务级 `concurrency` 一起由数据库 claim 事务裁决（取更严者）。旧配置 `circuitBreakerResetEveryHours` 已废弃：存在时启动告警并忽略，请改用 `circuitBreakerResetAt`。 |
+| `execution` | `windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`）、`maxConcurrentWindows`（4） | 执行引擎全局默认值。触发（批量/重跑/定时）不再按窗口铺开：触发即写 `pending` 并立即到期，`not_before_ms` 用于重试退避与排队到期（触发即写当前时间到期）。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。`maxConcurrentWindows` 为全局开窗上限（必须正整数；非法/0 回退 4 并启动告警），与任务级 `concurrency` 一起由数据库 claim 事务裁决（取更严者）。Phase 1 跨进程窗口额度等待超时后仍会放行开窗（旧调度器保留行为），Phase 2 由窗口池调度器替换并移除该放行。旧配置 `circuitBreakerResetEveryHours` 已废弃：存在时启动告警并忽略，请改用 `circuitBreakerResetAt`。 |
+| `execution.windowPool` | `enabled`（`false`）、`maxOpenWindows`（4）、`memoryReserveMb`（100）、`perWindowMb`（1024）、`criticalFreeMb`（1024）、`resumeFreeMb`（2048）、`checkIntervalMs`（5000）、`openCooldownMs`（10000）、`idleCloseSec`（180）、`windowMaxTasks`（3）、`windowMaxLifetimeSec`（600）、`cohortMaxSec`（1800） | 窗口池配置。**Phase 1 不启用池调度（`enabled` 默认 false），Phase 2 启用**：开/关窗串行化与开窗冷却已经生效（冷却只约束开窗，关窗不等待）；池调度、内存水位复用/轮转等 Phase 2 才接入。启用后按内存水位（`criticalFreeMb` 停止开窗、`resumeFreeMb` 回升恢复、`perWindowMb` 预估单窗占用、`memoryReserveMb` 系统余量）与任务数复用窗口：空闲 `idleCloseSec` 关闭、单窗最多 `windowMaxTasks` 个任务或 `windowMaxLifetimeSec` 秒后换窗；`openCooldownMs` 为两次开窗最小间隔，`cohortMaxSec` 为单窗口连续占用公平轮转上限（秒，默认 1800）：同一窗口连续占用超过该时长且有其它窗口排队时先轮转。非法值回退默认并启动告警；`criticalFreeMb` 必须小于 `resumeFreeMb`，否则回退 1024/2048。 |
+| `execution.health` | `bitbrowserProbeMs`（30000）、`globalEnvFailureWindowSec`（300）、`globalEnvFailureThreshold`（3）、`probeEnabled`（`true`）、`backoffSec`（`[30,60,120,300,600]`） | 全局健康门禁配置。**Phase 1 仅加载校验（未接入调度），Phase 2 启用**：每隔 `bitbrowserProbeMs` 探测比特浏览器可用性；`globalEnvFailureWindowSec` 秒内累计 `globalEnvFailureThreshold` 次全局环境级失败即暂停开新窗，并按 `backoffSec`（秒）逐级退避。非法值回退默认并启动告警。 |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |

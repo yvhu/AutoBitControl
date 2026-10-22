@@ -125,6 +125,20 @@ export interface DiagBundle {
   dialogText: string
 }
 
+/** 单张运行截图（后端 RunArtifact 同构） */
+export interface RunArtifact {
+  name: string
+  path: string
+  size: number
+  mtimeMs: number
+}
+
+/** 某次运行的全部截图（GET /api/runs/:id/artifacts） */
+export interface RunArtifactsData {
+  runId: number
+  files: RunArtifact[]
+}
+
 // ===== 工具中心（手补类型：/api/tools 与 /api/tools/file-assign/*） =====
 
 export type ToolItem = { key: string; name: string; description: string }
