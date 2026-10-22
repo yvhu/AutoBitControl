@@ -76,6 +76,7 @@ function makeDb(over: Partial<Record<keyof AppDb, unknown>> = {}): AppDb {
     reserveOpenWindow: vi.fn().mockResolvedValue(undefined),
     setOpenWindow: vi.fn().mockResolvedValue(undefined),
     setWindowState: vi.fn().mockResolvedValue(undefined),
+    incrementWindowUsage: vi.fn().mockResolvedValue(undefined),
     clearOpenWindow: vi.fn().mockResolvedValue(undefined),
     listOpenWindows: vi.fn().mockResolvedValue([]),
     ...over,
@@ -571,6 +572,130 @@ describe('WindowRunner', () => {
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
     expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+  })
+
+  it('keep-open 复用窗口 CDP 失败：串行关窗并清登记，避免留下无登记存活窗口', async () => {
+    const db = makeDb()
+    const runner = makeRunner({
+      db,
+      reuseOpen: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' }),
+      driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }),
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: true })
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('keep-open 成功：不关窗、回写 open 并累加窗口使用次数', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: true })
+    expect(statuses(db)).toContain('success')
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+    expect(db.incrementWindowUsage).toHaveBeenCalledWith('bb-1')
+    const setOpen = db.setOpenWindow as ReturnType<typeof vi.fn>
+    expect(setOpen).toHaveBeenCalledTimes(2)
+    expect(setOpen).toHaveBeenLastCalledWith('bb-1', open.http, process.pid, 'open')
+    expect(db.setWindowState).not.toHaveBeenCalledWith('bb-1', 'closing')
+  })
+
+  it('keepWindowOpen=false：会话结束仍关窗且不累加窗口使用次数', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: false })
+    expect(statuses(db)).toContain('success')
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(db.incrementWindowUsage).not.toHaveBeenCalled()
+  })
+
+  it('keep-open 任务级失败：保留窗口并累加窗口使用次数', async () => {
+    const db = makeDb()
+    const task = new FailTask()
+    const runner = makeRunner({ db, tasks: new Map([['fail-task', task]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }], { keepWindowOpen: true })
+    expect(statuses(db)).toContain('retry_wait')
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+    expect(db.incrementWindowUsage).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('keep-open 环境级失败：仍关闭窗口且不累加使用次数', async () => {
+    class WindowFailTask implements SiteTask {
+      meta = { key: 'window-fail', name: 'WF', url: 'https://x.io' }
+      run = vi.fn().mockRejectedValue(new Error('Target closed'))
+    }
+    const db = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>),
+      recordWindowEnvironmentFailure: vi.fn().mockResolvedValue({
+        ...closedHealth,
+        state: 'open',
+        failures: 3,
+        nextProbeMs: Date.now() + 60_000,
+        reason: 'Target closed',
+      }),
+    })
+    const runner = makeRunner({ db, tasks: new Map([['window-fail', new WindowFailTask()]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'window-fail' }], { keepWindowOpen: true })
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(db.incrementWindowUsage).not.toHaveBeenCalled()
+  })
+
+  it('keep-open 但 CDP 连接失败：仍按原逻辑关窗', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: true })
+    expect(statuses(db)).toEqual(['pending', 'failed'])
+    expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+    expect(db.incrementWindowUsage).not.toHaveBeenCalled()
+  })
+
+  it('keep-open 复用已开窗口：不关窗但仍累加窗口使用次数', async () => {
+    const db = makeDb()
+    const reuseOpen = vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' })
+    const runner = makeRunner({ db, reuseOpen })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: true })
+    expect(bitbrowser.openBrowser).not.toHaveBeenCalled()
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+    expect(db.incrementWindowUsage).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('closePoolWindow 经串行队列关窗、等待 pids 消失并清登记', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = makeDb()
+      const bb2 = {
+        ...bitbrowser,
+        openPids: vi.fn().mockResolvedValueOnce(new Set(['bb-1'])).mockResolvedValue(new Set<string>()),
+      }
+      const queue = new SerialQueue(0)
+      const runSpy = vi.spyOn(queue, 'run')
+      const runner = makeRunner({ db, bitbrowser: bb2, openCloseQueue: queue })
+      const p = runner.closePoolWindow(makeProfile(), '池轮转')
+      await vi.advanceTimersByTimeAsync(1000)
+      await p
+      expect(runSpy).toHaveBeenCalledWith(expect.any(Function), { cooldown: false })
+      expect(bb2.closeBrowser).toHaveBeenCalledWith('bb-1')
+      expect(bb2.openPids).toHaveBeenCalledTimes(2)
+      expect(db.setWindowState).toHaveBeenCalledWith('bb-1', 'closing')
+      expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('closePoolWindow pids 确认超时：保留登记待对账', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = makeDb()
+      const bb2 = { ...bitbrowser, openPids: vi.fn().mockResolvedValue(new Set(['bb-1'])) }
+      const runner = makeRunner({ db, bitbrowser: bb2 })
+      const p = runner.closePoolWindow(makeProfile(), '池轮转')
+      await vi.advanceTimersByTimeAsync(30_000)
+      await p
+      expect(bb2.closeBrowser).toHaveBeenCalledWith('bb-1')
+      expect(db.clearOpenWindow).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('新轮次使用 nextRunSlot（终态行后开新轮），续跑沿用原 slot', async () => {
@@ -1147,6 +1272,23 @@ describe('WindowRunner 跨进程窗口上限与开窗失败兜底关窗', () => 
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('窗口池执行器：跳过旧的全局窗口上限闸门（pids 已满也直接开窗）', async () => {
+    const bbFake = {
+      openBrowser: vi.fn().mockResolvedValue(open),
+      closeBrowser: vi.fn().mockResolvedValue(undefined),
+      openPids: vi.fn().mockResolvedValue(new Set(['a'])),
+    }
+    const db = makeDb({ listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' })]) })
+    const runner = new WindowRunner({
+      cfg: cfgWithCap(1) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
+      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
+      openOwnerKind: 'pool',
+    })
+    // 旧闸门会因 pids 已达 maxConcurrentWindows=1 等待 10 分钟；池执行器应直接开窗
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
   })
 
   it('跨进程上限：孤儿回收的关窗也经 openCloseQueue 串行执行', async () => {

@@ -50,6 +50,20 @@ export class GlobalHealthGate {
     return this.state
   }
 
+  /**
+   * 全局环境故障（比特 API/断网整体不可用）：立即暂停并进入指数退避，
+   * 不需要等多窗口聚合；调用方应做去抖/限频，避免每个 tick 都升级退避级别。
+   */
+  recordGlobalFailure(nowMs: number): GlobalHealthState {
+    const at = resolveNowMs(nowMs)
+    // 首次从 normal 暂停用 backoffSec[0]；已 paused/probing 时再次失败才升级退避级别
+    if (this.state === 'normal') this.level = 0
+    else this.level = Math.min(this.level + 1, this.maxLevel())
+    this.state = 'paused'
+    this.nextProbeMs = at + this.backoffMs()
+    return this.state
+  }
+
   recordProbeSuccess(): void {
     this.state = 'normal'
     this.failures.clear()

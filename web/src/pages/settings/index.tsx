@@ -2,6 +2,7 @@ import { Alert, Button, Card, Descriptions, Segmented, Space, Spin, Tag, Typogra
 import { ReloadOutlined } from '@ant-design/icons'
 import ConfirmButton from '../../components/ConfirmButton'
 import { useThemeMode } from '../../theme/useThemeMode'
+import PoolStatusCard from './PoolStatusCard'
 import {
   datasourceText,
   useReloadDatasource,
@@ -62,6 +63,8 @@ export default function SettingsPage() {
           ]}
         />
       </Card>
+
+      <PoolStatusCard />
 
       <Card size="small" title="数据源">
         <Space direction="vertical" size={12} style={{ display: 'flex' }}>

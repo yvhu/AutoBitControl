@@ -74,6 +74,8 @@ interface MockDeps {
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
   getRunById: Mock
   cancelSession: Mock
+  /** 窗口池状态快照（仅窗口池启用时注入） */
+  poolStatus?: Mock
   datasource: {
     summary: Mock
     reload: Mock
@@ -364,7 +366,7 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.code).toBe(40901)
     })
 
-    it('POST /api/batches/:id/rerun-failed 勾选已成功窗口也强制执行', async () => {
+    it('POST /api/batches/:id/rerun-failed 已成功窗口交给幂等入队（skipIfSuccess）', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.getLatestRun.mockResolvedValue({ status: 'success', finishedAt: '2026-10-17 11:00:00.000' })
@@ -372,7 +374,7 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.status).toBe(200)
       expect(res.body.data).toEqual({ batchId: 88, queued: 1 })
       expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'rerun-failed')
-      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88, notBeforeMs: expect.any(Number) })
+      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
     })
 
     it('POST /api/batches/:id/rerun-failed 不铺开：所有窗口入队时间几乎一致', async () => {
@@ -689,7 +691,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-all')
     expect(deps.enqueuer.enqueue).toHaveBeenCalled()
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
   })
 
   it('批量触发不铺开：所有窗口入队时间几乎一致', async () => {
@@ -713,6 +715,12 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.status).toBe(200)
     expect(deps.db.createBatch).toHaveBeenCalledWith('single', 't1', 'trigger-single')
     expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
+  })
+
+  it('单窗口触发不带 skipIfSuccess（保留手动重跑）', async () => {
+    const deps = makeDeps()
+    await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ bitbrowserId: 'bb-1' })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).not.toHaveProperty('skipIfSuccess')
   })
 
   it('触发任务存在在途 run 返回 409（业务码 40902）', async () => {
@@ -746,7 +754,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(2)
     expect(deps.enqueuer.enqueue.mock.calls[0][0].bitbrowserId).toBe('bb-1')
     expect(deps.enqueuer.enqueue.mock.calls[1][0].bitbrowserId).toBe('bb-2')
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
   })
 
   it('多窗口测试触发不铺开：按选择顺序入队且时间几乎一致', async () => {
@@ -1212,6 +1220,42 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data.columns).toEqual(['窗口', '邮箱'])
   })
 
+  describe('pool status API', () => {
+    const snapshot = {
+      memoryState: 'normal',
+      globalHealthState: 'normal',
+      freeMb: 8192,
+      perWindowMb: 1024,
+      effectivePool: 4,
+      maxOpenWindows: 4,
+      actualOpen: 3,
+      poolSize: 3,
+      busy: 1,
+      idle: 2,
+      opening: 0,
+      queueWindows: 1,
+      pendingTasks: 5,
+      updatedAt: '2026-10-22 09:00:00.000',
+    }
+
+    it('窗口池启用时返回 enabled=true 与状态快照', async () => {
+      const deps = makeDeps()
+      deps.poolStatus = vi.fn().mockReturnValue(snapshot)
+      const res = await request(createApp(deps as never)).get('/api/pool/status')
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(res.body.data).toEqual({ enabled: true, status: snapshot })
+      expect(deps.poolStatus).toHaveBeenCalledTimes(1)
+    })
+
+    it('窗口池关闭时返回 enabled=false 且 status=null', async () => {
+      const res = await request(createApp(makeDeps() as never)).get('/api/pool/status')
+      expect(res.status).toBe(200)
+      expect(res.body.code).toBe(0)
+      expect(res.body.data).toEqual({ enabled: false, status: null })
+    })
+  })
+
   it('GET /api/screenshots 拒绝目录穿越', async () => {
     const res = await request(createApp(makeDeps() as never)).get('/api/screenshots').query({ path: 'C:/windows/win.ini' })
     expect(res.status).toBe(404)
@@ -1302,6 +1346,7 @@ describe('OpenAPI 文档与统一错误码', () => {
       '/api/bitbrowser/sync',
       '/api/settings',
       '/api/datasource/reload',
+      '/api/pool/status',
       '/api/screenshots',
       '/api/docs/guide',
       '/api/docs/examples',

@@ -4,16 +4,19 @@
  * 装配顺序即依赖顺序：配置/日志 → 数据库 → 比特浏览器同步 → 任务/钱包 →
  * 执行器/队列 → Web 服务
  */
-import { loadConfig } from './infrastructure/config'
+import { loadConfig, type AppConfig } from './infrastructure/config'
 import { acquireSingleInstanceLock, singleInstanceLockPath, SingleInstanceError } from './infrastructure/single-instance'
-import { createLogger } from './infrastructure/logger'
-import { AppDb, type OpenWindowState } from './infrastructure/db'
+import { createLogger, type Logger } from './infrastructure/logger'
+import { AppDb, type OpenWindowState, type ProfileRow } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
 import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/window-runner'
 import { SerialQueue } from './engine/serial-queue'
-import { CoalescingEnqueuer } from './engine/queue'
+import { CoalescingEnqueuer, type RunEnqueuer } from './engine/queue'
+import { WindowPoolScheduler } from './engine/window-pool'
+import { MemoryGovernor } from './engine/memory-governor'
+import { GlobalHealthGate } from './engine/global-health'
 import { CancelRegistry } from './engine/cancel-registry'
 import { createTaskStopper } from './engine/task-stopper'
 import { recoverRuns } from './engine/run-recovery'
@@ -50,6 +53,52 @@ async function syncBrowsersPaged(bitbrowser: BitBrowserClient, db: AppDb): Promi
 export function getReusableWindow(row: { http: string; state: OpenWindowState } | null): { http: string } | null {
   if (!row || row.state !== 'open' || !row.http.trim()) return null
   return { http: row.http }
+}
+
+/** RunEnqueuer 装配依赖（独立导出便于测试开关分支；仅窗口池启用时才创建 pool 执行器） */
+export interface RunEnqueuerDeps {
+  cfg: AppConfig
+  db: AppDb
+  logger: Logger
+  /** taskKey -> meta.concurrency：旧调度器用作任务级并发上限，窗口池仅用于识别未注册任务 */
+  limits: Map<string, number>
+  bitbrowser: Pick<BitBrowserClient, 'openPids'>
+  /** 手动/面板共用的执行器（开窗归属保持 manual） */
+  runner: WindowRunner
+  /** 创建窗口池专用执行器（开窗归属 pool），仅窗口池分支调用 */
+  createPoolRunner(): WindowRunner
+}
+
+/**
+ * 按特性开关选择运行调度器：windowPool.enabled=true 时用窗口池并构建内存/健康门禁，
+ * 否则保持 CoalescingEnqueuer；两者共用 RunEnqueuer 接口，路由与停止器无需区分。
+ */
+export function createRunEnqueuer(deps: RunEnqueuerDeps): RunEnqueuer {
+  const { execution } = deps.cfg
+  if (!execution.windowPool.enabled) {
+    return new CoalescingEnqueuer(deps.db, deps.runner, deps.logger, deps.limits, execution.maxConcurrentWindows)
+  }
+  const pool = execution.windowPool
+  return new WindowPoolScheduler({
+    db: deps.db,
+    runner: deps.createPoolRunner(),
+    bitbrowser: deps.bitbrowser,
+    logger: deps.logger,
+    memory: new MemoryGovernor({
+      reserveMb: pool.memoryReserveMb,
+      perWindowMb: pool.perWindowMb,
+      criticalFreeMb: pool.criticalFreeMb,
+      resumeFreeMb: pool.resumeFreeMb,
+    }),
+    health: new GlobalHealthGate({
+      windowSec: execution.health.globalEnvFailureWindowSec,
+      threshold: execution.health.globalEnvFailureThreshold,
+      backoffSec: execution.health.backoffSec,
+      probeEnabled: execution.health.probeEnabled,
+    }),
+    cfg: pool,
+    limits: deps.limits,
+  })
 }
 
 /**
@@ -178,7 +227,8 @@ export async function startApp(): Promise<void> {
   const cancelRegistry = new CancelRegistry()
   // 比特开/关窗串行队列：全局单实例，避免异步开窗/关窗互相踩踏并按配置冷却限频
   const openCloseQueue = new SerialQueue(cfg.execution.windowPool.openCooldownMs)
-  const runner = new WindowRunner({
+  // 执行器共用依赖：手动/面板执行器与窗口池执行器只差开窗归属（openOwnerKind）
+  const runnerDeps = {
     cfg,
     db,
     bitbrowser,
@@ -195,20 +245,32 @@ export async function startApp(): Promise<void> {
     // 本轮会话不重新开窗、结束后不关窗。opening/closing 交给正常开窗流程；Phase 1 不回收
     // 「存活但无登记」的窗口。此处不做 pid 校验（pid 校验在 route/task:run 打开时登记、关闭时清除）；
     // 若窗口被外部关掉而表残留，复用会走到 CDP 连接失败 → failed 终态（可接受）
-    reuseOpen: async (id) => getReusableWindow(await db.getOpenWindow(id)),
+    reuseOpen: async (id: string) => getReusableWindow(await db.getOpenWindow(id)),
     // 数据源行解析：有窗口列按窗口名/ID 匹配，无窗口列按窗口列表顺序取行（list 顺序=面板顺序）
-    accountResolver: async (profile) => {
+    accountResolver: async (profile: ProfileRow) => {
       if (!datasource.available) return null
       const row = datasource.rowFor(profile, await db.listProfiles(false))
       return row ? { ...row.values } : null
     },
-  })
+  }
+  const runner = new WindowRunner(runnerDeps)
   // 双闸门：任务级并发（meta.concurrency）+ 全局窗口上限（execution.maxConcurrentWindows），
   // 传给 dispatcher 后由 DB claim 事务裁决（runs.status='running' 唯一口径）
   const limits = new Map([...tasks].map(([key, task]) => [key, Math.max(1, task.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY)]))
-  const enqueuer = new CoalescingEnqueuer(db, runner, logger, limits, cfg.execution.maxConcurrentWindows)
+  // 特性开关：窗口池启用时用独立 pool 执行器（开窗归属 pool），否则保持旧 CoalescingEnqueuer
+  const enqueuer = createRunEnqueuer({
+    cfg,
+    db,
+    logger,
+    limits,
+    bitbrowser,
+    runner,
+    createPoolRunner: () => new WindowRunner({ ...runnerDeps, openOwnerKind: 'pool' }),
+  })
   // dispatcher 常驻：重试退避行即使没有新的 enqueue 也要到点被拾取
   enqueuer.start()
+  // 池状态只有窗口池调度器才提供；旧调度不注入，池状态接口返回 enabled=false
+  const poolStatus = enqueuer instanceof WindowPoolScheduler ? () => enqueuer.getStatus() : undefined
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
   // （建 schedule 批次 + 全部启用窗口入队，触发即 pending）
@@ -266,6 +328,7 @@ export async function startApp(): Promise<void> {
     stopper,
     // 面板手动关窗前：若窗口有在途 running 行，置会话标记让 runner 按手动停止结算
     cancelSession: (id) => cancelRegistry.requestSession(id),
+    poolStatus,
   })
   // 保存 http server 引用：优雅退出时先 close（等待存量连接结束），再关数据库退出
   const server = app.listen(cfg.web.port, cfg.web.host, () => {

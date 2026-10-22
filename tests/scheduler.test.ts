@@ -168,10 +168,18 @@ describe('Scheduler', () => {
     const s = new Scheduler(deps)
     await s.tick()
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'task-a', '计划#1 每日签到')
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88, notBeforeMs: expect.any(Number) })
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
     const notBeforeMs = deps.enqueuer.enqueue.mock.calls[0][2].notBeforeMs as number
     // 单窗口立即到期（不再按窗口顺序延迟）
     expect(notBeforeMs).toBeGreaterThan(0)
+  })
+
+  it('定时触发入队带 skipIfSuccess（当天已成功窗口不重复执行）', async () => {
+    const deps = makeDeps()
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    await new Scheduler(deps).tick()
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toMatchObject({ skipIfSuccess: true })
   })
 
   it('同一计划多任务入队时间几乎一致（不铺开）', async () => {

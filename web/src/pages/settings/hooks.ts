@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { fetchSettings, reloadDatasource, testBitbrowser } from '../../api/endpoints'
+import { fetchSettings, fetchPoolStatus, reloadDatasource, testBitbrowser } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
 
 const errMsg = (e: unknown) => (e instanceof HttpError ? e.message : '操作失败，请重试')
@@ -14,6 +14,15 @@ export function useSettings() {
   return useQuery({
     queryKey: ['settings'],
     queryFn: fetchSettings,
+  })
+}
+
+/** 窗口池状态：只读展示，5 秒轮询（未启用时后端返回 enabled=false） */
+export function usePoolStatus() {
+  return useQuery({
+    queryKey: ['poolStatus'],
+    queryFn: fetchPoolStatus,
+    refetchInterval: 5000,
   })
 }
 

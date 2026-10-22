@@ -761,6 +761,7 @@ describe('cleanupOld 历史数据清理', () => {
 })
 
 describe('runs 即队列', () => {
+  const DATE = '2026-10-19'
   let qdb: AppDb
   let qdir: string
   // Windows 上 libsql 的文件句柄要等进程退出才释放，测试内删不掉；
@@ -796,6 +797,60 @@ describe('runs 即队列', () => {
     const b = await qdb.enqueueRun(p.id, 't', '2026-10-19', 8, 2000)
     expect(b.slot).toBe(1)
     expect(b.batchId).toBe(8)
+  })
+
+  it('listPendingWindowKeys/listPendingRunsForWindow 只返回最新 slot 到期行', async () => {
+    const p1 = await qdb.upsertProfile('bb-q1', '窗口1')
+    const p2 = await qdb.upsertProfile('bb-q2', '窗口2')
+    await qdb.enqueueRun(p1.id, 'A', DATE, 1, 0)
+    await qdb.enqueueRun(p1.id, 'B', DATE, 2, 0)
+    await qdb.upsertRun(p1.id, 'C', DATE, 0, 'retry_wait', { notBeforeMs: 0 })
+    await qdb.enqueueRun(p2.id, 'A', DATE, 3, Date.now() + 60_000) // 未到期
+    const keys = await qdb.listPendingWindowKeys(DATE, Date.now())
+    expect(keys.map((k) => k.profileId)).toEqual([p1.id])
+    expect(keys[0].oldestQueuedAt).toEqual(expect.any(String))
+    const rows = await qdb.listPendingRunsForWindow(p1.id, DATE, Date.now())
+    expect(rows.map((r) => r.taskKey).sort()).toEqual(['A', 'B', 'C'])
+    expect(rows.filter((r) => r.taskKey === 'C')[0].status).toBe('retry_wait')
+    expect(rows.every((r) => r.profileId === p1.id && ['pending', 'retry_wait'].includes(r.status))).toBe(true)
+    expect(await qdb.listPendingRunsForWindow(p2.id, DATE, Date.now())).toEqual([])
+  })
+
+  it('listPendingRunsForWindow 忽略被更新 slot 取代的行', async () => {
+    const p = await qdb.upsertProfile('bb-superseded', '窗口')
+    await qdb.upsertRun(p.id, 'A', DATE, 0, 'pending', { notBeforeMs: 0 })
+    await qdb.upsertRun(p.id, 'A', DATE, 1, 'pending', { notBeforeMs: 0 })
+    await qdb.upsertRun(p.id, 'B', DATE, 0, 'pending', { notBeforeMs: Date.now() + 60_000 })
+
+    const rows = await qdb.listPendingRunsForWindow(p.id, DATE, Date.now())
+    expect(rows.map((r) => ({ taskKey: r.taskKey, slot: r.slot }))).toEqual([{ taskKey: 'A', slot: 1 }])
+  })
+
+  it('listPendingWindowKeys 排除被更新 slot 取代的窗口', async () => {
+    const superseded = await qdb.upsertProfile('bb-keys-superseded', '被取代窗口')
+    const healthy = await qdb.upsertProfile('bb-keys-healthy', '正常窗口')
+    await qdb.upsertRun(superseded.id, 'A', DATE, 0, 'pending', { notBeforeMs: 0 })
+    await qdb.upsertRun(superseded.id, 'A', DATE, 1, 'success', { finishedAt: '2026-10-19 10:00:00.000' })
+    await qdb.upsertRun(healthy.id, 'A', DATE, 0, 'pending', { notBeforeMs: 0 })
+
+    const keys = await qdb.listPendingWindowKeys(DATE, Date.now())
+    expect(keys.map((k) => k.profileId)).toEqual([healthy.id])
+    expect(await qdb.listPendingRunsForWindow(superseded.id, DATE, Date.now())).toEqual([])
+  })
+
+  it('incrementWindowUsage 累加 tasks_done 并刷新 last_used_at', async () => {
+    await qdb.setOpenWindow('bb-usage', '127.0.0.1:9222', 123)
+    expect((await qdb.listOpenWindows())[0]).toMatchObject({ tasksDone: 0, lastUsedAt: null })
+
+    await qdb.incrementWindowUsage('bb-usage')
+    const first = (await qdb.listOpenWindows())[0]
+    expect(first.tasksDone).toBe(1)
+    expect(first.lastUsedAt).toEqual(expect.any(String))
+
+    await qdb.incrementWindowUsage('bb-usage')
+    expect((await qdb.listOpenWindows())[0].tasksDone).toBe(2)
+    // 未登记窗口不报错（更新 0 行）
+    await qdb.incrementWindowUsage('bb-missing')
   })
 
   it('enqueueRun 遇到最新行 running 时不改写批次/时间', async () => {

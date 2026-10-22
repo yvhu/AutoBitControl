@@ -101,6 +101,38 @@ export interface SettingsData extends Omit<SettingsBase, 'datasource'> {
   datasource: DatasourceInfo
 }
 
+// ===== 窗口池状态（手补类型：/api/pool/status） =====
+
+/** 内存水位状态（与后端 MemoryState 一致） */
+export type PoolMemoryState = 'normal' | 'warning' | 'critical'
+
+/** 全局健康门禁状态（与后端 GlobalHealthState 一致） */
+export type PoolGlobalHealthState = 'normal' | 'paused' | 'probing'
+
+/** 窗口池状态快照（与 WindowPoolScheduler.getStatus() 同构） */
+export interface PoolStatusSnapshot {
+  memoryState: PoolMemoryState
+  globalHealthState: PoolGlobalHealthState
+  freeMb: number
+  perWindowMb: number
+  effectivePool: number
+  maxOpenWindows: number
+  actualOpen: number
+  poolSize: number
+  busy: number
+  idle: number
+  opening: number
+  queueWindows: number
+  pendingTasks: number
+  updatedAt: string | null
+}
+
+/** GET /api/pool/status：未启用窗口池时 status 为 null */
+export interface PoolStatusData {
+  enabled: boolean
+  status: PoolStatusSnapshot | null
+}
+
 // ===== 失败诊断（手补类型：/api/diagnostics/{runId}） =====
 
 /** 诊断步骤记录（与后端 automation/diag 的 StepRecord 同构，detail 可缺省） */

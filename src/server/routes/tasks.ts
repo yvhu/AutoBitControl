@@ -2,14 +2,15 @@
  * 任务路由（server 层）：任务列表与手动触发
  * 依赖方向：依赖 engine/infrastructure；被 app 装配
  * 设计思路：GET 返回 meta 全字段（缺省字段补 null 保证前端取值的稳定性）；
- * POST trigger 支持单窗口（bitbrowserId）、手选窗口列表（profileIds）或全部启用窗口三种范围
+ * POST trigger 支持单窗口（bitbrowserId）、手选窗口列表（profileIds）或全部启用窗口三种范围；
+ * 批量路径（profileIds/全部）带 skipIfSuccess（当天已成功窗口不重复执行），单窗口保留可手动重跑
  */
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import { todayStr } from '../../infrastructure/db'
-import type { CoalescingEnqueuer } from '../../engine/queue'
+import type { RunEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
 import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
 
@@ -145,7 +146,7 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *         description: 任务已停用（40901）或执行中（40902）
  */
 
-export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tasks: Map<string, SiteTask> }): Router {
+export function tasksRouter(deps: { db: AppDb; enqueuer: RunEnqueuer; tasks: Map<string, SiteTask> }): Router {
   const router = Router()
   router.get('/tasks', asyncHandler(async (req, res) => {
     const list = []
@@ -205,7 +206,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
       if (busy.length > 0) throw new HttpError(409, ERROR_CODES.TASK_RUNNING, `以下窗口任务执行中，请等待结束再触发: ${busy.join(', ')}`)
       const batch = await deps.db.createBatch('bulk', key, 'trigger-test')
       for (const profile of selected) {
-        await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
+        await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
       }
       ok(res, { scope: 'selected' })
       return
@@ -229,7 +230,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: CoalescingEnqueuer; tas
     const batch = await deps.db.createBatch('bulk', key, 'trigger-all')
     const profiles = await deps.db.listProfiles(true)
     for (const profile of profiles) {
-      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
+      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
     }
     ok(res, { scope: 'all' })
   }))

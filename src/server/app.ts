@@ -12,11 +12,12 @@ import { fileURLToPath } from 'node:url'
 import type { AppDb } from '../infrastructure/db'
 import type { AppConfig } from '../infrastructure/config'
 import type { Logger } from '../infrastructure/logger'
-import type { CoalescingEnqueuer } from '../engine/queue'
+import type { RunEnqueuer } from '../engine/queue'
 import type { TaskStopper } from '../engine/task-stopper'
 import type { SiteTask } from '../tasks/base'
 import type { ScheduleRow } from '../infrastructure/db'
 import type { RunNowResult } from '../engine/scheduler'
+import type { PoolStatus } from '../engine/window-pool'
 import { schedulesRouter } from './routes/schedules'
 import { openapiSpec } from './openapi'
 import { batchesRouter } from './routes/batches'
@@ -26,6 +27,7 @@ import { bitbrowserRouter } from './routes/bitbrowser'
 import { screenshotsRouter } from './routes/screenshots'
 import { docsRouter } from './routes/docs'
 import { settingsRouter } from './routes/settings'
+import { poolRouter } from './routes/pool'
 import { toolsRouter } from './routes/tools'
 import { airdropRouter } from './routes/airdrop'
 import { diagnosticsRouter } from './routes/diagnostics'
@@ -38,7 +40,7 @@ const APP_VERSION = (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.m
 /** createApp 的依赖集（app.ts 装配时全部提供） */
 export interface ServerDeps {
   db: AppDb
-  enqueuer: CoalescingEnqueuer
+  enqueuer: RunEnqueuer
   tasks: Map<string, SiteTask>
   /** 定时调度器（面板「立即运行」入口；Scheduler.runNow 的薄代理） */
   scheduler: { runNow(schedule: ScheduleRow): Promise<RunNowResult> }
@@ -62,6 +64,8 @@ export interface ServerDeps {
   stopper: TaskStopper
   /** 置窗口会话取消标记（面板手动关窗前中止在途会话；app.ts 注入 CancelRegistry.requestSession） */
   cancelSession(profileId: number): void
+  /** 窗口池状态快照（仅窗口池启用时注入；未注入即旧调度，池状态接口返回 enabled=false） */
+  poolStatus?: () => PoolStatus
 }
 
 /**
@@ -87,6 +91,7 @@ export function createApp(deps: ServerDeps): express.Express {
   api.use(airdropRouter({ db: deps.db, tasks: deps.tasks }))
   api.use(diagnosticsRouter({ getRunById: deps.getRunById }))
   api.use(artifactsRouter({ cfg: deps.cfg, getRunById: deps.getRunById }))
+  api.use(poolRouter({ poolStatus: deps.poolStatus }))
   app.use('/api', api)
 
   // OpenAPI 文档：spec json 供类型生成；/api-docs 为 swagger-ui 页面（须在 notFoundHandler 之前）

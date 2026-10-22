@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AppDb, localWallNow, todayStr, type ProfileRow, type RunRow } from '../src/infrastructure/db'
-import { CoalescingEnqueuer, type SessionTask } from '../src/engine/queue'
+import { CoalescingEnqueuer, type RunEnqueuer, type SessionTask } from '../src/engine/queue'
 
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
@@ -165,6 +165,98 @@ describe('CoalescingEnqueuer DB 队列', () => {
     expect(after.notBeforeMs).toBe(before.notBeforeMs)
     expect(log.warn).toHaveBeenCalled()
     q.stop()
+  })
+
+  it('skipIfSuccess 为 true 时今日已成功的任务不再入队', async () => {
+    const p = await db.upsertProfile('bb-skip-success', '窗口1')
+    const log = makeLogger()
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, log as never, new Map([['t1', 1]]), 1, 1000, true)
+    const date = todayStr()
+    await db.enqueueRun(p.id, 't1', date, 7, 0)
+    await db.upsertRun(p.id, 't1', date, 0, 'success', { finishedAt: localWallNow() })
+
+    await q.enqueue(p, 't1', { batchId: 8, skipIfSuccess: true })
+
+    const rows = await db.listRunsForDate(date)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('success')
+    expect(rows[0].batchId).toBe(7)
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ profile: '窗口1', task: 't1' }),
+      '今日已成功，跳过重复入队',
+    )
+    await q.tick()
+    expect(runner.runWindowTasks).not.toHaveBeenCalled()
+    q.stop()
+  })
+
+  it('skipIfSuccess 缺省 false：已成功仍按旧行为新建下一轮', async () => {
+    const p = await db.upsertProfile('bb-skip-default', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 1)
+    const date = todayStr()
+    await db.enqueueRun(p.id, 't1', date, 7, 0)
+    await db.upsertRun(p.id, 't1', date, 0, 'success', { finishedAt: localWallNow() })
+
+    await q.enqueue(p, 't1', { batchId: 8 })
+
+    const rows = await db.listRunsForDate(date)
+    expect(rows).toHaveLength(2)
+    const latest = await db.getLatestRun(p.id, 't1', date)
+    expect(latest?.status).toBe('pending')
+    expect(latest?.slot).toBe(1)
+    expect(latest?.batchId).toBe(8)
+    q.stop()
+  })
+
+  it('未开启 honorSkipIfSuccess 时忽略 skipIfSuccess（旧调度/路由行为不变）', async () => {
+    const p = await db.upsertProfile('bb-skip-ignored', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1]]), 1)
+    const date = todayStr()
+    await db.enqueueRun(p.id, 't1', date, 7, 0)
+    await db.upsertRun(p.id, 't1', date, 0, 'success', { finishedAt: localWallNow() })
+
+    await q.enqueue(p, 't1', { batchId: 8, skipIfSuccess: true })
+
+    const rows = await db.listRunsForDate(date)
+    expect(rows).toHaveLength(2)
+    const latest = await db.getLatestRun(p.id, 't1', date)
+    expect(latest?.status).toBe('pending')
+    expect(latest?.slot).toBe(1)
+    expect(latest?.batchId).toBe(8)
+    q.stop()
+  })
+
+  it('skipIfSuccess 仅在最新行成功时跳过；失败或无记录照常入队', async () => {
+    const p = await db.upsertProfile('bb-skip-latest', '窗口1')
+    const runner = makeSuccessRunner()
+    const q = new CoalescingEnqueuer(db, runner as never, logger, new Map([['t1', 1], ['t2', 1]]), 1, 1000, true)
+    const date = todayStr()
+    await db.upsertRun(p.id, 't1', date, 0, 'failed', { error: '上次失败', failureKind: 'task' })
+
+    await q.enqueue(p, 't1', { skipIfSuccess: true })
+    await q.enqueue(p, 't2', { skipIfSuccess: true })
+
+    const t1 = await db.getLatestRun(p.id, 't1', date)
+    expect(t1?.status).toBe('pending')
+    expect(t1?.slot).toBe(1)
+    const t2 = await db.getLatestRun(p.id, 't2', date)
+    expect(t2?.status).toBe('pending')
+    expect(t2?.slot).toBe(0)
+    q.stop()
+  })
+
+  it('CoalescingEnqueuer 可作为 RunEnqueuer 使用', () => {
+    const enqueuer: RunEnqueuer = new CoalescingEnqueuer(
+      db,
+      { runWindowTasks: vi.fn() } as never,
+      logger,
+      new Map([['t1', 1]]),
+      1,
+    )
+    expect(enqueuer).toBeInstanceOf(CoalescingEnqueuer)
   })
 
   it('tick 先结算未注册任务的到期行并告警', async () => {

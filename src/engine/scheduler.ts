@@ -5,7 +5,8 @@
  * 设计思路：无 cron 库——到点判断走 schedule.ts 的墙上时钟匹配；
  * 错过即跳过（无锚点持久化，重启后从当前时间自然重算）；
  * 每分钟去重 Map（内存态，重启同分钟可能重复触发一次，由队列合并与在途守卫兜底）；
- * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期，不做错峰）
+ * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期、不做错峰）；
+ * 定时入队带 skipIfSuccess（当天已成功的窗口不重复执行）
  */
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
@@ -32,7 +33,11 @@ export interface SchedulerDeps {
     listProfiles(enabledOnly: boolean): Promise<ProfileRow[]>
   }
   enqueuer: {
-    enqueue(profile: ProfileRow, taskKey: string, opts?: { batchId?: number; notBeforeMs?: number }): Promise<void>
+    enqueue(
+      profile: ProfileRow,
+      taskKey: string,
+      opts?: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean },
+    ): Promise<void>
   }
   /** 任务注册表最小视图（engine 不得 import tasks 层，SiteTask 结构兼容） */
   tasks: Map<string, { meta: TaskMeta }>
@@ -198,7 +203,7 @@ export class Scheduler {
       }
       const batch = await this.deps.db.createBatch('schedule', key, `计划#${schedule.id} ${schedule.name}`)
       for (const profile of profiles) {
-        await this.deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
+        await this.deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
       }
       result.taskKeys.push(key)
       this.deps.logger.info({ schedule: schedule.name, task: key }, `定时触发已入队`)

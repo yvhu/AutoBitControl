@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, RerunCandidatesData, RerunFailedResult, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle, RunArtifactsData } from '../types'
+import type { BatchesData, BatchDetailData, RerunCandidatesData, RerunFailedResult, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle, RunArtifactsData, PoolStatusData } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
@@ -24,6 +24,7 @@ export const batchProfiles = (action: ProfileBatchAction, ids: number[]) =>
 export const testBitbrowser = () => post<{ ok: boolean }>('/api/bitbrowser/test', {})
 export const syncProfiles = () => post<{ count: number }>('/api/bitbrowser/sync', {})
 export const fetchSettings = () => get<SettingsData>('/api/settings')
+export const fetchPoolStatus = () => get<PoolStatusData>('/api/pool/status')
 export const reloadDatasource = () => post<DatasourceInfo>('/api/datasource/reload', {})
 export const fetchGuide = () => get<{ content: string }>('/api/docs/guide')
 export const fetchExamples = () => get<{ name: string; label: string }[]>('/api/docs/examples')

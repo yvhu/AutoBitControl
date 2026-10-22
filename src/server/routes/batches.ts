@@ -6,7 +6,7 @@
  */
 import { Router } from 'express'
 import { todayStr, type AppDb, type BatchRow, type ProfileRow, type RunRow } from '../../infrastructure/db'
-import type { CoalescingEnqueuer } from '../../engine/queue'
+import type { RunEnqueuer } from '../../engine/queue'
 import type { TaskStopper } from '../../engine/task-stopper'
 import type { SiteTask } from '../../tasks/base'
 import { ok, asyncHandler } from '../http/response'
@@ -167,7 +167,7 @@ function daysAgoStr(days: number): string {
  */
 export interface BatchesDeps {
   db: AppDb
-  enqueuer: CoalescingEnqueuer
+  enqueuer: RunEnqueuer
   tasks: Map<string, SiteTask>
   stopper: TaskStopper
   getRunById: AppDb['getRunById']
@@ -351,7 +351,7 @@ export function batchesRouter(deps: BatchesDeps): Router {
     const batchRow = await deps.db.createBatch('bulk', batch.taskKey, 'rerun-failed')
     const profilesToRun = [...chosen.values()].map((run) => profileById.get(run.profileId) as ProfileRow)
     for (const profile of profilesToRun) {
-      await deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id, notBeforeMs: Date.now() })
+      await deps.enqueuer.enqueue(profile, batch.taskKey, { batchId: batchRow.id, notBeforeMs: Date.now(), skipIfSuccess: true })
     }
     ok(res, { batchId: batchRow.id, queued: profilesToRun.length })
   }))

@@ -1056,6 +1056,23 @@ export class AppDb {
     return Number(rs.rowsAffected ?? 0)
   }
 
+  /**
+   * 环境级失败回收：窗口池会把「已终态但 failure_kind='environment'」的认领行退回 pending 并退避，
+   * 避免比特 API/代理/断网等系统级问题把任务永久结算掉；任务级失败不匹配（保持终态）。
+   * attempts 同时归零：环境重试不应消耗任务级重试预算（否则 retryMax 次后会被误判为任务失败）。
+   * 返回是否确实退回了该行。
+   */
+  async requeueEnvironmentRun(runId: number, notBeforeMs: number, error: string): Promise<boolean> {
+    const rs = await this.client.execute({
+      sql: `UPDATE runs
+            SET status = 'pending', not_before_ms = ?, attempts = 0, finished_at = NULL, failure_kind = NULL,
+                error = ?, queued_at = COALESCE(queued_at, ?)
+            WHERE id = ? AND failure_kind = 'environment' AND status IN ('failed','skipped')`,
+      args: [notBeforeMs, error, localWallNow(), runId],
+    })
+    return Number(rs.rowsAffected ?? 0) > 0
+  }
+
   /** 同窗口 pending 行的最早开始时间（无则 null） */
   async minPendingNotBefore(profileId: number, date: string): Promise<number | null> {
     const rows = await this.exec(
@@ -1102,6 +1119,42 @@ export class AppDb {
       args: [date, nowMs],
     })
     return Number(row?.v ?? 0) === 1
+  }
+
+  /** 当天到期排队行数（面板池状态/暂停时统计用；单行 COUNT，不分配结果数组） */
+  async countDueRuns(date: string, nowMs: number): Promise<number> {
+    const row = await this.client.getFirst({
+      sql: `SELECT COUNT(*) AS c FROM runs r WHERE ${DUE_RUN_CONDITION}`,
+      args: [date, nowMs],
+    })
+    return Number(row?.c ?? 0)
+  }
+
+  /**
+   * 当天有到期排队行的窗口（窗口池调度入口）：
+   * 只统计最新 slot、已到期且仍为 pending/retry_wait 的行，按最早入队时间排序；
+   * 到期/最新 slot 判定复用 DUE_RUN_CONDITION（别名与 r2 子查询均匹配分组查询）；
+   * oldestQueuedAt 为该窗口到期行中最早的 queued_at（老数据可能为 null）
+   */
+  async listPendingWindowKeys(
+    date: string,
+    nowMs: number,
+  ): Promise<Array<{ profileId: number; oldestQueuedAt: string | null }>> {
+    return (await this.exec(
+      `SELECT r.profile_id AS profileId, MIN(r.queued_at) AS oldestQueuedAt
+       FROM runs r
+       WHERE ${DUE_RUN_CONDITION}
+       GROUP BY r.profile_id ORDER BY oldestQueuedAt, r.profile_id`,
+      [date, nowMs],
+    )) as unknown as Array<{ profileId: number; oldestQueuedAt: string | null }>
+  }
+
+  /** 某窗口当天到期的最新增量排队行（窗口池会话取任务用；口径与 claimDueRuns 一致） */
+  async listPendingRunsForWindow(profileId: number, date: string, nowMs: number): Promise<RunRow[]> {
+    return (await this.exec(
+      `${SELECT_RUN} WHERE r.profile_id = ? AND ${DUE_RUN_CONDITION} ORDER BY r.queued_at, r.id`,
+      [profileId, date, nowMs],
+    )) as unknown as RunRow[]
   }
 
   /** 处于 running 的窗口数（COUNT DISTINCT profile_id；会话级额度口径，跨午夜旧会话同样计入） */
@@ -1311,10 +1364,10 @@ export class AppDb {
     return rows.map(toOpenWindowRow)
   }
 
-  /** 读窗口池可用窗口（owner_kind = pool 且生命周期为 open） */
+  /** 读窗口池可用窗口（owner_kind = pool、生命周期 open 且已写入调试地址） */
   async listPoolWindows(): Promise<OpenWindowPoolRow[]> {
     const rows = await this.exec(
-      `SELECT ${OPEN_WINDOW_COLUMNS} FROM open_windows WHERE owner_kind = 'pool' AND state = 'open'`,
+      `SELECT ${OPEN_WINDOW_COLUMNS} FROM open_windows WHERE owner_kind = 'pool' AND state = 'open' AND TRIM(http) <> ''`,
     )
     return rows.map(toOpenWindowRow)
   }
@@ -1367,6 +1420,14 @@ export class AppDb {
       tasksDone,
       bitbrowserId,
     ])
+  }
+
+  /** 窗口每完成一个任务：tasks_done 原子 +1 并刷新最近使用时间（窗口池淘汰依据） */
+  async incrementWindowUsage(bitbrowserId: string): Promise<void> {
+    await this.exec(
+      'UPDATE open_windows SET tasks_done = tasks_done + 1, last_used_at = ? WHERE bitbrowser_id = ?',
+      [localWallNow(), bitbrowserId],
+    )
   }
 
   /** 清除窗口打开状态登记（窗口关闭或 pid 实测已死时调用） */

@@ -7,7 +7,7 @@
  *   2) 复用探测（reuseOpen 命中则直接取调试地址）或开窗（openWithRetry 退避重试）
  *   3) CDP 连接（PatchrightDriver 接管首个非扩展 page）
  *   4) 建窗口级 WalletSession → 逐任务 runTask（窗口截止时间与熔断双重守卫）
- *   5) finally 先关 CDP 连接再关窗口（复用窗口不关）
+ *   5) finally 先关 CDP 连接再关窗口（复用窗口不关；池 keep-open 时保留窗口并累加使用计数）
  *
  * 失败分支（三段 try 把异常分区为不同终态）：
  *   开窗重试耗尽 → 全部任务 skipped（环境问题，重试无意义）
@@ -267,10 +267,16 @@ export class WindowRunner {
    * 熔断中的任务逐个 skipped；其余逐任务执行
    * @param profile 目标窗口记录（含 bitbrowserId、熔断计数、名称）
    * @param tasks 本轮要跑的任务（SessionTask：taskKey + 可选 batchId）
+   * @param opts.keepWindowOpen 池模式：会话结束不关窗（环境级失败/连接失败/熔断仍关），
+   *   并回写 open 状态、累加窗口使用计数；缺省 false 保持旧行为
    * @returns 各任务本轮最终运行行（key → 行；DB 写失败降级时为 null）——
    * 内存传递供调用方（run-task 脚本等）直接取结果，避免执行后再读库的竞态
    */
-  async runWindowTasks(profile: ProfileRow, tasks: SessionTask[]): Promise<Map<string, RunRow | null>> {
+  async runWindowTasks(
+    profile: ProfileRow,
+    tasks: SessionTask[],
+    opts?: { keepWindowOpen?: boolean },
+  ): Promise<Map<string, RunRow | null>> {
     const { cfg, db, bitbrowser, logger } = this.deps
     // 会话日期以已认领行为准（跨午夜时 dispatcher 认领的是旧日期行，不能再按 todayStr 落新行）；
     // task:run 等直接调用方未传日期时回落当日
@@ -352,9 +358,10 @@ export class WindowRunner {
           reusedFlag = true
         } else {
           if (reused) logger.warn({ profile: profile.name, http: reused.http }, 'open_windows 登记缺少调试地址，忽略复用并重新开窗')
-          // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http
+          // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http。
+          // 窗口池开窗已由池调度器按 effectivePool/maxOpenWindows 裁决，不能再被旧的全局 maxConcurrentWindows 闸门卡住
           await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid, this.openOwnerKind)
-          await this.waitForGlobalWindowCapacity()
+          if (this.openOwnerKind !== 'pool') await this.waitForGlobalWindowCapacity()
           try {
             open = await this.openWithRetry(profile.bitbrowserId)
             await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open')
@@ -400,10 +407,18 @@ export class WindowRunner {
             await this.safeDb(() => db.releaseWindowProbe(profile.id, 'aborted'), undefined)
             probeClaimed = false
           }
-          // 复用地址失效（端口已关/空地址）：清掉登记，避免后续每次重试都复用同一个坏地址
+          // 复用地址失效（端口已关/空地址）：清掉登记，避免后续每次重试都复用同一个坏地址；
+          // 池 keep-open 模式下复用窗口仍存活，必须走串行关窗才能真正释放，否则会留下
+          // 「无登记但 pids 仍存活」的窗口，池的 actualOpen 会永久占用额度且无法回收。
+          // 非 keep-open（面板/task:run 复用）保持旧行为：只清登记、不主动关用户的窗口。
           if (reusedFlag) {
-            await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
-            logger.warn({ profile: profile.name, http: open.http }, '复用窗口 CDP 连接失败，已清除 open_windows 登记')
+            if (opts?.keepWindowOpen) {
+              const closed = await this.closeWindowSafely(profile.bitbrowserId, '池复用窗口 CDP 连接失败')
+              if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+            } else {
+              await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+            }
+            logger.warn({ profile: profile.name, http: open.http, keepWindowOpen: opts?.keepWindowOpen ?? false }, '复用窗口 CDP 连接失败，已清除 open_windows 登记')
           }
           logger.error({ profile: profile.name, stopped: sessionStopped }, message)
           return results
@@ -488,10 +503,20 @@ export class WindowRunner {
         // 无论成功失败：先关 CDP 连接再关窗口（顺序反了会残留进程）
         if (connected) await connected.close().catch(() => {})
         // 复用（面板/脚本已打开的窗口）不关闭：只关本轮会话自己打开的窗口；
-        // 只有确认 pids 已消失才清登记，超时/失败保留 closing 行交由 Phase 2 对账
-        if (!reusedFlag && open) {
-          const closed = await this.closeWindowSafely(profile.bitbrowserId, '会话结束')
-          if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+        // 池 keep-open 时保留窗口并回写 open/累加使用次数；环境级失败、连接失败、
+        // 熔断或手动停止仍按原逻辑关窗，避免把不可用窗口留在池里。
+        if (open) {
+          const keepOpen = this.shouldKeepWindowOpen(profile, health, results, opts)
+          if (keepOpen) {
+            if (!reusedFlag) {
+              await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open').catch(() => {})
+            }
+            await this.deps.db.incrementWindowUsage(profile.bitbrowserId).catch(() => {})
+          } else if (!reusedFlag) {
+            // 只有确认 pids 已消失才清登记，超时/失败保留 closing 行交由 Phase 2 对账
+            const closed = await this.closeWindowSafely(profile.bitbrowserId, '会话结束')
+            if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+          }
         }
         // 探测租约兜底释放：异常路径（任务循环抛出等）不能把窗口永久卡在 half_open
         if (probeClaimed && !probeRetryReleased) {
@@ -523,6 +548,35 @@ export class WindowRunner {
     // 日期取自已入队行（跨午夜调试时沿用原行日期，避免另写新日期的重复行）
     const results = await this.runWindowTasks(profile, [{ taskKey, date: row.date, ...(batchId === undefined ? {} : { batchId }) }])
     return results.get(taskKey) ?? null
+  }
+
+  /**
+   * 池窗口关闭入口：经串行关窗 + pids 确认后清登记；
+   * 确认超时/失败保留 closing 行，交由后续对账处理（不把仍关闭中的窗口误判为孤儿）
+   */
+  async closePoolWindow(profile: ProfileRow, reason: string): Promise<void> {
+    const closed = await this.closeWindowSafely(profile.bitbrowserId, reason)
+    if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
+  }
+
+  /**
+   * 池 keep-open 判定：仅当调用方要求保活、窗口健康未熔断、本轮无环境级失败且会话未停止时
+   * 保留窗口。任务级失败/超时说明窗口本身可用，仍保留；连接失败会在 results 落 environment，
+   * 因此同样走关窗。
+   */
+  private shouldKeepWindowOpen(
+    profile: ProfileRow,
+    health: WindowHealth,
+    results: Map<string, RunRow | null>,
+    opts?: { keepWindowOpen?: boolean },
+  ): boolean {
+    if (!opts?.keepWindowOpen) return false
+    if (health.state === 'open') return false
+    if (this.deps.cancelRegistry?.isSessionCancelled(profile.id)) return false
+    for (const row of results.values()) {
+      if (row?.failureKind === 'environment') return false
+    }
+    return true
   }
 
   /**

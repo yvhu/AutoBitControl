@@ -107,4 +107,14 @@ describe('GlobalHealthGate', () => {
     g.recordProbeFailure(30_000)
     expect(g.nextProbeMs).toBe(90_000)
   })
+
+  it('recordGlobalFailure 立即暂停：首次用首档退避，重复失败升级', () => {
+    const g = new GlobalHealthGate({ windowSec: 300, threshold: 3, backoffSec: [30, 60], probeEnabled: true })
+    expect(g.recordGlobalFailure(1000)).toBe('paused')
+    expect(g.nextProbeMs).toBe(31_000)
+    expect(g.canOpen(31_000)).toBe(true)
+    g.recordProbeFailure(31_000)
+    g.recordGlobalFailure(32_000)
+    expect(g.nextProbeMs).toBe(92_000)
+  })
 })

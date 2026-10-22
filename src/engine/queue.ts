@@ -17,7 +17,19 @@ export interface SessionTask {
 /** runner 拒绝后的回队退避：避免持久性故障导致 dispatcher 热循环 */
 const REQUEUE_BACKOFF_MS = 30_000
 
-export class CoalescingEnqueuer {
+/** 入队器契约：面板触发与调度器只依赖此接口，便于替换实现 */
+export interface RunEnqueuer {
+  enqueue(
+    profile: ProfileRow,
+    taskKey: string,
+    opts?: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean },
+  ): Promise<void>
+  cancelBatch(batchId: number): Promise<number>
+  start(): void
+  stop(): void
+}
+
+export class CoalescingEnqueuer implements RunEnqueuer {
   private timer: ReturnType<typeof setInterval> | null = null
   private dispatchTimer: ReturnType<typeof setTimeout> | null = null
   private ticking = false
@@ -35,6 +47,8 @@ export class CoalescingEnqueuer {
     private readonly limits: Map<string, number>,
     maxConcurrentWindows = Number.POSITIVE_INFINITY,
     tickMs = 1000,
+    /** 是否执行 skipIfSuccess 幂等跳过（默认 false 保持旧调度/路由行为；窗口池自身处理幂等） */
+    private readonly honorSkipIfSuccess = false,
   ) {
     this.maxConcurrentWindows = Number.isFinite(maxConcurrentWindows) ? Math.max(1, maxConcurrentWindows) : Number.POSITIVE_INFINITY
     this.tickMs = tickMs
@@ -58,13 +72,24 @@ export class CoalescingEnqueuer {
     this.dispatchScheduled = false
   }
 
-  /** 入队：写 pending 行；notBeforeMs 缺省立即到期（只用于重试退避/排队到期，触发不再按窗口铺开） */
+  /**
+   * 入队：写 pending 行；notBeforeMs 缺省立即到期（只用于重试退避/排队到期，触发不再按窗口铺开）。
+   * honorSkipIfSuccess=true 时，skipIfSuccess 且该窗口当天该任务最新行已成功则直接返回（定时/批量触发幂等）；
+   * 默认关闭以保持旧调度器/路由行为，窗口池调度器自行处理 skipIfSuccess。
+   */
   async enqueue(
     profile: ProfileRow,
     taskKey: string,
-    opts: { batchId?: number; notBeforeMs?: number } = {},
+    opts: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean } = {},
   ): Promise<void> {
     const date = todayStr()
+    if (opts.skipIfSuccess && this.honorSkipIfSuccess) {
+      const latest = await this.db.getLatestRun(profile.id, taskKey, date)
+      if (latest?.status === 'success') {
+        this.logger.debug({ profile: profile.name, task: taskKey }, '今日已成功，跳过重复入队')
+        return
+      }
+    }
     const notBeforeMs = opts.notBeforeMs ?? Date.now()
     const row = await this.db.enqueueRun(profile.id, taskKey, date, opts.batchId ?? null, notBeforeMs)
     if (row.status === 'running') {
