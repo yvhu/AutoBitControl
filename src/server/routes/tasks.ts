@@ -138,6 +138,7 @@ import type { SiteTask } from '../../tasks/base'
  *                   type: object
  *                   properties:
  *                     scope: { type: string, enum: [single, all, selected] }
+ *                     queued: { type: integer, description: '实际入队窗口数（all/selected）' }
  *       '404':
  *         description: 任务或窗口不存在（业务码 40401/40402）
  *       '409':
@@ -203,9 +204,9 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: RunEnqueuer; tasks: Map
       if (busy.length > 0) throw new HttpError(409, ERROR_CODES.TASK_RUNNING, `以下窗口任务执行中，请等待结束再触发: ${busy.join(', ')}`)
       const batch = await deps.db.createBatch('bulk', key, 'trigger-test')
       for (const profile of selected) {
-        await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
+        await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
       }
-      ok(res, { scope: 'selected' })
+      ok(res, { scope: 'selected', queued: selected.length })
       return
     }
     // 指定窗口：单窗口触发（面板矩阵行级重跑）
@@ -224,12 +225,16 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: RunEnqueuer; tasks: Map
     if ((await deps.db.countInFlightRuns(key, todayStr())) > 0) {
       throw new HttpError(409, ERROR_CODES.TASK_RUNNING, '任务执行中，请等待全部窗口结束后再触发')
     }
-    const batch = await deps.db.createBatch('bulk', key, 'trigger-all')
     const profiles = await deps.db.listProfiles(true)
-    for (const profile of profiles) {
-      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
+    if (profiles.length === 0) {
+      ok(res, { scope: 'all', queued: 0 })
+      return
     }
-    ok(res, { scope: 'all' })
+    const batch = await deps.db.createBatch('bulk', key, 'trigger-all')
+    for (const profile of profiles) {
+      await deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
+    }
+    ok(res, { scope: 'all', queued: profiles.length })
   }))
   return router
 }

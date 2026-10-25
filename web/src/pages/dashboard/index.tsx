@@ -158,9 +158,11 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
           </span>
         )}
         <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
-          {timing.finished && timing.durationSec != null
-            ? `${formatDateTime(batch.lastFinishedAt!)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
-            : '进行中'}
+          {batch.stats.total === 0
+            ? '已跳过（无待执行窗口）'
+            : timing.finished && timing.durationSec != null
+              ? `${formatDateTime(batch.lastFinishedAt!)} 结束 · 耗时 ${formatDuration(timing.durationSec)}`
+              : '进行中'}
         </span>
       </div>
       <div style={{ marginTop: 8 }}>

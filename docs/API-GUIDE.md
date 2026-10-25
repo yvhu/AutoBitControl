@@ -1158,7 +1158,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 运行队列（runs 即队列）
 
-- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（触发入口写当前时间，即立即到期；失败重试时写入退避到期时间）与 `batch_id`。批量触发、`rerun-failed`、多窗口测试触发与定时计划都不再按窗口铺开；这些批量/定时入口带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 时不再入队）。单窗口手动触发（看板行级「执行/重跑」）不带该选项，始终新建一轮，便于手动重跑。
+- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（触发入口写当前时间，即立即到期；失败重试时写入退避到期时间）与 `batch_id`。批量触发、`rerun-failed`、多窗口测试触发与定时计划都不再按窗口铺开；`rerun-failed` 带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 时不再入队），定时计划与「立即触发/测试触发」属于显式执行，不再按当天成功跳过（否则 hourly 计划会退化成每天一次）；定时计划用 `schedules.last_fired_minute` 持久化去重，保证同一分钟不会重复触发。单窗口手动触发（看板行级「执行/重跑」）始终新建一轮，便于手动重跑。
 - 窗口池调度器每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口同一时刻只跑一个任务，任务结束后在该窗口继续领取下一个到期任务。
 - 跨午夜排队残留：旧日期的 `pending/retry_wait` 行不会补跑，窗口池调度器跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）。旧日期已在运行的会话**仅在进程存活期间**继续跑完并按认领日期落终态，其窗口/任务额度不按日期过滤，仍占用新日期的窗口池额度；进程重启时 `recoverRuns` 会调用 `settleOldRunningRuns` 把旧日期残留的 `running` 行结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。
 - 到期但不在任务注册表中的行会在调度前统一结算为 `skipped`（错误「任务未注册」），避免一直停在 `pending`；任务恢复注册后重新触发即可。
@@ -1180,7 +1180,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 队列与轮转：有任务但未打开的窗口按最早 `queued_at` 排队；池有空位才开，每 tick 最多开一个。池窗口任务集清空且仍有窗口排队时关闭让位；无任务时按 `idleCloseSec` 关闭，达到 `windowMaxTasks` / `windowMaxLifetimeSec`，或连续占用超过 `cohortMaxSec`（有其它窗口排队时）轮转。
 - 任务**无顺序、无任务级并发限制**：所有已打开窗口都可同时跑同一个任务；站点限频由任务重试/熔断/启动间隔兜底。
 - 开窗/关窗统一经进程内 `SerialQueue` 串行执行（两次开窗最小间隔 `windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待）；关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记。`open_windows.state` 区分 `opening/open/closing`，`owner_kind` 区分 `pool/manual/taskrun`。
-- 幂等：批量触发、多窗口测试触发、`rerun-failed` 与定时计划都带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 则跳过入队）；`failed/skipped` 仍可按需重跑，单窗口手动触发不带该选项（保留手动重跑）。
+- 幂等：`rerun-failed` 带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 则跳过入队）；定时计划与批量/测试触发按每个触发时刻执行，不按当天成功跳过；`failed/skipped` 仍可按需重跑，单窗口手动触发始终新建一轮。定时计划额外用 `last_fired_minute` 持久化分钟去重，重启也不会重复触发。
 - `open_windows.last_used_at` / `tasks_done` 记录窗口最近使用时间与已跑任务数，供轮转/寿命回收使用。
 - 面板设置页「窗口池状态」卡片（只读，5 秒自动刷新）展示：内存状态（正常/偏高/临界）、全局健康（正常/暂停/探测中）、空闲内存、单窗预估、有效池/上限、已打开/池窗口、忙碌/空闲/打开中、排队窗口/待执行任务与更新时间。对应接口 `GET /api/pool/status` 始终返回 `{ enabled: true, status: { memoryState, globalHealthState, freeMb, perWindowMb, effectivePool, maxOpenWindows, actualOpen, poolSize, busy, idle, opening, queueWindows, pendingTasks, updatedAt } }`；状态快照尚未产生时 `status` 为 null（关闭中的窗口不单列，仍按实际打开数对账）。
 - 触发即写 `pending` 并立即到期；`not_before_ms` 只用于重试退避与排队到期。

@@ -52,6 +52,8 @@ export interface ScheduleRow {
   config: string
   /** JSON 原文：任务 key 字符串数组 */
   taskKeys: string
+  /** 最近一次定时触发所在分钟（YYYY-MM-DD HH:mm）；用于进程重启后仍只触发一次 */
+  lastFiredMinute: string | null
   createdAt: string
   updatedAt: string
 }
@@ -300,6 +302,7 @@ const SCHEMA = [
     mode TEXT NOT NULL,
     config TEXT NOT NULL,
     task_keys TEXT NOT NULL,
+    last_fired_minute TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -443,6 +446,11 @@ export class AppDb {
     ]
     for (const [col, type] of owNew) {
       if (!owCols.has(col)) await this.client.execute(`ALTER TABLE open_windows ADD COLUMN ${col} ${type}`)
+    }
+    // 老库补列：schedules.last_fired_minute（定时触发分钟去重，重启后仍生效）
+    const schInfo = await this.client.execute(`PRAGMA table_info(schedules)`)
+    if (!schInfo.rows.some((r) => String(r.name) === 'last_fired_minute')) {
+      await this.client.execute('ALTER TABLE schedules ADD COLUMN last_fired_minute TEXT')
     }
     // 老库重建：runs 表加 slot 列 + 唯一键改为 (profile_id, task_key, date, slot)——
     // SQLite 无法 ALTER 删除表级 UNIQUE 约束，必须建新表迁移数据（事务内完成，中断自动回滚）
@@ -593,12 +601,12 @@ export class AppDb {
 
   /** 全部计划（按创建顺序）；引擎 tick 与面板列表共用 */
   async listSchedules(): Promise<ScheduleRow[]> {
-    return (await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, created_at AS createdAt, updated_at AS updatedAt FROM schedules ORDER BY id`)) as unknown as ScheduleRow[]
+    return (await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, last_fired_minute AS lastFiredMinute, created_at AS createdAt, updated_at AS updatedAt FROM schedules ORDER BY id`)) as unknown as ScheduleRow[]
   }
 
   /** 按 id 查计划（不存在返回 null） */
   async getSchedule(id: number): Promise<ScheduleRow | null> {
-    const rows = await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, created_at AS createdAt, updated_at AS updatedAt FROM schedules WHERE id = ?`, [id])
+    const rows = await this.exec(`SELECT id, name, enabled, mode, config, task_keys AS taskKeys, last_fired_minute AS lastFiredMinute, created_at AS createdAt, updated_at AS updatedAt FROM schedules WHERE id = ?`, [id])
     return (rows[0] as unknown as ScheduleRow | undefined) ?? null
   }
 
@@ -627,6 +635,19 @@ export class AppDb {
   async deleteSchedule(id: number): Promise<boolean> {
     const rs = await this.client.execute({ sql: 'DELETE FROM schedules WHERE id = ?', args: [id] })
     return Number(rs.rowsAffected) > 0
+  }
+
+  /**
+   * 原子认领计划触发分钟：仅当该计划尚未在 minuteKey 触发过时写入并返回 true。
+   * 用于进程内 tick 去重之外的重启/多实例兜底（单实例锁下主要是重启）。
+   */
+  async claimScheduleMinute(id: number, minuteKey: string): Promise<boolean> {
+    const rs = await this.client.execute({
+      sql: `UPDATE schedules SET last_fired_minute = ?
+            WHERE id = ? AND (last_fired_minute IS NULL OR last_fired_minute <> ?)`,
+      args: [minuteKey, id, minuteKey],
+    })
+    return Number(rs.rowsAffected ?? 0) > 0
   }
 
   /** 熔断计数 +1，返回最新计数（window-runner 终态失败时调用） */

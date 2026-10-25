@@ -118,7 +118,7 @@ const TZ2 = 'Asia/Shanghai'
 function makeSchedule(over: Partial<ScheduleRow> = {}): ScheduleRow {
   return {
     id: 1, name: '每日签到', enabled: 1, mode: 'daily',
-    config: '{"times":["09:00"]}', taskKeys: '["task-a"]',
+    config: '{"times":["09:00"]}', taskKeys: '["task-a"]', lastFiredMinute: null,
     createdAt: '2026-09-04 00:00:00.000', updatedAt: '2026-09-04 00:00:00.000',
     ...over,
   }
@@ -134,6 +134,7 @@ interface MockDeps extends SchedulerDeps {
     countInFlightRuns: Mock
     createBatch: Mock
     listProfiles: Mock
+    claimScheduleMinute: Mock
   }
   enqueuer: { enqueue: Mock }
   fileAssign: { run: Mock }
@@ -147,6 +148,7 @@ function makeDeps(over: Partial<MockDeps> = {}): MockDeps {
       countInFlightRuns: vi.fn().mockResolvedValue(0),
       createBatch: vi.fn().mockResolvedValue({ id: 88, kind: 'schedule', taskKey: 'task-a', source: '', createdAt: '' }),
       listProfiles: vi.fn().mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }]),
+      claimScheduleMinute: vi.fn().mockResolvedValue(true),
     },
     enqueuer: { enqueue: vi.fn().mockResolvedValue(undefined) },
     fileAssign: { run: vi.fn().mockResolvedValue({ renamedCount: 1, updatedRows: 1 }) },
@@ -168,18 +170,18 @@ describe('Scheduler', () => {
     const s = new Scheduler(deps)
     await s.tick()
     expect(deps.db.createBatch).toHaveBeenCalledWith('schedule', 'task-a', '计划#1 每日签到')
-    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
+    expect(deps.enqueuer.enqueue).toHaveBeenCalledWith({ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }, 'task-a', { batchId: 88, notBeforeMs: expect.any(Number) })
     const notBeforeMs = deps.enqueuer.enqueue.mock.calls[0][2].notBeforeMs as number
     // 单窗口立即到期（不再按窗口顺序延迟）
     expect(notBeforeMs).toBeGreaterThan(0)
   })
 
-  it('定时触发入队带 skipIfSuccess（当天已成功窗口不重复执行）', async () => {
+  it('每个定时时刻都重新入队（不按当天成功跳过，hourly 计划不会退化成每天一次）', async () => {
     const deps = makeDeps()
     deps.db.listSchedules.mockResolvedValue([makeSchedule()])
     await new Scheduler(deps).tick()
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toMatchObject({ skipIfSuccess: true })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).not.toHaveProperty('skipIfSuccess')
   })
 
   it('同一计划多任务入队时间几乎一致（不铺开）', async () => {
@@ -209,6 +211,29 @@ describe('Scheduler', () => {
     await s.tick()
     await s.tick()
     expect(deps.db.createBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('重启后同一分钟不重复触发（持久化 lastFiredMinute 兜底）', async () => {
+    const deps = makeDeps()
+    let claimed = false
+    deps.db.claimScheduleMinute.mockImplementation(async () => {
+      if (claimed) return false
+      claimed = true
+      return true
+    })
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    await new Scheduler(deps).tick()
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('没有启用窗口时不建空批次，只告警', async () => {
+    const deps = makeDeps()
+    deps.db.listProfiles.mockResolvedValue([])
+    deps.db.listSchedules.mockResolvedValue([makeSchedule()])
+    await new Scheduler(deps).tick()
+    expect(deps.db.createBatch).not.toHaveBeenCalled()
+    expect(deps.logger.warn).toHaveBeenCalled()
   })
 
   it('分钟不匹配不触发', async () => {

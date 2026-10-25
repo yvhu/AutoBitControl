@@ -44,6 +44,15 @@ describe('AppDb · schedules 表', () => {
     expect(await db.listSchedules()).toHaveLength(0)
   })
 
+  it('claimScheduleMinute 同一分钟只成功一次并持久化', async () => {
+    const s = await db.createSchedule({ name: 'A', mode: 'interval', config: '{"everyHours":1}', taskKeys: '["task-a"]' })
+    expect(s.lastFiredMinute).toBeNull()
+    expect(await db.claimScheduleMinute(s.id, '2026-10-25 16:00')).toBe(true)
+    expect(await db.claimScheduleMinute(s.id, '2026-10-25 16:00')).toBe(false)
+    expect(await db.claimScheduleMinute(s.id, '2026-10-25 17:00')).toBe(true)
+    expect((await db.getSchedule(s.id))?.lastFiredMinute).toBe('2026-10-25 17:00')
+  })
+
   it('createBatch 支持 kind=schedule 且 getBatch 读回', async () => {
     const b = await db.createBatch('schedule', 'task-a', '计划#1 每日签到')
     expect(b.kind).toBe('schedule')

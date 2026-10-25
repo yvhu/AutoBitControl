@@ -31,6 +31,7 @@ export interface SchedulerDeps {
     countInFlightRuns(taskKey: string, date: string): Promise<number>
     createBatch(kind: 'schedule', taskKey: string, source: string): Promise<BatchRow>
     listProfiles(enabledOnly: boolean): Promise<ProfileRow[]>
+    claimScheduleMinute(id: number, minuteKey: string): Promise<boolean>
   }
   enqueuer: {
     enqueue(
@@ -92,6 +93,18 @@ export class Scheduler {
       const cfg = parseConfig(s, this.deps.logger)
       if (!cfg) continue
       if (!isDueMinute(s.mode as ScheduleMode, cfg, wc)) continue
+      // 持久化分钟去重：进程内 Map 之外再落库，避免重启后在同一个分钟重复触发
+      let claimed = false
+      try {
+        claimed = await this.deps.db.claimScheduleMinute(s.id, minuteKey)
+      } catch (e) {
+        this.deps.logger.warn({ err: (e as Error).message, schedule: s.name }, '计划触发分钟认领失败，跳过该计划（下轮重试）')
+        continue
+      }
+      if (!claimed) {
+        this.lastFired.set(s.id, minuteKey)
+        continue
+      }
       this.lastFired.set(s.id, minuteKey)
       // set 先于 fire：fire 失败时当日该分钟不再重试（错过即跳过），且不阻塞后续计划
       try {
@@ -194,7 +207,13 @@ export class Scheduler {
       }
     }
     // 第二遍：建批次入队（触发即 pending）
+    // 定时计划每个触发时刻都应执行一轮：不按「当天已成功」跳过（否则 hourly 计划会退化成每天一次）；
+    // 同分钟重复由 lastFiredMinute 持久化去重，rerun-failed 才保留 skipIfSuccess。
     const profiles = await this.deps.db.listProfiles(true)
+    if (profiles.length === 0) {
+      this.deps.logger.warn({ schedule: schedule.name }, '定时触发无启用窗口，未入队')
+      return result
+    }
     for (const key of passing) {
       if (assignFailed && this.deps.tasks.get(key)?.meta.requiresFileAssign) {
         this.deps.logger.warn({ schedule: schedule.name, task: key, reason: 'file-assign-failed' }, '定时触发跳过任务')
@@ -203,10 +222,10 @@ export class Scheduler {
       }
       const batch = await this.deps.db.createBatch('schedule', key, `计划#${schedule.id} ${schedule.name}`)
       for (const profile of profiles) {
-        await this.deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now(), skipIfSuccess: true })
+        await this.deps.enqueuer.enqueue(profile, key, { batchId: batch.id, notBeforeMs: Date.now() })
       }
       result.taskKeys.push(key)
-      this.deps.logger.info({ schedule: schedule.name, task: key }, `定时触发已入队`)
+      this.deps.logger.info({ schedule: schedule.name, task: key, profiles: profiles.length }, `定时触发已入队`)
     }
     return result
   }

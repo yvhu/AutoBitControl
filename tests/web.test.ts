@@ -489,7 +489,7 @@ describe('server API（RESTful + envelope）', () => {
   describe('schedules API', () => {
     const row = {
       id: 1, name: '每日签到', enabled: 1, mode: 'daily' as const,
-      config: '{"times":["09:00"]}', taskKeys: '["t1"]',
+      config: '{"times":["09:00"]}', taskKeys: '["t1"]', lastFiredMinute: null,
       createdAt: '2026-09-04 00:00:00.000', updatedAt: '2026-09-04 00:00:00.000',
     }
 
@@ -677,7 +677,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-all')
     expect(deps.enqueuer.enqueue).toHaveBeenCalled()
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
   it('批量触发不铺开：所有窗口入队时间几乎一致', async () => {
@@ -735,12 +735,12 @@ describe('server API（RESTful + envelope）', () => {
     ])
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1', 'bb-2'] })
     expect(res.status).toBe(200)
-    expect(res.body.data).toEqual({ scope: 'selected' })
+    expect(res.body.data).toEqual({ scope: 'selected', queued: 2 })
     expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'trigger-test')
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(2)
     expect(deps.enqueuer.enqueue.mock.calls[0][0].bitbrowserId).toBe('bb-1')
     expect(deps.enqueuer.enqueue.mock.calls[1][0].bitbrowserId).toBe('bb-2')
-    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
+    expect(deps.enqueuer.enqueue.mock.calls[0][2]).toEqual({ batchId: 88, notBeforeMs: expect.any(Number) })
   })
 
   it('多窗口测试触发不铺开：按选择顺序入队且时间几乎一致', async () => {
@@ -764,7 +764,7 @@ describe('server API（RESTful + envelope）', () => {
     deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 }])
     const res = await request(createApp(deps as never)).post('/api/tasks/t1/trigger').send({ profileIds: ['bb-1', 'bb-1'] })
     expect(res.status).toBe(200)
-    expect(res.body.data).toEqual({ scope: 'selected' })
+    expect(res.body.data).toEqual({ scope: 'selected', queued: 1 })
     expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
   })
 
