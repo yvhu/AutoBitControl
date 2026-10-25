@@ -275,7 +275,7 @@ export class WindowRunner {
   async runWindowTasks(
     profile: ProfileRow,
     tasks: SessionTask[],
-    opts?: { keepWindowOpen?: boolean },
+    opts?: { keepWindowOpen?: boolean; manualReused?: boolean },
   ): Promise<Map<string, RunRow | null>> {
     const { cfg, db, bitbrowser, logger } = this.deps
     // 会话日期以已认领行为准（跨午夜时 dispatcher 认领的是旧日期行，不能再按 todayStr 落新行）；
@@ -407,18 +407,23 @@ export class WindowRunner {
             await this.safeDb(() => db.releaseWindowProbe(profile.id, 'aborted'), undefined)
             probeClaimed = false
           }
-          // 复用地址失效（端口已关/空地址）：清掉登记，避免后续每次重试都复用同一个坏地址；
-          // 池 keep-open 模式下复用窗口仍存活，必须走串行关窗才能真正释放，否则会留下
-          // 「无登记但 pids 仍存活」的窗口，池的 actualOpen 会永久占用额度且无法回收。
-          // 非 keep-open（面板/task:run 复用）保持旧行为：只清登记、不主动关用户的窗口。
+          // 复用地址失效（端口已关/空地址）：避免后续每次重试都复用同一个坏地址。
+          // - 池 keep-open 且非手动窗口：串行关窗真正释放，避免「无登记但 pids 存活」永久占额度
+          // - 手动窗口（manualReused）：保留登记、不关窗，窗口留给用户/后续任务
+          // - 非 keep-open（面板/task:run 复用）：保持旧行为，只清登记
           if (reusedFlag) {
-            if (opts?.keepWindowOpen) {
+            if (opts?.keepWindowOpen && !opts.manualReused) {
               const closed = await this.closeWindowSafely(profile.bitbrowserId, '池复用窗口 CDP 连接失败')
               if (closed) await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
-            } else {
+            } else if (!opts?.manualReused) {
               await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
             }
-            logger.warn({ profile: profile.name, http: open.http, keepWindowOpen: opts?.keepWindowOpen ?? false }, '复用窗口 CDP 连接失败，已清除 open_windows 登记')
+            logger.warn({
+              profile: profile.name,
+              http: open.http,
+              keepWindowOpen: opts?.keepWindowOpen ?? false,
+              manualReused: opts?.manualReused ?? false,
+            }, '复用窗口 CDP 连接失败')
           }
           logger.error({ profile: profile.name, stopped: sessionStopped }, message)
           return results

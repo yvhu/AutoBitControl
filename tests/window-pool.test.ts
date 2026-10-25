@@ -92,11 +92,9 @@ async function makeHarness(opts: HarnessOptions = {}) {
         const latest = await db.getLatestRun(profile.id, task.taskKey, taskDate)
         if (!latest) continue
         if (opts.recoverBreakerOnRun) await db.claimWindowProbe(profile.id, { leaseMs: 60_000, nowMs })
-        if (runOpts?.keepWindowOpen) {
-          if (!openIds.has(profile.bitbrowserId)) {
-            openIds.add(profile.bitbrowserId)
-            openEvents.push(profile.bitbrowserId)
-          }
+        if (runOpts?.keepWindowOpen && !openIds.has(profile.bitbrowserId)) {
+          openIds.add(profile.bitbrowserId)
+          openEvents.push(profile.bitbrowserId)
           await db.reserveOpenWindow(profile.bitbrowserId, process.pid, 'pool')
           await db.setOpenWindow(profile.bitbrowserId, `127.0.0.1:${60000 + profile.id}`, process.pid, 'open')
         }
@@ -589,15 +587,53 @@ describe('WindowPoolScheduler 幂等、对账与回收', () => {
     await h.tick(0)
     expect(h.openEvents).toHaveLength(1)
 
-    // 窗口2 由面板手动打开（无池登记），且有到期任务；它不在池里也不会被池开窗
+    // 窗口2 由面板手动打开（manual 登记），任务在它自己的窗口执行
     const manual = h.profiles[1]
-    h.extraLive.add(manual.bitbrowserId)
+    await h.db.setOpenWindow(manual.bitbrowserId, '127.0.0.1:60099', process.pid, 'open')
+    h.openIds.add(manual.bitbrowserId)
     await h.enqueueAll([manual], 'task2')
     await h.tick(0)
     await h.tick(5000)
 
     expect(h.closeCalls.some((call) => call.bitbrowserId === h.profiles[0].bitbrowserId)).toBe(true)
-    expect((await h.latest(manual, 'task2'))?.status).toBe('pending')
+    expect((await h.latest(manual, 'task2'))?.status).toBe('success')
+  })
+
+  it('手动存活窗口直接执行 pending 任务：不新开、不关窗，保持 manual', async () => {
+    const h = await harness({ windows: 1, cfg: { maxOpenWindows: 1 } })
+    const profile = h.profiles[0]
+    await h.db.setOpenWindow(profile.bitbrowserId, '127.0.0.1:60098', process.pid, 'open')
+    h.openIds.add(profile.bitbrowserId)
+    await h.enqueueAll(h.profiles, 'task1')
+
+    await h.tick(0)
+
+    expect(h.runCalls('task1')).toHaveLength(1)
+    expect((await h.latest(profile, 'task1'))?.status).toBe('success')
+    expect(h.openEvents).toHaveLength(0)
+    expect(h.closeCalls).toHaveLength(0)
+    const row = (await h.db.listOpenWindows()).find((item) => item.bitbrowserId === profile.bitbrowserId)
+    expect(row?.state).toBe('open')
+    expect(row?.ownerKind).toBe('manual')
+    expect(h.scheduler.getStatus().poolSize).toBe(0)
+    expect(h.scheduler.getStatus().actualOpen).toBe(1)
+  })
+
+  it('手动窗口环境失败不自动关闭，任务回队', async () => {
+    const h = await harness({ windows: 1, behavior: 'env', cfg: { maxOpenWindows: 1 } })
+    const profile = h.profiles[0]
+    await h.db.setOpenWindow(profile.bitbrowserId, '127.0.0.1:60097', process.pid, 'open')
+    h.openIds.add(profile.bitbrowserId)
+    await h.enqueueAll(h.profiles, 'task1')
+
+    await h.tick(0)
+
+    expect(h.runCalls('task1')).toHaveLength(1)
+    expect(h.closeCalls).toHaveLength(0)
+    const row = (await h.db.listOpenWindows()).find((item) => item.bitbrowserId === profile.bitbrowserId)
+    expect(row?.ownerKind).toBe('manual')
+    expect(row?.state).toBe('open')
+    expect((await h.latest(profile, 'task1'))?.status).toBe('pending')
   })
 
   it('窗口达到 windowMaxTasks 后关闭', async () => {

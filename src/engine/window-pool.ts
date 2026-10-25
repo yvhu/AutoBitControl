@@ -42,7 +42,7 @@ export interface WindowPoolRunner {
   runWindowTasks(
     profile: ProfileRow,
     tasks: SessionTask[],
-    opts?: { keepWindowOpen?: boolean },
+    opts?: { keepWindowOpen?: boolean; manualReused?: boolean },
   ): Promise<Map<string, RunRow | null>>
   closePoolWindow(profile: ProfileRow, reason: string): Promise<void>
 }
@@ -88,6 +88,8 @@ export interface PoolStatus {
 interface SessionStartOptions {
   opening: boolean
   probe: boolean
+  /** manual 窗口（面板手动打开）作为工作者：失败/熔断/空闲都不自动关窗 */
+  manual?: boolean
 }
 
 /** 每 tick 读取的窗口对账结果 */
@@ -365,12 +367,20 @@ export class WindowPoolScheduler implements RunEnqueuer {
     }
     if (this.stopped) return
 
-    const poolRows = await this.deps.db.listPoolWindows()
+    const openRows = await this.deps.db.listOpenWindows()
+    // 池窗口 = pool 归属、open、已有调试地址
+    const poolRows = openRows.filter((row) => row.ownerKind === 'pool' && row.state === 'open' && row.http.trim() !== '')
+    // 面板手动打开的窗口只作为其 profile 的工作者复用，不纳入池生命周期/轮转
+    const manualRows = openRows.filter((row) => row.ownerKind === 'manual'
+      && row.state === 'open'
+      && row.http.trim() !== ''
+      && live.has(row.bitbrowserId)
+      && byBitbrowserId.has(row.bitbrowserId))
     const queue = await this.deps.db.listPendingWindowKeys(date, nowMs)
     const waitingNonPool = this.collectWaitingNonPool(queue, poolRows, profiles, byBitbrowserId, live, openingReservations, nowMs)
     const pendingByWindow = new Map<number, RunRow[]>()
     let pendingTotal = 0
-    for (const row of poolRows) {
+    for (const row of [...poolRows, ...manualRows]) {
       const profile = byBitbrowserId.get(row.bitbrowserId)
       if (!profile) continue
       const pending = await this.deps.db.listPendingRunsForWindow(profile.id, date, nowMs)
@@ -424,10 +434,11 @@ export class WindowPoolScheduler implements RunEnqueuer {
       return
     }
 
-    // 已打开池窗口优先：每个空闲窗口取任务集第一条（无任务级并发/顺序限制）
+    // 已打开窗口优先：池窗口 + 面板手动窗口都可作为其 profile 的工作者（无任务级并发/顺序限制）
     // warning/critical 均不再分配普通任务；warning 仅允许前面的 half-open 探测（受 effectivePool 限制）
     if (mem.state === 'normal') {
-      for (const row of activePool) {
+      const activeWorkers = [...activePool, ...manualRows]
+      for (const row of activeWorkers) {
         if (this.stopped) break
         const profile = byBitbrowserId.get(row.bitbrowserId)
         if (!profile || this.inFlight.has(profile.id)) continue
@@ -437,7 +448,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
         const claimed = await this.deps.db.claimQueuedRuns([pending[0].id], nowMs)
         if (claimed.length === 0) continue
         this.idleSince.delete(profile.id)
-        this.startSession(profile, claimed[0], { opening: false, probe: false })
+        this.startSession(profile, claimed[0], { opening: false, probe: false, manual: row.ownerKind === 'manual' })
       }
     }
 
@@ -917,19 +928,22 @@ export class WindowPoolScheduler implements RunEnqueuer {
       ...(row.batchId == null ? {} : { batchId: row.batchId }),
     }
     this.deps.logger.info(
-      { profile: profile.name, task: row.taskKey, poolState: this.deps.health.state, probe: opts.probe },
+      { profile: profile.name, task: row.taskKey, poolState: this.deps.health.state, probe: opts.probe, manual: opts.manual === true },
       '窗口池分配任务',
     )
     // 包一层 Promise.resolve：runner 同步抛错也走统一 catch/回队路径
     let called: Promise<Map<string, RunRow | null>>
     try {
-      called = Promise.resolve(this.deps.runner.runWindowTasks(profile, [task], { keepWindowOpen: true }))
+      called = Promise.resolve(this.deps.runner.runWindowTasks(profile, [task], {
+        keepWindowOpen: true,
+        manualReused: opts.manual === true,
+      }))
     } catch (e) {
       called = Promise.reject(e)
     }
     const chain = called
       .then(async (results) => {
-        await this.afterSession(profile, row, results, opts.probe)
+        await this.afterSession(profile, row, results, opts.probe, opts.manual === true)
       })
       .catch(async (e) => {
         const message = (e as Error).message
@@ -945,7 +959,8 @@ export class WindowPoolScheduler implements RunEnqueuer {
           this.probeLease = null
           this.deps.health.recordProbeFailure(this.now().getTime())
         }
-        await this.closeWindow(profile, '会话异常，回收池窗口')
+        // 手动窗口不自动关闭：只回队任务，窗口留给用户/后续任务
+        if (opts.manual !== true) await this.closeWindow(profile, '会话异常，回收池窗口')
       })
     let tracked!: Promise<void>
     tracked = chain.finally(() => {
@@ -969,6 +984,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
     claimedRow: RunRow,
     results: Map<string, RunRow | null>,
     probe: boolean,
+    manual: boolean,
   ): Promise<void> {
     const rows = [...results.values()].filter((row): row is RunRow => row != null)
     const environmentFailure = rows.some((row) => row.failureKind === 'environment')
@@ -989,7 +1005,8 @@ export class WindowPoolScheduler implements RunEnqueuer {
       } else {
         this.deps.health.recordEnvironmentFailure(profile.bitbrowserId, nowMs)
       }
-      await this.closeWindow(profile, '环境失败，回收池窗口')
+      // 手动窗口不自动关闭：环境失败也只回队任务，窗口留给用户
+      if (!manual) await this.closeWindow(profile, '环境失败，回收池窗口')
       return
     }
 
@@ -1006,7 +1023,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
           }
         }
         this.deps.health.recordProbeFailure(nowMs)
-        await this.closeWindow(profile, '探测未成功，回收池窗口')
+        if (!manual) await this.closeWindow(profile, '探测未成功，回收池窗口')
         return
       }
       this.deps.health.recordProbeSuccess()
@@ -1028,7 +1045,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
     } catch (e) {
       this.deps.logger.warn({ err: (e as Error).message, profile: profile.name }, '读取窗口健康状态失败')
     }
-    if (windowState === 'open') await this.closeWindow(profile, '窗口熔断，回收池窗口')
+    if (windowState === 'open' && !manual) await this.closeWindow(profile, '窗口熔断，回收池窗口')
   }
 
   /**

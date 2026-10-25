@@ -1183,6 +1183,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 **窗口池（`windowPool.enabled=true`）**
 
 - 窗口跨任务保持打开：一个窗口同一时刻只跑一个任务，任务结束后优先在该窗口接着跑下一个到期任务；新任务到点只补 `pending`，已打开窗口立即参与，不再按任务重复开窗。
+- 面板手动打开且存活（`owner_kind='manual'`、`state='open'`、已有调试地址）的窗口会作为该窗口的工作者直接接任务，不新开窗口；它不计入 `poolSize`、不参与空闲/寿命/连续占用轮转，也不会因空闲、环境失败或窗口熔断被自动关闭。`task:run` 等其他归属仍按各自流程处理。
 - 打开总数受 `windowPool.maxOpenWindows` 与内存共同约束：`effectivePool = min(maxOpenWindows, actualOpen + 可用内存可再开数)`；实际打开数包含池窗口、手动窗口与 `task:run` 窗口，开窗前后都按比特 `/browser/pids` 对账。
 - 内存 `warning` 停止补池与普通任务分配（已打开窗口也暂不接新任务，仅允许 half-open 探测在 `effectivePool` 容量内启动）；`critical` 停止分配新任务并优先关闭空闲池窗口，运行中的任务自然结束；恢复到 `resumeFreeMb` 并连续 3 次检查后才回到 `normal`。不能开窗/分配时任务保持 `pending`，不会被打成失败。
 - 全局健康门禁：比特 API/断网/代理整体不可用时暂停开窗，并按 `execution.health.backoffSec` 退避；暂停/探测期间任务保持 `pending`，恢复后先半开探测再逐步加窗口。单窗口故障仍走窗口熔断，不影响其它窗口。

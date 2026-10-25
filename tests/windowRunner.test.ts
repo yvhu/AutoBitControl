@@ -586,6 +586,18 @@ describe('WindowRunner', () => {
     expect(db.clearOpenWindow).toHaveBeenCalledWith('bb-1')
   })
 
+  it('keep-open 手动复用窗口 CDP 失败：不关窗也不清登记', async () => {
+    const db = makeDb()
+    const runner = makeRunner({
+      db,
+      reuseOpen: vi.fn().mockResolvedValue({ http: '127.0.0.1:61234' }),
+      driver: makeDriver({ connect: vi.fn().mockRejectedValue(new Error('连接被拒绝')) }),
+    })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }], { keepWindowOpen: true, manualReused: true })
+    expect(bitbrowser.closeBrowser).not.toHaveBeenCalled()
+    expect(db.clearOpenWindow).not.toHaveBeenCalled()
+  })
+
   it('keep-open 成功：不关窗、回写 open 并累加窗口使用次数', async () => {
     const db = makeDb()
     const runner = makeRunner({ db })
