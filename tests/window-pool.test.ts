@@ -11,7 +11,6 @@ import { WindowPoolScheduler } from '../src/engine/window-pool'
 import type { SessionTask } from '../src/engine/queue'
 
 const BASE_CFG: WindowPoolConfig = {
-  enabled: true,
   maxOpenWindows: 4,
   memoryReserveMb: 100,
   perWindowMb: 1024,
@@ -163,7 +162,7 @@ async function makeHarness(opts: HarnessOptions = {}) {
     memory: memory as unknown as MemoryGovernor,
     health,
     cfg,
-    limits: new Map(taskKeys.map((key) => [key, 100])),
+    taskKeys: new Set(taskKeys),
     now: () => new Date(nowMs),
     tickMs: 1000,
     freeMemMb: () => 8192,

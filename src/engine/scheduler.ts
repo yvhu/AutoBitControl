@@ -4,8 +4,8 @@
  *           被 src/app.ts 装配、被 server 路由经 runNow 调用
  * 设计思路：无 cron 库——到点判断走 schedule.ts 的墙上时钟匹配；
  * 错过即跳过（无锚点持久化，重启后从当前时间自然重算）；
- * 每分钟去重 Map（内存态，重启同分钟可能重复触发一次，由队列合并与在途守卫兜底）；
- * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期、不做错峰）；
+ * 每分钟去重 Map（内存态，重启同分钟可能重复触发一次，由入队幂等与在途守卫兜底）；
+ * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期）；
  * 定时入队带 skipIfSuccess（当天已成功的窗口不重复执行）
  */
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
@@ -193,7 +193,7 @@ export class Scheduler {
         ...(assignCount !== undefined ? { renamedCount: assignCount } : {}),
       }
     }
-    // 第二遍：建批次入队（触发即 pending，不再按窗口顺序错峰）
+    // 第二遍：建批次入队（触发即 pending）
     const profiles = await this.deps.db.listProfiles(true)
     for (const key of passing) {
       if (assignFailed && this.deps.tasks.get(key)?.meta.requiresFileAssign) {

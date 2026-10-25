@@ -414,12 +414,12 @@ effectivePool = clamp(min(maxOpenWindows, actualOpen + allowance), 0, maxOpenWin
 - 接入全局健康探测的租约/超时（`global-health` 模块目前只有纯函数与单测，Phase 2 由调度器持有探测租约并处理超时）。
 - 验收：任务2 复用任务1 窗口；不重复执行；窗口总数受池/内存约束。
 
-**Phase 3：清理与调优**
-- 移除 `maxConcurrentWindows`、`meta.concurrency`、stagger 配置与代码；
-- 根据真机数据校准 `perWindowMb`、`idleCloseSec`、`windowMaxLifetimeSec`；
+**Phase 3：清理与调优（清理部分已于 2026-10-25 完成）**
+- 已移除 `maxConcurrentWindows`、`meta.concurrency`、`CoalescingEnqueuer`、旧 claim/容量 gate、stagger 配置与 `windowPool.enabled` 开关；
+- 待根据真机数据校准 `perWindowMb`、`idleCloseSec`、`windowMaxLifetimeSec`；
 - 可选 `dependsOn` 顺序依赖。
 
-每阶段用特性开关 `execution.windowPool.enabled` 控制，默认关闭到验收通过。
+迁移期曾用特性开关 `execution.windowPool.enabled` 控制；Phase 3 已删除该开关，窗口池始终启用。
 
 ## 16. 风险与缓解
 

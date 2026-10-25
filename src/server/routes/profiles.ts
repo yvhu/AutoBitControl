@@ -175,7 +175,7 @@ function toProfileView(p: ProfileRow, open: boolean) {
  *       '404':
  *         description: 窗口不存在（业务码 40402）
  *       '409':
- *         description: 同时打开的窗口已达上限（业务码 40907）
+ *         description: 同时打开的窗口已达 windowPool.maxOpenWindows 上限（业务码 40907）
  */
 
 /**
@@ -255,8 +255,8 @@ export function profilesRouter(deps: {
     isOpen(id: string): Promise<boolean>
     openPids(ids: string[]): Promise<Set<string>>
   }
-  /** 同时打开窗口上限（execution.maxConcurrentWindows）；打开前校验，达上限拒绝 */
-  maxConcurrentWindows: number
+  /** 同时打开窗口上限（execution.windowPool.maxOpenWindows）；打开前校验，达上限拒绝 */
+  maxOpenWindows: number
   /** 置窗口会话取消标记（手动关窗前中止在途会话；由 app 注入 CancelRegistry.requestSession） */
   cancelSession(profileId: number): void
   /** 日志器（孤儿回收打点用） */
@@ -274,13 +274,13 @@ export function profilesRouter(deps: {
   type BatchAction = 'open' | 'close' | 'resetBreaker'
 
   /**
-   * 打开前校验同时打开窗口上限（execution.maxConcurrentWindows）：
+   * 打开前校验同时打开窗口上限（execution.windowPool.maxOpenWindows）：
    * 以 /browser/pids 实测全量窗口数为准；满额时先回收孤儿窗口（仅 state=open 且归属进程已死）腾名额，
    * 仍满才抛 409；探测/回收失败（本地 API 未就绪）放行，避免校验本身阻断。
    * Phase 1 不回收「存活但无登记」的窗口（可能处于已开未登记窗口期，留给 Phase 2 对账）。
    */
   const ensureWindowCapacity = async (): Promise<void> => {
-    const max = deps.maxConcurrentWindows
+    const max = deps.maxOpenWindows
     if (!Number.isFinite(max)) return
     const ids = (await deps.db.listProfiles(false)).map((p: ProfileRow) => p.bitbrowserId)
     let open: Set<string>

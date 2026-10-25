@@ -284,7 +284,6 @@ describe('ArcFaucetTask 元信息', () => {
     expect(t.meta.wallet).toBeUndefined()
     expect(t.meta.timeoutSec).toBe(420)
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 120 })
-    expect(t.meta.concurrency).toBe(3)
   })
 })
 

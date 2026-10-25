@@ -36,7 +36,6 @@ export class PortalRhunaTask extends SiteTask {
     wallet: 'petra',
     timeoutSec: 1200,
     retry: { max: 2, backoffSec: 600 },
-    concurrency: 2,
   }
 
   /**

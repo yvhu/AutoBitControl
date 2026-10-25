@@ -17,7 +17,7 @@ export function useSettings() {
   })
 }
 
-/** 窗口池状态：只读展示，5 秒轮询（未启用时后端返回 enabled=false） */
+/** 窗口池状态：只读展示，5 秒轮询（窗口池是唯一调度器） */
 export function usePoolStatus() {
   return useQuery({
     queryKey: ['poolStatus'],

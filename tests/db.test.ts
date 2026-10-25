@@ -3,7 +3,6 @@ import { createClient } from '@libsql/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Worker } from 'node:worker_threads'
 import { AppDb, todayStr } from '../src/infrastructure/db'
 
 let db: AppDb
@@ -889,23 +888,14 @@ describe('runs 即队列', () => {
     expect(await qdb.updateRunIfRunning(p.id, 't', date, 9, 'failed')).toBeNull()
   })
 
-  it('minPendingNotBefore 无 pending 返回 null，有则取 pending 最小值', async () => {
-    const p = await qdb.upsertProfile('bb-min', '窗口')
-    expect(await qdb.minPendingNotBefore(p.id, '2026-10-19')).toBeNull()
-    await qdb.upsertRun(p.id, 'a', '2026-10-19', 0, 'pending', { notBeforeMs: 3000 })
-    await qdb.upsertRun(p.id, 'b', '2026-10-19', 0, 'pending', { notBeforeMs: 1000 })
-    await qdb.upsertRun(p.id, 'c', '2026-10-19', 0, 'running', { notBeforeMs: 0 })
-    expect(await qdb.minPendingNotBefore(p.id, '2026-10-19')).toBe(1000)
-  })
-
-  it('settleUnregisteredRuns 只结算无 limit 的到期行', async () => {
+  it('settleUnregisteredRuns 只结算未注册任务的到期行', async () => {
     const p = await qdb.upsertProfile('bb-unregistered', '窗口')
     const date = '2026-10-19'
     await qdb.enqueueRun(p.id, 'known', date, null, 0)
     await qdb.enqueueRun(p.id, 'ghost', date, null, 0)
     await qdb.enqueueRun(p.id, 'future-ghost', date, null, 5000)
 
-    expect(await qdb.settleUnregisteredRuns(date, 1000, new Map([['known', 1]]))).toBe(1)
+    expect(await qdb.settleUnregisteredRuns(date, 1000, new Set(['known']))).toBe(1)
     const ghost = await qdb.getLatestRun(p.id, 'ghost', date)
     expect(ghost?.status).toBe('skipped')
     expect(ghost?.error).toBe('任务未注册')
@@ -1017,7 +1007,7 @@ describe('runs 即队列', () => {
     expect((await qdb.getLatestRun(p.id, 'today-pending', today))?.status).toBe('pending')
   })
 
-  describe('claimDueRuns DB 并发阀门', () => {
+  describe('到期待执行查询', () => {
     const DATE = '2026-10-19'
 
     it('hasDueRuns 空转短路：无到期行为 false，有到期 pending 行为 true', async () => {
@@ -1029,210 +1019,6 @@ describe('runs 即队列', () => {
 
       await qdb.enqueueRun(p.id, 'A', DATE, null, 0)
       expect(await qdb.hasDueRuns(DATE, Date.now())).toBe(true)
-    })
-
-    it('claimDueRuns 遵守全局上限并合并同窗口任务', async () => {
-      const p1 = await qdb.upsertProfile('bb-g1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-g2', '窗口2')
-      await qdb.enqueueRun(p1.id, 'A', DATE, 1, 0)
-      await qdb.enqueueRun(p1.id, 'B', DATE, 1, 0)
-      await qdb.enqueueRun(p2.id, 'A', DATE, 2, 0)
-      const limits = new Map([['A', 2], ['B', 1]])
-
-      const first = await qdb.claimDueRuns({ date: DATE, nowMs: 1000, limits, maxConcurrentWindows: 1 })
-      expect(first).toHaveLength(2)
-      expect(new Set(first.map((r) => r.profileId))).toEqual(new Set([p1.id]))
-      expect(first.map((r) => r.taskKey).sort()).toEqual(['A', 'B'])
-      expect(first.every((r) => r.status === 'running' && r.startedAt !== null)).toBe(true)
-
-      const second = await qdb.claimDueRuns({ date: DATE, nowMs: 1001, limits, maxConcurrentWindows: 2 })
-      expect(second).toHaveLength(1)
-      expect(second[0].profileId).toBe(p2.id)
-      expect(second[0].taskKey).toBe('A')
-    })
-
-    it('claimDueRuns 遵守任务级上限', async () => {
-      const p1 = await qdb.upsertProfile('bb-t1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-t2', '窗口2')
-      await qdb.enqueueRun(p1.id, 'A', DATE, null, 0)
-      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
-      const limits = new Map([['A', 1]])
-
-      const first = await qdb.claimDueRuns({ date: DATE, nowMs: 1000, limits, maxConcurrentWindows: 5 })
-      expect(first).toHaveLength(1)
-      expect(first[0].profileId).toBe(p1.id)
-
-      const second = await qdb.claimDueRuns({ date: DATE, nowMs: 1001, limits, maxConcurrentWindows: 5 })
-      expect(second).toHaveLength(0)
-      expect((await qdb.getLatestRun(p2.id, 'A', DATE))?.status).toBe('pending')
-    })
-
-    it('claimDueRuns 跳过已有 running 行的窗口', async () => {
-      const p1 = await qdb.upsertProfile('bb-r1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-r2', '窗口2')
-      const running = await qdb.enqueueRun(p1.id, 'B', DATE, null, 0)
-      await qdb.claimQueuedRuns([running.id], 500)
-      await qdb.enqueueRun(p1.id, 'A', DATE, null, 0)
-      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
-
-      const claimed = await qdb.claimDueRuns({ date: DATE, nowMs: 1000, limits: new Map([['A', 5], ['B', 5]]), maxConcurrentWindows: 5 })
-      expect(claimed.map((r) => r.profileId)).toEqual([p2.id])
-      expect(claimed.map((r) => r.taskKey)).toEqual(['A'])
-      expect((await qdb.getLatestRun(p1.id, 'A', DATE))?.status).toBe('pending')
-    })
-
-    it('claimDueRuns 只认领最新 slot 的到期行', async () => {
-      const p = await qdb.upsertProfile('bb-latest-slot', '窗口')
-      await qdb.upsertRun(p.id, 'A', DATE, 0, 'pending', { notBeforeMs: 0 })
-      await qdb.upsertRun(p.id, 'A', DATE, 1, 'pending', { notBeforeMs: 0 })
-
-      const claimed = await qdb.claimDueRuns({ date: DATE, nowMs: 1000, limits: new Map([['A', 1]]), maxConcurrentWindows: 1 })
-      expect(claimed.map((r) => r.slot)).toEqual([1])
-    })
-
-    it('claimDueRuns 不改写终态行', async () => {
-      const p = await qdb.upsertProfile('bb-g3', '窗口')
-      await qdb.upsertRun(p.id, 'A', DATE, 0, 'success')
-
-      const claimed = await qdb.claimDueRuns({ date: DATE, nowMs: 1000, limits: new Map([['A', 1]]), maxConcurrentWindows: 1 })
-      expect(claimed).toHaveLength(0)
-      expect((await qdb.getRun(p.id, 'A', DATE, 0))?.status).toBe('success')
-    })
-
-    it('两个 AppDb 实例共享同一库文件时并发认领不重复', async () => {
-      const url = `file:${join(qdir, 'queue.db').split('\\').join('/')}`
-      const p1 = await qdb.upsertProfile('bb-s1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-s2', '窗口2')
-      await qdb.enqueueRun(p1.id, 'A', DATE, null, 0)
-      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
-
-      // 真实并发认领（非顺序调用）：libsql 本地引擎是同步绑定，同一线程内 Promise.all 会在
-      // BEGIN IMMEDIATE 处互相阻塞；这里用两个 worker 线程各开一个 AppDb 连接，两边就绪后
-      // 同时 claim，由 SQLite 写锁 + WAL/busy_timeout 串行化。
-      const startSignal = new SharedArrayBuffer(4)
-      const signal = new Int32Array(startSignal)
-      const workerUrl = new URL('./helpers/concurrent-claim.worker.mjs', import.meta.url)
-      const workerData = {
-        url,
-        date: DATE,
-        nowMs: 1000,
-        maxConcurrentWindows: 1,
-        limits: [['A', 5]] as Array<[string, number]>,
-        startSignal,
-        timeoutMs: 5000,
-      }
-      const results: Array<Array<{ id: number; profileId: number }>> = []
-      let readyCount = 0
-      const WORKER_WATCHDOG_MS = 10_000
-      const workers = [0, 1].map(() => new Worker(workerUrl, { workerData }))
-      let watchdog: ReturnType<typeof setTimeout> | undefined
-      try {
-        // 主线程 watchdog：worker 未就绪或一直不退出时主动失败，finally 里 terminate 收尾
-        await Promise.race([
-          Promise.all(
-            workers.map(
-              (worker) =>
-                new Promise<void>((resolve, reject) => {
-                  worker.on('message', (msg: { type: string; rows?: Array<{ id: number; profileId: number }>; message?: string }) => {
-                    if (msg.type === 'ready') {
-                      readyCount++
-                      if (readyCount === 2) {
-                        Atomics.store(signal, 0, 1)
-                        Atomics.notify(signal, 0, 2)
-                      }
-                    } else if (msg.type === 'result') {
-                      results.push(msg.rows ?? [])
-                    } else if (msg.type === 'error') {
-                      reject(new Error(msg.message ?? 'claim worker 执行失败'))
-                    }
-                  })
-                  worker.on('error', reject)
-                  worker.on('exit', (code) => {
-                    if (code === 0) resolve()
-                    else reject(new Error(`claim worker 退出码 ${code}`))
-                  })
-                }),
-            ),
-          ),
-          new Promise<never>((_, reject) => {
-            watchdog = setTimeout(
-              () => reject(new Error(`并发认领 worker 超时（${WORKER_WATCHDOG_MS}ms）`)),
-              WORKER_WATCHDOG_MS,
-            )
-          }),
-        ])
-
-        const all = results.flat()
-        expect(all).toHaveLength(1)
-        expect(new Set(all.map((r) => r.id)).size).toBe(all.length)
-      } finally {
-        if (watchdog) clearTimeout(watchdog)
-        await Promise.all(workers.map((worker) => worker.terminate()))
-      }
-    })
-
-    it('countRunningProfiles 只统计去重后的运行窗口', async () => {
-      const p1 = await qdb.upsertProfile('bb-c1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-c2', '窗口2')
-      expect(await qdb.countRunningProfiles()).toBe(0)
-
-      await qdb.upsertRun(p1.id, 'A', DATE, 0, 'running')
-      await qdb.upsertRun(p1.id, 'B', DATE, 0, 'running')
-      await qdb.upsertRun(p2.id, 'A', DATE, 0, 'pending')
-      expect(await qdb.countRunningProfiles()).toBe(1)
-
-      await qdb.upsertRun(p2.id, 'A', DATE, 0, 'running')
-      expect(await qdb.countRunningProfiles()).toBe(2)
-    })
-
-    it('跨午夜：昨天的 running 行仍占同窗口与全局额度，countRunningProfiles 可见', async () => {
-      const OLD = '2026-10-18'
-      const p1 = await qdb.upsertProfile('bb-x1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-x2', '窗口2')
-      const oldRunning = await qdb.enqueueRun(p1.id, 'B', OLD, null, 0)
-      await qdb.claimQueuedRuns([oldRunning.id], 500)
-
-      expect(await qdb.countRunningProfiles()).toBe(1)
-
-      // 同一窗口今天到期：旧会话仍在跑，不得重复开窗
-      await qdb.enqueueRun(p1.id, 'A', DATE, null, 0)
-      const sameWindow = await qdb.claimDueRuns({
-        date: DATE,
-        nowMs: 1000,
-        limits: new Map([['A', 5], ['B', 5]]),
-        maxConcurrentWindows: 5,
-      })
-      expect(sameWindow).toHaveLength(0)
-      expect((await qdb.getLatestRun(p1.id, 'A', DATE))?.status).toBe('pending')
-
-      // 另一窗口今天到期：旧 running 已占满全局上限 1
-      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
-      const capped = await qdb.claimDueRuns({
-        date: DATE,
-        nowMs: 1001,
-        limits: new Map([['A', 5]]),
-        maxConcurrentWindows: 1,
-      })
-      expect(capped).toHaveLength(0)
-      expect((await qdb.getLatestRun(p2.id, 'A', DATE))?.status).toBe('pending')
-    })
-
-    it('跨午夜：昨天的 running 同任务仍占今天任务额度', async () => {
-      const OLD = '2026-10-18'
-      const p1 = await qdb.upsertProfile('bb-tq1', '窗口1')
-      const p2 = await qdb.upsertProfile('bb-tq2', '窗口2')
-      const oldRunning = await qdb.enqueueRun(p1.id, 'A', OLD, null, 0)
-      await qdb.claimQueuedRuns([oldRunning.id], 500)
-
-      await qdb.enqueueRun(p2.id, 'A', DATE, null, 0)
-      const claimed = await qdb.claimDueRuns({
-        date: DATE,
-        nowMs: 1000,
-        limits: new Map([['A', 1]]),
-        maxConcurrentWindows: 5,
-      })
-      expect(claimed).toHaveLength(0)
-      expect((await qdb.getLatestRun(p2.id, 'A', DATE))?.status).toBe('pending')
     })
   })
 })

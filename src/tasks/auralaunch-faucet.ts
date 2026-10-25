@@ -2,7 +2,7 @@
  * AuraLaunch 领水任务（auralaunch-faucet）：Caldera LiteForge 测试网水龙头
  * 站点：https://liteforge.hub.caldera.xyz/
  * 设计：地址取自数据源「metamask钱包地址」直填（不连钱包）；领取走 tRPC faucet.requestFaucetFunds
- * 时间预算：timeoutSec 300s、retry.max 2 次 / 退避 120s、concurrency 3
+ * 时间预算：timeoutSec 300s、retry.max 2 次 / 退避 120s
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
 import { openPage, fill, click, waitFor, race, clickTurnstile, getAccountValue, takeScreenshot, evaluate } from '../api'
@@ -82,7 +82,6 @@ export class AuralaunchFaucetTask extends SiteTask {
     enabled: true, // 参与定时/批量触发
     timeoutSec: 300, // 单任务整体超时秒数
     retry: { max: 2, backoffSec: 120 }, // 失败最多再试 2 次，每次退避 120s（不占窗）
-    concurrency: 3, // 任务级并发上限（与全局 maxConcurrentWindows 取更严者）
   }
 
   /**

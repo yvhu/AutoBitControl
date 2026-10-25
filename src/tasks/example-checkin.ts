@@ -4,7 +4,7 @@
  * 执行流程：打开任务页（占位 url）→ 声明式登录（竞速判登录态 → 点连接 → 签名/确认 → 等登录完成）
  *          → 判已签到（幂等）→ 点签到按钮 → 断言成功标志
  * 设计：run 内直接用 ../api 能力函数（openPage/connectWallet/click/hasText/waitFor）
- * 时间预算：timeoutSec 180s（单任务整体超时）、retry.max 2 次 / 退避 600s、concurrency 4
+ * 时间预算：timeoutSec 180s（单任务整体超时）、retry.max 2 次 / 退避 600s
  * 新增任务从这里复制改起：先跑通流程，再逐步替换选择器
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
@@ -24,7 +24,6 @@ export class ExampleCheckinTask extends SiteTask {
     wallet: 'metamask', // 使用的钱包类型（决定登录/签名走哪个适配器）
     timeoutSec: 180, // 单任务整体超时秒数
     retry: { max: 2, backoffSec: 600 }, // 失败最多再试 2 次，每次退避 600s（不占窗）
-    concurrency: 4, // 任务级并发上限（与全局 maxConcurrentWindows 取更严者）
   }
 
   /**

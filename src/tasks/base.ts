@@ -20,7 +20,7 @@ export { RECOVER_TEXTS, DEFAULT_RELOAD_TIMEOUT_MS } from '../engine/task'
  * 子类只需声明 meta 并在 run 内调用 ../api 的能力函数完成站点动作，新增站点后在 index.ts 登记即可。
  */
 export abstract class SiteTask {
-  /** 任务元信息：key/name/url/wallet/timeoutSec/retry/concurrency/enabled 等（key 全局唯一） */
+  /** 任务元信息：key/name/url/wallet/timeoutSec/retry/enabled 等（key 全局唯一） */
   abstract meta: TaskMeta
 
   /**

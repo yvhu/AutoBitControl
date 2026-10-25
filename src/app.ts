@@ -13,7 +13,6 @@ import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/window-runner'
 import { SerialQueue } from './engine/serial-queue'
-import { CoalescingEnqueuer, type RunEnqueuer } from './engine/queue'
 import { WindowPoolScheduler } from './engine/window-pool'
 import { MemoryGovernor } from './engine/memory-governor'
 import { GlobalHealthGate } from './engine/global-health'
@@ -23,7 +22,6 @@ import { recoverRuns } from './engine/run-recovery'
 import { Scheduler } from './engine/scheduler'
 import { startCircuitBreakerResetSchedule } from './engine/maintenance'
 import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
-import { DEFAULT_TASK_CONCURRENCY } from './engine/task'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
@@ -55,29 +53,21 @@ export function getReusableWindow(row: { http: string; state: OpenWindowState } 
   return { http: row.http }
 }
 
-/** RunEnqueuer 装配依赖（独立导出便于测试开关分支；仅窗口池启用时才创建 pool 执行器） */
+/** RunEnqueuer 装配依赖（独立导出便于测试装配结果） */
 export interface RunEnqueuerDeps {
   cfg: AppConfig
   db: AppDb
   logger: Logger
-  /** taskKey -> meta.concurrency：旧调度器用作任务级并发上限，窗口池仅用于识别未注册任务 */
-  limits: Map<string, number>
+  /** 已注册任务 key：仅用于识别「任务已从注册表移除」的到期行（窗口池不做任务级并发） */
+  taskKeys: Set<string>
   bitbrowser: Pick<BitBrowserClient, 'openPids'>
-  /** 手动/面板共用的执行器（开窗归属保持 manual） */
-  runner: WindowRunner
-  /** 创建窗口池专用执行器（开窗归属 pool），仅窗口池分支调用 */
+  /** 创建窗口池专用执行器（开窗归属 pool） */
   createPoolRunner(): WindowRunner
 }
 
-/**
- * 按特性开关选择运行调度器：windowPool.enabled=true 时用窗口池并构建内存/健康门禁，
- * 否则保持 CoalescingEnqueuer；两者共用 RunEnqueuer 接口，路由与停止器无需区分。
- */
-export function createRunEnqueuer(deps: RunEnqueuerDeps): RunEnqueuer {
+/** 装配窗口池调度器（唯一调度器）：构建内存/健康门禁并注入配置与任务注册表 */
+export function createRunEnqueuer(deps: RunEnqueuerDeps): WindowPoolScheduler {
   const { execution } = deps.cfg
-  if (!execution.windowPool.enabled) {
-    return new CoalescingEnqueuer(deps.db, deps.runner, deps.logger, deps.limits, execution.maxConcurrentWindows)
-  }
   const pool = execution.windowPool
   return new WindowPoolScheduler({
     db: deps.db,
@@ -97,7 +87,7 @@ export function createRunEnqueuer(deps: RunEnqueuerDeps): RunEnqueuer {
       probeEnabled: execution.health.probeEnabled,
     }),
     cfg: pool,
-    limits: deps.limits,
+    taskKeys: deps.taskKeys,
   })
 }
 
@@ -253,24 +243,21 @@ export async function startApp(): Promise<void> {
       return row ? { ...row.values } : null
     },
   }
-  const runner = new WindowRunner(runnerDeps)
-  // 双闸门：任务级并发（meta.concurrency）+ 全局窗口上限（execution.maxConcurrentWindows），
-  // 传给 dispatcher 后由 DB claim 事务裁决（runs.status='running' 唯一口径）
-  const limits = new Map([...tasks].map(([key, task]) => [key, Math.max(1, task.meta.concurrency ?? DEFAULT_TASK_CONCURRENCY)]))
-  // 特性开关：窗口池启用时用独立 pool 执行器（开窗归属 pool），否则保持旧 CoalescingEnqueuer
+  // 任务注册表：窗口池仅用于识别未注册任务的到期行，不做任务级并发
+  const taskKeys = new Set(tasks.keys())
+  // 窗口池是唯一调度器：独立 pool 执行器（开窗归属 pool）负责开窗/复用/回收
   const enqueuer = createRunEnqueuer({
     cfg,
     db,
     logger,
-    limits,
+    taskKeys,
     bitbrowser,
-    runner,
     createPoolRunner: () => new WindowRunner({ ...runnerDeps, openOwnerKind: 'pool' }),
   })
-  // dispatcher 常驻：重试退避行即使没有新的 enqueue 也要到点被拾取
+  // 调度器常驻：重试退避行即使没有新的 enqueue 也要到点被拾取
   enqueuer.start()
-  // 池状态只有窗口池调度器才提供；旧调度不注入，池状态接口返回 enabled=false
-  const poolStatus = enqueuer instanceof WindowPoolScheduler ? () => enqueuer.getStatus() : undefined
+  // 池状态始终可用（窗口池是唯一调度器）
+  const poolStatus = () => enqueuer.getStatus()
 
   // 定时调度器：自研 tick（每 15 秒扫一次 schedules 表）；触发路径与批量手动同构
   // （建 schedule 批次 + 全部启用窗口入队，触发即 pending）

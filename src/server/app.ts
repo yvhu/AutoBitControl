@@ -64,8 +64,8 @@ export interface ServerDeps {
   stopper: TaskStopper
   /** 置窗口会话取消标记（面板手动关窗前中止在途会话；app.ts 注入 CancelRegistry.requestSession） */
   cancelSession(profileId: number): void
-  /** 窗口池状态快照（仅窗口池启用时注入；未注入即旧调度，池状态接口返回 enabled=false） */
-  poolStatus?: () => PoolStatus
+  /** 窗口池状态快照（窗口池是唯一调度器，始终注入） */
+  poolStatus: () => PoolStatus
 }
 
 /**
@@ -80,7 +80,7 @@ export function createApp(deps: ServerDeps): express.Express {
   // 各路由只接收自己需要的依赖（最小依赖面，测试可单独构造）
   api.use(batchesRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks, stopper: deps.stopper, getRunById: deps.getRunById, circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled }))
   api.use(tasksRouter({ db: deps.db, enqueuer: deps.enqueuer, tasks: deps.tasks }))
-  api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows, cancelSession: deps.cancelSession, logger: deps.logger }))
+  api.use(profilesRouter({ db: deps.db, bitbrowser: deps.bitbrowser, maxOpenWindows: deps.cfg.execution.windowPool.maxOpenWindows, cancelSession: deps.cancelSession, logger: deps.logger }))
   api.use(bitbrowserRouter({ health: () => deps.bitbrowser.health(), sync: () => deps.bitbrowser.sync() }))
   api.use(screenshotsRouter(deps))
   api.use(docsRouter())

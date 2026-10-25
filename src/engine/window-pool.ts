@@ -2,7 +2,7 @@
  * 窗口池调度器（engine 层）：runs 表即每窗口任务集，open_windows 即池状态；
  * 每秒 tick 对账窗口 → 内存/健康门禁 → 空闲池窗口分配任务 → 补池/轮转 → 记录状态
  * 依赖方向：依赖 infrastructure/db 与 engine 的 memory-governor/global-health/queue 类型；
- *   被 app 装配启用（execution.windowPool.enabled），旧 CoalescingEnqueuer 保留为回滚路径
+ *   由 app 装配为唯一调度器
  * 设计：任务级无并发/顺序限制；窗口保持打开（keepWindowOpen），关窗只由健康/内存/轮转/寿命策略触发
  *
  * 内存状态语义：normal 允许补池与分配；warning 停止补池与普通任务分配（已有会话自然结束），
@@ -56,8 +56,8 @@ export interface WindowPoolSchedulerDeps {
   memory: MemoryGovernor
   health: GlobalHealthGate
   cfg: WindowPoolConfig
-  /** taskKey -> meta.concurrency；只用于识别「任务已从注册表移除」的到期行（池不做任务级并发） */
-  limits: Map<string, number>
+  /** 已注册任务 key；只用于识别「任务已从注册表移除」的到期行（池不做任务级并发） */
+  taskKeys: Set<string>
   now?: () => Date
   tickMs?: number
   /** 空闲内存采样（MB）：默认 os.freemem；测试注入固定值 */
@@ -360,7 +360,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
 
     // 任务从注册表移除后其到期行永远不会被认领：认领前先结算，避免永久 pending
     try {
-      const settled = await this.deps.db.settleUnregisteredRuns(date, nowMs, this.deps.limits)
+      const settled = await this.deps.db.settleUnregisteredRuns(date, nowMs, this.deps.taskKeys)
       if (settled > 0) this.deps.logger.warn({ count: settled, date }, '已结算未注册任务的到期行')
     } catch (e) {
       this.deps.logger.warn({ err: (e as Error).message, date }, '未注册任务结算失败（下轮重试）')
@@ -509,7 +509,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
     })
   }
 
-  /** 跨午夜结算旧日期排队行（与旧调度器同口径；running 行留给会话自行落终态） */
+  /** 跨午夜结算旧日期排队行（与跨日结算口径一致；running 行留给会话自行落终态） */
   private async settleOldDate(date: string): Promise<void> {
     if (this.lastDate === date) return
     try {

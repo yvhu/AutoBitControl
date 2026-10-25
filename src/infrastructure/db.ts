@@ -506,7 +506,7 @@ export class AppDb {
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, not_before_ms)')
     // countInFlightRuns（任务/看板每次手动触发都查）用的复合索引
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_task_date ON runs(task_key, date)')
-    // claimDueRuns（DB 并发阀门）统计 running 窗口与任务占用的复合索引：计数不按日期（跨午夜会话也占额度），索引以 status 前缀生效
+    // 运行状态查询索引：按 status+date 过滤窗口/任务运行行（跨午夜旧会话仍可按 status 命中）
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_status_date_profile ON runs(status, date, profile_id)')
     await this.client.execute('CREATE INDEX IF NOT EXISTS idx_runs_status_date_task ON runs(status, date, task_key)')
     // 空投追踪默认状态列种子（INSERT OR IGNORE 幂等：用户自建/改名后重启不覆盖）
@@ -1073,25 +1073,16 @@ export class AppDb {
     return Number(rs.rowsAffected ?? 0) > 0
   }
 
-  /** 同窗口 pending 行的最早开始时间（无则 null） */
-  async minPendingNotBefore(profileId: number, date: string): Promise<number | null> {
-    const rows = await this.exec(
-      `SELECT MIN(not_before_ms) AS v FROM runs WHERE profile_id = ? AND date = ? AND status = 'pending'`,
-      [profileId, date],
-    )
-    return rows[0]?.v == null ? null : Number(rows[0].v)
-  }
-
   /**
-   * 结算到期但任务已不在注册表中的行：limits 无对应 key 时 claim 永远不会认领，
+   * 结算到期但任务已不在注册表中的行：taskKeys 无对应 key 时永远不会被认领，
    * 直接置 skipped 避免永久 pending；只处理当天到期的最新增量行
    */
-  async settleUnregisteredRuns(date: string, nowMs: number, limits: Map<string, number>): Promise<number> {
+  async settleUnregisteredRuns(date: string, nowMs: number, taskKeys: Set<string>): Promise<number> {
     const due = (await this.exec(
       `${SELECT_RUN} WHERE ${DUE_RUN_CONDITION} ORDER BY r.profile_id, r.not_before_ms, r.id`,
       [date, nowMs],
     )) as unknown as RunRow[]
-    const ids = due.filter((row) => !limits.has(row.taskKey)).map((row) => row.id)
+    const ids = due.filter((row) => !taskKeys.has(row.taskKey)).map((row) => row.id)
     if (ids.length === 0) return 0
     const placeholders = ids.map(() => '?').join(',')
     const rs = await this.client.execute({
@@ -1109,9 +1100,9 @@ export class AppDb {
   }
 
   /**
-   * 当天是否有到期待执行行（dispatcher 空转短路用）：
+   * 当天是否有到期待执行行（窗口池空转短路用）：
    * 用单行 EXISTS（底层走 .get，不会像多行查询那样每次分配原生结果数组），
-   * 无到期行时 dispatcher 直接返回，不读窗口列表、不写事务
+   * 无到期行时窗口池直接返回，不读窗口列表、不写事务
    */
   async hasDueRuns(date: string, nowMs: number): Promise<boolean> {
     const row = await this.client.getFirst({
@@ -1149,7 +1140,7 @@ export class AppDb {
     )) as unknown as Array<{ profileId: number; oldestQueuedAt: string | null }>
   }
 
-  /** 某窗口当天到期的最新增量排队行（窗口池会话取任务用；口径与 claimDueRuns 一致） */
+  /** 某窗口当天到期的最新增量排队行（窗口池会话取任务用；与 DUE_RUN_CONDITION 同口径） */
   async listPendingRunsForWindow(profileId: number, date: string, nowMs: number): Promise<RunRow[]> {
     return (await this.exec(
       `${SELECT_RUN} WHERE r.profile_id = ? AND ${DUE_RUN_CONDITION} ORDER BY r.queued_at, r.id`,
@@ -1157,104 +1148,9 @@ export class AppDb {
     )) as unknown as RunRow[]
   }
 
-  /** 处于 running 的窗口数（COUNT DISTINCT profile_id；会话级额度口径，跨午夜旧会话同样计入） */
-  async countRunningProfiles(): Promise<number> {
-    const rows = await this.exec(`SELECT COUNT(DISTINCT profile_id) AS c FROM runs WHERE status = 'running'`)
-    return Number(rows[0]?.c ?? 0)
-  }
-
-  /**
-   * DB 并发阀门：在同一个写事务内完成“查到期行 + 统计 running 占用 + 选窗口 + 条件认领”。
-   * 额度完全以 runs.status='running' 为准，进程重启/多实例共享同一库时不会双认领；
-   * 同一窗口的多个到期任务合并认领（一次会话），任务级与全局窗口级上限都在此裁决。
-   * @param opts.limits taskKey -> meta.concurrency；未登记的 taskKey 视为不可认领
-   * @param opts.maxConcurrentWindows 全局同时活跃窗口上限
-   * @returns 实际认领为 running 的行（按窗口、到期时间排序）
-   */
-  async claimDueRuns(opts: { date: string; nowMs: number; limits: Map<string, number>; maxConcurrentWindows: number }): Promise<RunRow[]> {
-    const { date, nowMs, limits, maxConcurrentWindows } = opts
-    const tx = await this.client.transaction('write')
-    try {
-      // 1. 当天到期且为最新 slot 的待执行行（统一到期口径）
-      const dueRs = await tx.execute({
-        sql: `${SELECT_RUN} WHERE ${DUE_RUN_CONDITION} ORDER BY r.profile_id, r.not_before_ms, r.id`,
-        args: [date, nowMs],
-      })
-      const due = dueRs.rows as unknown as RunRow[]
-      if (due.length === 0) {
-        await tx.commit()
-        return []
-      }
-
-      // 2. 当前 running 占用：窗口集合 + 每个任务的活跃窗口数（同窗口多任务只占 1 个全局额度）
-      //    不按 date 过滤：跨午夜仍在运行的旧会话必须继续占用同窗口/任务/全局额度
-      const runningRs = await tx.execute({
-        sql: `SELECT DISTINCT profile_id AS profileId, task_key AS taskKey FROM runs WHERE status = 'running'`,
-      })
-      const runningProfiles = new Set<number>()
-      const taskActive = new Map<string, number>()
-      for (const row of runningRs.rows) {
-        runningProfiles.add(Number(row.profileId))
-        const taskKey = String(row.taskKey)
-        taskActive.set(taskKey, (taskActive.get(taskKey) ?? 0) + 1)
-      }
-      let globalActive = runningProfiles.size
-
-      // 3. 按窗口分组（到期查询已按 profile_id 排序，保持窗口顺序稳定）
-      const groups = new Map<number, RunRow[]>()
-      for (const row of due) {
-        const list = groups.get(row.profileId) ?? []
-        list.push(row)
-        groups.set(row.profileId, list)
-      }
-
-      // 4. 逐窗口筛选：已有会话的窗口跳过；全局额度用尽即停止；任务额度按窗口去重计数
-      const selected: RunRow[] = []
-      for (const [profileId, rows] of groups) {
-        if (runningProfiles.has(profileId)) continue
-        if (globalActive >= maxConcurrentWindows) break
-        const eligible = rows.filter((row) => (taskActive.get(row.taskKey) ?? 0) < (limits.get(row.taskKey) ?? 0))
-        if (eligible.length === 0) continue
-        for (const row of eligible) {
-          selected.push(row)
-          taskActive.set(row.taskKey, (taskActive.get(row.taskKey) ?? 0) + 1)
-        }
-        globalActive++
-      }
-      if (selected.length === 0) {
-        await tx.commit()
-        return []
-      }
-
-      // 5. 条件 UPDATE：只认领仍为 pending/retry_wait 的行，避免与停止/其它写者重复
-      const placeholders = selected.map(() => '?').join(',')
-      const claimed = await tx.execute({
-        sql: `UPDATE runs
-              SET status = 'running', started_at = COALESCE(started_at, ?), error = NULL
-              WHERE id IN (${placeholders}) AND status IN ('pending','retry_wait')`,
-        args: [localWallFromMs(nowMs), ...selected.map((row) => row.id)],
-      })
-      // 命中数不足说明行已被其它写者改走：整批回滚，下一 tick 重试，避免部分认领
-      if (Number(claimed.rowsAffected ?? 0) !== selected.length) {
-        await tx.rollback()
-        return []
-      }
-
-      const rows = await tx.execute({
-        sql: `${SELECT_RUN} WHERE r.id IN (${placeholders}) ORDER BY r.profile_id, r.not_before_ms, r.id`,
-        args: selected.map((row) => row.id),
-      })
-      await tx.commit()
-      return rows.rows as unknown as RunRow[]
-    } catch (e) {
-      await tx.rollback().catch(() => {})
-      throw e
-    }
-  }
-
   /**
    * 单行停止：仅当该行仍是 pending/retry_wait 时原子结算为 skipped。
-   * 条件更新用于与 dispatcher 的 claimQueuedRuns 竞争——已被认领为 running 的行不会被覆盖；
+   * 条件更新用于与调度器的 claimQueuedRuns 竞争——已被认领为 running 的行不会被覆盖；
    * 返回是否确实由本次调用结算（false 表示行已不存在或已进入其它状态）。
    */
   async stopQueuedRun(profileId: number, taskKey: string, date: string, slot: number): Promise<boolean> {
@@ -1310,7 +1206,7 @@ export class AppDb {
     return Number(rs.rowsAffected ?? 0)
   }
 
-  /** 启动恢复：当天 running 行重置为 pending，等待 dispatcher 重新调度 */
+  /** 启动恢复：当天 running 行重置为 pending，等待调度器重新调度 */
   async requeueStaleRunning(date: string, nowMs: number): Promise<number> {
     const rs = await this.client.execute({
       sql: `UPDATE runs SET status = 'pending', not_before_ms = ?, finished_at = NULL, failure_kind = NULL,

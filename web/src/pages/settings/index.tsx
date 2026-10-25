@@ -55,7 +55,7 @@ export default function SettingsPage() {
           size="small"
           column={{ xs: 1, md: 2 }}
           items={[
-            { key: 'maxWin', label: '全局窗口上限', children: s.maxConcurrentWindows },
+            { key: 'maxWin', label: '开窗上限', children: s.maxOpenWindows },
             { key: 'breakerEnabled', label: '熔断开关', children: s.circuitBreakerEnabled ? '开启' : '关闭' },
             { key: 'breaker', label: '熔断阈值', children: s.circuitBreakerThreshold },
             { key: 'breakerCooldown', label: '冷却 / 上限', children: `${s.circuitBreakerCooldownSec / 60} / ${s.circuitBreakerMaxCooldownSec / 60} 分钟` },

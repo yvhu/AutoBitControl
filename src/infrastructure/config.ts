@@ -21,11 +21,9 @@ export interface BitBrowserConfig {
   retryBackoffMs: number[]
 }
 
-/** 窗口池配置（Phase 2 启用；默认关闭，不改动现有调度行为）：按内存水位与任务数复用窗口会话 */
+/** 窗口池配置（唯一调度器）：按内存水位与任务数复用窗口会话 */
 export interface WindowPoolConfig {
-  /** 窗口池总开关（默认 false：窗口池调度未启用；Phase 1 的开/关窗串行与开窗冷却已生效） */
-  enabled: boolean
-  /** Phase 2 窗口池允许同时打开的窗口数上限（旧 maxConcurrentWindows 保留到 Phase 3 移除） */
+  /** 窗口池允许同时打开的窗口数上限（窗口池调度、手动/面板开窗共用） */
   maxOpenWindows: number
   /** 系统内存保留余量（MB）：可用内存需高于该值才继续开窗 */
   memoryReserveMb: number
@@ -49,7 +47,7 @@ export interface WindowPoolConfig {
   cohortMaxSec: number
 }
 
-/** 全局健康检查配置（Phase 2 启用；默认值即当前行为） */
+/** 全局健康检查配置（窗口池开窗门禁） */
 export interface HealthConfig {
   /** 比特浏览器可用性探测间隔（毫秒） */
   bitbrowserProbeMs: number
@@ -63,7 +61,7 @@ export interface HealthConfig {
   backoffSec: number[]
 }
 
-/** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；并发为任务级 meta.concurrency + 全局窗口上限 maxConcurrentWindows 双闸门） */
+/** 执行引擎配置：超时、重试与熔断的全局默认值（任务级可覆盖部分字段；开窗上限见 windowPool.maxOpenWindows） */
 export interface ExecutionConfig {
   windowTimeoutMs: number
   taskTimeoutMs: number
@@ -78,11 +76,9 @@ export interface ExecutionConfig {
   circuitBreakerMaxCooldownSec: number
   /** 熔断每日重置时刻（本地 HH:mm，默认 23:59）：到点自动归零所有窗口的熔断计数；空字符串关闭自动重置 */
   circuitBreakerResetAt: string
-  /** 全局窗口上限：同时最多开几个窗口会话（机器资源容度；与任务级 concurrency 双闸门取更严者） */
-  maxConcurrentWindows: number
-  /** 窗口池配置（Phase 2 使用；enabled=false 时不影响现有调度） */
+  /** 窗口池配置（唯一调度器，始终生效） */
   windowPool: WindowPoolConfig
-  /** 全局健康检查配置（Phase 2 使用） */
+  /** 全局健康检查配置（窗口池门禁） */
   health: HealthConfig
 }
 
@@ -164,7 +160,7 @@ const defaults: AppConfig = {
     retryBackoffMs: [5000, 30000, 120000],
   },
   execution: {
-    // 单窗口会话超时 15 分钟（开窗+全部任务），防止异常卡死占用并发槽位
+    // 单窗口会话超时 15 分钟（开窗+全部任务），防止异常卡死占用窗口池额度
     windowTimeoutMs: 900000,
     // 单任务默认超时 3 分钟（任务 meta.timeoutSec 可覆盖）
     taskTimeoutMs: 180000,
@@ -181,11 +177,8 @@ const defaults: AppConfig = {
     circuitBreakerMaxCooldownSec: 7200,
     // 熔断每日重置时刻（本地墙钟 HH:mm）：到点归零所有窗口健康状态；"" 关闭自动重置
     circuitBreakerResetAt: '23:59',
-    // 全局窗口上限：所有任务共享的同时开窗总数封顶（默认 4；与任务级 meta.concurrency 双闸门取更严者）
-    maxConcurrentWindows: 4,
-    // 窗口池：Phase 2 启用（默认关闭，保持现有调度行为）
+    // 窗口池：始终启用的唯一调度器
     windowPool: {
-      enabled: false,
       maxOpenWindows: 4,
       // 系统保留 100MB 余量，低于临界水位 1GB 停止开窗，回升到 2GB 才恢复
       memoryReserveMb: 100,
@@ -331,22 +324,13 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (!Number.isFinite(cb.circuitBreakerMaxCooldownSec) || cb.circuitBreakerMaxCooldownSec < cb.circuitBreakerCooldownSec) {
     cb.circuitBreakerMaxCooldownSec = Math.max(cb.circuitBreakerCooldownSec, 7200)
   }
-  // 全局窗口上限：必须是正整数（负数/0/小数/非数字 → 回退 4 并告警），避免并发闸门失效
-  if (!Number.isInteger(cb.maxConcurrentWindows) || cb.maxConcurrentWindows < 1) {
-    warnings?.push(`execution.maxConcurrentWindows=${String(cb.maxConcurrentWindows)} 非法（必须为正整数），已回退默认 4`)
-    cb.maxConcurrentWindows = 4
-  }
-  // 窗口池参数校验：非法值逐项回落默认并告警（Phase 2 才消费，此处只保证配置始终合法）
+  // 窗口池参数校验：非法值逐项回落默认并告警（窗口池为唯一调度器，配置始终生效）
   // 段级校验：配置写成 null/数字等非对象时整体回退默认，避免后续读字段直接抛 TypeError
   if (!isPlainObject(cfg.execution.windowPool)) {
     warnings?.push(`execution.windowPool=${JSON.stringify(cfg.execution.windowPool)} 非法（必须为对象），已回退默认配置`)
     cfg.execution.windowPool = structuredClone(defaults.execution.windowPool)
   }
   const pool = cfg.execution.windowPool
-  if (typeof pool.enabled !== 'boolean') {
-    warnings?.push(`execution.windowPool.enabled=${String(pool.enabled)} 非法（必须为布尔值），已回退默认 false`)
-    pool.enabled = false
-  }
   if (!Number.isInteger(pool.maxOpenWindows) || pool.maxOpenWindows < 1) {
     warnings?.push(`execution.windowPool.maxOpenWindows=${String(pool.maxOpenWindows)} 非法（必须为正整数），已回退默认 4`)
     pool.maxOpenWindows = 4

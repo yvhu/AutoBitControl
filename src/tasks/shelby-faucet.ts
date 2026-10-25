@@ -100,7 +100,6 @@ export class ShelbyFaucetTask extends SiteTask {
     enabled: true,
     timeoutSec: 300,
     retry: { max: 2, backoffSec: 120 },
-    concurrency: 6,
   }
 
   /**

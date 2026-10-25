@@ -61,7 +61,7 @@ function TaskCard({ task }: { task: TaskMetaView }) {
           </Space>
           <div style={{ marginTop: 6, fontSize: 12 }}>
             <Typography.Text type="secondary">
-              ⏱ 钱包 {task.wallet ?? '无'} · 并发 {task.concurrency} · 重试{' '}
+              ⏱ 钱包 {task.wallet ?? '无'} · 重试{' '}
               {task.retry?.max ?? '默认'} 次
               {task.lastUpdated ? ` · 更新于 ${task.lastUpdated}` : ''}
             </Typography.Text>

@@ -4,7 +4,7 @@
  * 执行流程：打开任务页（占位 url）→ action 判已领（幂等）→ 判维护中（转失败）
  *          → 取邮箱（数据源优先、faker 兜底）→ 填邮箱 → 点领取 → 断言成功文案 → 截图
  * 设计：不连钱包，故无 login 声明；成功必须显式断言成功 toast
- * 时间预算：timeoutSec 240s（单任务整体超时）、retry.max 1 次 / 退避 300s、concurrency 4
+ * 时间预算：timeoutSec 240s（单任务整体超时）、retry.max 1 次 / 退避 300s
  */
 import { faker } from '@faker-js/faker'
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
@@ -24,7 +24,6 @@ export class FaucetExampleTask extends SiteTask {
     wallet: 'metamask',
     timeoutSec: 240, // 单任务整体超时秒数
     retry: { max: 1, backoffSec: 300 }, // 失败最多再试 1 次，退避 300s
-    concurrency: 4,
   }
 
   /**

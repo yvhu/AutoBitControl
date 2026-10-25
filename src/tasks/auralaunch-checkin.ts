@@ -5,7 +5,7 @@
  *          读题干+选项 → 问 AI（命中本地缓存则跳过）→ 点击答案 → 截「quiz-answer」存证 → 提交 → 等弹窗关闭
  *          → 若出现「Claim」按钮则点击领取（等成功提示作成功断言 + 存证截图），否则任务结束
  * 设计：run 内直接用 ../api 能力函数；答题答案按「题干」缓存在进程内存，同题跨窗口复用
- * 时间预算：timeoutSec 180s、retry.max 2 次 / 退避 600s、concurrency 4
+ * 时间预算：timeoutSec 180s、retry.max 2 次 / 退避 600s
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
 import { openPage, connectWallet, click, waitFor, getText, answerQuiz, takeScreenshot } from '../api'
@@ -78,7 +78,6 @@ export class AuralaunchCheckinTask extends SiteTask {
     wallet: 'metamask', // 使用的钱包类型（决定登录/签名走哪个适配器）
     timeoutSec: 180, // 单任务整体超时秒数
     retry: { max: 2, backoffSec: 600 }, // 失败最多再试 2 次，每次退避 600s（不占窗）
-    concurrency: 4, // 任务级并发上限（与全局 maxConcurrentWindows 取更严者）
   }
 
   /**

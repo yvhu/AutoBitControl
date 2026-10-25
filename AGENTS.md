@@ -21,8 +21,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 三层配置 + 环境变量覆盖（`src/infrastructure/config.ts` 的 `loadConfig` 是唯一入口）：
 
 - `config/config.json` — 通用参数（已提交）
-  - `execution.maxConcurrentWindows`：**旧调度**的全局开窗上限（缺省 4，与任务级 concurrency 一起由 DB claim 事务裁决，取更严者）；窗口池开启后由 `windowPool.maxOpenWindows` 接管，此项为遗留配置（Phase 3 移除）
-  - `execution.windowPool`：窗口池（**Phase 2 已实现，默认 `enabled=false`；把 `enabled` 改为 `true` 并重启即启用**）。开启后窗口跨任务复用、无任务级并发/顺序限制；有效池 = `min(maxOpenWindows, 内存允许的打开数)`，实际打开数含手动/`task:run` 窗口；内存 `warning` 停补池与普通分配（仅允许探测）、`critical` 停分配并关空闲；关闭窗口按最早 `queued_at` 排队轮转，idle/任务数/寿命/连续占用回收；开窗冷却由 `openCooldownMs` 控制
+  - `execution.windowPool`：窗口池（唯一调度器，始终启用，无开关）。窗口跨任务复用、无任务级并发/顺序限制；有效池 = `min(maxOpenWindows, 内存允许的打开数)`，实际打开数含手动/`task:run` 窗口；`maxOpenWindows` 同时是手动/面板开窗的统一上限；内存 `warning` 停补池与普通分配（仅允许探测）、`critical` 停分配并关空闲；关闭窗口按最早 `queued_at` 排队轮转，idle/任务数/寿命/连续占用回收；开窗冷却由 `openCooldownMs` 控制
   - `execution.health`：全局健康门禁（**Phase 2 已接入窗口池**；比特 API/断网/代理整体故障 → 暂停开窗 + 指数退避 + half-open 探测；暂停期间任务保持 `pending`，不批量失败）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
 - `config/.env` — 密钥与端口：`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
@@ -42,7 +41,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、ai/（OpenAI 兼容客户端，默认 DeepSeek，供 AI 答题）
 - `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
-- `engine/`：queue（runs 表即队列的 DB-backed dispatcher，DB claim 事务裁决全局窗口 + 任务级并发 + 同窗口任务合并 CoalescingEnqueuer）、window-pool（Phase 2 窗口池调度：跨任务复用窗口、每窗口任务集、内存/健康门禁、队列轮转）、memory-governor / global-health（内存水位与全局健康纯逻辑）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗/keep-open，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、run-recovery（启动时结算被新 slot 取代的旧行、把崩溃残留 running 重置为 pending）
+- `engine/`：queue（运行队列契约 `RunEnqueuer`/`SessionTask` 类型）、window-pool（唯一调度器：跨任务复用窗口、每窗口任务集、内存/健康门禁、队列轮转）、memory-governor / global-health（内存水位与全局健康纯逻辑）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗/keep-open，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、run-recovery（启动时结算被新 slot 取代的旧行、把崩溃残留 running 重置为 pending）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件
 - `web/`：React 18 + Vite 5 + antd 5 + react-query + react-router，页面在 web/src/pages/{dashboard,profiles,tasks,schedules,settings,docs}
@@ -53,7 +52,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 三步：在 `src/tasks/` 新建类继承 `SiteTask`（参考 `example-checkin.ts` 的逐行注释）→ 在 `src/tasks/index.ts` 的 ALL 数组登记（key 必须全局唯一）→ 重启生效。
 
-要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry/concurrency） + 可选 `login: LoginSpec`（声明式登录，`ctx.wallet.ensureLoggedIn` 执行）+ 可选 `action(ctx)`（默认 `run` 骨架：清理标签页 → `goto` 3 次重试 → `ensureLoggedIn` → `action`；多页等特殊流程可覆盖 `run`）；DOM 操作直接调 `ctx.page`（patchright），等待/恢复用 `ctx.recover`，竞速用 `ctx.race`，验证码用 `ctx.captcha.*`（仅 Turnstile 方框），截图用 `ctx.safeScreenshot`；成功必须显式断言；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
+要点：任务 = `meta`（key/name/url/wallet/timeoutSec/retry） + 可选 `login: LoginSpec`（声明式登录，`ctx.wallet.ensureLoggedIn` 执行）+ 可选 `action(ctx)`（默认 `run` 骨架：清理标签页 → `goto` 3 次重试 → `ensureLoggedIn` → `action`；多页等特殊流程可覆盖 `run`）；DOM 操作直接调 `ctx.page`（patchright），等待/恢复用 `ctx.recover`，竞速用 `ctx.race`，验证码用 `ctx.captcha.*`（仅 Turnstile 方框），截图用 `ctx.safeScreenshot`；成功必须显式断言；触发方式：手动（任务页「立即触发」= 全部启用窗口、看板行级「执行/重跑」= 单窗口单任务）+ 定时计划（「定时任务」栏目，到点全部启用窗口，错过不补跑、在途跳过）；`meta.enabled=false` 时手动触发 409；面板任务页开关写入本地库 task_states（运行时状态，换设备重置回代码默认值）。
 
 **AI 帮写任务（元素清单式模板）**：用户按 `docs/API-GUIDE.md` 附录模板提交新任务时：① 筛选选择器（原始长选择器 → 稳定短选择器，优先 id/data-testid/按钮文案，多候选说明取舍）② 缺失关键信息（登录标志/成功判定/数据源列）一次性列全问题，不逐条追问、不瞎编 ③ 直接写代码（登录竞速/刷新恢复/钱包/领取循环按既有任务模式），真机闭环照常。用户给的是真值素材，不猜。
 
@@ -104,7 +103,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 任务写完/改完后的真机验证，严格按以下方式执行（2026-10-09 用户明确要求，后续一律照此）：
 
 1. **批量真机验证剩余窗口**：新任务/改动用 `task:run` 逐个窗口验证（`BITBROWSER_PROFILE_ID=<窗口ID> TASK_KEY=<任务key> npm run task:run`），覆盖剩余未验证窗口；已签到/已答题的窗口由任务逻辑自适应（幂等）。
-2. **并发上限 4**：同时最多开 4 个窗口（全局 `maxConcurrentWindows` 缺省 4 即此上限；手动并行验证时每次也最多同时跑 4 个窗口，跑完一批再下一批）。
+2. **开窗上限 4**：同时最多开 4 个窗口（受 `execution.windowPool.maxOpenWindows` 缺省 4 约束；手动并行验证时每次也最多同时跑 4 个窗口，跑完一批再下一批）。
 3. **问题自解决 + 及时暂停**：遇到问题先自行排查解决；**若长时间无法解决（最多 3 分钟）或同一问题尝试 3 次仍失败，立刻暂停通知用户人工辅助**，不要反复派自动化重跑消耗窗口/额度。
 4. **每次验证前清理残留进程、单入口执行（2026-10-09 用户明确要求）**：开始验证前先检查并结束**此前由 AI 启动但未关闭的 node 进程**（`task:run`、探针脚本、临时起的服务/后端），确认无残留再开跑；**不要同时运行多个程序**——用户手动的 dev/pm2 后端在跑时，**不要再并行起 `task:run`/第二个后端**，统一走一个执行入口（优先复用已在运行的 dev 后端 API 触发），验证结束立即停止自启进程。
 5. **只验证「尚未关闭/尚未验证」的任务**：一次只推进未验证的窗口/任务，不重跑已完成的。
@@ -117,13 +116,13 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
 - 设计文档在 `docs/superpowers/specs/`（按日期），计划在 `docs/superpowers/plans/`；实现前可查对应 spec
-- 运行队列以 `runs` 表为准：触发即写 `pending + not_before_ms`（立即到期）；dispatcher 每秒按 DB 调度（同一窗口任务合并为一次会话）；并发阀门由 `claimDueRuns` DB 事务裁决（running 窗口/任务计数，计数不按日期，跨午夜旧会话仍占额度），dispatcher 不再维护内存 gates。`not_before_ms` 用于重试退避与排队到期，不再挂进程内定时器；`task:run` 不启动 dispatcher，按行内 `not_before_ms` 自行等待
+- 运行队列以 `runs` 表为准：触发即写 `pending + not_before_ms`（立即到期）；窗口池调度器每秒对账窗口并按到期行分配任务（同一窗口同一时刻只跑一个任务）；开窗/分配由池容量、内存与全局健康共同裁决。`not_before_ms` 用于重试退避与排队到期，不再挂进程内定时器；`task:run` 不启动调度器，按行内 `not_before_ms` 自行等待
 - **本地库一律经 `src/infrastructure/sqlite-client.ts` 访问，不要直接用 `@libsql/client` 本地 client**：它每次 `execute` 新建 prepared statement 且不释放（约 3.8KB/条）、`transaction()` 每次新开原生连接且从不关闭（约 178KB/次），长跑必然原生内存暴涨，定时触发叠加批量入队时进程以 `0xC0000005` 退出（2026-10-21 事故）。高频单行判断用 `AppDb` 内的 `first`/单行查询路径（`.all()` 每次调用也泄漏约 1KB，与行数无关）；新增批量写尽量在一个事务内完成
-- 跨午夜排队残留：旧日期的 `pending/retry_wait` 不补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）；旧日期已在运行的会话仅在进程存活期间继续跑完并按认领日期落终态（仍占额度），进程重启时 `recoverRuns` 调用 `settleOldRunningRuns` 把旧日期残留 `running` 结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。看板 ETA（`not_before_ms`）只是最早可调度下界，受并发上限/在途任务影响可能更晚
-- 批量触发（任务页「立即触发」）、`rerun-failed`、多窗口测试触发与定时触发都不再按窗口铺开：触发即写 `pending` 并立即到期。批量/测试/重跑/定时入口带 `skipIfSuccess`（窗口池启用时当天该窗口该任务最新行已成功则跳过，保证幂等；旧 `CoalescingEnqueuer` 回滚路径忽略该标记）；单窗口手动触发不带，始终新建一轮可重跑。
-- 窗口池（`execution.windowPool.enabled=true`，默认关闭）开启后：窗口跨任务保持打开、同一窗口同一时刻只跑一个任务；任务默认无并发/顺序限制（多窗口可同时跑同一任务，`meta.concurrency` 不生效）；关闭窗口按最早 `queued_at` 排队轮转；内存/全局健康门禁不满足时只停止开窗/分配，任务保持 `pending`。面板手动打开且存活（有调试地址）的窗口会直接作为该窗口的工作者接任务，但不计入 `poolSize`、不参与轮转、不自动关闭。旧 `CoalescingEnqueuer` 保留为回滚路径。
-- `not_before_ms` 用于重试退避与排队到期（触发即写当前时间到期），不用于初始错峰；单窗口入口（看板行级执行、task:run 脚本）同样立即到期。
-- 开窗/关窗统一经进程内 `SerialQueue` 串行（两次开窗最小间隔 `execution.windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待），关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记；孤儿回收只处理 `state=open` 且归属进程已死的窗口，`opening/closing` 一律跳过，避免误关正在打开/关闭的窗口。窗口池调度器内置后台对账：`opening/closing` 超时会重探/重试关窗，池窗口 pids 消失会清行；窗口池执行器不再走旧调度的跨进程额度等待/超时放行（旧 `CoalescingEnqueuer` 路径保留该行为）。
+- 跨午夜排队残留：旧日期的 `pending/retry_wait` 不补跑，dispatcher 跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）；旧日期已在运行的会话仅在进程存活期间继续跑完并按认领日期落终态（仍占额度），进程重启时 `recoverRuns` 调用 `settleOldRunningRuns` 把旧日期残留 `running` 结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。看板 ETA（`not_before_ms`）只是最早可调度下界，受池容量/内存/健康门禁与在途任务影响可能更晚
+- 批量触发（任务页「立即触发」）、`rerun-failed`、多窗口测试触发与定时触发都不再按窗口铺开：触发即写 `pending` 并立即到期。批量/测试/重跑/定时入口带 `skipIfSuccess`（当天该窗口该任务最新行已成功则跳过，保证幂等）；单窗口手动触发不带，始终新建一轮可重跑。
+- 窗口池是唯一调度器（始终启用）：窗口跨任务保持打开、同一窗口同一时刻只跑一个任务；任务无并发/顺序限制（所有已打开窗口可同时跑同一任务）；关闭窗口按最早 `queued_at` 排队轮转；内存/全局健康门禁不满足时只停止开窗/分配，任务保持 `pending`。面板手动打开且存活（有调试地址）的窗口会直接作为该窗口的工作者接任务，但不计入 `poolSize`、不参与轮转、不自动关闭。
+- `not_before_ms` 用于重试退避与排队到期（触发即写当前时间到期），不用于初始延迟；单窗口入口（看板行级执行、task:run 脚本）同样立即到期。
+- 开窗/关窗统一经进程内 `SerialQueue` 串行（两次开窗最小间隔 `execution.windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待），关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记；孤儿回收只处理 `state=open` 且归属进程已死的窗口，`opening/closing` 一律跳过，避免误关正在打开/关闭的窗口。窗口池调度器内置后台对账：`opening/closing` 超时会重探/重试关窗，池窗口 pids 消失会清行。
 - 真机任务卡死/连续失败时：先读 `data/logs/app.log` 与窗口截图定位（日志静默期=卡在无日志的等待循环）；**连续 2 次失败或 10 分钟无进展 → 立刻请求人工接入**（带日志+截图问用户），不要反复派自动化重跑（见 `docs/API-GUIDE.md` 第 6.7 节（真机经验））
 - 双后端实例会互相踩踏（2026-09-08 事故：旧 npm start 与新 dev 并存，定时计划双触发、同窗口双 CDP 会话、领水额度打乱）。已有单实例锁 `data/app.lock`（startApp 启动取锁，PID 存活检测自动接管残留锁）；报「检测到另一个后端实例正在运行」时先杀残留进程，确认无残留再删锁文件
 - **AI 自行启动的 node 进程，用后必须关闭**：无论出于什么目的（跑测试、临时探针脚本、起服务验证等），用完立即停止，绝不能留着后台跑——否则会和用户手动启动的 dev/pm2 后端冲突（端口占用、双实例踩踏）

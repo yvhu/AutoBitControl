@@ -327,7 +327,6 @@ describe('ShelbyExplorerTask 元信息', () => {
     expect(t.meta.enabled).toBe(true)
     expect(t.meta.timeoutSec).toBe(600)
     expect(t.meta.retry).toEqual({ max: 2, backoffSec: 60 })
-    expect(t.meta.concurrency).toBe(4)
     expect(t.meta.requiresFileAssign).toBe(true)
     expect(t.meta.sourceUrl).toBe('https://cryptorank.io/zh/drophunting/shelby-activity1120')
     expect(t.meta.lastUpdated).toBe('2026-10-09')

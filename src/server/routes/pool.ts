@@ -1,7 +1,7 @@
 /**
  * 窗口池路由（server 层）：池状态只读查询
  * 依赖方向：只依赖装配层注入的池状态快照函数；被 app 装配
- * 设计思路：窗口池未启用时返回 enabled=false + status=null，面板据此展示「窗口池未启用」
+ * 设计思路：窗口池是唯一调度器，接口始终返回当前快照；enabled 字段保留给旧面板兼容
  */
 import { Router } from 'express'
 import type { PoolStatus } from '../../engine/window-pool'
@@ -11,7 +11,7 @@ import { ok } from '../http/response'
  * @swagger
  * /api/pool/status:
  *   get:
- *     summary: 读取窗口池状态（未启用时 enabled=false、status=null）
+ *     summary: 读取窗口池状态（窗口池始终启用）
  *     responses:
  *       '200':
  *         description: 池状态快照
@@ -27,11 +27,11 @@ import { ok } from '../http/response'
  *                   properties:
  *                     enabled:
  *                       type: boolean
- *                       description: 是否启用窗口池调度（execution.windowPool.enabled）
+ *                       description: 恒为 true（窗口池是唯一调度器，保留字段兼容旧面板）
  *                     status:
  *                       type: object
  *                       nullable: true
- *                       description: 窗口池启用时的状态快照；未启用为 null
+ *                       description: 最近一次 tick 的状态快照
  *                       properties:
  *                         memoryState: { type: string, enum: [normal, warning, critical] }
  *                         globalHealthState: { type: string, enum: [normal, paused, probing] }
@@ -52,14 +52,10 @@ import { ok } from '../http/response'
  *                           description: 最近一次 tick 更新时间
  */
 
-export function poolRouter(deps: { poolStatus?: () => PoolStatus }): Router {
+export function poolRouter(deps: { poolStatus: () => PoolStatus }): Router {
   const router = Router()
-  // 池状态只读：启用时透出最近一次 tick 的快照，旧调度下明确返回未启用
+  // 池状态只读：透出最近一次 tick 的快照（窗口池始终启用）
   router.get('/pool/status', (req, res) => {
-    if (!deps.poolStatus) {
-      ok(res, { enabled: false, status: null })
-      return
-    }
     ok(res, { enabled: true, status: deps.poolStatus() })
   })
   return router

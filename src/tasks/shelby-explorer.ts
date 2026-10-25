@@ -42,7 +42,6 @@ export class ShelbyExplorerTask extends SiteTask {
     wallet: 'petra',
     timeoutSec: 600,
     retry: { max: 2, backoffSec: 60 },
-    concurrency: 4,
     requiresFileAssign: true,
   }
 

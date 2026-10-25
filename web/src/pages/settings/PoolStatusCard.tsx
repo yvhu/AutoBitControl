@@ -1,7 +1,7 @@
 /**
  * 窗口池状态卡片（settings 组件）：只读展示池指标，5 秒轮询
  * 依赖方向：依赖 settings/hooks 的 usePoolStatus 与 types 的状态枚举
- * 设计思路：未启用时展示明确提示与开启方式；启用时按内存/健康/容量/队列分组展示
+ * 设计思路：窗口池始终启用；状态快照不可用时提示稍后刷新，正常时按内存/健康/容量/队列分组展示
  */
 import { Alert, Card, Descriptions, Space, Spin, Tag, Typography } from 'antd'
 import type { PoolGlobalHealthState, PoolMemoryState } from '../../types'
@@ -40,11 +40,11 @@ export default function PoolStatusCard() {
         </div>
       ) : isError || !data ? (
         <Alert type="warning" showIcon message="窗口池状态加载失败" description="请检查后端服务是否运行" />
-      ) : !data.enabled || !data.status ? (
+      ) : !data.status ? (
         <Space direction="vertical" size={8}>
-          <Tag>窗口池未启用</Tag>
+          <Tag>窗口池状态不可用</Tag>
           <Typography.Text type="secondary">
-            在 config/config.json 将 execution.windowPool.enabled 设为 true 并重启后端后生效。
+            后端尚未产生首个池状态快照，请稍后刷新。
           </Typography.Text>
         </Space>
       ) : (

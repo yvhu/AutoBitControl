@@ -147,7 +147,7 @@ export default function SchedulesPage() {
       extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建计划</Button>}
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-        独立调度子系统：先配时间，再选任务。到点对全部启用窗口立即入队（开窗节奏由并发上限与开窗串行队列控制），错过不补跑，任务在途则跳过。
+        独立调度子系统：先配时间，再选任务。到点对全部启用窗口立即入队（开窗节奏由窗口池的容量、内存/健康门禁与开窗串行队列控制），错过不补跑，任务在途则跳过。
       </Typography.Paragraph>
       <Table<ScheduleItem>
         rowKey="id"

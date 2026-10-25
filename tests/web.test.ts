@@ -56,7 +56,7 @@ interface MockDeps {
   stopper: { stop: Mock; stopBatch: Mock }
   scheduler: { runNow: Mock }
   logger: { info: Mock; warn: Mock; error: Mock }
-  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; concurrency?: number; group?: { key: string; name: string } } }>
+  tasks: Map<string, { meta: { key: string; name: string; url: string; wallet: string; enabled?: boolean; group?: { key: string; name: string } } }>
   cfg: {
     web: { port: number }
     storage: { screenshotDir: string }
@@ -66,7 +66,7 @@ interface MockDeps {
       circuitBreakerEnabled: boolean
       circuitBreakerCooldownSec: number
       circuitBreakerMaxCooldownSec: number
-      maxConcurrentWindows: number
+      windowPool: { maxOpenWindows: number }
     }
     scheduler: { timezone: string }
     dataSource: { path: string }
@@ -74,8 +74,8 @@ interface MockDeps {
   bitbrowser: { health: Mock; sync: Mock; openBrowser: Mock; closeBrowser: Mock; isOpen: Mock; openPids: Mock }
   getRunById: Mock
   cancelSession: Mock
-  /** 窗口池状态快照（仅窗口池启用时注入） */
-  poolStatus?: Mock
+  /** 窗口池状态快照（窗口池是唯一调度器，始终注入） */
+  poolStatus: Mock
   datasource: {
     summary: Mock
     reload: Mock
@@ -141,7 +141,7 @@ function makeDeps(): MockDeps {
       web: { port: 3000 },
       storage: { screenshotDir: 'D:/StudySpace/AutoBitControl/data/screenshots' },
       bitbrowser: { apiBase: 'http://127.0.0.1:9999' },
-      execution: { circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, maxConcurrentWindows: 4 },
+      execution: { circuitBreakerThreshold: 2, circuitBreakerEnabled: true, circuitBreakerCooldownSec: 1800, circuitBreakerMaxCooldownSec: 7200, windowPool: { maxOpenWindows: 4 } },
       scheduler: { timezone: 'Asia/Shanghai' },
       dataSource: { path: 'D:/StudySpace/AutoBitControl/config/accounts.xlsx' },
     },
@@ -155,6 +155,7 @@ function makeDeps(): MockDeps {
     },
     getRunById: vi.fn().mockResolvedValue(null),
     cancelSession: vi.fn(),
+    poolStatus: vi.fn(),
     datasource: {
       summary: vi.fn().mockReturnValue({ rows: 2, columns: ['窗口', '邮箱'] }),
       reload: vi.fn().mockResolvedValue(undefined),
@@ -652,21 +653,6 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.code).toBe(0)
     expect(res.body.data[0].key).toBe('t1')
     expect(res.body.data[0].wallet).toBe('metamask')
-  })
-
-  it('GET /api/tasks 返回任务级并发（meta 未写时缺省 4）', async () => {
-    const res = await request(createApp(makeDeps() as never)).get('/api/tasks')
-    expect(res.body.code).toBe(0)
-    expect(res.body.data[0].concurrency).toBe(4)
-  })
-
-  it('GET /api/tasks meta 显式写并发时透传该值', async () => {
-    const deps = makeDeps()
-    deps.tasks.set('t2', { meta: { key: 't2', name: '任务2', url: '', wallet: 'petra', concurrency: 2 } })
-    const res = await request(createApp(deps as never)).get('/api/tasks')
-    expect(res.body.code).toBe(0)
-    const t2 = res.body.data.find((t: { key: string }) => t.key === 't2')
-    expect(t2.concurrency).toBe(2)
   })
 
   it('GET /api/tasks meta 显式写 group 时透传该值', async () => {
@@ -1192,7 +1178,7 @@ describe('server API（RESTful + envelope）', () => {
     expect(res.body.data.circuitBreakerEnabled).toBe(true)
     expect(res.body.data.circuitBreakerCooldownSec).toBe(1800)
     expect(res.body.data.circuitBreakerMaxCooldownSec).toBe(7200)
-    expect(res.body.data.maxConcurrentWindows).toBe(4)
+    expect(res.body.data.maxOpenWindows).toBe(4)
     expect(JSON.stringify(res.body.data)).not.toContain('clientKey')
     expect(JSON.stringify(res.body.data)).not.toContain('test-secret-key-abc123')
     expect(JSON.stringify(res.body.data)).not.toContain('password')
@@ -1238,7 +1224,7 @@ describe('server API（RESTful + envelope）', () => {
       updatedAt: '2026-10-22 09:00:00.000',
     }
 
-    it('窗口池启用时返回 enabled=true 与状态快照', async () => {
+    it('始终返回 enabled=true 与状态快照', async () => {
       const deps = makeDeps()
       deps.poolStatus = vi.fn().mockReturnValue(snapshot)
       const res = await request(createApp(deps as never)).get('/api/pool/status')
@@ -1246,13 +1232,6 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.code).toBe(0)
       expect(res.body.data).toEqual({ enabled: true, status: snapshot })
       expect(deps.poolStatus).toHaveBeenCalledTimes(1)
-    })
-
-    it('窗口池关闭时返回 enabled=false 且 status=null', async () => {
-      const res = await request(createApp(makeDeps() as never)).get('/api/pool/status')
-      expect(res.status).toBe(200)
-      expect(res.body.code).toBe(0)
-      expect(res.body.data).toEqual({ enabled: false, status: null })
     })
   })
 

@@ -45,7 +45,6 @@ export class DacCheckinMainnetTask extends SiteTask {
     wallet: 'metamask',
     timeoutSec: 600,
     retry: { max: 2, backoffSec: 600 },
-    concurrency: 4,
   }
 
   /**

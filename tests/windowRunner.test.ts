@@ -2,7 +2,7 @@
  * window-runner 单测（注入假驱动，不连真库）
  * 文件顶部共享夹具：makeProfile/makeDb/okPage/makeDriver/bitbrowser(bb)/logger/cfg/artifactsDir/walletPasswords
  * 多个 describe：基础会话编排（mock db）+ 批次透传与 pending 预写（有状态内存假库）
- * + 跨进程窗口上限 + runs 即队列端到端交接（真实临时库）
+ * + 开窗失败兜底关窗 + runs 即队列端到端交接（真实临时库）
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -1256,101 +1256,10 @@ describe('批次透传与 pending 预写', () => {
   })
 })
 
-describe('WindowRunner 跨进程窗口上限与开窗失败兜底关窗', () => {
+describe('WindowRunner 开窗失败兜底关窗', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
   const cfgObj = cfg as unknown as { execution: Record<string, unknown>; bitbrowser: Record<string, unknown> }
-  const cfgWithCap = (cap: number) => ({ ...cfgObj, execution: { ...cfgObj.execution, maxConcurrentWindows: cap } })
-
-  it('跨进程上限：pids 显示已满时先等待，放开后才开窗', async () => {
-    vi.useFakeTimers()
-    try {
-      let pidsCalls = 0
-      const bbFake = {
-        openBrowser: vi.fn().mockResolvedValue(open),
-        closeBrowser: vi.fn().mockResolvedValue(undefined),
-        openPids: vi.fn(async () => (++pidsCalls === 1 ? new Set(['a', 'b']) : new Set<string>())),
-      }
-      const db = makeDb({ listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' }), makeProfile({ id: 2, bitbrowserId: 'b' })]) })
-      const runner = new WindowRunner({
-        cfg: cfgWithCap(2) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
-        tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
-      })
-      const p = runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
-      expect(bbFake.openBrowser).not.toHaveBeenCalled() // 已满，先等待，未开窗
-      await vi.advanceTimersByTimeAsync(5000) // 跨过一轮等待轮询
-      await p
-      expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('窗口池执行器：跳过旧的全局窗口上限闸门（pids 已满也直接开窗）', async () => {
-    const bbFake = {
-      openBrowser: vi.fn().mockResolvedValue(open),
-      closeBrowser: vi.fn().mockResolvedValue(undefined),
-      openPids: vi.fn().mockResolvedValue(new Set(['a'])),
-    }
-    const db = makeDb({ listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' })]) })
-    const runner = new WindowRunner({
-      cfg: cfgWithCap(1) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
-      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
-      openOwnerKind: 'pool',
-    })
-    // 旧闸门会因 pids 已达 maxConcurrentWindows=1 等待 10 分钟；池执行器应直接开窗
-    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
-    expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
-  })
-
-  it('跨进程上限：孤儿回收的关窗也经 openCloseQueue 串行执行', async () => {
-    const pidsQueue = [
-      new Set(['a']),
-      new Set(['a']),
-      new Set<string>(),
-      new Set<string>(),
-    ]
-    const bbFake = {
-      openBrowser: vi.fn().mockResolvedValue(open),
-      closeBrowser: vi.fn().mockResolvedValue(undefined),
-      openPids: vi.fn(async () => pidsQueue.shift() ?? new Set<string>()),
-    }
-    const db = makeDb({
-      listProfiles: vi.fn().mockResolvedValue([makeProfile({ bitbrowserId: 'a' })]),
-      listOpenWindows: vi.fn().mockResolvedValue([
-        { bitbrowserId: 'a', http: '127.0.0.1:60000', ownerPid: 999999999, state: 'open' },
-      ]),
-    })
-    const queue = new SerialQueue(0)
-    const runSpy = vi.spyOn(queue, 'run')
-    const runner = new WindowRunner({
-      cfg: cfgWithCap(1) as never, db, bitbrowser: bbFake as never, driver: makeDriver(),
-      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
-      openCloseQueue: queue,
-    })
-    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
-    // 3 次串行操作：回收孤儿关窗 + 本轮开窗 + 会话结束关窗
-    expect(runSpy).toHaveBeenCalledTimes(3)
-    expect(runSpy.mock.calls[0][1]).toEqual({ cooldown: false })
-    expect(runSpy.mock.calls[1][1]).toBeUndefined()
-    expect(runSpy.mock.calls[2][1]).toEqual({ cooldown: false })
-    expect(bbFake.closeBrowser).toHaveBeenCalledWith('a')
-    expect(bbFake.closeBrowser).toHaveBeenCalledWith('bb-1')
-  })
-
-  it('跨进程上限：探测失败（本地 API 未就绪）直接放行开窗', async () => {
-    const bbFake = {
-      openBrowser: vi.fn().mockResolvedValue(open),
-      closeBrowser: vi.fn().mockResolvedValue(undefined),
-      openPids: vi.fn().mockRejectedValue(new Error('本地 API 未就绪')),
-    }
-    const runner = new WindowRunner({
-      cfg: cfgWithCap(1) as never, db: makeDb(), bitbrowser: bbFake as never, driver: makeDriver(),
-      tasks: new Map([['ok-task', new OkTask()]]), wallets: null as never, logger, artifactsDir, walletPasswords,
-    })
-    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
-    expect(bbFake.openBrowser).toHaveBeenCalledWith('bb-1')
-  })
 
   it('开窗耗尽：延迟 90s 兜底补关一次，清理可能半开的窗口', async () => {
     vi.useFakeTimers()

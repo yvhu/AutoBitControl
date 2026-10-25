@@ -53,9 +53,9 @@ describe('PoolStatusCard 窗口池状态卡片', () => {
     expect(screen.getByText('2026-10-22 09:00:00.000')).toBeInTheDocument()
   })
 
-  it('未启用时提示窗口池未启用与开启方式', async () => {
-    renderCard({ enabled: false, status: null })
-    expect(await screen.findByText('窗口池未启用')).toBeInTheDocument()
-    expect(screen.getByText(/execution\.windowPool\.enabled/)).toBeInTheDocument()
+  it('状态快照缺失时提示稍后刷新', async () => {
+    renderCard({ enabled: true, status: null })
+    expect(await screen.findByText('窗口池状态不可用')).toBeInTheDocument()
+    expect(screen.getByText(/稍后刷新/)).toBeInTheDocument()
   })
 })

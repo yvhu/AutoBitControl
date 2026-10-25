@@ -19,9 +19,7 @@
     "circuitBreakerCooldownSec": 1800,
     "circuitBreakerMaxCooldownSec": 7200,
     "circuitBreakerResetAt": "23:59",
-    "maxConcurrentWindows": 6,
     "windowPool": {
-      "enabled": false,
       "maxOpenWindows": 4,
       "memoryReserveMb": 100,
       "perWindowMb": 1024,

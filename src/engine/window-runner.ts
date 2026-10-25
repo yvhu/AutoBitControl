@@ -29,7 +29,6 @@ import { nextStateAfterFailure } from './state'
 import { classifyFailure } from './failure'
 import { TaskTimeoutError, type FailureKind } from '../infrastructure/run-errors'
 import { TaskContext } from './task-context'
-import { reclaimOrphanWindows } from './window-registry'
 import { SerialQueue } from './serial-queue'
 import type { TaskMeta } from './task'
 import type { SessionTask } from './queue'
@@ -46,10 +45,8 @@ const DELAYED_FALLBACK_CLOSE_MS = 90000
 const CLOSE_CONFIRM_TIMEOUT_MS = 30_000
 /** 关窗后 pids 确认轮询间隔（毫秒） */
 const CLOSE_CONFIRM_POLL_MS = 1000
-/** 跨进程全局窗口上限：等待轮询间隔（毫秒） */
-const CAPACITY_POLL_MS = 5000
-/** 跨进程全局窗口上限：单次等待总预算（毫秒；超出则放行并告警，不无限阻塞会话） */
-const CAPACITY_WAIT_MS = 10 * 60 * 1000
+/** 探测租约在窗口会话之外的余量（毫秒）：覆盖关窗/落库等收尾，避免租约提前过期被其它会话抢走 */
+const PROBE_LEASE_BUFFER_MS = 10 * 60 * 1000
 
 /** 窗口健康状态缺省值（库读取失败时按正常窗口处理） */
 const CLOSED_WINDOW_HEALTH: WindowHealth = {
@@ -73,11 +70,11 @@ type BreakerConfigFields = {
 }
 
 /**
- * 探测租约时长：覆盖整个窗口会话（含跨进程额度等待）并留余量，
+ * 探测租约时长：覆盖整个窗口会话并留收尾余量（开窗上限已由窗口池调度器裁决，runner 不再等待额度），
  * 避免探测期间其它会话误抢；供 runner 与启动恢复共用，保证两端口径一致
  */
 export function windowProbeLeaseMs(cfg: AppConfig): number {
-  return cfg.execution.windowTimeoutMs + CAPACITY_WAIT_MS + 10 * 60 * 1000
+  return cfg.execution.windowTimeoutMs + PROBE_LEASE_BUFFER_MS
 }
 
 /** 浏览器连接抽象：测试注入假驱动，生产用 PatchrightDriver */
@@ -290,7 +287,7 @@ export class WindowRunner {
       logger.info({ profile: profile.name }, '会话启动前已被停止，整窗任务跳过')
       return results
     }
-    // 会话开始前消费取消标记：已请求停止的任务不跑（错峰/排队中的会话也不开窗、直接结束）
+    // 会话开始前消费取消标记：已请求停止的任务不跑（排队中的会话也不开窗、直接结束）
     const runTasks: SessionTask[] = []
     for (const t of tasks) {
       if (registry?.isCancelled(profile.id, t.taskKey)) {
@@ -312,7 +309,7 @@ export class WindowRunner {
       registry?.clearSession(profile.id)
       return results
     }
-    // 预写 pending：新轮次任务落「待执行」行（批次看板在错峰/开窗期间即可见）；
+    // 预写 pending：新轮次任务落「待执行」行（批次看板在排队/开窗期间即可见）；
     // 续跑行（retry_wait 等非终态）不动——重试沿用原行与批次；
     // batch_id 只在此写入，后续 upsert 一律不传（ON CONFLICT COALESCE 保留）
     for (const t of runTasks) {
@@ -358,10 +355,10 @@ export class WindowRunner {
           reusedFlag = true
         } else {
           if (reused) logger.warn({ profile: profile.name, http: reused.http }, 'open_windows 登记缺少调试地址，忽略复用并重新开窗')
-          // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再过跨进程闸门、开窗、补 http。
-          // 窗口池开窗已由池调度器按 effectivePool/maxOpenWindows 裁决，不能再被旧的全局 maxConcurrentWindows 闸门卡住
+          // 先预留归属登记（避免「已开未登记」竞态被其它进程的孤儿回收误关），再开窗、补 http。
+          // 开窗额度由窗口池调度器按 effectivePool/maxOpenWindows 裁决；面板手动开窗由 profiles 路由校验，
+          // task:run 是单窗口调试入口，不额外做跨进程容量闸门
           await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid, this.openOwnerKind)
-          if (this.openOwnerKind !== 'pool') await this.waitForGlobalWindowCapacity()
           try {
             open = await this.openWithRetry(profile.bitbrowserId)
             await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open')
@@ -433,7 +430,7 @@ export class WindowRunner {
         // 扩展状态随浏览器实例重置，新会话必须重建）
         const walletSession = new WalletSession(page)
         // 第三段（循环内）：逐任务执行，失败只影响当前任务
-        // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证并发槽位不被长时间占用）
+        // 窗口级截止时间：到点后剩余任务标 skipped（异常卡死时保证窗口池额度不被长时间占用）
         const deadline = Date.now() + cfg.execution.windowTimeoutMs
         for (let i = 0; i < runTasks.length; i++) {
           const key = runTasks[i].taskKey
@@ -651,53 +648,6 @@ export class WindowRunner {
         .catch((e) => this.deps.logger.warn({ bitbrowserId, err: (e as Error).message }, '开窗失败兜底关窗失败（窗口可能残留，请手动清理）'))
     }, DELAYED_FALLBACK_CLOSE_MS)
     timer.unref?.()
-  }
-
-  /**
-   * 跨进程全局窗口闸门：本进程队列闸门只统计进程内会话，多进程（后端 + task:run 脚本）并存时
-   * 各自开满上限 → 实际开窗数翻倍。这里以比特浏览器 `/browser/pids` 实测的「当前已开窗口数」为准，
-   * 达到 `execution.maxConcurrentWindows` 时排队等待其它窗口释放；等待超预算则放行并告警（不无限阻塞会话）。
-   * 探测失败（本地 API 未就绪）直接放行，避免闸门本身阻断执行。
-   */
-  private async waitForGlobalWindowCapacity(): Promise<void> {
-    const max = this.deps.cfg.execution.maxConcurrentWindows
-    if (!Number.isFinite(max)) return
-    const ids = (await this.deps.db.listProfiles(false)).map((p) => p.bitbrowserId)
-    if (ids.length === 0) return
-    const deadline = Date.now() + CAPACITY_WAIT_MS
-    let reclaimedOnce = false
-    for (;;) {
-      let open: Set<string>
-      try {
-        open = await this.deps.bitbrowser.openPids(ids)
-      } catch (e) {
-        this.deps.logger.warn({ err: (e as Error).message }, '窗口占用探测失败，跳过跨进程窗口额度等待')
-        return
-      }
-      if (open.size < max) return
-      // 满额先甄别并回收占位者：仅 state=open 且归属进程已死的窗口直接关掉，腾出名额后再重新计数
-      if (!reclaimedOnce) {
-        reclaimedOnce = true
-        const reclaimed = await reclaimOrphanWindows({
-          db: this.deps.db,
-          bitbrowser: {
-            openPids: (ids) => this.deps.bitbrowser.openPids(ids),
-            // 孤儿回收的 close 也串行化，避免与正常开/关窗并发踩踏比特 API
-            closeBrowser: (id) => this.openCloseQueue.run(() => this.deps.bitbrowser.closeBrowser(id), { cooldown: false }),
-          },
-        }, this.deps.logger)
-        if (reclaimed > 0) {
-          this.deps.logger.info({ reclaimed, max }, '跨进程窗口满额：已回收孤儿窗口，重新计数')
-          continue
-        }
-      }
-      if (Date.now() >= deadline) {
-        this.deps.logger.warn({ open: open.size, max }, '跨进程窗口被在途会话占满且等待超时，仍继续开窗（放行）')
-        return
-      }
-      this.deps.logger.info({ open: open.size, max }, '跨进程窗口已达上限，等待其它窗口释放')
-      await new Promise((r) => setTimeout(r, CAPACITY_POLL_MS))
-    }
   }
 
   /** 取某任务当日下一轮 slot（库失败兜底 0——不阻塞任务执行） */

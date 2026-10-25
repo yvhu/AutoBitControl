@@ -4,7 +4,7 @@
  * 执行流程：打开任务页（占位 url）→ 声明式登录（Petra）→ action 填名称/符号
  *          → 下一步 → 填描述/数量 → 提交 → 等钱包确认交易 → 断言链上成功提示 → 截图
  * 设计：run 内直接用 ../api 能力函数（openPage/connectWallet/click/fill/waitFor/confirmTransaction）
- * 时间预算：timeoutSec 300s（单任务整体超时）、retry.max 1 次 / 退避 600s、concurrency 4
+ * 时间预算：timeoutSec 300s（单任务整体超时）、retry.max 1 次 / 退避 600s
  */
 import { faker } from '@faker-js/faker'
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
@@ -24,7 +24,6 @@ export class MintExampleTask extends SiteTask {
     wallet: 'petra', // 示例使用 Petra 钱包
     timeoutSec: 300, // 单任务整体超时秒数（铸币含钱包确认，预留较久）
     retry: { max: 1, backoffSec: 600 }, // 失败最多再试 1 次，退避 600s
-    concurrency: 4,
   }
 
   /**

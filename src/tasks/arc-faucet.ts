@@ -92,7 +92,6 @@ export class ArcFaucetTask extends SiteTask {
     enabled: true,
     timeoutSec: 420,
     retry: { max: 2, backoffSec: 120 },
-    concurrency: 3,
   }
 
   /**

@@ -30,8 +30,6 @@ export interface TaskMeta {
   timeoutSec?: number
   /** 失败重试：max 额外重试次数、backoffSec 重试间隔（秒） */
   retry?: { max: number; backoffSec: number }
-  /** 任务级并发：同一时间最多几个窗口并行跑该任务；缺省 DEFAULT_TASK_CONCURRENCY（4）；批量触发时滚动分批跑完 */
-  concurrency?: number
   /** 声明任务依赖「上传前自动文件随机分配」：计划配置 fileAssign 时 fire 先执行一次分配，失败则本任务跳过 */
   requiresFileAssign?: boolean
 }
@@ -40,9 +38,6 @@ export interface TaskMeta {
 export interface TaskRef {
   meta: TaskMeta
 }
-
-/** 任务级并发缺省值：meta.concurrency 未写时生效 */
-export const DEFAULT_TASK_CONCURRENCY = 4
 
 /** 供 tasks 层经 engine 取得运行时常量（避免 tasks 直连 infrastructure） */
 export { RECOVER_TEXTS, DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'

@@ -40,7 +40,6 @@ export class InceptionDachainTask extends SiteTask {
     wallet: 'metamask',
     timeoutSec: 900,
     retry: { max: 2, backoffSec: 600 },
-    concurrency: 4,
   }
 
   /**

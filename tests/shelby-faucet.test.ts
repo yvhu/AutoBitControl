@@ -171,7 +171,6 @@ describe('ShelbyFaucetTask 元信息', () => {
     const t = new ShelbyFaucetTask()
     expect(t.meta.key).toBe('shelby-faucet')
     expect(t.meta.name).toBe('Shelby 领水')
-    expect(t.meta.concurrency).toBe(6)
     expect(t.meta.retry?.backoffSec).toBe(120)
     expect(t.usdUrl).toBe('https://docs.shelby.xyz/apis/faucet/shelbyusd')
     expect(t.meta.category).toBe('faucet')

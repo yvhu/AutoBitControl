@@ -127,7 +127,7 @@ export interface PoolStatusSnapshot {
   updatedAt: string | null
 }
 
-/** GET /api/pool/status：未启用窗口池时 status 为 null */
+/** GET /api/pool/status：窗口池是唯一调度器，enabled 恒为 true；status 为最近一次 tick 快照 */
 export interface PoolStatusData {
   enabled: boolean
   status: PoolStatusSnapshot | null

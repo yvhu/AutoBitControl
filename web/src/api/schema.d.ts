@@ -482,7 +482,6 @@ export interface paths {
                                     /** @description 重试间隔（秒） */
                                     backoffSec?: number;
                                 } | null;
-                                concurrency?: number;
                                 group?: {
                                     /** @description 分组 key（全局唯一） */
                                     key?: string;
@@ -677,7 +676,7 @@ export interface paths {
                                 circuitBreakerEnabled?: boolean;
                                 circuitBreakerCooldownSec?: number;
                                 circuitBreakerMaxCooldownSec?: number;
-                                maxConcurrentWindows?: number;
+                                maxOpenWindows?: number;
                                 version?: string;
                                 datasource?: {
                                     available?: boolean;

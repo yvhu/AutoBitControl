@@ -15,7 +15,7 @@ export interface PublicSettings {
   circuitBreakerEnabled: boolean
   circuitBreakerCooldownSec: number
   circuitBreakerMaxCooldownSec: number
-  maxConcurrentWindows: number
+  maxOpenWindows: number
   version: string
   datasource: {
     available: boolean
@@ -50,7 +50,7 @@ export interface PublicSettings {
  *                     circuitBreakerEnabled: { type: boolean }
  *                     circuitBreakerCooldownSec: { type: integer }
  *                     circuitBreakerMaxCooldownSec: { type: integer }
- *                     maxConcurrentWindows: { type: integer }
+ *                     maxOpenWindows: { type: integer }
  *                     version: { type: string }
  *                     datasource:
  *                       type: object
@@ -104,7 +104,7 @@ export function settingsRouter(deps: {
       circuitBreakerEnabled: deps.cfg.execution.circuitBreakerEnabled,
       circuitBreakerCooldownSec: deps.cfg.execution.circuitBreakerCooldownSec,
       circuitBreakerMaxCooldownSec: deps.cfg.execution.circuitBreakerMaxCooldownSec,
-      maxConcurrentWindows: deps.cfg.execution.maxConcurrentWindows,
+      maxOpenWindows: deps.cfg.execution.windowPool.maxOpenWindows,
       version: deps.version,
       // 数据源状态：面板设置页展示（行数/列名/可用性），路径仅提示用途不泄密
       datasource: {

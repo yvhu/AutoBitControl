@@ -12,7 +12,6 @@ import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import { todayStr } from '../../infrastructure/db'
 import type { RunEnqueuer } from '../../engine/queue'
 import type { SiteTask } from '../../tasks/base'
-import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
 
 /**
  * @swagger
@@ -58,7 +57,6 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *                         properties:
  *                           max: { type: integer, description: 额外重试次数 }
  *                           backoffSec: { type: integer, description: 重试间隔（秒） }
- *                       concurrency: { type: integer, description: '任务级并发：同一时间最多几个窗口并行，缺省 4' }
  */
 
 /**
@@ -125,7 +123,7 @@ import { DEFAULT_TASK_CONCURRENCY } from '../../engine/task'
  *               profileIds:
  *                 type: array
  *                 items: { type: string }
- *                 description: 指定窗口 id 列表（测试入口，手选启用窗口；语义同批量触发，走并发闸门）
+ *                 description: 指定窗口 id 列表（测试入口，手选启用窗口；语义同批量触发，由窗口池按容量调度）
  *     responses:
  *       '200':
  *         description: 入队成功
@@ -166,7 +164,6 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: RunEnqueuer; tasks: Map
         wallet: m.wallet ?? null,
         timeoutSec: m.timeoutSec ?? null,
         retry: m.retry ?? null,
-        concurrency: m.concurrency ?? DEFAULT_TASK_CONCURRENCY,
       })
     }
     ok(res, list)
@@ -185,7 +182,7 @@ export function tasksRouter(deps: { db: AppDb; enqueuer: RunEnqueuer; tasks: Map
     if (!(await deps.db.getTaskEnabled(key, deps.tasks.get(key)!.meta.enabled ?? true))) throw new HttpError(409, ERROR_CODES.TASK_DISABLED, '任务已停用')
     // Express 5 bodyless 请求时 req.body 可能为 undefined，统一 ?? {} 兜底
     const body = (req.body ?? {}) as { bitbrowserId?: string; profileIds?: unknown }
-    // 指定窗口列表：测试入口（手选若干启用窗口；语义等同批量触发，走双闸门）
+    // 指定窗口列表：测试入口（手选若干启用窗口；语义等同批量触发）
     if (body.profileIds !== undefined) {
       if (!Array.isArray(body.profileIds) || body.profileIds.length === 0 || !body.profileIds.every((id) => typeof id === 'string' && id !== '')) {
         throw new HttpError(400, ERROR_CODES.INVALID_ARGUMENT, 'profileIds 必须为非空字符串数组')

@@ -12,33 +12,11 @@ describe('loadConfig', () => {
   it('无配置文件时返回默认值', () => {
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.bitbrowser.apiBase).toBe('http://127.0.0.1:54345')
-    expect(cfg.execution.maxConcurrentWindows).toBe(4)
+    expect(cfg.execution.windowPool.maxOpenWindows).toBe(4)
     // 批量错峰已移除：配置不再包含 stagger 字段
     const execution = cfg.execution as unknown as Record<string, unknown>
     expect(execution.staggerMaxSec).toBeUndefined()
     expect(execution.staggerJitterPct).toBeUndefined()
-  })
-
-  it('maxConcurrentWindows 非法或 0 回退 4 并产生告警', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    for (const value of [0, -1, 1.5, '4', null]) {
-      writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { maxConcurrentWindows: value } }))
-      const warnings: string[] = []
-      const cfg = loadConfig({ rootDir: dir, warnings })
-      expect(cfg.execution.maxConcurrentWindows).toBe(4)
-      expect(warnings.some((w) => w.includes('maxConcurrentWindows'))).toBe(true)
-    }
-  })
-
-  it('maxConcurrentWindows 正整数生效且无告警', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { maxConcurrentWindows: 6 } }))
-    const warnings: string[] = []
-    const cfg = loadConfig({ rootDir: dir, warnings })
-    expect(cfg.execution.maxConcurrentWindows).toBe(6)
-    expect(warnings).toEqual([])
   })
 
   it('旧配置 circuitBreakerResetEveryHours 产生废弃告警且不影响新配置', () => {
@@ -211,7 +189,6 @@ describe('loadConfig', () => {
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: { maxOpenWindows: 6 } } }))
     const cfg = loadConfig({ rootDir: dir })
     expect(cfg.execution.windowPool).toMatchObject({
-      enabled: false,
       maxOpenWindows: 6,
       memoryReserveMb: 100,
       perWindowMb: 1024,
@@ -240,7 +217,6 @@ describe('loadConfig', () => {
   it('windowPool 无配置文件时返回默认值且不告警', () => {
     const warnings: string[] = []
     const cfg = loadConfig({ rootDir: dir, warnings })
-    expect(cfg.execution.windowPool.enabled).toBe(false)
     expect(cfg.execution.windowPool.maxOpenWindows).toBe(4)
     expect(cfg.execution.windowPool.cohortMaxSec).toBe(1800)
     expect(warnings).toEqual([])
@@ -309,16 +285,6 @@ describe('loadConfig', () => {
     }
   })
 
-  it('windowPool enabled 非布尔值回退 false 并告警', () => {
-    const configDir = join(dir, 'config')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { windowPool: { enabled: 'yes' } } }))
-    const warnings: string[] = []
-    const cfg = loadConfig({ rootDir: dir, warnings })
-    expect(cfg.execution.windowPool.enabled).toBe(false)
-    expect(warnings.some((w) => w.includes('windowPool.enabled'))).toBe(true)
-  })
-
   it('health 非法 backoffSec（空数组/含非正数）回退默认并告警', () => {
     const configDir = join(dir, 'config')
     mkdirSync(configDir, { recursive: true })
@@ -349,7 +315,6 @@ describe('loadConfig', () => {
       const warnings: string[] = []
       const cfg = loadConfig({ rootDir: dir, warnings })
       expect(cfg.execution.windowPool).toMatchObject({
-        enabled: false,
         maxOpenWindows: 4,
         memoryReserveMb: 100,
         perWindowMb: 1024,
