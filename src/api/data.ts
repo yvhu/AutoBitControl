@@ -41,6 +41,7 @@ export async function takeScreenshot(ctx: TaskContext, name: string, page?: Page
     mkdirSync(ctx.artifactsDir, { recursive: true })
     const file = join(ctx.artifactsDir, `${name}.png`)
     await (page ?? ctx.page).screenshot({ path: file, fullPage: false })
+    ctx.recordScreenshot(file)
     return file
   } catch (e) {
     ctx.log.warn({ step: 'screenshot', window: ctx.profile.name, err: (e as Error).message }, '截图失败（不影响任务结果）')

@@ -61,6 +61,8 @@ pm2 startup   # 按提示执行输出的命令
 钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按钱包类型配置（JSON 映射，`{"metamask":"密码","petra":"密码"}`，同类型钱包共用同一密码，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，保留最近 N 天；启动时与按天滚动时均清理过期文件）。
 
+截图按 `storage.screenshotRetainDays` 保留（默认 3 天，启动时与每 6 小时清理超期日期目录）；路径为 `data/screenshots/<日期>/<窗口>/<任务>/slot-<slot>/`，每小时/手动重跑按 slot 隔离。
+
 ## 日志
 
 - 终端实时输出：`[时间] 级别 消息`，中文正常显示无乱码；颜色按终端能力自动检测（`storage.prettyColorize` 可强制开关）

@@ -49,6 +49,19 @@ export class TaskContext {
   /** 本任务的步骤记录器（api/diag 经 recorder getter 读写运行时间线） */
   private recorderInstance = new StepRecorder()
 
+  /** 本次 attempt 任务主动截图的最后路径（api/data 写入；window-runner 成功时优先落 run.screenshot） */
+  private screenshotPath: string | null = null
+
+  /** 记录任务主动截图路径（仅 api/data 的 takeScreenshot 成功时调用） */
+  recordScreenshot(path: string): void {
+    if (path) this.screenshotPath = path
+  }
+
+  /** 本次 attempt 最后一张任务截图；未截图为 null（框架据此决定是否补成功图） */
+  get lastScreenshotPath(): string | null {
+    return this.screenshotPath
+  }
+
   /** 当前页面（patchright Page，任务侧只读使用，用于自定义选择器操作） */
   get page(): Page {
     return this.deps.page

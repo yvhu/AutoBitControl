@@ -136,6 +136,16 @@ describe('loadConfig', () => {
     expect(loadConfig({ rootDir: dir }).storage.dbRetainDays).toBe(30)
   })
 
+  it('storage.screenshotRetainDays 默认 3 且可被配置文件覆盖', () => {
+    expect(loadConfig({ rootDir: dir }).storage.screenshotRetainDays).toBe(3)
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      storage: { screenshotRetainDays: 7 },
+    }))
+    expect(loadConfig({ rootDir: dir }).storage.screenshotRetainDays).toBe(7)
+  })
+
   it('scheduler.timezone 默认 Asia/Shanghai，可被 config.json 覆盖', () => {
     expect(loadConfig({ rootDir: dir }).scheduler.timezone).toBe('Asia/Shanghai')
     const configDir = join(dir, 'config')

@@ -745,8 +745,9 @@ export class WindowRunner {
         ? this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'failed', patch), null)
         : this.safeDb(() => db.upsertRun(profile.id, taskKey, date, slot, 'failed', patch), null)
     }
-    // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/
-    const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey)
+    // 产物目录：data/screenshots/<日期>/<窗口>/<任务>/slot-<slot>/
+    // slot 隔离每小时/每次手动重跑；同一轮重试仍共用本目录。
+    const artifacts = join(this.deps.artifactsDir, date, profile.bitbrowserId, taskKey, `slot-${slot}`)
     try {
       mkdirSync(artifacts, { recursive: true })
     } catch (e) {
@@ -790,9 +791,10 @@ export class WindowRunner {
         await withTimeout(task.run(ctx), timeoutSec * 1000, `任务 ${taskKey} 超时`)
         // 任务正常结束同样清理取消标记（任务一次运行以任意终态收尾即排空，防止残留误伤下一次合法触发）
         this.deps.cancelRegistry?.clear(profile.id, taskKey)
-        // 成功截图：直接取页面截图写产物目录（TaskContext 已收敛为数据袋子，不再有 screenshot 方法）
+        // 成功截图：任务主动截图优先（避免框架与任务各截一张的重复）；任务没截图才由框架兜底。
+        const taskShot = ctx?.lastScreenshotPath ?? null
         const successShot = join(artifacts, `${date}-success.png`)
-        const shot = await page.screenshot({ path: successShot }).then(() => successShot).catch(() => null)
+        const shot = taskShot ?? await page.screenshot({ path: successShot }).then(() => successShot).catch(() => null)
         const finishedAt = localWallNow()
         // CAS：任务执行期间 stop 已把 running 结算为 skipped 时不覆盖停止结果
         const row = await this.safeDb(() => db.updateRunIfRunning(profile.id, taskKey, date, slot, 'success', { error: null, screenshot: shot, finishedAt, failureKind: null }), null)

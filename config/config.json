@@ -73,6 +73,6 @@
     "logLevel": "info",
     "logRetainDays": 7,
     "dbRetainDays": 90,
-    "screenshotRetainDays": 90
+    "screenshotRetainDays": 3
   }
 }

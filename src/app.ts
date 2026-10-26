@@ -9,7 +9,7 @@ import { acquireSingleInstanceLock, singleInstanceLockPath, SingleInstanceError 
 import { createLogger, type Logger } from './infrastructure/logger'
 import { AppDb, type OpenWindowState, type ProfileRow } from './infrastructure/db'
 import { DataSource } from './infrastructure/datasource'
-import { pruneScreenshots } from './infrastructure/screenshot-cleanup'
+import { startScreenshotCleanupSchedule } from './infrastructure/screenshot-cleanup'
 import { createBitBrowserClient, type BitBrowserClient } from './integrations/bitbrowser'
 import { PatchrightDriver, WindowRunner, windowProbeLeaseMs } from './engine/window-runner'
 import { SerialQueue } from './engine/serial-queue'
@@ -332,15 +332,15 @@ export async function startApp(): Promise<void> {
     logger.warn({ err: (e as Error).message }, '历史数据清理失败（不影响运行）')
   }
 
-  // 截图目录按日期清理：早于保留期限的日期目录整目录删除（截图文件无限累积，需与 DB 同节奏收敛）
-  try {
-    const prunedScreenshots = pruneScreenshots(cfg.storage.screenshotDir, cfg.storage.screenshotRetainDays)
-    if (prunedScreenshots.removed > 0) {
-      logger.info({ retainDays: cfg.storage.screenshotRetainDays, removed: prunedScreenshots.removed }, '已清理超期截图目录')
-    }
-  } catch (e) {
-    logger.warn({ err: (e as Error).message }, '截图目录清理失败（不影响运行）')
-  }
+  // 截图目录按日期清理：启动立即清一次，之后每 6 小时重复（服务长开时不能只靠启动清理）
+  const screenshotCleanup = startScreenshotCleanupSchedule({
+    screenshotDir: cfg.storage.screenshotDir,
+    retainDays: cfg.storage.screenshotRetainDays,
+    onRemoved: ({ removed }) => {
+      if (removed > 0) logger.info({ retainDays: cfg.storage.screenshotRetainDays, removed }, '已清理超期截图目录')
+    },
+    onError: (err) => logger.warn({ err: err.message }, '截图目录清理失败（不影响运行）'),
+  })
 
   // 优雅退出：server.close（回调中关库退出）→ 3 秒强制兜底（keep-alive 连接挂着时不阻塞退出）
   let finishing = false
@@ -359,6 +359,7 @@ export async function startApp(): Promise<void> {
     scheduler.stop()
     enqueuer.stop()
     maintenance.stop()
+    screenshotCleanup.stop()
     logger.info('正在关闭...')
     server.close(() => finish())
     // 强制退出兜底：3 秒内未优雅关闭则直接收尾（unref 保证不阻止进程自然退出）

@@ -1,5 +1,5 @@
 /**
- * 运行截图预览（dashboard 层）：列出某次运行的全部截图（1–3 张）并支持大图预览
+ * 运行截图预览（dashboard 层）：列出某次运行当前 slot 的截图并支持大图预览
  * 依赖方向：仅依赖 api/endpoints 与 types；数据由 react-query 缓存（打开时按需拉取）
  */
 import type { ReactNode } from 'react'

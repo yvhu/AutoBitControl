@@ -58,7 +58,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 ## 数据层
 
-本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次；同时即运行队列，`not_before_ms` 控制队列到期/重试退避）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享；`state` 区分 opening/open/closing，`owner_kind` 区分 pool/manual/taskrun，并记 `last_used_at`/`tasks_done`，窗口池用于复用、轮转与寿命回收）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
+本地 SQLite（libsql file: 引擎），库文件 `storage.dbPath`（默认 `data/app.db`，已 gitignore），`src/infrastructure/db.ts` 的 AppDb 封装全部访问，表结构首次打开自动创建：`profiles`（窗口）、`runs`（窗口×任务×日期×slot 唯一，`batch_id` 归属运行批次；同时即运行队列，`not_before_ms` 控制队列到期/重试退避）、`batches`（运行批次）、`task_states`、`open_windows`（面板与 task:run 跨进程共享；`state` 区分 opening/open/closing，`owner_kind` 区分 pool/manual/taskrun，并记 `last_used_at`/`tasks_done`，窗口池用于复用、轮转与寿命回收）。WAL 模式支持多进程并发开库；启动时按 `storage.dbRetainDays`（默认 90）清理超期历史数据；截图按 `storage.screenshotRetainDays`（默认 3 天）在启动与每 6 小时清理超期日期目录。新增字段加 migrate 补列逻辑（老库兼容）。运行状态机：pending → running → success / retry_wait / captcha_failed / failed / skipped（`captcha_failed` 为历史遗留终态，无产生路径，保留状态机兼容；tests 与 db 均用注入隔离，不连真库）。
 
 ## 前端与 API 变更
 

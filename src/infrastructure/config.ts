@@ -100,7 +100,7 @@ export interface StorageConfig {
   logRetainDays?: number
   /** 数据库历史数据保留天数（runs/batches 超期行启动时清理，默认 90） */
   dbRetainDays: number
-  /** 截图目录按日期保留天数（默认 90；启动时删除早于截止日的日期目录） */
+  /** 截图目录按日期保留天数（默认 3；启动与每 6 小时删除超期日期目录） */
   screenshotRetainDays: number
 }
 
@@ -213,8 +213,8 @@ const defaults: AppConfig = {
     logRetainDays: 7,
     // 数据库历史数据保留 90 天，超期行启动时清理（runs/batches）
     dbRetainDays: 90,
-    // 截图目录按日期保留 90 天，早于截止日的日期目录启动时删除（grid-debug 等非日期目录不动）
-    screenshotRetainDays: 90,
+    // 截图目录按日期保留 3 天；启动与每 6 小时删除超期日期目录（grid-debug 等非日期目录不动）
+    screenshotRetainDays: 3,
   },
   // 钱包解锁密码不落默认值：由 config.json/config.local.json 的 wallet.passwords 或环境变量提供（key 为钱包类型，如 metamask/petra，同类型钱包共用同一密码）
   wallet: { passwords: {} },

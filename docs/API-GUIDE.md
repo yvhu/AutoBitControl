@@ -146,7 +146,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
 4. **停止运行**：看板批次卡片头部「停止」停整批（含排队中尚未开窗的行，这些行会直接结算为 `skipped`、不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
 5. **重跑批次失败**：看板批量批次卡片头部「重跑失败 N」弹窗预览失败窗口今天最新一轮；已成功窗口默认不勾（可手勾强跑），停用/熔断/执行中的窗口不可勾。确认后按勾选窗口新建「批量 · 重跑失败」批次（对应 GET /api/batches/{id}/rerun-candidates、POST /api/batches/{id}/rerun-failed）。
-6. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`，日志在 `data/logs/app.log`。
+6. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/`，日志在 `data/logs/app.log`。
 
 注意：三个示例任务用占位地址 `https://example.com/`（可直接跑通导航步骤），但都显式写了 `enabled: false`，不参与日常执行；调试时在面板手动触发或用 `task:run` 脚本跑。改完任务代码必须**重启服务**才生效（后端无 watch）。
 
@@ -771,7 +771,7 @@ await setInputFiles(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // �
 **注意**
 
 - **成功截图一律用它**：持续动画页面（倒计时/动态榜）会让 CDP 截图偶发挂起，直接 await 会把已成功的任务误报失败（真机教训，见第 6 章）。
-- 目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；成功/失败截图框架还会自动补拍。
+- 目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/`；同一轮重试共用目录，每小时/每次手动重跑独立；成功优先用任务截图，任务没截时框架补 `<日期>-success`，失败框架补 `<日期>-attemptN`。
 
 ### 3.7 诊断（`src/api/diag.ts`）
 
@@ -1151,7 +1151,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 6.5 截图与日志位置
 
-- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/`；每次运行通常 1–3 张（任务显式截图如 `quiz-answer`/`claim-success`，加上框架自动的 `<日期>-success` / `<日期>-attemptN`）。看板批次明细点「截图」打开画廊，可看该 run 的全部图片（`GET /api/runs/:id/artifacts` 列出目录内 png，`/api/screenshots?path=` 读取原图）；失败诊断弹窗里也能打开同一画廊。
+- **截图**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/`；同一轮重试共用目录，每小时/手动重跑按 slot 隔离。成功普通任务通常 1 张（任务截图优先，任务没截时框架补 `<日期>-success`），特殊任务（如答题+领取）2 张；失败框架补 `<日期>-attemptN`。看板批次明细点「截图」只看当前 run 的 slot 目录（`GET /api/runs/:id/artifacts`；旧数据回退读扁平目录，`/api/screenshots?path=` 读取原图）；失败诊断弹窗里也能打开同一画廊。截图目录保留 `storage.screenshotRetainDays` 天（默认 3），启动时与运行中每 6 小时清理超期日期目录。
 - **日志**：`data/logs/app.log`（当天）+ `data/logs/app.log.<日期>`（按天滚动，保留 `storage.logRetainDays` 天，默认 7）；级别由 `storage.logLevel` 控制，控制台同步输出。
 - **运行状态**：`pending → running → success | failed | retry_wait → …`；`pending` = 已入队待调度，`retry_wait` = 等待退避到期，`skipped` = 开窗失败 / 窗口超时 / 熔断跳过 / 手动停止 / 任务未注册（到期但任务 key 已不在注册表）。
 - `runs.failure_kind` 记录每次尝试的失败分类；只有 `environment` 且终态失败才会计入窗口熔断，`task/timeout/stopped` 不计。
@@ -1191,7 +1191,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 任务失败时（含重试前每次尝试），框架自动采集当前窗口的排障上下文并落盘，面板看板失败行点「诊断」即可查看，不必先翻日志文件。
 
 - **采集内容**：失败时的页面 URL、页面可见文本（截前 2000 字）、弹窗文本（`[role="dialog"]` 截前 1000 字）、步骤时间线（`recordStep` 记录的每步耗时与成败）、错误信息、窗口名与任务 key；另有失败截图。
-- **落盘位置**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/<日期>-attempt<n>.diag.json`（与截图同目录，`attempt<n>` 对应第 n 次尝试）；路径记在该 run 的 `runs.diag_path`。
+- **落盘位置**：`data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/<日期>-attempt<n>.diag.json`（与截图同目录，`attempt<n>` 对应第 n 次尝试）；路径记在该 run 的 `runs.diag_path`。
 - **面板入口**：看板批次明细的失败行（`status=failed`）「诊断」按钮，弹窗展示错误 / URL / 步骤时间线 / 弹窗文本 / 页面文本，并可跳转失败截图。
 - **接口**：`GET /api/diagnostics/:runId` 按 run id 返回诊断包 JSON（DiagBundle）；run 不存在、无诊断或文件不可读统一 404（业务码 `40408`）。
 - **不影响成败**：采集全程 best-effort，采集或写盘异常只告警，绝不改变任务成功/失败结果，也不计入熔断。
@@ -1322,7 +1322,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |
 | `wallet` | `passwords`（`{}`） | 钱包解锁密码映射（key 为钱包类型）；一般用环境变量 `WALLET_PASSWORDS`（JSON）配置 |
 | `dataSource` | `path`（`config/accounts.xlsx`） | 账号/素材数据源 Excel，每个窗口按行领取 |
-| `storage` | `dbPath`、`screenshotDir`、`logDir`、`logLevel`、`logRetainDays`（7）、`dbRetainDays`（90）、`screenshotRetainDays`（90） | 本地 SQLite、截图与日志的路径与保留天数 |
+| `storage` | `dbPath`、`screenshotDir`、`logDir`、`logLevel`、`logRetainDays`（7）、`dbRetainDays`（90）、`screenshotRetainDays`（3） | 本地 SQLite、截图与日志的路径与保留天数；截图启动时及每 6 小时清理超期日期目录 |
 
 **环境变量覆盖**（写在 `config/.env`，优先级最高）：
 

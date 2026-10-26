@@ -6,6 +6,7 @@ import { StepRecorder } from '../src/automation'
 function makeCtx(over: Record<string, unknown> = {}) {
   const locatorSetInputFiles = vi.fn(async () => {})
   const screenshot = vi.fn(async () => {})
+  const recordScreenshot = vi.fn()
   const ctx = {
     accountRow: { 邮箱: 'a@b.com', 密码: '' } as Record<string, string> | null,
     profile: { name: 'W1' },
@@ -14,11 +15,12 @@ function makeCtx(over: Record<string, unknown> = {}) {
       screenshot,
     },
     artifactsDir: 'C:/tmp/art',
+    recordScreenshot,
     log: { info: vi.fn(), warn: vi.fn() },
     recorder: new StepRecorder(),
     ...over,
   }
-  return { ctx: ctx as never, spies: { setInputFiles: locatorSetInputFiles, screenshot } }
+  return { ctx: ctx as never, spies: { setInputFiles: locatorSetInputFiles, screenshot, recordScreenshot } }
 }
 
 describe('api/data getAccountValue', () => {
@@ -52,15 +54,17 @@ describe('api/data setInputFiles', () => {
 })
 
 describe('api/data takeScreenshot', () => {
-  it('成功：返回产物路径', async () => {
-    const { ctx } = makeCtx()
+  it('成功：返回产物路径并记录到 ctx', async () => {
+    const { ctx, spies } = makeCtx()
     const out = await takeScreenshot(ctx, 'shot')
     expect(out.endsWith('shot.png')).toBe(true)
+    expect(spies.recordScreenshot).toHaveBeenCalledWith(out)
   })
 
-  it('失败：返回空串并告警', async () => {
-    const { ctx } = makeCtx({ page: { screenshot: vi.fn(async () => { throw new Error('boom') }) } })
+  it('失败：返回空串并告警，不记录路径', async () => {
+    const { ctx, spies } = makeCtx({ page: { screenshot: vi.fn(async () => { throw new Error('boom') }) } })
     expect(await takeScreenshot(ctx, 'shot')).toBe('')
+    expect(spies.recordScreenshot).not.toHaveBeenCalled()
     expect((ctx as never as { log: { warn: ReturnType<typeof vi.fn> } }).log.warn).toHaveBeenCalled()
   })
 

@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WindowRunner, type BrowserDriver } from '../src/engine/window-runner'
+import { takeScreenshot } from '../src/api'
 import { SerialQueue } from '../src/engine/serial-queue'
 import { CancelRegistry } from '../src/engine/cancel-registry'
 import { AppDb, todayStr, type ProfileRow, type RunRow } from '../src/infrastructure/db'
@@ -160,6 +161,14 @@ class FailTask implements SiteTask {
   run = vi.fn().mockRejectedValue(new Error('boom'))
 }
 
+/** 成功前主动截图：验证任务截图优先、框架不再重复补成功图 */
+class ShottedOkTask implements SiteTask {
+  meta = { key: 'shot-task', name: 'SHOT', url: 'https://x.io' }
+  run = vi.fn(async (ctx: TaskContext) => {
+    await takeScreenshot(ctx, 'task-success')
+  })
+}
+
 /** 钱包探针任务 fixture：run 内经 ctx 字段装配 WalletActions 并 ready，验证 WalletSession 注入链路（TaskContext 已无 wallet 命名空间） */
 class WalletProbeTask implements SiteTask {
   meta = { key: 'wallet-probe', name: 'WP', url: 'https://x.io', wallet: 'metamask' }
@@ -191,6 +200,52 @@ describe('WindowRunner', () => {
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     expect(statuses(db)).toContain('success')
     expect(bitbrowser.closeBrowser).toHaveBeenCalledWith('bb-1')
+  })
+
+  it('任务已截图时不再补框架成功图，run.screenshot 指向任务截图', async () => {
+    const db = makeDb()
+    const page = { ...okPage, screenshot: vi.fn().mockResolvedValue(Buffer.from('')) }
+    const driver = makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) })
+    const runner = makeRunner({ db, driver, tasks: new Map([['shot-task', new ShottedOkTask()]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'shot-task' }])
+    const success = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'success')
+    expect(success![5].screenshot).toBe(join(artifactsDir, todayStr(), 'bb-1', 'shot-task', 'slot-0', 'task-success.png'))
+    expect(page.screenshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('任务没截图时框架补成功图，且落在当前 slot 目录', async () => {
+    const db = makeDb()
+    const page = { ...okPage, screenshot: vi.fn().mockResolvedValue(Buffer.from('')) }
+    const driver = makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) })
+    const runner = makeRunner({ db, driver })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const success = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'success')
+    expect(success![5].screenshot).toBe(join(artifactsDir, todayStr(), 'bb-1', 'ok-task', 'slot-0', `${todayStr()}-success.png`))
+    expect(page.screenshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('每小时/手动重跑按新 slot 分目录（不在旧轮次目录覆盖）', async () => {
+    const db = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'success', attempts: 1, slot: 1 } as Partial<RunRow>),
+      nextRunSlot: vi.fn().mockResolvedValue(2),
+    })
+    const page = { ...okPage, screenshot: vi.fn().mockResolvedValue(Buffer.from('')) }
+    const driver = makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) })
+    const runner = makeRunner({ db, driver })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const success = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'success')
+    expect(success![5].screenshot).toBe(join(artifactsDir, todayStr(), 'bb-1', 'ok-task', 'slot-2', `${todayStr()}-success.png`))
+  })
+
+  it('失败截图与诊断包落在当前 slot 目录', async () => {
+    const db = makeDb()
+    const page = { ...okPage, screenshot: vi.fn().mockResolvedValue(Buffer.from('')) }
+    const driver = makeDriver({ connect: vi.fn().mockResolvedValue({ page, close: vi.fn().mockResolvedValue(undefined) }) })
+    const runner = makeRunner({ db, driver, tasks: new Map([['fail-task', new FailTask()]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'fail-task' }])
+    const fail = (db.upsertRun as ReturnType<typeof vi.fn>).mock.calls.find(c => c[4] === 'retry_wait')
+    expect(fail![5].screenshot).toBe(join(artifactsDir, todayStr(), 'bb-1', 'fail-task', 'slot-0', `${todayStr()}-attempt1.png`))
+    expect(fail![5].diagPath).toContain(join('fail-task', 'slot-0'))
   })
 
   it('开窗成功后登记 state=open', async () => {

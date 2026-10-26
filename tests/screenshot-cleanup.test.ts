@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { pruneScreenshots } from '../src/infrastructure/screenshot-cleanup'
+import { pruneScreenshots, startScreenshotCleanupSchedule } from '../src/infrastructure/screenshot-cleanup'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'abc-screenshots-')) })
@@ -42,6 +42,40 @@ describe('pruneScreenshots 截图目录日期清理', () => {
     pruneScreenshots(sub, 90)
     for (const name of ['grid-2026-01-01', '2026-01-01x', '999-01-01']) {
       expect(existsSync(join(sub, name))).toBe(true)
+    }
+  })
+
+  it('startScreenshotCleanupSchedule 启动即清理、按间隔重复、stop 后停止', () => {
+    vi.useFakeTimers()
+    try {
+      const sub = join(dir, 'screenshots')
+      const daysAgo = (n: number) => {
+        const d = new Date()
+        d.setDate(d.getDate() - n)
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      }
+      mkdirSync(join(sub, daysAgo(5)), { recursive: true })
+      const onRemoved = vi.fn()
+      const h = startScreenshotCleanupSchedule({
+        screenshotDir: sub,
+        retainDays: 3,
+        intervalMs: 1000,
+        onRemoved,
+      })
+      expect(existsSync(join(sub, daysAgo(5)))).toBe(false)
+      expect(onRemoved).toHaveBeenCalledWith({ removed: 1 })
+
+      mkdirSync(join(sub, daysAgo(4)), { recursive: true })
+      vi.advanceTimersByTime(1000)
+      expect(existsSync(join(sub, daysAgo(4)))).toBe(false)
+      expect(onRemoved).toHaveBeenCalledTimes(2)
+
+      h.stop()
+      mkdirSync(join(sub, daysAgo(6)), { recursive: true })
+      vi.advanceTimersByTime(2000)
+      expect(existsSync(join(sub, daysAgo(6)))).toBe(true)
+    } finally {
+      vi.useRealTimers()
     }
   })
 })
