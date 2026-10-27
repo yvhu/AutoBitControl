@@ -618,6 +618,12 @@ export class WindowPoolScheduler implements RunEnqueuer {
       if (row.state === 'closing') {
         this.openingSince.delete(id)
         if (!live.has(id)) {
+          // 本窗口仍有在途会话（开窗失败重试中）：登记正被重试路径复用，
+          // 此时清行会让重试成功后的 setOpenWindow 以默认 manual 重建，池窗口永久占额度。
+          if (profile && this.inFlight.has(profile.id)) {
+            this.closingSince.delete(id)
+            continue
+          }
           await this.clearWindowRow(id)
           this.closingSince.delete(id)
           if (profile) this.forgetWindow(profile.id)
@@ -637,6 +643,8 @@ export class WindowPoolScheduler implements RunEnqueuer {
       this.openingSince.delete(id)
       this.closingSince.delete(id)
       if (!live.has(id)) {
+        // 会话在途时 pids 可能瞬时缺失：先不删登记，避免把正在使用/重试的窗口变成无登记孤儿
+        if (profile && this.inFlight.has(profile.id)) continue
         await this.clearWindowRow(id)
         if (profile) this.forgetWindow(profile.id)
       }

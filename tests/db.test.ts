@@ -115,10 +115,10 @@ describe('AppDb', () => {
     // 3 参登记沿用旧调用：状态转为 open，ownerKind 保持 manual
     await db.setOpenWindow('bb-1', '127.0.0.1:61234', 61234)
     expect((await db.listOpenWindows())[0]).toMatchObject({ state: 'open', ownerKind: 'manual' })
-    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61234', state: 'open' })
+    expect(await db.getOpenWindow('bb-1')).toMatchObject({ http: '127.0.0.1:61234', state: 'open' })
     // 同窗口重复登记覆盖 http（幂等 upsert，不产生第二行）
     await db.setOpenWindow('bb-1', '127.0.0.1:61235')
-    expect(await db.getOpenWindow('bb-1')).toEqual({ http: '127.0.0.1:61235', state: 'open' })
+    expect(await db.getOpenWindow('bb-1')).toMatchObject({ http: '127.0.0.1:61235', state: 'open' })
     await db.clearOpenWindow('bb-1')
     expect(await db.getOpenWindow('bb-1')).toBeNull()
   })
@@ -142,6 +142,25 @@ describe('AppDb', () => {
       expect(await db.listPoolWindows()).toHaveLength(0)
       await db.clearOpenWindow('bb-1')
       expect(await db.listOpenWindows()).toHaveLength(0)
+      db.close()
+    })
+
+    it('登记行被清掉后重建时保留调用方归属，不退回 manual', async () => {
+      const db = await AppDb.open('file::memory:')
+      // 模拟开窗失败重试期间对账已删行：setOpenWindow 只能 INSERT 新行
+      await db.setOpenWindow('bb-1', '127.0.0.1:9222', 123, 'open', 'pool')
+      expect((await db.listOpenWindows())[0]).toMatchObject({ state: 'open', ownerKind: 'pool' })
+      // 冲突更新也按调用方归属写回
+      await db.setOpenWindow('bb-1', '127.0.0.1:9223', 123, 'open', 'pool')
+      expect((await db.listOpenWindows())[0]).toMatchObject({ http: '127.0.0.1:9223', ownerKind: 'pool' })
+      db.close()
+    })
+
+    it('不传归属时冲突更新保持原归属', async () => {
+      const db = await AppDb.open('file::memory:')
+      await db.reserveOpenWindow('bb-1', 123, 'pool')
+      await db.setOpenWindow('bb-1', '127.0.0.1:9222', 123, 'open')
+      expect((await db.listOpenWindows())[0]).toMatchObject({ state: 'open', ownerKind: 'pool' })
       db.close()
     })
 

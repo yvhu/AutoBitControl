@@ -1303,6 +1303,14 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 第二轮真机（2026-10-21 21:00 定时批次）发现新的慢点：点连接后页面「未连接」按钮一直可见，`advanceRound` 的 8 次推进瞬间跑完就进入 90 秒 `recover`；`recover` 只查页面 `0x`、不看扩展弹窗，导致弹窗明明开着却没人处理，直到超时后 reload 重试。修复：`raceRound` 每轮先用 `findOpenPopup` 处理已打开的弹窗（避免未连接按钮抢先命中）；点连接后至少观察 `observeMs`（默认 15s）；`recover` 改为带弹窗监听的 `recoverWithPopups`；钱包交互完成后主动刷新一次；无钱包交互时不再空等 90 秒，直接 reload 重试（最后一轮保留 30s 短 recover）。
 - 通用经验：**等 UI 用短轮询，别用固定 sleep；成功判定不要只依赖事件（事件会漏收），要有状态兜底。** 另外，**“等待页面上某个登录标志”的循环必须同时监听钱包弹窗**，否则弹窗迟到时整段等待都是盲区。
 
+**16）开窗失败重试把池窗口误标成 manual，最终占满额度导致队列停摆（2026-10-27）**
+
+- 现象：3:00 与 8:00 的定时批次只跑了前几十个/前 4 个窗口就停住，面板仍显示「进行中」；日志最后一行长期是 `actualOpen=4, poolSize=0, busy=0, queueWindows=96`，`runs` 里还有大量 `pending`。
+- 根因链：池窗口首次 `/browser/open` 失败 → `openWithRetry` 调 `closeWindowSafely` 把登记改成 `closing` 并关窗 → 调度器对账看到 `closing` 且 pid 已消失，**删除了登记行** → 退避后重试成功，`setOpenWindow` 只能按新行 INSERT，而 INSERT 未写 `owner_kind`，走表默认值 `manual`。于是池窗口变成「手动窗口」：不计入 `poolSize`、不轮转/不空闲回收，但仍计入 `actualOpen`，永久占用 `maxOpenWindows` 名额；攒满 4 个后再也开不出池窗口。
+- 识别方法：查 `open_windows` 的 `owner_kind`/`opened_at`；若 `opened_at` 恰好等于某次任务成功时间、且该会话日志里有过 `/browser/open` 失败 + 重试，就是被误标。正常手动窗口的 `opened_at` 不会与任务完成时间重合。
+- 修复：`setOpenWindow` 支持写入 `owner_kind`（显式传归属、省略时保持旧语义）；`openWithRetry` 每次重试前重新 `reserveOpenWindow`；调度器对账清理 `open/closing` 登记时跳过仍有在途会话的窗口；面板列表/孤儿回收只在「归属进程已死」时清行，面板开窗遇到 `opening` 预留直接返回已在打开，避免改写归属。历史脏行可临时 `UPDATE open_windows SET owner_kind='pool'` 或直接关掉这些窗口恢复。
+- 通用经验：**「失败路径的关窗清理」和「调度器对账」会竞争删除同一行登记，重试成功后的重建必须带上完整归属/状态字段，不能依赖表默认值。**
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）

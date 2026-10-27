@@ -741,6 +741,39 @@ describe('WindowPoolScheduler 幂等、对账与回收', () => {
     expect(await h.db.getOpenWindow(id)).toBeNull()
   })
 
+  it('closing 登记在本窗口会话在途时不清理（开窗失败重试期间）', async () => {
+    const h = await harness({ windows: 1, cfg: { maxOpenWindows: 1 }, holdSessions: true })
+    const id = h.profiles[0].bitbrowserId
+    await h.enqueueAll(h.profiles, 'task1')
+    await h.tickNoWait(0)
+    await h.waitForGates(1)
+
+    // 模拟开窗失败重试的关窗阶段：登记被改成 closing、pid 暂不可见，但会话仍在途（即将重开）
+    await h.db.setWindowState(id, 'closing')
+    h.openIds.delete(id)
+    await h.tickNoWait(0)
+
+    expect(await h.db.getOpenWindow(id)).not.toBeNull()
+    h.releaseAll()
+    await h.scheduler.waitForIdle()
+  })
+
+  it('open 登记在本窗口会话在途时不因单次 pids 缺失而清理', async () => {
+    const h = await harness({ windows: 1, cfg: { maxOpenWindows: 1 }, holdSessions: true })
+    const id = h.profiles[0].bitbrowserId
+    await h.enqueueAll(h.profiles, 'task1')
+    await h.tickNoWait(0)
+    await h.waitForGates(1)
+
+    // 模拟一次 /browser/pids 未上报该窗口（会话仍在途，窗口实际未关）
+    h.openIds.delete(id)
+    await h.tickNoWait(0)
+
+    expect(await h.db.getOpenWindow(id)).not.toBeNull()
+    h.releaseAll()
+    await h.scheduler.waitForIdle()
+  })
+
   it('关窗失败保留登记与池状态，下轮重试成功后清理', async () => {
     const h = await harness({ windows: 1, cfg: { idleCloseSec: 5 }, closeFailures: 1 })
     await h.enqueueAll(h.profiles, 'warm')

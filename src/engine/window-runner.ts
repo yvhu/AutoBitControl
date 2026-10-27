@@ -361,7 +361,7 @@ export class WindowRunner {
           await this.deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid, this.openOwnerKind)
           try {
             open = await this.openWithRetry(profile.bitbrowserId)
-            await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open')
+            await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open', this.openOwnerKind)
           } catch (e) {
             await this.deps.db.clearOpenWindow(profile.bitbrowserId).catch(() => {})
             throw e
@@ -511,7 +511,7 @@ export class WindowRunner {
           const keepOpen = this.shouldKeepWindowOpen(profile, health, results, opts)
           if (keepOpen) {
             if (!reusedFlag) {
-              await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open').catch(() => {})
+              await this.deps.db.setOpenWindow(profile.bitbrowserId, open.http, process.pid, 'open', this.openOwnerKind).catch(() => {})
             }
             await this.deps.db.incrementWindowUsage(profile.bitbrowserId).catch(() => {})
           } else if (!reusedFlag) {
@@ -593,6 +593,11 @@ export class WindowRunner {
     const { maxRetries, retryBackoffMs } = this.deps.cfg.bitbrowser
     let lastErr: Error | null = null
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // 重试前恢复归属登记：上一轮失败清理会把行置 closing，调度器对账可能已把它删掉；
+      // 若直接重开，setOpenWindow 只能 INSERT 新行，池窗口会退化成 manual 并永久占用额度。
+      if (attempt > 0) {
+        await this.deps.db.reserveOpenWindow(id, process.pid, this.openOwnerKind).catch(() => {})
+      }
       try {
         return await this.openCloseQueue.run(() => this.deps.bitbrowser.openBrowser(id))
       } catch (e) {

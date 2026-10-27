@@ -1268,10 +1268,14 @@ export class AppDb {
   }
 
   /** 读窗口打开状态登记（无登记返回 null）；是否真实存活由调用方经比特浏览器 /browser/pids 实测 */
-  async getOpenWindow(bitbrowserId: string): Promise<{ http: string; state: OpenWindowState } | null> {
-    const rows = await this.exec('SELECT http, state FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
+  async getOpenWindow(bitbrowserId: string): Promise<{ http: string; state: OpenWindowState; ownerPid: number | null } | null> {
+    const rows = await this.exec('SELECT http, state, owner_pid FROM open_windows WHERE bitbrowser_id = ?', [bitbrowserId])
     return rows.length > 0
-      ? { http: String(rows[0].http), state: String(rows[0].state) as OpenWindowState }
+      ? {
+        http: String(rows[0].http),
+        state: String(rows[0].state) as OpenWindowState,
+        ownerPid: rows[0].owner_pid == null ? null : Number(rows[0].owner_pid),
+      }
       : null
   }
 
@@ -1309,19 +1313,27 @@ export class AppDb {
     )
   }
 
-  /** 登记/更新窗口打开状态（面板打开、task:run 复用探测等场景写入；同 id 覆盖 http/时间/归属进程/状态） */
+  /**
+   * 登记/更新窗口打开状态（面板打开、task:run 复用探测等场景写入；同 id 覆盖 http/时间/归属进程/状态）。
+   * ownerKind 显式传入时写入/覆盖归属；省略时保持旧语义（新建默认 manual、冲突保留原归属）。
+   * 开窗失败重试等场景登记行可能已被对账清理，必须带上归属重建，避免池窗口退化成 manual。
+   */
   async setOpenWindow(
     bitbrowserId: string,
     http: string,
     ownerPid?: number,
     state: OpenWindowState = 'open',
+    ownerKind?: OpenWindowOwnerKind,
   ): Promise<void> {
+    const kind = ownerKind ?? null
     await this.exec(
-      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid, state) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO open_windows (bitbrowser_id, http, opened_at, owner_pid, state, owner_kind)
+       VALUES (?, ?, ?, ?, ?, COALESCE(?, 'manual'))
        ON CONFLICT(bitbrowser_id) DO UPDATE SET
          http = excluded.http, opened_at = excluded.opened_at,
-         owner_pid = excluded.owner_pid, state = excluded.state`,
-      [bitbrowserId, http, localWallNow(), ownerPid ?? null, state],
+         owner_pid = excluded.owner_pid, state = excluded.state,
+         owner_kind = COALESCE(?, open_windows.owner_kind)`,
+      [bitbrowserId, http, localWallNow(), ownerPid ?? null, state, kind, kind],
     )
   }
 

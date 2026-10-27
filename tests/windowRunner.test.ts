@@ -252,7 +252,7 @@ describe('WindowRunner', () => {
     const db = makeDb()
     const runner = makeRunner({ db })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
-    expect(db.setOpenWindow).toHaveBeenCalledWith('bb-1', open.http, process.pid, 'open')
+    expect(db.setOpenWindow).toHaveBeenCalledWith('bb-1', open.http, process.pid, 'open', 'manual')
   })
 
   it('可指定开窗归属（task:run 脚本登记 taskrun）', async () => {
@@ -260,6 +260,27 @@ describe('WindowRunner', () => {
     const runner = makeRunner({ db, openOwnerKind: 'taskrun' })
     await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
     expect(db.reserveOpenWindow).toHaveBeenCalledWith('bb-1', process.pid, 'taskrun')
+  })
+
+  it('登记 open 时写入开窗归属，避免行被重建后退回 manual', async () => {
+    const db = makeDb()
+    const runner = makeRunner({ db, openOwnerKind: 'pool' })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    expect(db.setOpenWindow).toHaveBeenCalledWith('bb-1', open.http, process.pid, 'open', 'pool')
+  })
+
+  it('开窗失败重试前重新预留归属，避免对账清行后重建成 manual', async () => {
+    const db = makeDb()
+    const bb2 = {
+      ...bitbrowser,
+      openBrowser: vi.fn().mockRejectedValueOnce(new Error('开窗失败')).mockResolvedValue(open),
+      openPids: vi.fn().mockResolvedValue(new Set<string>()),
+    }
+    const runner = makeRunner({ db, bitbrowser: bb2, openOwnerKind: 'pool' })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'ok-task' }])
+    const reserves = (db.reserveOpenWindow as ReturnType<typeof vi.fn>).mock.calls
+    expect(reserves.length).toBeGreaterThanOrEqual(2)
+    expect(reserves[reserves.length - 1]).toEqual(['bb-1', process.pid, 'pool'])
   })
 
   it('关窗先标记 closing，确认 pids 消失后清登记', async () => {
@@ -662,7 +683,7 @@ describe('WindowRunner', () => {
     expect(db.incrementWindowUsage).toHaveBeenCalledWith('bb-1')
     const setOpen = db.setOpenWindow as ReturnType<typeof vi.fn>
     expect(setOpen).toHaveBeenCalledTimes(2)
-    expect(setOpen).toHaveBeenLastCalledWith('bb-1', open.http, process.pid, 'open')
+    expect(setOpen).toHaveBeenLastCalledWith('bb-1', open.http, process.pid, 'open', 'manual')
     expect(db.setWindowState).not.toHaveBeenCalledWith('bb-1', 'closing')
   })
 

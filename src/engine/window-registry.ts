@@ -85,8 +85,10 @@ export async function reclaimOrphanWindows(deps: WindowRegistryDeps, logger: Log
   const rows = await deps.db.listOpenWindows()
   const byId = new Map(rows.map((r) => [r.bitbrowserId, r] as const))
   // ① state=open 的死登记行（pid 已死）→ 清登记（窗口自身无需关，已不在存活集）
+  //    归属进程仍存活时跳过：单次探测缺失可能只是抖动，交给调度器对账清理，避免误删在用登记
   for (const r of rows) {
     if (r.state !== 'open') continue
+    if (r.ownerPid != null && isProcessAlive(r.ownerPid)) continue
     if (!alive.has(r.bitbrowserId)) await deps.db.clearOpenWindow(r.bitbrowserId).catch(() => {})
   }
   // ② 仅回收 state=open 且 owner 进程已死的存活窗口

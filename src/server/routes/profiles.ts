@@ -9,7 +9,7 @@ import { ok, asyncHandler } from '../http/response'
 import { HttpError, ERROR_CODES } from '../http/errors'
 import type { AppDb, ProfileRow } from '../../infrastructure/db'
 import type { Logger } from '../../infrastructure/logger'
-import { reclaimOrphanWindows, waitForWindowClosed } from '../../engine/window-registry'
+import { isProcessAlive, reclaimOrphanWindows, waitForWindowClosed } from '../../engine/window-registry'
 
 /** 面板关窗后等待 pids 消失的总时长（毫秒） */
 const PANEL_CLOSE_CONFIRM_TIMEOUT_MS = 15_000
@@ -321,6 +321,8 @@ export function profilesRouter(deps: {
         if (row.state !== 'open') await deps.db.setWindowState(profile.bitbrowserId, 'open')
         return { already: true }
       }
+      // 已有 opening 登记：窗口池/其它入口正在开窗，重复开窗会改写归属（pool → manual）
+      if (row?.state === 'opening') return { already: true }
       await ensureWindowCapacity()
       // 先预留归属登记（避免「已开未登记」竞态被孤儿回收误关），开成功后补 http
       await deps.db.reserveOpenWindow(profile.bitbrowserId, process.pid)
@@ -374,7 +376,11 @@ export function profilesRouter(deps: {
       const alive = openIds?.has(p.bitbrowserId) ?? false
       if (!alive && openIds !== null) {
         const row = await deps.db.getOpenWindow(p.bitbrowserId)
-        if (row && row.state !== 'opening') await deps.db.clearOpenWindow(p.bitbrowserId)
+        // 归属进程仍存活时不做单次探测清行：窗口可能只是瞬时未上报，
+        // 交给调度器对账清理，避免把在用登记删成「无登记存活窗口」占满额度。
+        if (row && row.state !== 'opening' && (row.ownerPid == null || !isProcessAlive(row.ownerPid))) {
+          await deps.db.clearOpenWindow(p.bitbrowserId)
+        }
       }
       result.push(toProfileView(p, alive))
     }

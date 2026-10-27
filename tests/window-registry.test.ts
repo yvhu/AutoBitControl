@@ -112,10 +112,17 @@ describe('reclaimOrphanWindows 孤儿回收', () => {
   })
 
   it('state=open 的死登记行（pid 已不在存活集）只清登记、不误关', async () => {
-    const { deps, closeBrowser, clearOpenWindow } = makeDeps({ alive: [], rows: [makeRow()] })
+    const { deps, closeBrowser, clearOpenWindow } = makeDeps({ alive: [], rows: [makeRow({ ownerPid: 999999999 })] })
     expect(await reclaimOrphanWindows(deps, logger)).toBe(0)
     expect(closeBrowser).not.toHaveBeenCalled()
     expect(clearOpenWindow).toHaveBeenCalledWith('a')
+  })
+
+  it('归属进程仍存活时不在面板侧清行（单次探测缺失交给调度器对账）', async () => {
+    const { deps, closeBrowser, clearOpenWindow } = makeDeps({ alive: [], rows: [makeRow()] })
+    expect(await reclaimOrphanWindows(deps, logger)).toBe(0)
+    expect(closeBrowser).not.toHaveBeenCalled()
+    expect(clearOpenWindow).not.toHaveBeenCalled()
   })
 
   it.each(['opening', 'closing'] as OpenWindowState[])(
