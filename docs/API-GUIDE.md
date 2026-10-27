@@ -1179,7 +1179,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 打开总数受 `windowPool.maxOpenWindows` 与内存共同约束：`effectivePool = min(maxOpenWindows, actualOpen + 可用内存可再开数)`；实际打开数包含池窗口、手动窗口与 `task:run` 窗口，开窗前后都按比特 `/browser/pids` 对账。
 - 内存 `warning` 停止补池与普通任务分配（已打开窗口也暂不接新任务，仅允许 half-open 探测在 `effectivePool` 容量内启动）；`critical` 停止分配新任务并优先关闭空闲池窗口，运行中的任务自然结束；恢复到 `resumeFreeMb` 并连续 3 次检查后才回到 `normal`。不能开窗/分配时任务保持 `pending`，不会被打成失败。
 - 全局健康门禁：**只由比特浏览器本地 API（`/browser/pids` 对账）失败触发**，暂停开窗并按 `execution.health.backoffSec` 退避；暂停/探测期间任务保持 `pending`，API 恢复后先半开探测再逐步加窗口。单窗口的代理/任务/网络失败只走窗口熔断（代理类 3 分钟起步短冷却），**不会拖停整个窗口池**。
-- 队列与轮转：有任务但未打开的窗口按最早 `queued_at` 排队；池有空位才开，每 tick 最多开一个。池窗口任务集清空且仍有窗口排队时关闭让位；无任务时按 `idleCloseSec` 关闭，达到 `windowMaxTasks` / `windowMaxLifetimeSec`，或连续占用超过 `cohortMaxSec`（有其它窗口排队时）轮转。
+- 队列与轮转：有任务但未打开的窗口按最早 `queued_at` 排队；池有空位才开，每 tick 最多开一个。池窗口任务集清空且仍有窗口排队时关闭让位；无任务时按 `idleCloseSec` 关闭（当前项目配置为 60 秒，代码兜底默认值为 180 秒），达到 `windowMaxTasks` / `windowMaxLifetimeSec`，或连续占用超过 `cohortMaxSec`（有其它窗口排队时）轮转。
 - 任务**无顺序、无任务级并发限制**：所有已打开窗口都可同时跑同一个任务；站点限频由任务重试/熔断/启动间隔兜底。
 - 开窗/关窗统一经进程内 `SerialQueue` 串行执行（两次开窗最小间隔 `windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待）；关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记。`open_windows.state` 区分 `opening/open/closing`，`owner_kind` 区分 `pool/manual/taskrun`。
 - 幂等：`rerun-failed` 带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 则跳过入队）；定时计划与批量/测试触发按每个触发时刻执行，不按当天成功跳过；`failed/skipped` 仍可按需重跑，单窗口手动触发始终新建一轮。定时计划额外用 `last_fired_minute` 持久化分钟去重，重启也不会重复触发。

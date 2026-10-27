@@ -29,7 +29,7 @@
       "resumeFreeMb": 2048,
       "checkIntervalMs": 5000,
       "openCooldownMs": 10000,
-      "idleCloseSec": 180,
+      "idleCloseSec": 60,
       "windowMaxTasks": 3,
       "windowMaxLifetimeSec": 600,
       "cohortMaxSec": 1800
