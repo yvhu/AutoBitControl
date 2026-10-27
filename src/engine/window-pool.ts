@@ -696,8 +696,9 @@ export class WindowPoolScheduler implements RunEnqueuer {
     if (nowMs < this.probeLease.deadlineMs) return
     const started = this.probeLease.profileId != null
     this.probeLease = null
-    this.deps.logger.warn({ started }, '全局健康探测租约到期，重新退避')
-    this.deps.health.recordProbeFailure(nowMs)
+    this.deps.logger.warn({ started }, '全局健康探测租约到期，恢复常规调度')
+    // API 探测已在 reconcile 成功（否则不会进入 probing）；租约到期只是没能启动探测会话，交回常规调度
+    this.deps.health.recordProbeSuccess()
   }
 
   /** 池窗口空闲时关闭一个（健康暂停/critical 路径；任务保持 pending 等恢复） */
@@ -965,7 +966,8 @@ export class WindowPoolScheduler implements RunEnqueuer {
         }
         if (opts.probe) {
           this.probeLease = null
-          this.deps.health.recordProbeFailure(this.now().getTime())
+          // 会话能走到这里说明 reconcile 的比特 API 探测成功；异常不代表 API 不可用，交回常规调度
+          this.deps.health.recordProbeSuccess()
         }
         // 手动窗口不自动关闭：只回队任务，窗口留给用户/后续任务
         if (opts.manual !== true) await this.closeWindow(profile, '会话异常，回收池窗口')
@@ -1009,10 +1011,11 @@ export class WindowPoolScheduler implements RunEnqueuer {
       }
       if (probe) {
         this.probeLease = null
-        this.deps.health.recordProbeFailure(nowMs)
-      } else {
-        this.deps.health.recordEnvironmentFailure(profile.bitbrowserId, nowMs)
+        // 探测会话能启动，说明 reconcile 的比特 API 探测已成功；代理/任务失败属窗口级问题，
+        // 不能再次拖停全局（否则坏代理窗口会一直卡住 half-open 探测）。
+        this.deps.health.recordProbeSuccess()
       }
+      // 普通会话的环境失败只回队 + 回收窗口，由窗口级熔断隔离，不拖停整个窗口池
       // 手动窗口不自动关闭：环境失败也只回队任务，窗口留给用户
       if (!manual) await this.closeWindow(profile, '环境失败，回收池窗口')
       return
@@ -1030,7 +1033,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
             this.deps.logger.warn({ err: (e as Error).message }, '探测未执行行回队失败')
           }
         }
-        this.deps.health.recordProbeFailure(nowMs)
+        this.deps.health.recordProbeSuccess()
         if (!manual) await this.closeWindow(profile, '探测未成功，回收池窗口')
         return
       }

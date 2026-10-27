@@ -126,6 +126,8 @@ const cfg = {
     circuitBreakerEnabled: true,
     circuitBreakerCooldownSec: 1800,
     circuitBreakerMaxCooldownSec: 7200,
+    circuitBreakerProxyCooldownSec: 180,
+    circuitBreakerProxyMaxCooldownSec: 900,
     windowTimeoutMs: 60000,
   },
   ai: { apiKey: '' },
@@ -1050,6 +1052,20 @@ describe('WindowRunner', () => {
     const runner2 = makeRunner({ db: db2, tasks: new Map([['window-fail', new WindowFailTask()]]) })
     await runner2.runWindowTasks(makeProfile(), [{ taskKey: 'window-fail' }])
     expect(db2.recordWindowEnvironmentFailure).toHaveBeenCalled()
+  })
+
+  it('代理连接失败使用短熔断冷却（3 分钟 / 最长 15 分钟）', async () => {
+    class ProxyFailTask implements SiteTask {
+      meta = { key: 'proxy-fail', name: 'PF', url: 'https://x.io' }
+      run = vi.fn().mockRejectedValue(new Error('page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://x.io'))
+    }
+    const db = makeDb({
+      getLatestRun: vi.fn().mockResolvedValue({ status: 'retry_wait', attempts: 2, slot: 0 } as Partial<RunRow>),
+    })
+    const runner = makeRunner({ db, tasks: new Map([['proxy-fail', new ProxyFailTask()]]) })
+    await runner.runWindowTasks(makeProfile(), [{ taskKey: 'proxy-fail' }])
+    const call = (db.recordWindowEnvironmentFailure as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(call[2]).toMatchObject({ threshold: 2, cooldownMs: 180_000, maxCooldownMs: 900_000 })
   })
 
   it('half_open 环境失败进入 retry_wait：保持 half_open、释放 retry 租约、剩余任务跳过', async () => {

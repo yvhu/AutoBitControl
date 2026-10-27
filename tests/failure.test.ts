@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyFailure } from '../src/engine/failure'
+import { classifyFailure, isProxyFailure } from '../src/engine/failure'
 import { TaskExecutionError, TaskTimeoutError, WindowUnavailableError } from '../src/infrastructure/run-errors'
 
 describe('classifyFailure', () => {
@@ -39,5 +39,24 @@ describe('classifyFailure', () => {
 
   it('Navigation failed 不误判为窗口环境失败', () => {
     expect(classifyFailure('task', new Error('Navigation failed'))).toBe('task')
+  })
+})
+
+describe('isProxyFailure', () => {
+  it('识别代理/隧道/SOCKS 连接失败（含认证）', () => {
+    for (const message of [
+      'page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://x.io',
+      'net::ERR_TUNNEL_CONNECTION_FAILED',
+      'net::ERR_SOCKS_CONNECTION_FAILED',
+      'ERR_PROXY_AUTH_UNSUPPORTED',
+    ]) {
+      expect(isProxyFailure(message)).toBe(true)
+    }
+  })
+
+  it('普通环境/任务错误不算代理失败', () => {
+    for (const message of ['Target closed', 'net::ERR_INTERNET_DISCONNECTED', '选择器没找到', '']) {
+      expect(isProxyFailure(message)).toBe(false)
+    }
   })
 })

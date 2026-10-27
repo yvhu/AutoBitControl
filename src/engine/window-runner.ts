@@ -26,7 +26,7 @@ import type { Logger } from '../infrastructure/logger'
 import { AppDb, todayStr, localWallNow, localWallFromMs, type ProfileRow, type RunRow, type CircuitBreakerPolicy, type WindowHealth, type OpenWindowOwnerKind } from '../infrastructure/db'
 import type { BitBrowserClient, OpenResult } from '../integrations/bitbrowser'
 import { nextStateAfterFailure } from './state'
-import { classifyFailure } from './failure'
+import { classifyFailure, isProxyFailure } from './failure'
 import { TaskTimeoutError, type FailureKind } from '../infrastructure/run-errors'
 import { TaskContext } from './task-context'
 import { SerialQueue } from './serial-queue'
@@ -61,12 +61,17 @@ const CLOSED_WINDOW_HEALTH: WindowHealth = {
 const DEFAULT_BREAKER_THRESHOLD = 2
 const DEFAULT_BREAKER_COOLDOWN_MS = 30 * 60 * 1000
 const DEFAULT_BREAKER_MAX_COOLDOWN_MS = 2 * 60 * 60 * 1000
+/** 代理连接类失败：代理通常几分钟内恢复，使用短冷却快速重试 */
+const DEFAULT_BREAKER_PROXY_COOLDOWN_MS = 3 * 60 * 1000
+const DEFAULT_BREAKER_PROXY_MAX_COOLDOWN_MS = 15 * 60 * 1000
 
-/** 熔断配置字段（配置层已提供，保留局部类型便于测试注入缺省字段） */
+/** 熔断配置字段（配置层不提供全部字段时用本地常量兜底，便于测试注入缺省字段） */
 type BreakerConfigFields = {
   circuitBreakerEnabled?: boolean
   circuitBreakerCooldownSec?: number
   circuitBreakerMaxCooldownSec?: number
+  circuitBreakerProxyCooldownSec?: number
+  circuitBreakerProxyMaxCooldownSec?: number
 }
 
 /**
@@ -176,18 +181,21 @@ export class WindowRunner {
     return process.env.FORCE_BREAKER === '1'
   }
 
-  /** 熔断策略（配置缺省/非法值回落默认，冷却上限不小于首次冷却） */
-  private breakerPolicy(): CircuitBreakerPolicy {
+  /** 熔断策略（配置缺省/非法值回落默认；代理连接类失败使用短冷却；冷却上限不小于首次冷却） */
+  private breakerPolicy(reason = ''): CircuitBreakerPolicy {
     const e = this.deps.cfg.execution as typeof this.deps.cfg.execution & BreakerConfigFields
+    const proxyFailure = isProxyFailure(reason)
     const threshold = Number.isInteger(e.circuitBreakerThreshold) && e.circuitBreakerThreshold >= 1
       ? e.circuitBreakerThreshold
       : DEFAULT_BREAKER_THRESHOLD
-    const cooldownMs = Number.isFinite(e.circuitBreakerCooldownSec) && (e.circuitBreakerCooldownSec ?? 0) >= 60
-      ? (e.circuitBreakerCooldownSec as number) * 1000
-      : DEFAULT_BREAKER_COOLDOWN_MS
-    const configuredMax = Number.isFinite(e.circuitBreakerMaxCooldownSec) && (e.circuitBreakerMaxCooldownSec ?? 0) * 1000 >= cooldownMs
-      ? (e.circuitBreakerMaxCooldownSec as number) * 1000
-      : DEFAULT_BREAKER_MAX_COOLDOWN_MS
+    const cooldownSec = proxyFailure ? e.circuitBreakerProxyCooldownSec : e.circuitBreakerCooldownSec
+    const maxCooldownSec = proxyFailure ? e.circuitBreakerProxyMaxCooldownSec : e.circuitBreakerMaxCooldownSec
+    const cooldownMs = Number.isFinite(cooldownSec) && (cooldownSec ?? 0) >= 60
+      ? (cooldownSec as number) * 1000
+      : (proxyFailure ? DEFAULT_BREAKER_PROXY_COOLDOWN_MS : DEFAULT_BREAKER_COOLDOWN_MS)
+    const configuredMax = Number.isFinite(maxCooldownSec) && (maxCooldownSec ?? 0) * 1000 >= cooldownMs
+      ? (maxCooldownSec as number) * 1000
+      : (proxyFailure ? DEFAULT_BREAKER_PROXY_MAX_COOLDOWN_MS : DEFAULT_BREAKER_MAX_COOLDOWN_MS)
     // 上限不得低于首次冷却：注入配置可能把 cooldown 调大而漏配 max
     const maxCooldownMs = Math.max(cooldownMs, configuredMax)
     return { threshold, cooldownMs, maxCooldownMs }
@@ -235,7 +243,7 @@ export class WindowRunner {
   /** 记录一次窗口环境失败并输出结构化日志（熔断关闭或调试逃生时不做任何事） */
   private async recordWindowFailure(profile: ProfileRow, reason: string): Promise<WindowHealth | null> {
     if (!this.breakerEnabled() || this.forceBreaker()) return null
-    const next = await this.safeDb(() => this.deps.db.recordWindowEnvironmentFailure(profile.id, reason, this.breakerPolicy()), null)
+    const next = await this.safeDb(() => this.deps.db.recordWindowEnvironmentFailure(profile.id, reason, this.breakerPolicy(reason)), null)
     if (next) {
       this.deps.logger.warn({
         profile: profile.name,

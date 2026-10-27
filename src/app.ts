@@ -81,8 +81,6 @@ export function createRunEnqueuer(deps: RunEnqueuerDeps): WindowPoolScheduler {
       resumeFreeMb: pool.resumeFreeMb,
     }),
     health: new GlobalHealthGate({
-      windowSec: execution.health.globalEnvFailureWindowSec,
-      threshold: execution.health.globalEnvFailureThreshold,
       backoffSec: execution.health.backoffSec,
       probeEnabled: execution.health.probeEnabled,
     }),

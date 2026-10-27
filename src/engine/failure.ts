@@ -28,6 +28,14 @@ const WINDOW_UNHEALTHY_PATTERN = new RegExp(
   'i',
 )
 
+/** 代理/隧道/SOCKS 连接失败：通常只影响该窗口的代理，恢复时间以分钟计，使用短熔断冷却 */
+const PROXY_FAILURE_PATTERN = /net::ERR_(?:PROXY|TUNNEL|SOCKS)_|ERR_PROXY_AUTH|ERR_SOCKS_CONNECTION/i
+
+/** 失败消息是否属于代理连接类失败 */
+export function isProxyFailure(message: string): boolean {
+  return PROXY_FAILURE_PATTERN.test(message)
+}
+
 /**
  * 分类一次失败：
  * 1. 显式错误类型优先；

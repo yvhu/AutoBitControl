@@ -66,7 +66,7 @@
 | 钱包适配器 / wallet | 一组「解锁 / 连接 / 签名 / 确认交易」的钱包操作方法，按 `meta.wallet` 的 key 查找（`metamask` / `petra`） | §4.1 |
 | 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
-| 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；30 分钟起步指数退避到 2 小时；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
+| 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；普通环境失败 30 分钟起步指数退避到 2 小时，代理连接类失败 3 分钟起步到 15 分钟；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
 | 窗口池 / Window Pool | 唯一的运行调度器：跨任务复用已打开窗口，按内存水位与全局健康控制开窗；始终启用 | §6 / §7 |
 | 在途 / in-flight | 某窗口或任务当天已有 `pending/running/retry_wait` 行（已排队或正在跑）；在途时再触发同任务会被拒（409），防重复执行 | §6.7 |
 | 弹窗 / Popup | 网页上浮出的小窗口，或浏览器钱包插件弹出的确认窗口 | §6.3 |
@@ -1137,6 +1137,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 熔断是**窗口级环境健康**保护：只统计环境级终态失败（开窗失败、CDP 失败、浏览器崩溃、钱包扩展未加载、代理/网络错误），任务业务失败、选择器失效、数据源错误、任务超时都不计入。
 - 连续环境级终态失败达到 `execution.circuitBreakerThreshold`（默认 2）后进入 `open`：该窗口后续任务直接 `skipped`，**不会先开窗**。
 - 冷却从 `execution.circuitBreakerCooldownSec`（默认 30 分钟）开始，每次半开探测再失败按 2 倍退避，最多 `execution.circuitBreakerMaxCooldownSec`（默认 2 小时）。
+- **代理连接类失败使用更短的冷却**：失败消息命中 `ERR_PROXY_*` / `ERR_TUNNEL_*` / `ERR_SOCKS_*` 时，从 `execution.circuitBreakerProxyCooldownSec`（默认 3 分钟）开始，最多 `execution.circuitBreakerProxyMaxCooldownSec`（默认 15 分钟）——代理通常几分钟内恢复，避免按普通环境失败等半小时。
+- 单窗口代理/网络失败只影响该窗口（窗口熔断 + 短冷却重试），**不会暂停整个窗口池**；全局暂停只由比特浏览器本地 API 探测失败触发（见 6.5 全局健康门禁）。
 - 冷却到期进入 `half_open`，用真实任务探测：成功或任务级失败会关闭熔断；环境级失败会重新打开并延长冷却。
 - 每日 `execution.circuitBreakerResetAt`（默认 `23:59`，配置时区）全量重置；任一任务成功或面板「重置熔断」也会清零。
 - `execution.circuitBreakerEnabled=false` 时熔断完全关闭：不做开窗前拦截、不累计环境失败，面板显示「熔断已关闭」；数据库里的历史状态字段仍原样返回，但不会影响执行。
@@ -1176,7 +1178,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 面板手动打开且存活（`owner_kind='manual'`、`state='open'`、已有调试地址）的窗口会作为该窗口的工作者直接接任务，不新开窗口；它不计入 `poolSize`、不参与空闲/寿命/连续占用轮转，也不会因空闲、环境失败或窗口熔断被自动关闭。`task:run` 等其他归属仍按各自流程处理。
 - 打开总数受 `windowPool.maxOpenWindows` 与内存共同约束：`effectivePool = min(maxOpenWindows, actualOpen + 可用内存可再开数)`；实际打开数包含池窗口、手动窗口与 `task:run` 窗口，开窗前后都按比特 `/browser/pids` 对账。
 - 内存 `warning` 停止补池与普通任务分配（已打开窗口也暂不接新任务，仅允许 half-open 探测在 `effectivePool` 容量内启动）；`critical` 停止分配新任务并优先关闭空闲池窗口，运行中的任务自然结束；恢复到 `resumeFreeMb` 并连续 3 次检查后才回到 `normal`。不能开窗/分配时任务保持 `pending`，不会被打成失败。
-- 全局健康门禁：比特 API/断网/代理整体不可用时暂停开窗，并按 `execution.health.backoffSec` 退避；暂停/探测期间任务保持 `pending`，恢复后先半开探测再逐步加窗口。单窗口故障仍走窗口熔断，不影响其它窗口。
+- 全局健康门禁：**只由比特浏览器本地 API（`/browser/pids` 对账）失败触发**，暂停开窗并按 `execution.health.backoffSec` 退避；暂停/探测期间任务保持 `pending`，API 恢复后先半开探测再逐步加窗口。单窗口的代理/任务/网络失败只走窗口熔断（代理类 3 分钟起步短冷却），**不会拖停整个窗口池**。
 - 队列与轮转：有任务但未打开的窗口按最早 `queued_at` 排队；池有空位才开，每 tick 最多开一个。池窗口任务集清空且仍有窗口排队时关闭让位；无任务时按 `idleCloseSec` 关闭，达到 `windowMaxTasks` / `windowMaxLifetimeSec`，或连续占用超过 `cohortMaxSec`（有其它窗口排队时）轮转。
 - 任务**无顺序、无任务级并发限制**：所有已打开窗口都可同时跑同一个任务；站点限频由任务重试/熔断/启动间隔兜底。
 - 开窗/关窗统一经进程内 `SerialQueue` 串行执行（两次开窗最小间隔 `windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待）；关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记。`open_windows.state` 区分 `opening/open/closing`，`owner_kind` 区分 `pool/manual/taskrun`。
@@ -1311,6 +1313,14 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 修复：`setOpenWindow` 支持写入 `owner_kind`（显式传归属、省略时保持旧语义）；`openWithRetry` 每次重试前重新 `reserveOpenWindow`；调度器对账清理 `open/closing` 登记时跳过仍有在途会话的窗口；面板列表/孤儿回收只在「归属进程已死」时清行，面板开窗遇到 `opening` 预留直接返回已在打开，避免改写归属。历史脏行可临时 `UPDATE open_windows SET owner_kind='pool'` 或直接关掉这些窗口恢复。
 - 通用经验：**「失败路径的关窗清理」和「调度器对账」会竞争删除同一行登记，重试成功后的重建必须带上完整归属/状态字段，不能依赖表默认值。**
 
+**17）少量坏代理不应暂停整个窗口池（2026-10-27 全局健康门禁调整）**
+
+- 现象：10:52–11:12 只有窗口 15/16/17/18 等少数窗口报 `ERR_PROXY_CONNECTION_FAILED`，但 5 分钟内累计 3 个不同窗口环境失败后，全局健康进入 `paused`，100 个窗口全部停摆；half-open 探测又选中坏代理窗口，探测失败继续暂停并退避。
+- 根因：全局门禁把「任意窗口的环境失败」聚合成全局故障；但每个窗口是独立代理，少量代理故障不等于比特 API/本机整体不可用。探测会话失败也被当成全局失败，进一步把池按回去。
+- 调整后：全局暂停**只由 `/browser/pids` 对账失败触发**（比特 API/本机整体不可用）；half-open 探测会话内的代理/任务失败视为「API 已恢复」，只做窗口级熔断；代理连接类失败使用短冷却（默认 3 分钟起步、最长 15 分钟），坏代理窗口几分钟后自动重试。
+- 旧配置 `execution.health.globalEnvFailureWindowSec` / `globalEnvFailureThreshold` 已废弃（存在时启动告警并忽略）；代理冷却对应 `execution.circuitBreakerProxyCooldownSec` / `circuitBreakerProxyMaxCooldownSec`。
+- 通用经验：**「多个窗口都失败」不等于「全局故障」；先分清共享资源（比特 API/本机网络）与窗口私有资源（代理/指纹/登录态），只对共享资源做全局熔断。**
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）
@@ -1322,9 +1332,9 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | 段 | 键（括号内为默认值） | 说明 |
 | --- | --- | --- |
 | `bitbrowser` | `apiBase`（`http://127.0.0.1:54345`）、`openTimeoutMs`、`maxRetries`、`retryBackoffMs` | 比特浏览器本地 API；只有端口/地址改过才需要动 |
-| `execution` | `windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerResetAt`（`"23:59"`） | 执行引擎全局默认值。触发（批量/重跑/定时）不再按窗口铺开：触发即写 `pending` 并立即到期，`not_before_ms` 用于重试退避与排队到期（触发即写当前时间到期）。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。开窗上限统一由 `execution.windowPool.maxOpenWindows` 控制（窗口池调度与手动/面板开窗共用）。旧配置 `circuitBreakerResetEveryHours` 已废弃：存在时启动告警并忽略，请改用 `circuitBreakerResetAt`。 |
+| `execution` | `windowTimeoutMs`（900000）、`taskTimeoutMs`（180000）、`retryMax`（2）、`retryBackoffSec`（600）、`circuitBreakerEnabled`（`true`）、`circuitBreakerThreshold`（2）、`circuitBreakerCooldownSec`（1800）、`circuitBreakerMaxCooldownSec`（7200）、`circuitBreakerProxyCooldownSec`（180）、`circuitBreakerProxyMaxCooldownSec`（900）、`circuitBreakerResetAt`（`"23:59"`） | 执行引擎全局默认值。触发（批量/重跑/定时）不再按窗口铺开：触发即写 `pending` 并立即到期，`not_before_ms` 用于重试退避与排队到期（触发即写当前时间到期）。`circuitBreakerEnabled` 为熔断总开关，`false` 时不拦截、不计数；`circuitBreakerThreshold` 为连续环境级终态失败阈值；`circuitBreakerCooldownSec` 为首次冷却秒数，半开失败按 2 倍指数退避到 `circuitBreakerMaxCooldownSec`；代理连接类失败改用 `circuitBreakerProxyCooldownSec` / `circuitBreakerProxyMaxCooldownSec`（默认 3 / 15 分钟）；`circuitBreakerResetAt` 每日全量重置时刻（空串关闭，时区 `scheduler.timezone`）。开窗上限统一由 `execution.windowPool.maxOpenWindows` 控制（窗口池调度与手动/面板开窗共用）。旧配置 `circuitBreakerResetEveryHours` 已废弃：存在时启动告警并忽略，请改用 `circuitBreakerResetAt`。 |
 | `execution.windowPool` | `maxOpenWindows`（4）、`memoryReserveMb`（100）、`perWindowMb`（1024）、`criticalFreeMb`（1024）、`resumeFreeMb`（2048）、`checkIntervalMs`（5000）、`openCooldownMs`（10000）、`idleCloseSec`（180）、`windowMaxTasks`（3）、`windowMaxLifetimeSec`（600）、`cohortMaxSec`（1800） | 窗口池配置（唯一调度器，始终启用）。窗口跨任务复用，`maxOpenWindows` 与内存共同决定有效池大小（`effectivePool`），实际打开数含手动/`task:run` 窗口。内存：`memoryReserveMb` 系统余量、`perWindowMb` 单窗预估、`criticalFreeMb`/`resumeFreeMb` 临界/恢复水位（连续 3 次恢复检查才回 normal）；`warning` 停止补池与普通任务分配（探测可在 `effectivePool` 内启动），`critical` 停止分配并关闭空闲池窗口，任务保持 `pending`。窗口回收：空闲 `idleCloseSec`、单窗 `windowMaxTasks` 或 `windowMaxLifetimeSec`、连续占用 `cohortMaxSec`（有其它可调度窗口排队时）轮转；`openCooldownMs` 为两次开窗最小间隔。`checkIntervalMs` 目前**不用于节流**（池每 tick 采样内存）；`perWindowMb` 当前为固定预估，自动校准后续按真机数据再做。非法值回退默认并启动告警；`criticalFreeMb` 必须小于 `resumeFreeMb`，否则回退 1024/2048。 |
-| `execution.health` | `bitbrowserProbeMs`（30000）、`globalEnvFailureWindowSec`（300）、`globalEnvFailureThreshold`（3）、`probeEnabled`（`true`）、`backoffSec`（`[30,60,120,300,600]`） | 全局健康门禁（窗口池开窗裁决）：`globalEnvFailureWindowSec` 秒内累计 `globalEnvFailureThreshold` 个不同窗口的环境级失败即暂停开新窗，并按 `backoffSec`（秒）逐级退避；暂停期间任务保持 `pending`，恢复前做 half-open 探测。`probeEnabled=false` 时暂停后不再自动探测恢复（仍可人工处理）。`bitbrowserProbeMs` 目前未用于池调度（每 tick 用 `/browser/pids` 对账），保留配置位。非法值回退默认并启动告警。 |
+| `execution.health` | `bitbrowserProbeMs`（30000）、`probeEnabled`（`true`）、`backoffSec`（`[30,60,120,300,600]`） | 全局健康门禁（窗口池开窗裁决）：**只由比特浏览器本地 API（`/browser/pids` 对账）失败触发**，按 `backoffSec`（秒）逐级退避；暂停期间任务保持 `pending`，API 恢复后做 half-open 探测。`probeEnabled=false` 时暂停后不再自动探测恢复（仍可人工处理）。`bitbrowserProbeMs` 目前未用于池调度（每 tick 用 `/browser/pids` 对账），保留配置位。单窗口代理/任务失败不再计入全局暂停，走窗口熔断；旧配置 `globalEnvFailureWindowSec` / `globalEnvFailureThreshold` 已废弃（存在时启动告警并忽略）。非法值回退默认并启动告警。 |
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |

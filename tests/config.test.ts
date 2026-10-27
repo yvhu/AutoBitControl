@@ -190,7 +190,23 @@ describe('loadConfig', () => {
     expect(cfg.execution.circuitBreakerThreshold).toBe(2)
     expect(cfg.execution.circuitBreakerCooldownSec).toBe(1800)
     expect(cfg.execution.circuitBreakerMaxCooldownSec).toBe(7200)
+    expect(cfg.execution.circuitBreakerProxyCooldownSec).toBe(180)
+    expect(cfg.execution.circuitBreakerProxyMaxCooldownSec).toBe(900)
     expect(cfg.execution.circuitBreakerResetAt).toBe('23:59')
+  })
+
+  it('代理熔断冷却非法值回退默认并告警', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      execution: { circuitBreakerProxyCooldownSec: 10, circuitBreakerProxyMaxCooldownSec: 60 },
+    }))
+    const warnings: string[] = []
+    const cfg = loadConfig({ rootDir: dir, warnings })
+    expect(cfg.execution.circuitBreakerProxyCooldownSec).toBe(180)
+    expect(cfg.execution.circuitBreakerProxyMaxCooldownSec).toBe(900)
+    expect(warnings.some((w) => w.includes('circuitBreakerProxyCooldownSec'))).toBe(true)
+    expect(warnings.some((w) => w.includes('circuitBreakerProxyMaxCooldownSec'))).toBe(true)
   })
 
   it('windowPool 默认值与覆盖', () => {
@@ -213,15 +229,25 @@ describe('loadConfig', () => {
     })
   })
 
-  it('health 默认值与非法回退', () => {
+  it('health 非法退避回退默认并告警', () => {
     const configDir = join(dir, 'config')
     mkdirSync(configDir, { recursive: true })
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: { globalEnvFailureThreshold: 0 } } }))
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ execution: { health: { backoffSec: [0] } } }))
     const warnings: string[] = []
     const cfg = loadConfig({ rootDir: dir, warnings })
-    expect(cfg.execution.health.globalEnvFailureThreshold).toBe(3)
     expect(cfg.execution.health.backoffSec).toEqual([30, 60, 120, 300, 600])
-    expect(warnings.some((w) => w.includes('globalEnvFailureThreshold'))).toBe(true)
+    expect(warnings.some((w) => w.includes('backoffSec'))).toBe(true)
+  })
+
+  it('已废弃的 globalEnvFailure* 配置告警并忽略', () => {
+    const configDir = join(dir, 'config')
+    mkdirSync(configDir, { recursive: true })
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      execution: { health: { globalEnvFailureWindowSec: 60, globalEnvFailureThreshold: 2 } },
+    }))
+    const warnings: string[] = []
+    loadConfig({ rootDir: dir, warnings })
+    expect(warnings.some((w) => w.includes('globalEnvFailure'))).toBe(true)
   })
 
   it('windowPool 无配置文件时返回默认值且不告警', () => {
@@ -236,8 +262,6 @@ describe('loadConfig', () => {
     const warnings: string[] = []
     const cfg = loadConfig({ rootDir: dir, warnings })
     expect(cfg.execution.health.bitbrowserProbeMs).toBe(30000)
-    expect(cfg.execution.health.globalEnvFailureWindowSec).toBe(300)
-    expect(cfg.execution.health.globalEnvFailureThreshold).toBe(3)
     expect(cfg.execution.health.probeEnabled).toBe(true)
     expect(cfg.execution.health.backoffSec).toEqual([30, 60, 120, 300, 600])
     expect(warnings).toEqual([])
@@ -350,8 +374,6 @@ describe('loadConfig', () => {
       const cfg = loadConfig({ rootDir: dir, warnings })
       expect(cfg.execution.health).toMatchObject({
         bitbrowserProbeMs: 30000,
-        globalEnvFailureWindowSec: 300,
-        globalEnvFailureThreshold: 3,
         probeEnabled: true,
         backoffSec: [30, 60, 120, 300, 600],
       })

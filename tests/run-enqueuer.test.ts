@@ -21,8 +21,6 @@ function makeCfg(): never {
       },
       health: {
         bitbrowserProbeMs: 30000,
-        globalEnvFailureWindowSec: 300,
-        globalEnvFailureThreshold: 3,
         probeEnabled: true,
         backoffSec: [30, 60, 120, 300, 600],
       },

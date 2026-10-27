@@ -1,13 +1,12 @@
 /**
- * 全局健康门禁（engine 层）：多窗口环境失败聚合 → 暂停窗口池 → 指数退避 → half-open 探测
+ * 全局健康门禁（engine 层）：比特浏览器本地 API / 整体不可用时暂停窗口池 → 指数退避 → half-open 探测
  * 依赖方向：仅依赖标准库；被窗口池调度使用
- * 设计：非有限时间戳（NaN/Infinity）回退到 Date.now()，避免污染探测时间导致永久暂停；backoffSec 为空时按 30 秒兜底
+ * 设计：只认比特 API 探测失败（reconcile /browser/pids）；单窗口的任务/代理失败由窗口级熔断隔离，不拖停全局。
+ *       非有限时间戳（NaN/Infinity）回退到 Date.now()，避免污染探测时间导致永久暂停；backoffSec 为空时按 30 秒兜底
  */
 export type GlobalHealthState = 'normal' | 'paused' | 'probing'
 
 export interface GlobalHealthConfig {
-  windowSec: number
-  threshold: number
   backoffSec: number[]
   probeEnabled: boolean
 }
@@ -19,7 +18,6 @@ function resolveNowMs(nowMs: number): number {
 export class GlobalHealthGate {
   state: GlobalHealthState = 'normal'
   nextProbeMs: number | null = null
-  private failures = new Map<string, number>()
   private level = 0
   private readonly cfg: GlobalHealthConfig
 
@@ -36,20 +34,6 @@ export class GlobalHealthGate {
     return this.state === 'normal'
   }
 
-  recordEnvironmentFailure(windowId: string, nowMs: number): GlobalHealthState {
-    const at = resolveNowMs(nowMs)
-    this.failures.set(windowId, at)
-    for (const [id, failedAt] of this.failures) {
-      if (at - failedAt > this.cfg.windowSec * 1000) this.failures.delete(id)
-    }
-    if (this.state === 'normal' && this.failures.size >= this.cfg.threshold) {
-      this.state = 'paused'
-      this.level = 0
-      this.nextProbeMs = at + this.backoffMs()
-    }
-    return this.state
-  }
-
   /**
    * 全局环境故障（比特 API/断网整体不可用）：立即暂停并进入指数退避，
    * 不需要等多窗口聚合；调用方应做去抖/限频，避免每个 tick 都升级退避级别。
@@ -64,18 +48,14 @@ export class GlobalHealthGate {
     return this.state
   }
 
+  /**
+   * 探测会话结束：只要窗口池能启动会话，就说明 reconcile 的比特 API 探测已成功；
+   * 会话内的代理/任务失败属窗口级问题，调用方应回到 normal 交给窗口熔断处理。
+   */
   recordProbeSuccess(): void {
     this.state = 'normal'
-    this.failures.clear()
     this.level = 0
     this.nextProbeMs = null
-  }
-
-  recordProbeFailure(nowMs: number): GlobalHealthState {
-    this.state = 'paused'
-    this.level = Math.min(this.level + 1, this.maxLevel())
-    this.nextProbeMs = resolveNowMs(nowMs) + this.backoffMs()
-    return this.state
   }
 
   private maxLevel(): number {

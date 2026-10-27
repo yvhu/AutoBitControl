@@ -51,10 +51,6 @@ export interface WindowPoolConfig {
 export interface HealthConfig {
   /** 比特浏览器可用性探测间隔（毫秒） */
   bitbrowserProbeMs: number
-  /** 全局环境级失败统计窗口（秒）：该窗口内累计失败达到阈值即判全局异常 */
-  globalEnvFailureWindowSec: number
-  /** 全局环境级失败阈值（次）：窗口内达到该次数后暂停开新窗 */
-  globalEnvFailureThreshold: number
   /** 是否启用比特浏览器可用性探测（默认 true） */
   probeEnabled: boolean
   /** 全局异常退避数列（秒）：按失败级别递增取用 */
@@ -74,6 +70,10 @@ export interface ExecutionConfig {
   circuitBreakerCooldownSec: number
   /** 冷却上限（秒，默认 7200）：连续失败时冷却按级别递增，不超过该值 */
   circuitBreakerMaxCooldownSec: number
+  /** 代理连接类失败的首次冷却时长（秒，默认 180）：代理通常几分钟内恢复，使用短冷却快速重试 */
+  circuitBreakerProxyCooldownSec: number
+  /** 代理连接类失败的冷却上限（秒，默认 900）：连续失败时按级别递增，不超过该值 */
+  circuitBreakerProxyMaxCooldownSec: number
   /** 熔断每日重置时刻（本地 HH:mm，默认 23:59）：到点自动归零所有窗口的熔断计数；空字符串关闭自动重置 */
   circuitBreakerResetAt: string
   /** 窗口池配置（唯一调度器，始终生效） */
@@ -175,6 +175,9 @@ const defaults: AppConfig = {
     circuitBreakerCooldownSec: 1800,
     // 冷却上限 2 小时：连续失败时按级别递增，避免无限拉长
     circuitBreakerMaxCooldownSec: 7200,
+    // 代理连接类失败：3 分钟起步、最长 15 分钟（代理通常几分钟内恢复，避免长时间拖停）
+    circuitBreakerProxyCooldownSec: 180,
+    circuitBreakerProxyMaxCooldownSec: 900,
     // 熔断每日重置时刻（本地墙钟 HH:mm）：到点归零所有窗口健康状态；"" 关闭自动重置
     circuitBreakerResetAt: '23:59',
     // 窗口池：始终启用的唯一调度器
@@ -193,11 +196,9 @@ const defaults: AppConfig = {
       windowMaxLifetimeSec: 600,
       cohortMaxSec: 1800,
     },
-    // 全局健康：每 30 秒探测比特浏览器；5 分钟内累计 3 次环境级失败即判全局异常，退避 30s 起阶梯到 10 分钟
+    // 全局健康：只由比特 API 探测失败触发；5 分钟内不再聚合单窗口环境失败，退避 30s 起阶梯到 10 分钟
     health: {
       bitbrowserProbeMs: 30000,
-      globalEnvFailureWindowSec: 300,
-      globalEnvFailureThreshold: 3,
       probeEnabled: true,
       backoffSec: [30, 60, 120, 300, 600],
     },
@@ -324,6 +325,14 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (!Number.isFinite(cb.circuitBreakerMaxCooldownSec) || cb.circuitBreakerMaxCooldownSec < cb.circuitBreakerCooldownSec) {
     cb.circuitBreakerMaxCooldownSec = Math.max(cb.circuitBreakerCooldownSec, 7200)
   }
+  if (!Number.isFinite(cb.circuitBreakerProxyCooldownSec) || cb.circuitBreakerProxyCooldownSec < 60) {
+    warnings?.push(`execution.circuitBreakerProxyCooldownSec=${String(cb.circuitBreakerProxyCooldownSec)} 非法（必须 >= 60），已回退默认 180`)
+    cb.circuitBreakerProxyCooldownSec = 180
+  }
+  if (!Number.isFinite(cb.circuitBreakerProxyMaxCooldownSec) || cb.circuitBreakerProxyMaxCooldownSec < cb.circuitBreakerProxyCooldownSec) {
+    warnings?.push(`execution.circuitBreakerProxyMaxCooldownSec=${String(cb.circuitBreakerProxyMaxCooldownSec)} 非法（必须 >= circuitBreakerProxyCooldownSec），已回退默认 900`)
+    cb.circuitBreakerProxyMaxCooldownSec = Math.max(cb.circuitBreakerProxyCooldownSec, 900)
+  }
   // 窗口池参数校验：非法值逐项回落默认并告警（窗口池为唯一调度器，配置始终生效）
   // 段级校验：配置写成 null/数字等非对象时整体回退默认，避免后续读字段直接抛 TypeError
   if (!isPlainObject(cfg.execution.windowPool)) {
@@ -394,13 +403,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     warnings?.push(`execution.health.bitbrowserProbeMs=${String(health.bitbrowserProbeMs)} 非法（必须 >= 1000），已回退默认 30000`)
     health.bitbrowserProbeMs = 30000
   }
-  if (!Number.isFinite(health.globalEnvFailureWindowSec) || health.globalEnvFailureWindowSec < 0) {
-    warnings?.push(`execution.health.globalEnvFailureWindowSec=${String(health.globalEnvFailureWindowSec)} 非法（必须 >= 0），已回退默认 300`)
-    health.globalEnvFailureWindowSec = 300
-  }
-  if (!Number.isInteger(health.globalEnvFailureThreshold) || health.globalEnvFailureThreshold < 1) {
-    warnings?.push(`execution.health.globalEnvFailureThreshold=${String(health.globalEnvFailureThreshold)} 非法（必须 >= 1），已回退默认 3`)
-    health.globalEnvFailureThreshold = 3
+  // 单窗口环境失败聚合已移除：全局健康只由比特 API 探测失败触发；旧配置项保留告警但不生效
+  const legacyHealth = health as unknown as Record<string, unknown>
+  if (legacyHealth.globalEnvFailureWindowSec !== undefined || legacyHealth.globalEnvFailureThreshold !== undefined) {
+    warnings?.push('execution.health.globalEnvFailureWindowSec/globalEnvFailureThreshold 已废弃并被忽略：全局健康现在只由比特浏览器 API 探测失败触发，单窗口代理/任务失败由窗口级熔断处理')
   }
   if (typeof health.probeEnabled !== 'boolean') {
     warnings?.push(`execution.health.probeEnabled=${String(health.probeEnabled)} 非法（必须为布尔值），已回退默认 true`)

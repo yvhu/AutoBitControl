@@ -146,8 +146,6 @@ async function makeHarness(opts: HarnessOptions = {}) {
   }
 
   const health = new GlobalHealthGate({
-    windowSec: 300,
-    threshold: 3,
     backoffSec: [30, 60, 120],
     probeEnabled: true,
   })
@@ -340,7 +338,7 @@ describe('WindowPoolScheduler 内存与全局健康门禁', () => {
   it('全局健康 paused 时不补池；到点只启动一个探测，探测成功后恢复', async () => {
     const h = await harness({ windows: 4 })
     const base = new Date(2026, 9, 22, 10, 0, 0).getTime()
-    for (const id of ['a', 'b', 'c']) h.health.recordEnvironmentFailure(id, base)
+    h.health.recordGlobalFailure(base)
     expect(h.health.state).toBe('paused')
     await h.enqueueAll(h.profiles, 'task1')
 
@@ -358,47 +356,47 @@ describe('WindowPoolScheduler 内存与全局健康门禁', () => {
     for (const profile of h.profiles) expect((await h.latest(profile, 'task1'))?.status).toBe('success')
   })
 
-  it('探测环境失败：重新暂停并把任务行退回 pending', async () => {
+  it('探测环境失败不再暂停全局健康：任务回队、窗口回收', async () => {
     const h = await harness({ windows: 1, behavior: 'env' })
     const base = new Date(2026, 9, 22, 10, 0, 0).getTime()
-    for (const id of ['a', 'b', 'c']) h.health.recordEnvironmentFailure(id, base)
+    h.health.recordGlobalFailure(base)
     await h.enqueueAll(h.profiles, 'task1')
 
     await h.tick(31_000)
 
     expect(h.runCalls('task1')).toHaveLength(1)
-    expect(h.health.state).toBe('paused')
+    expect(h.health.state).toBe('normal')
     expect(h.closeCalls).toHaveLength(1)
     const row = await h.latest(h.profiles[0], 'task1')
     expect(row?.status).toBe('pending')
     expect(Number(row?.notBeforeMs)).toBeGreaterThan(base + 31_000)
   })
 
-  it('探测被 skipped（手动停止/熔断）不算成功', async () => {
+  it('探测被 skipped（手动停止/熔断）不再拖停全局健康', async () => {
     const h = await harness({ windows: 1, behavior: 'skip' })
     const base = new Date(2026, 9, 22, 10, 0, 0).getTime()
-    for (const id of ['a', 'b', 'c']) h.health.recordEnvironmentFailure(id, base)
+    h.health.recordGlobalFailure(base)
     await h.enqueueAll(h.profiles, 'task1')
 
     await h.tick(31_000)
 
-    expect(h.health.state).toBe('paused')
+    expect(h.health.state).toBe('normal')
     expect((await h.latest(h.profiles[0], 'task1'))?.status).toBe('skipped')
   })
 
-  it('探测空结果不算成功，认领行退回 pending', async () => {
+  it('探测空结果不再拖停全局健康，认领行退回 pending', async () => {
     const h = await harness({ windows: 1, behavior: 'empty' })
     const base = new Date(2026, 9, 22, 10, 0, 0).getTime()
-    for (const id of ['a', 'b', 'c']) h.health.recordEnvironmentFailure(id, base)
+    h.health.recordGlobalFailure(base)
     await h.enqueueAll(h.profiles, 'task1')
 
     await h.tick(31_000)
 
-    expect(h.health.state).toBe('paused')
+    expect(h.health.state).toBe('normal')
     expect((await h.latest(h.profiles[0], 'task1'))?.status).toBe('pending')
   })
 
-  it('环境级失败回收窗口、任务行退回 pending，多窗口失败后暂停全局健康', async () => {
+  it('普通会话环境级失败只回收窗口并回队，不再暂停全局健康', async () => {
     const h = await harness({
       windows: 3,
       failure: () => true,
@@ -407,7 +405,7 @@ describe('WindowPoolScheduler 内存与全局健康门禁', () => {
     for (let i = 0; i < 8; i++) await h.tick(1000)
 
     expect(h.closeCalls.length).toBeGreaterThanOrEqual(3)
-    expect(h.health.state).toBe('paused')
+    expect(h.health.state).toBe('normal')
     expect(h.openEvents).toHaveLength(3)
     for (const profile of h.profiles) {
       const row = await h.latest(profile, 'task1')
@@ -502,7 +500,7 @@ describe('WindowPoolScheduler 内存与全局健康门禁', () => {
   it('half-open 探测受 effectivePool 限制；恢复内存后才启动', async () => {
     const h = await harness({ windows: 1 })
     const base = new Date(2026, 9, 22, 10, 0, 0).getTime()
-    for (const id of ['a', 'b', 'c']) h.health.recordEnvironmentFailure(id, base)
+    h.health.recordGlobalFailure(base)
     await h.enqueueAll(h.profiles, 'task1')
 
     h.memory.state = 'warning'

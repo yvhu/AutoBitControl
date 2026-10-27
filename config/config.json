@@ -18,6 +18,8 @@
     "circuitBreakerEnabled": true,
     "circuitBreakerCooldownSec": 1800,
     "circuitBreakerMaxCooldownSec": 7200,
+    "circuitBreakerProxyCooldownSec": 180,
+    "circuitBreakerProxyMaxCooldownSec": 900,
     "circuitBreakerResetAt": "23:59",
     "windowPool": {
       "maxOpenWindows": 4,
@@ -34,8 +36,6 @@
     },
     "health": {
       "bitbrowserProbeMs": 30000,
-      "globalEnvFailureWindowSec": 300,
-      "globalEnvFailureThreshold": 3,
       "probeEnabled": true,
       "backoffSec": [
         30,

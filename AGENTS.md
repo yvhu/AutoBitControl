@@ -22,7 +22,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
 
 - `config/config.json` — 通用参数（已提交）
   - `execution.windowPool`：窗口池（唯一调度器，始终启用，无开关）。窗口跨任务复用、无任务级并发/顺序限制；有效池 = `min(maxOpenWindows, 内存允许的打开数)`，实际打开数含手动/`task:run` 窗口；`maxOpenWindows` 同时是手动/面板开窗的统一上限；内存 `warning` 停补池与普通分配（仅允许探测）、`critical` 停分配并关空闲；关闭窗口按最早 `queued_at` 排队轮转，idle/任务数/寿命/连续占用回收；开窗冷却由 `openCooldownMs` 控制
-  - `execution.health`：全局健康门禁（**Phase 2 已接入窗口池**；比特 API/断网/代理整体故障 → 暂停开窗 + 指数退避 + half-open 探测；暂停期间任务保持 `pending`，不批量失败）
+  - `execution.health`：全局健康门禁（**Phase 2 已接入窗口池**；只由比特 API `/browser/pids` 对账失败/本机整体故障触发 → 暂停开窗 + 指数退避 + half-open 探测；暂停期间任务保持 `pending`，不批量失败。单窗口代理/任务失败走窗口熔断，不拖停全局）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
 - `config/.env` — 密钥与端口：`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
@@ -111,7 +111,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 ## 踩坑提醒
 
 - 未捕获异常默认退出进程，但 CDP 会话级瞬时错误（Protocol error/session closed 等，见 src/app.ts TRANSIENT_PATTERN）只告警不退出——修 bug 时别把这类错误当致命
-- 窗口连续 2 次**环境级**终态失败触发熔断（只计开窗/CDP/浏览器/扩展/网络类失败，任务业务失败不计；该窗口剩余任务 skipped）；熔断后 30 分钟起步指数退避到 2 小时，半开用真实任务探测；每日 23:59 全量重置（`execution.circuitBreakerResetAt`），任一任务成功/面板手动也清零；代理失效由任务自身失败暴露（已无前置 IP 校验）
+- 窗口连续 2 次**环境级**终态失败触发熔断（只计开窗/CDP/浏览器/扩展/网络类失败，任务业务失败不计；该窗口剩余任务 skipped）；熔断后普通环境失败 30 分钟起步指数退避到 2 小时，**代理连接类失败（`ERR_PROXY_*`/`ERR_TUNNEL_*`/`ERR_SOCKS_*`）3 分钟起步到 15 分钟**，半开用真实任务探测；每日 23:59 全量重置（`execution.circuitBreakerResetAt`），任一任务成功/面板手动也清零；代理失效由任务自身失败暴露（已无前置 IP 校验）。全局健康门禁只由比特 API `/browser/pids` 对账失败触发，单窗口代理/任务失败不拖停整个池
 - 定时触发与手动触发共享在途守卫与窗口熔断：定时失败同样按环境/任务分类，只有环境级终态失败计入熔断（连续 2 次后该窗口当日剩余任务 skipped，含手动）
 - 面板端口被占/改端口：改 `config/.env` 的 WEB_PORT/VITE_PORT 后重启 dev
 - 比特浏览器必须在同一台机器运行且 API 已开启；无它无法联调，跑任务需真实环境
