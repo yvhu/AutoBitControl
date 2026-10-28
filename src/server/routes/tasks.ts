@@ -3,7 +3,7 @@
  * 依赖方向：依赖 engine/infrastructure；被 app 装配
  * 设计思路：GET 返回 meta 全字段（缺省字段补 null 保证前端取值的稳定性）；
  * POST trigger 支持单窗口（bitbrowserId）、手选窗口列表（profileIds）或全部启用窗口三种范围；
- * 批量路径（profileIds/全部）带 skipIfSuccess（当天已成功窗口不重复执行），单窗口保留可手动重跑
+ * 批量路径（profileIds/全部）不带 skipIfSuccess（显式执行不按当天成功跳过），单窗口保留可手动重跑
  */
 import { Router } from 'express'
 import { ok, asyncHandler } from '../http/response'

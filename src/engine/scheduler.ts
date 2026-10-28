@@ -6,7 +6,7 @@
  * 错过即跳过（无锚点持久化，重启后从当前时间自然重算）；
  * 每分钟去重 Map（内存态，重启同分钟可能重复触发一次，由入队幂等与在途守卫兜底）；
  * 触发路径与手动批量触发同构：createBatch('schedule') → 全部启用窗口 enqueue（触发即到期）；
- * 定时入队带 skipIfSuccess（当天已成功的窗口不重复执行）
+ * 定时入队不带 skipIfSuccess（每个触发时刻都执行一轮）
  */
 import type { BatchRow, ProfileRow, ScheduleRow } from '../infrastructure/db'
 import type { Logger } from '../infrastructure/logger'
