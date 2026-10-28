@@ -954,6 +954,37 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
 
 `RunsTable` 与 `SingleBatchRow` 内原有的 `useTriggerTask/useStopRun` 调用删除，只保留 `RunActionCell` 内的调用，避免未使用变量导致类型检查失败。
 
+6. 修正批次耗时起算（Task 1 审阅遗留）：跨日重跑后不能再用 `createdAt` 起算，否则显示多天耗时。`groupBatches.ts` 的 `batchTiming` 改为从 `lastActivityAt` 起算（缺省回落 `createdAt`），并同步 `splitBatches` 的过时注释：
+
+```ts
+export function batchTiming(batch: BatchItem): { finished: boolean; durationSec: number | null } {
+  const s = batch.stats
+  const finished = s.running === 0 && s.pending === 0 && s.retryWait === 0
+  if (!finished || !batch.lastFinishedAt) return { finished, durationSec: null }
+  const end = new Date(batch.lastFinishedAt.replace(' ', 'T')).getTime()
+  const start = new Date((batch.lastActivityAt ?? batch.createdAt).replace(' ', 'T')).getTime()
+  const sec = Math.round((end - start) / 1000)
+  return { finished, durationSec: Number.isFinite(sec) ? sec : null }
+}
+```
+
+`groupBatches.test.ts` 的 `makeBatch` 增加 `lastActivityAt: over.lastActivityAt ?? over.createdAt ?? '2026-09-04 09:00:00.000'`，并追加用例：
+
+```ts
+  it('跨日重跑后耗时从最近活动起算', () => {
+    const t = batchTiming(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-05 09:00:00.000',
+      lastFinishedAt: '2026-09-05 09:26:10.000',
+      stats: { total: 1, success: 1, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 },
+    }))
+    expect(t.finished).toBe(true)
+    expect(t.durationSec).toBe(1570)
+  })
+```
+
+`splitBatches` 注释改为「主列表仍按后端最近活动时间倒序」。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npm run test:web`
