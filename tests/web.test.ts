@@ -358,7 +358,7 @@ describe('server API（RESTful + envelope）', () => {
     it('GET /api/batches/:id/rerun-candidates 同窗口多行取最新轮次', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
-        runRow(101, 1, 'failed', 0),
+        runRow(101, 1, 'failed', 5),
         runRow(102, 1, 'failed', 1),
       ])
       const res = await request(createApp(deps as never)).get('/api/batches/2/rerun-candidates')
@@ -407,13 +407,26 @@ describe('server API（RESTful + envelope）', () => {
     it('POST /api/batches/:id/rerun 拒绝非最新轮次', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
-        runRow(101, 1, 'failed', 0),
+        runRow(101, 1, 'failed', 5),
         runRow(102, 1, 'failed', 1),
       ])
       const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.message).toContain('该窗口已有更新轮次')
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+    })
+
+    it('POST /api/batches/:id/rerun 接受 slot 更低的 id 最新轮次', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([
+        runRow(101, 1, 'failed', 5),
+        runRow(102, 1, 'failed', 1),
+      ])
+      deps.enqueuer.enqueue.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [102] })
+      expect(res.status).toBe(200)
+      expect(res.body.data).toEqual({ batchId: 2, queued: 1 })
+      expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
     })
 
     it('POST /api/batches/:id/rerun queued 统计真实入队数', async () => {
