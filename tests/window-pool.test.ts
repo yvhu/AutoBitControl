@@ -564,6 +564,15 @@ describe('WindowPoolScheduler 幂等、对账与回收', () => {
     expect(p1Rows.some((row) => row.slot === 1 && row.status === 'pending')).toBe(true)
   })
 
+  it('enqueue 返回是否真实入队', async () => {
+    const h = await makeHarness({ windows: 1 })
+    const profile = h.profiles[0]
+    expect(await h.scheduler.enqueue(profile, 'task1')).toBe(true)
+    await h.tick()
+    expect(await h.scheduler.enqueue(profile, 'task1', { skipIfSuccess: true })).toBe(false)
+    h.scheduler.stop()
+  })
+
   it('窗口空闲超过 idleCloseSec 后关闭', async () => {
     const h = await harness({ windows: 1, cfg: { idleCloseSec: 10 } })
     await h.enqueueAll(h.profiles, 'warm')

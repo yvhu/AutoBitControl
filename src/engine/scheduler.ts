@@ -38,7 +38,7 @@ export interface SchedulerDeps {
       profile: ProfileRow,
       taskKey: string,
       opts?: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean },
-    ): Promise<void>
+    ): Promise<boolean>
   }
   /** 任务注册表最小视图（engine 不得 import tasks 层，SiteTask 结构兼容） */
   tasks: Map<string, { meta: TaskMeta }>

@@ -19,7 +19,7 @@ export interface RunEnqueuer {
     profile: ProfileRow,
     taskKey: string,
     opts?: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean },
-  ): Promise<void>
+  ): Promise<boolean>
   cancelBatch(batchId: number): Promise<number>
   start(): void
   stop(): void

@@ -196,14 +196,14 @@ export class WindowPoolScheduler implements RunEnqueuer {
     profile: ProfileRow,
     taskKey: string,
     opts: { batchId?: number; notBeforeMs?: number; skipIfSuccess?: boolean } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const now = this.now()
     const date = todayStr(now)
     if (opts.skipIfSuccess) {
       const latest = await this.deps.db.getLatestRun(profile.id, taskKey, date)
       if (latest?.status === 'success') {
         this.deps.logger.debug({ profile: profile.name, task: taskKey }, '今日已成功，跳过重复入队')
-        return
+        return false
       }
     }
     const row = await this.deps.db.enqueueRun(
@@ -215,8 +215,10 @@ export class WindowPoolScheduler implements RunEnqueuer {
     )
     if (row.status === 'running') {
       this.deps.logger.warn({ profile: profile.name, task: taskKey }, '任务已在运行，本次入队忽略')
+      return false
     }
     this.requestTick()
+    return true
   }
 
   /** 取消批次中仍在排队的行（running 行由执行器按停止语义结算） */
