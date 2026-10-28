@@ -345,16 +345,17 @@ describe('server API（RESTful + envelope）', () => {
       deps.cfg.execution.circuitBreakerEnabled = false
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open' }])
+      deps.enqueuer.enqueue.mockResolvedValue(true)
       const app = createApp(deps as never)
       const candidates = await request(app).get('/api/batches/2/rerun-candidates')
       expect(candidates.status).toBe(200)
       expect(candidates.body.data.candidates[0]).toMatchObject({ selectable: true, defaultSelected: true, blockedReason: null })
-      const rerun = await request(app).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const rerun = await request(app).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(rerun.status).toBe(200)
       expect(deps.enqueuer.enqueue).toHaveBeenCalled()
     })
 
-    it('GET /api/batches/:id/rerun-candidates 同窗口多行取 slot 最大', async () => {
+    it('GET /api/batches/:id/rerun-candidates 同窗口多行取最新轮次', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
         runRow(101, 1, 'failed', 0),
@@ -382,18 +383,61 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.code).toBe(40901)
     })
 
-    it('POST /api/batches/:id/rerun-failed 已成功窗口交给幂等入队（skipIfSuccess）', async () => {
+    it('POST /api/batches/:id/rerun 写回原批次且强跑不跳过', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.getLatestRun.mockResolvedValue({ status: 'success', finishedAt: '2026-10-17 11:00:00.000' })
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      deps.enqueuer.enqueue.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(200)
-      expect(res.body.data).toEqual({ batchId: 88, queued: 1 })
-      expect(deps.db.createBatch).toHaveBeenCalledWith('bulk', 't1', 'rerun-failed')
-      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 88, notBeforeMs: expect.any(Number), skipIfSuccess: true })
+      expect(res.body.data).toEqual({ batchId: 2, queued: 1 })
+      expect(deps.db.createBatch).not.toHaveBeenCalled()
+      expect(deps.enqueuer.enqueue).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), 't1', { batchId: 2, notBeforeMs: expect.any(Number) })
     })
 
-    it('POST /api/batches/:id/rerun-failed 不铺开：所有窗口入队时间几乎一致', async () => {
+    it('POST /api/batches/:id/rerun 允许成功行执行（行级执行）', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'success')])
+      deps.enqueuer.enqueue.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
+      expect(res.status).toBe(200)
+      expect(res.body.data).toEqual({ batchId: 2, queued: 1 })
+    })
+
+    it('POST /api/batches/:id/rerun 拒绝非最新轮次', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([
+        runRow(101, 1, 'failed', 0),
+        runRow(102, 1, 'failed', 1),
+      ])
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
+      expect(res.status).toBe(400)
+      expect(res.body.message).toContain('该窗口已有更新轮次')
+      expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
+    })
+
+    it('POST /api/batches/:id/rerun queued 统计真实入队数', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed'), runRow(102, 2, 'failed')])
+      deps.db.listProfiles.mockResolvedValue([
+        { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
+        { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
+      ])
+      deps.enqueuer.enqueue.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101, 102] })
+      expect(res.body.data).toEqual({ batchId: 2, queued: 1 })
+    })
+
+    it('POST /api/batches/:id/rerun-failed 旧路径仍可用', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
+      deps.enqueuer.enqueue.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      expect(res.status).toBe(200)
+      expect(res.body.data).toEqual({ batchId: 2, queued: 1 })
+    })
+
+    it('POST /api/batches/:id/rerun 不铺开：所有窗口入队时间几乎一致', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
         runRow(101, 1, 'failed'),
@@ -405,7 +449,8 @@ describe('server API（RESTful + envelope）', () => {
         { id: 2, bitbrowserId: 'bb-2', name: '窗口2', enabled: 1, circuitBreakerCount: 0 },
         { id: 3, bitbrowserId: 'bb-3', name: '窗口3', enabled: 1, circuitBreakerCount: 0 },
       ])
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [103, 101, 102] })
+      deps.enqueuer.enqueue.mockResolvedValue(true)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [103, 101, 102] })
       expect(res.status).toBe(200)
       expect(deps.enqueuer.enqueue.mock.calls.map((c) => c[0].bitbrowserId)).toEqual(['bb-3', 'bb-1', 'bb-2'])
       const opts = deps.enqueuer.enqueue.mock.calls.map((c) => c[2] as { notBeforeMs: number })
@@ -414,88 +459,82 @@ describe('server API（RESTful + envelope）', () => {
       expect(Math.max(...times) - Math.min(...times)).toBeLessThan(1000)
     })
 
-    it('POST /api/batches/:id/rerun-failed 停用窗口拒绝执行', async () => {
+    it('POST /api/batches/:id/rerun 停用窗口拒绝执行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 0, circuitBreakerCount: 0 }])
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.code).toBe(40000)
       expect(res.body.message).toContain('窗口1 已停用')
-      expect(deps.db.createBatch).not.toHaveBeenCalled()
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
     })
 
-    it('POST /api/batches/:id/rerun-failed 熔断窗口拒绝执行', async () => {
+    it('POST /api/batches/:id/rerun 熔断窗口拒绝执行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.listProfiles.mockResolvedValue([{ id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 2, circuitBreakerState: 'open' }])
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.code).toBe(40000)
       expect(res.body.message).toContain('窗口1 熔断中')
     })
 
-    it('POST /api/batches/:id/rerun-failed 在途窗口拒绝执行', async () => {
+    it('POST /api/batches/:id/rerun 在途窗口拒绝执行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
       deps.db.countInFlightRuns.mockResolvedValue(1)
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.code).toBe(40000)
       expect(res.body.message).toContain('窗口1 执行中')
-      expect(deps.db.createBatch).not.toHaveBeenCalled()
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
     })
 
-    it('POST /api/batches/:id/rerun-failed 窗口不存在拒绝执行', async () => {
+    it('POST /api/batches/:id/rerun 窗口不存在拒绝执行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 5, 'failed')])
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(400)
       expect(res.body.code).toBe(40000)
       expect(res.body.message).toContain('窗口不存在(5)')
-      expect(deps.db.createBatch).not.toHaveBeenCalled()
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
     })
 
-    it('POST /api/batches/:id/rerun-failed 任务不存在 404（40401）', async () => {
+    it('POST /api/batches/:id/rerun 任务不存在 404（40401）', async () => {
       const deps = makeDeps()
       deps.tasks.delete('t1')
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101] })
       expect(res.status).toBe(404)
       expect(res.body.code).toBe(40401)
       expect(deps.enqueuer.enqueue).not.toHaveBeenCalled()
     })
 
-    it('POST /api/batches/:id/rerun-failed runId 不属于批次或非失败状态 400', async () => {
+    it('POST /api/batches/:id/rerun runId 不属于批次 400', async () => {
       const deps = makeDeps()
-      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'success')])
-      const res1 = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101] })
-      expect(res1.status).toBe(400)
-      expect(res1.body.code).toBe(40000)
-      const res2 = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [999] })
-      expect(res2.status).toBe(400)
-      expect(res2.body.code).toBe(40000)
+      deps.db.listRunsForBatch.mockResolvedValue([runRow(101, 1, 'failed')])
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [999] })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe(40000)
+      expect(res.body.message).toContain('运行记录不属于该批次')
     })
 
-    it('POST /api/batches/:id/rerun-failed 同窗口多条 runId 去重', async () => {
+    it('POST /api/batches/:id/rerun 同窗口多条 runId 拒绝历史行', async () => {
       const deps = makeDeps()
       deps.db.listRunsForBatch.mockResolvedValue([
         runRow(101, 1, 'failed', 0),
         runRow(102, 1, 'failed', 1),
       ])
-      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun-failed').send({ runIds: [101, 102] })
-      expect(res.status).toBe(200)
-      expect(res.body.data).toEqual({ batchId: 88, queued: 1 })
-      expect(deps.enqueuer.enqueue).toHaveBeenCalledTimes(1)
+      const res = await request(createApp(deps as never)).post('/api/batches/2/rerun').send({ runIds: [101, 102] })
+      expect(res.status).toBe(400)
+      expect(res.body.message).toContain('该窗口已有更新轮次')
     })
 
-    it('POST /api/batches/:id/rerun-failed runIds 为空或非法 400', async () => {
-      const res1 = await request(createApp(makeDeps() as never)).post('/api/batches/2/rerun-failed').send({ runIds: [] })
+    it('POST /api/batches/:id/rerun runIds 为空或非法 400', async () => {
+      const res1 = await request(createApp(makeDeps() as never)).post('/api/batches/2/rerun').send({ runIds: [] })
       expect(res1.status).toBe(400)
       expect(res1.body.code).toBe(40000)
-      const res2 = await request(createApp(makeDeps() as never)).post('/api/batches/2/rerun-failed').send({ runIds: ['1'] })
+      const res2 = await request(createApp(makeDeps() as never)).post('/api/batches/2/rerun').send({ runIds: ['1'] })
       expect(res2.status).toBe(400)
       expect(res2.body.code).toBe(40000)
     })
