@@ -241,6 +241,21 @@ describe('server API（RESTful + envelope）', () => {
       expect(res.body.data.runs[0].notBeforeMs).toBe(1760000000000)
     })
 
+    it('GET /api/batches/:id 标记每窗口最新轮次', async () => {
+      const deps = makeDeps()
+      deps.db.listRunsForBatch.mockResolvedValue([
+        runRow(101, 1, 'failed', 0),
+        runRow(102, 1, 'success', 1),
+        runRow(103, 2, 'failed', 0),
+      ])
+      const res = await request(createApp(deps as never)).get('/api/batches/2')
+      expect(res.status).toBe(200)
+      const byId = Object.fromEntries(res.body.data.runs.map((r: { id: number }) => [r.id, r]))
+      expect(byId[101].isLatest).toBe(false)
+      expect(byId[102].isLatest).toBe(true)
+      expect(byId[103].isLatest).toBe(true)
+    })
+
     it('GET /api/batches/abc 返回 400（业务码 40000）', async () => {
       const res = await request(createApp(makeDeps() as never)).get('/api/batches/abc')
       expect(res.status).toBe(400)

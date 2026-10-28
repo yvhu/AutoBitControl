@@ -161,6 +161,7 @@ function daysAgoStr(days: number): string {
  *                           failureKind: { type: string, nullable: true, enum: [environment, task, timeout, stopped, captcha, breaker] }
  *                           durationSec: { type: integer, nullable: true }
  *                           inFlight: { type: boolean }
+ *                           isLatest: { type: boolean }
  *                           notBeforeMs: { type: integer, format: int64, nullable: true }
  *                           profileName: { type: string }
  *                           bitbrowserId: { type: string }
@@ -206,11 +207,17 @@ export function batchesRouter(deps: BatchesDeps): Router {
     const batch = await deps.db.getBatch(id)
     if (!batch) throw new HttpError(404, ERROR_CODES.BATCH_NOT_FOUND, '批次不存在')
     const rows = await deps.db.listRunsForBatch(id)
+    const latestIdByProfile = new Map<number, number>()
+    for (const r of rows) {
+      const prev = latestIdByProfile.get(r.profileId)
+      if (prev == null || r.id > prev) latestIdByProfile.set(r.profileId, r.id)
+    }
     const today = todayStr()
     ok(res, {
       batch,
       runs: await Promise.all(rows.map(async (r) => ({
         ...r,
+        isLatest: latestIdByProfile.get(r.profileId) === r.id,
         durationSec: runDurationSec(r.startedAt, r.finishedAt),
         inFlight: (await deps.db.countInFlightRuns(r.taskKey, today, r.profileId)) > 0,
       }))),

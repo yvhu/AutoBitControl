@@ -952,9 +952,9 @@ export class AppDb {
     return list
   }
 
-  /** 某批次的全部 run 行（窗口明细；按窗口与任务排序） */
+  /** 某批次的全部 run 行（窗口明细；按窗口与追加顺序排序） */
   async listRunsForBatch(batchId: number): Promise<RunRow[]> {
-    return (await this.exec(`${SELECT_RUN} WHERE r.batch_id = ? ORDER BY p.id, r.task_key, r.slot`, [batchId])) as unknown as RunRow[]
+    return (await this.exec(`${SELECT_RUN} WHERE r.batch_id = ? ORDER BY p.id, r.task_key, r.id`, [batchId])) as unknown as RunRow[]
   }
 
   /** 区间内未分批的 run 行（老数据 batch_id IS NULL）；from=null 不设下界 */
