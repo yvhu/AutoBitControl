@@ -1007,6 +1007,7 @@ git commit -m "feat: 看板重跑按钮覆盖所有批次类型并折叠历史�
 - Modify: `docs/API-GUIDE.md:1163`、`1185`（触发与幂等口径）
 - Modify: `docs/API-GUIDE.md` 第 8.2 节（面板使用）
 - Modify: `AGENTS.md:122`
+- Modify: `src/engine/scheduler.ts:209-211`（过时注释）
 
 **Interfaces:**
 - Consumes: 前六个任务完成后的实际行为。
@@ -1036,8 +1037,9 @@ git commit -m "feat: 看板重跑按钮覆盖所有批次类型并折叠历史�
 
 ```markdown
 - 批次统计按“每个窗口最新一轮”计算，`total` 为窗口数；重跑成功后原失败状态被最新轮次替代。
-- 批次时间线按最近活动时间归属：昨天的批次今天重跑后会回到今天列表，卡片显示最近活动时间。
-- 批次明细默认只显示最新轮次，可展开历史轮次；历史行不可再执行。
+- 批次时间线按“最近一次入队时间”归属：昨天的批次今天重跑后会回到今天列表；卡片在入队时间比创建时间晚超过 60 秒时显示「最近活动」。
+- 批次耗时从最近一次入队时间起算，跨日重跑不会显示多天。
+- 批次明细默认只显示最新轮次，可展开历史轮次；历史行标注 slot 且不可再执行。
 - 接口：`POST /api/batches/{id}/rerun`（body `{ runIds }`，写回原批次）；旧 `/rerun-failed` 保留为别名。
 ```
 
@@ -1049,10 +1051,19 @@ git commit -m "feat: 看板重跑按钮覆盖所有批次类型并折叠历史�
 - 批量触发（任务页「立即触发」）、批次重跑、多窗口测试触发与定时触发都不再按窗口铺开：触发即写 `pending` 并立即到期。批次重跑（批次头/明细行）写回原批次并强制入队，不按当天成功跳过；批次统计与明细按每窗口最新一轮（`run.id` 最大）计算，历史轮次保留但只读。定时/批量/测试触发属于显式执行，不按当天成功跳过（否则 hourly 计划会退化成每天一次），定时计划用 `last_fired_minute` 持久化分钟去重；单窗口手动触发始终新建一轮可重跑。
 ```
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 3: 更新过时注释**
+
+把 `src/engine/scheduler.ts:210-211` 的注释改为：
+
+```ts
+    // 定时计划每个触发时刻都应执行一轮：不按「当天已成功」跳过（否则 hourly 计划会退化成每天一次）；
+    // 同分钟重复由 lastFiredMinute 持久化去重；批次重跑不再使用 skipIfSuccess，勾选即强制入队。
+```
+
+- [ ] **Step 4: 提交**
 
 ```bash
-git add docs/API-GUIDE.md AGENTS.md
+git add docs/API-GUIDE.md AGENTS.md src/engine/scheduler.ts
 git commit -m "docs: 同步批次重跑归属原批次与最新轮次口径"
 ```
 
