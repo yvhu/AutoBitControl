@@ -1254,6 +1254,7 @@ export interface paths {
                                     taskKey?: string;
                                     source?: string;
                                     createdAt?: string;
+                                    lastActivityAt?: string;
                                     lastFinishedAt?: string | null;
                                     stats?: {
                                         total?: number;
@@ -1344,6 +1345,7 @@ export interface paths {
                                     bitbrowserId?: string;
                                     durationSec?: number | null;
                                     inFlight?: boolean;
+                                    isLatest?: boolean;
                                     notBeforeMs?: number | null;
                                 }[];
                             };

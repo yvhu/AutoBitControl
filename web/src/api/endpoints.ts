@@ -1,10 +1,10 @@
 import { get, post, patch, del } from './client'
-import type { BatchesData, BatchDetailData, RerunCandidatesData, RerunFailedResult, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle, RunArtifactsData, PoolStatusData } from '../types'
+import type { BatchesData, BatchDetailData, RerunCandidatesData, BatchRerunResult, TaskMetaView, ProfileRow, ProfileBatchAction, ProfileBatchResult, SettingsData, DatasourceInfo, ScheduleItem, ScheduleConfigInput, ToolItem, FileAssignTemplate, FileAssignRow, FileAssignPreview, FileAssignApplyResult, RunScheduleResult, AirdropPriority, AirdropImportItem, AirdropImportResult, AirdropProjectInput, AirdropProjectPatch, AirdropProjectView, AirdropReminders, AirdropStatusItem, AirdropTodoItem, DiagBundle, RunArtifactsData, PoolStatusData } from '../types'
 
 export const fetchBatches = (range: string) => get<BatchesData>(`/api/batches?range=${range}`)
 export const fetchBatchDetail = (id: number) => get<BatchDetailData>(`/api/batches/${id}`)
 export const fetchRerunCandidates = (batchId: number) => get<RerunCandidatesData>(`/api/batches/${batchId}/rerun-candidates`)
-export const rerunFailedBatch = (batchId: number, runIds: number[]) => post<RerunFailedResult>(`/api/batches/${batchId}/rerun-failed`, { runIds })
+export const rerunBatch = (batchId: number, runIds: number[]) => post<BatchRerunResult>(`/api/batches/${batchId}/rerun`, { runIds })
 export const fetchDiagnostics = (runId: number) => get<DiagBundle>(`/api/diagnostics/${runId}`)
 export const fetchRunArtifacts = (runId: number) => get<RunArtifactsData>(`/api/runs/${runId}/artifacts`)
 export const fetchTasks = () => get<TaskMetaView[]>('/api/tasks')

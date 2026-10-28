@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { App } from 'antd'
-import { fetchBatches, fetchBatchDetail, fetchRerunCandidates, rerunFailedBatch, fetchTasks, triggerTask, stopBatch, stopRun } from '../../api/endpoints'
+import { fetchBatches, fetchBatchDetail, fetchRerunCandidates, rerunBatch, fetchTasks, triggerTask, stopBatch, stopRun } from '../../api/endpoints'
 import { HttpError } from '../../api/client'
 import type { BatchItem, TaskMetaView } from '../../types'
 
@@ -80,15 +80,16 @@ export function useStopBatch() {
   })
 }
 
-export function useRerunFailedBatch() {
+export function useRerunBatch() {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ batchId, runIds }: { batchId: number; runIds: number[] }) => rerunFailedBatch(batchId, runIds),
+    mutationFn: ({ batchId, runIds }: { batchId: number; runIds: number[] }) => rerunBatch(batchId, runIds),
     onSuccess: (res) => {
-      message.success(`已提交 ${res.queued} 个窗口重跑`)
+      message.success(`已提交 ${res.queued} 个窗口执行`)
       queryClient.invalidateQueries({ queryKey: ['batches'] })
       queryClient.invalidateQueries({ queryKey: ['batchDetail'] })
+      queryClient.invalidateQueries({ queryKey: ['rerunCandidates'] })
     },
     onError: (e) => message.error(errMsg(e)),
   })

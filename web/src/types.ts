@@ -66,7 +66,7 @@ export interface RerunCandidatesData {
   candidates: RerunCandidate[]
 }
 
-export interface RerunFailedResult {
+export interface BatchRerunResult {
   batchId: number
   queued: number
 }

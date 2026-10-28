@@ -10,12 +10,12 @@ import { App } from 'antd'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import RerunFailedModal from './RerunFailedModal'
-import { fetchRerunCandidates, rerunFailedBatch } from '../../api/endpoints'
+import { fetchRerunCandidates, rerunBatch } from '../../api/endpoints'
 import type { RerunCandidatesData } from '../../types'
 
 vi.mock('../../api/endpoints', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/endpoints')>()
-  return { ...actual, fetchRerunCandidates: vi.fn(), rerunFailedBatch: vi.fn() }
+  return { ...actual, fetchRerunCandidates: vi.fn(), rerunBatch: vi.fn() }
 })
 
 // antd Table 在 jsdom 下渲染较重，全量并行跑时默认 5s 超时不够，本文件单独放宽
@@ -112,12 +112,12 @@ async function closeThenReopen() {
 describe('RerunFailedModal', () => {
   beforeEach(() => {
     vi.mocked(fetchRerunCandidates).mockReset()
-    vi.mocked(rerunFailedBatch).mockReset()
+    vi.mocked(rerunBatch).mockReset()
   })
 
   it('默认勾选非成功窗口，已成功可手动勾选，停用/在途不可选，确认提交选中 runIds', async () => {
     vi.mocked(fetchRerunCandidates).mockResolvedValue(data)
-    vi.mocked(rerunFailedBatch).mockResolvedValue({ batchId: 9, queued: 2 })
+    vi.mocked(rerunBatch).mockResolvedValue({ batchId: 9, queued: 2 })
     render(<RerunFailedModal batchId={2} open onClose={() => {}} />, { wrapper })
     await screen.findByText('后续已成功')
     await waitFor(() => expect(screen.getByRole('button', { name: /重跑选中 1 个/ })).toBeEnabled())
@@ -132,7 +132,7 @@ describe('RerunFailedModal', () => {
     fireEvent.click(boxes[1])
     expect(screen.getByRole('button', { name: /重跑选中 2 个/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /重跑选中 2 个/ }))
-    await waitFor(() => expect(rerunFailedBatch).toHaveBeenCalledWith(2, [1, 2]))
+    await waitFor(() => expect(rerunBatch).toHaveBeenCalledWith(2, [1, 2]))
   })
 
   it('重新打开时等待新响应，加载中禁止提交，新预览就绪后再校验勾选与提交', async () => {
@@ -140,7 +140,7 @@ describe('RerunFailedModal', () => {
     vi.mocked(fetchRerunCandidates)
       .mockResolvedValueOnce(firstPreview)
       .mockReturnValueOnce(second.promise)
-    vi.mocked(rerunFailedBatch).mockResolvedValue({ batchId: 9, queued: 1 })
+    vi.mocked(rerunBatch).mockResolvedValue({ batchId: 9, queued: 1 })
     renderHarness()
 
     await screen.findByText('窗口A')
@@ -171,14 +171,14 @@ describe('RerunFailedModal', () => {
     })
     await waitFor(() => expect(screen.getByRole('button', { name: /重跑选中 1 个/ })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: /重跑选中 1 个/ }))
-    await waitFor(() => expect(rerunFailedBatch).toHaveBeenCalledWith(2, [11]))
+    await waitFor(() => expect(rerunBatch).toHaveBeenCalledWith(2, [11]))
   })
 
   it('重新打开时新预览请求失败：显示错误且不允许提交缓存勾选', async () => {
     vi.mocked(fetchRerunCandidates)
       .mockResolvedValueOnce(firstPreview)
       .mockRejectedValueOnce(new Error('network down'))
-    vi.mocked(rerunFailedBatch).mockResolvedValue({ batchId: 9, queued: 1 })
+    vi.mocked(rerunBatch).mockResolvedValue({ batchId: 9, queued: 1 })
     renderHarness()
 
     await screen.findByText('窗口A')
@@ -189,14 +189,14 @@ describe('RerunFailedModal', () => {
     await screen.findByText('预览加载失败')
     await waitFor(() => expect(screen.getByRole('button', { name: /重跑选中 0 个/ })).toBeDisabled())
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
-    expect(rerunFailedBatch).not.toHaveBeenCalled()
+    expect(rerunBatch).not.toHaveBeenCalled()
   })
 
   it('新鲜数据把已手动勾选的行变为不可选时，剔除勾选并从提交载荷中排除', async () => {
     vi.mocked(fetchRerunCandidates)
       .mockResolvedValueOnce(pruneFirstPreview)
       .mockResolvedValueOnce(pruneSecondPreview)
-    vi.mocked(rerunFailedBatch).mockResolvedValue({ batchId: 9, queued: 1 })
+    vi.mocked(rerunBatch).mockResolvedValue({ batchId: 9, queued: 1 })
     const { qc } = renderHarness()
 
     await screen.findByText('窗口A')
@@ -220,6 +220,6 @@ describe('RerunFailedModal', () => {
     })
     await waitFor(() => expect(screen.getByRole('button', { name: /重跑选中 1 个/ })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: /重跑选中 1 个/ }))
-    await waitFor(() => expect(rerunFailedBatch).toHaveBeenCalledWith(2, [22]))
+    await waitFor(() => expect(rerunBatch).toHaveBeenCalledWith(2, [22]))
   })
 })

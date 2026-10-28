@@ -1,6 +1,6 @@
 /**
  * 批次失败重跑弹窗（dashboard 层）：预览失败窗口最新状态，二次勾选后按 runId 提交
- * 依赖方向：依赖 api/endpoints、types 与 hooks；打开时拉取预览，提交走 useRerunFailedBatch
+ * 依赖方向：依赖 api/endpoints、types 与 hooks；打开时拉取预览，提交走 useRerunBatch
  */
 import { useEffect, useRef, useState } from 'react'
 import type { Key, ReactNode } from 'react'
@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import StatusPill from '../../components/StatusPill'
 import type { RerunBlockedReason, RerunCandidate } from '../../types'
 import { formatDateTime } from './format'
-import { useRerunCandidates, useRerunFailedBatch } from './hooks'
+import { useRerunCandidates, useRerunBatch } from './hooks'
 
 const BLOCKED_TEXT: Record<RerunBlockedReason, string> = {
   'profile-missing': '窗口不存在',
@@ -26,7 +26,7 @@ export interface RerunFailedModalProps {
 
 export default function RerunFailedModal({ batchId, open, onClose }: RerunFailedModalProps) {
   const query = useRerunCandidates(open ? batchId : null)
-  const submit = useRerunFailedBatch()
+  const submit = useRerunBatch()
   const [selected, setSelected] = useState<Key[]>([])
   const initializedBatch = useRef<number | null>(null)
   const openedAt = useRef(0)
