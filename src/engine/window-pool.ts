@@ -189,7 +189,7 @@ export class WindowPoolScheduler implements RunEnqueuer {
   }
 
   /**
-   * 入队：写 pending 行；skipIfSuccess 时若该窗口当天该任务最新行已成功则跳过（供定时计划等幂等入口使用；批次重跑不传）。
+   * 入队：写 pending 行；skipIfSuccess 时若该窗口当天该任务最新行已成功则跳过（当前仅测试使用；批次重跑不传）。
    * 入队后尽快触发一次 tick，开窗节奏仍由池容量/冷却/内存决定。
    */
   async enqueue(

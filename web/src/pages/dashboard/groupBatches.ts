@@ -56,5 +56,6 @@ export function batchTiming(batch: BatchItem): { finished: boolean; durationSec:
   const end = new Date(batch.lastFinishedAt.replace(' ', 'T')).getTime()
   const start = new Date((batch.lastActivityAt ?? batch.createdAt).replace(' ', 'T')).getTime()
   const sec = Math.round((end - start) / 1000)
+  if (sec < 0) return { finished, durationSec: null }
   return { finished, durationSec: Number.isFinite(sec) ? sec : null }
 }

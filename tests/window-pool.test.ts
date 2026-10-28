@@ -565,12 +565,11 @@ describe('WindowPoolScheduler 幂等、对账与回收', () => {
   })
 
   it('enqueue 返回是否真实入队', async () => {
-    const h = await makeHarness({ windows: 1 })
+    const h = await harness({ windows: 1 })
     const profile = h.profiles[0]
     expect(await h.scheduler.enqueue(profile, 'task1')).toBe(true)
     await h.tick()
     expect(await h.scheduler.enqueue(profile, 'task1', { skipIfSuccess: true })).toBe(false)
-    h.scheduler.stop()
   })
 
   it('窗口空闲超过 idleCloseSec 后关闭', async () => {

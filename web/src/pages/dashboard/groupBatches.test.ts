@@ -152,6 +152,17 @@ describe('batchTiming 批次时间信息', () => {
     }
   })
 
+  it('lastFinishedAt 早于最近活动：durationSec=null', () => {
+    const t = batchTiming(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-05 09:00:00.000',
+      lastFinishedAt: '2026-09-04 09:26:10.000',
+      stats: { total: 1, success: 1, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 },
+    }))
+    expect(t.finished).toBe(true)
+    expect(t.durationSec).toBeNull()
+  })
+
   it('终态但缺 lastFinishedAt：durationSec=null', () => {
     const t = batchTiming(makeBatch({ createdAt: '2026-09-04 09:00:00.000', lastFinishedAt: null, stats: { total: 1, success: 1, failed: 0, captchaFailed: 0, skipped: 0, running: 0, pending: 0, retryWait: 0 } }))
     expect(t.finished).toBe(true)

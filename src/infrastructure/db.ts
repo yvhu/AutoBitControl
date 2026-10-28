@@ -1533,7 +1533,7 @@ export class AppDb {
 
   /**
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
-    * batches 按批次最近一次入队时刻（触发/重跑，无行为 created_at）判断超期，
+   * batches 按批次最近一次入队时刻（触发/重跑，无行为 created_at）判断超期，
    * 该时间为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
    * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数按 0 处理：仅清理今天之前的数据）

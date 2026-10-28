@@ -221,7 +221,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
   )
 }
 
-function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskInfoMap }) {
+export function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskInfoMap }) {
   const detail = useBatchDetail(batch.id)
   const [showHistory, setShowHistory] = useState(false)
   const [rerunOpen, setRerunOpen] = useState(false)
@@ -249,7 +249,7 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         loading={detail.isPending}
         locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
         columns={[
-          { title: '时间', width: 130, render: (_, r) => formatDateTime(r.startedAt ?? batch.createdAt) },
+          { title: '时间', width: 130, render: (_, r) => (r.startedAt ? formatDateTime(r.startedAt) : '—') },
           { title: '任务', width: 120, render: () => <TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /> },
           { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
             <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
