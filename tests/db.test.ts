@@ -666,13 +666,49 @@ describe('批次（batches）', () => {
     await db.upsertRun(p2.id, 't1', '2026-09-04', 1, 'retry_wait', { batchId: b1.id, finishedAt: '2026-09-04 08:05:00.000' })
     const list = await db.listBatchesForRange('2026-09-04', '2026-09-04')
     expect(list.map((b) => b.id)).toEqual([b2.id, b1.id])
-    expect(list[1].stats.total).toBe(3)
+    expect(list[1].stats.total).toBe(2)
     expect(list[1].stats.success).toBe(1)
-    expect(list[1].stats.failed).toBe(1)
+    expect(list[1].stats.failed).toBe(0)
     expect(list[1].stats.retryWait).toBe(1)
     expect(list[1].stats.running).toBe(0)
     expect(list[1].lastFinishedAt).toBe('2026-09-04 08:05:00.000')
     expect(list[0].stats.running).toBe(1)
+  })
+
+  it('同批次多轮只统计每窗口最新一轮', async () => {
+    const p1 = await db.upsertProfile('bb-1', 'A')
+    const p2 = await db.upsertProfile('bb-2', 'B')
+    const b = await db.createBatch('bulk', 't1', 'trigger-all', '2026-09-04 08:00:00.000')
+    await db.upsertRun(p1.id, 't1', '2026-09-04', 0, 'failed', { batchId: b.id })
+    await db.upsertRun(p1.id, 't1', '2026-09-04', 1, 'success', { batchId: b.id, finishedAt: '2026-09-04 09:00:00.000' })
+    await db.upsertRun(p2.id, 't1', '2026-09-04', 0, 'failed', { batchId: b.id })
+    const list = await db.listBatchesForRange('2026-09-04', '2026-09-04')
+    expect(list[0].stats.total).toBe(2)
+    expect(list[0].stats.success).toBe(1)
+    expect(list[0].stats.failed).toBe(1)
+    expect(list[0].lastFinishedAt).toBe('2026-09-04 09:00:00.000')
+  })
+
+  it('跨日重跑 slot 归零仍按 run id 取最新一轮', async () => {
+    const p = await db.upsertProfile('bb-1', 'A')
+    const b = await db.createBatch('bulk', 't1', 'trigger-all', '2026-09-04 08:00:00.000')
+    await db.upsertRun(p.id, 't1', '2026-09-04', 2, 'failed', { batchId: b.id, queuedAt: '2026-09-04 08:00:00.000' })
+    await db.upsertRun(p.id, 't1', '2026-09-05', 0, 'success', { batchId: b.id, queuedAt: '2026-09-05 08:00:00.000', finishedAt: '2026-09-05 09:00:00.000' })
+    const list = await db.listBatchesForRange('2026-09-05', '2026-09-05')
+    expect(list).toHaveLength(1)
+    expect(list[0].stats.total).toBe(1)
+    expect(list[0].stats.success).toBe(1)
+    expect(list[0].stats.failed).toBe(0)
+    expect(list[0].lastActivityAt).toBe('2026-09-05 09:00:00.000')
+  })
+
+  it('昨天创建的批次今天重跑后按最近活动时间归入今天', async () => {
+    const p = await db.upsertProfile('bb-1', 'A')
+    const b = await db.createBatch('bulk', 't1', 'trigger-all', '2026-09-04 08:00:00.000')
+    await db.upsertRun(p.id, 't1', '2026-09-04', 0, 'failed', { batchId: b.id, queuedAt: '2026-09-04 08:00:00.000' })
+    await db.upsertRun(p.id, 't1', '2026-09-05', 0, 'pending', { batchId: b.id, queuedAt: '2026-09-05 08:00:00.000' })
+    const list = await db.listBatchesForRange('2026-09-05', '2026-09-05')
+    expect(list.map((item) => item.id)).toEqual([b.id])
   })
 
   it('无行的批次 lastFinishedAt 为 null', async () => {
@@ -750,6 +786,17 @@ describe('cleanupOld 历史数据清理', () => {
     const batches = await db.listBatchesForRange(null, today)
     expect(batches).toHaveLength(1)
     db.close()
+  })
+
+  it('重跑过的旧批次按最近活动时间保留', async () => {
+    const p = await db.upsertProfile('bb-clean', 'A')
+    const oldDate = todayStr(new Date(Date.now() - 400 * 86400000))
+    const today = todayStr()
+    const b = await db.createBatch('bulk', 't', 'trigger-all', `${oldDate} 08:00:00.000`)
+    await db.upsertRun(p.id, 't', today, 0, 'success', { batchId: b.id, queuedAt: `${today} 08:00:00.000` })
+    const result = await db.cleanupOld(90)
+    expect(result.batches).toBe(0)
+    expect(await db.listBatchesForRange(null, today)).toHaveLength(1)
   })
 
   it('retainDays 为负数按 0 处理：当天数据保留、更早数据删除', async () => {

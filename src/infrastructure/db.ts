@@ -891,19 +891,33 @@ export class AppDb {
     return (rows[0] as unknown as BatchRow | undefined) ?? null
   }
 
-  /** 时间段内的批次列表（含每批状态聚合与最后完成时间）；createdAt 倒序；from=null 表示不设下界 */
-  async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null }>> {
+  /** 时间段内的批次列表（每窗口只取批次内最新一轮；按最近活动时间倒序）；from=null 表示不设下界 */
+  async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }>> {
+    // 最近活动时间取批次内最晚的排队/完成时刻（重跑排队与跑完都算活动），无行时退回创建时间
+    const activitySql = `COALESCE((SELECT MAX(CASE
+        WHEN r3.finished_at IS NULL THEN r3.queued_at
+        WHEN r3.queued_at IS NULL THEN r3.finished_at
+        WHEN r3.finished_at > r3.queued_at THEN r3.finished_at
+        ELSE r3.queued_at
+      END) FROM runs r3 WHERE r3.batch_id = b.id), b.created_at)`
     const rows = await this.exec(
       `SELECT b.id, b.kind, b.task_key AS taskKey, b.source, b.created_at AS createdAt,
-              r.status, COUNT(r.id) AS c, MAX(r.finished_at) AS lastFinishedAt
-       FROM batches b LEFT JOIN runs r ON r.batch_id = b.id
-       WHERE date(b.created_at) >= COALESCE(date(?), '0000-01-01') AND date(b.created_at) <= date(?)
+              r.status, COUNT(r.id) AS c, MAX(r.finished_at) AS lastFinishedAt,
+              ${activitySql} AS lastActivityAt
+       FROM batches b
+       LEFT JOIN runs r ON r.batch_id = b.id
+         AND r.id = (
+           SELECT MAX(r2.id) FROM runs r2
+           WHERE r2.batch_id = b.id AND r2.profile_id = r.profile_id
+         )
+       WHERE date(${activitySql}) >= COALESCE(date(?), '0000-01-01')
+         AND date(${activitySql}) <= date(?)
        GROUP BY b.id, r.status
-       ORDER BY b.created_at DESC, b.id DESC`,
+       ORDER BY ${activitySql} DESC, b.id DESC`,
       [from, to],
     )
-    const list: Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null }> = []
-    const byId = new Map<number, BatchRow & { stats: BatchStats; lastFinishedAt: string | null }>()
+    const list: Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }> = []
+    const byId = new Map<number, BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }>()
     for (const r of rows) {
       const id = Number(r.id)
       let item = byId.get(id)
@@ -915,6 +929,7 @@ export class AppDb {
           source: String(r.source),
           createdAt: String(r.createdAt),
           lastFinishedAt: r.lastFinishedAt === null || r.lastFinishedAt === undefined ? null : String(r.lastFinishedAt),
+          lastActivityAt: String(r.lastActivityAt),
           stats: { total: 0, success: 0, failed: 0, captchaFailed: 0, skipped: 0, running: 0, retryWait: 0, pending: 0 },
         }
         byId.set(id, item)
@@ -1523,7 +1538,8 @@ export class AppDb {
 
   /**
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
-   * batches 的 created_at 为本地墙钟时间字符串，用 date() 提取日期比较。
+   * batches 按批次最近活动时间（最后一条 run 的排队/完成时刻，无行为 created_at）判断超期，
+   * 该时间为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
    * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数按 0 处理：仅清理今天之前的数据）
    * @returns 各表删除行数
@@ -1533,7 +1549,19 @@ export class AppDb {
     const now = new Date()
     const cutoff = todayStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - safeDays))
     const r1 = await this.client.execute({ sql: 'DELETE FROM runs WHERE date < ?', args: [cutoff] })
-    const r2 = await this.client.execute({ sql: 'DELETE FROM batches WHERE date(created_at) < date(?)', args: [cutoff] })
+    const r2 = await this.client.execute({
+      sql: `DELETE FROM batches
+            WHERE date(COALESCE(
+              (SELECT MAX(CASE
+                WHEN finished_at IS NULL THEN queued_at
+                WHEN queued_at IS NULL THEN finished_at
+                WHEN finished_at > queued_at THEN finished_at
+                ELSE queued_at
+              END) FROM runs WHERE batch_id = batches.id),
+              created_at
+            )) < date(?)`,
+      args: [cutoff],
+    })
     return { runs: Number(r1.rowsAffected), batches: Number(r2.rowsAffected) }
   }
 }
