@@ -208,7 +208,7 @@ export class Scheduler {
     }
     // 第二遍：建批次入队（触发即 pending）
     // 定时计划每个触发时刻都应执行一轮：不按「当天已成功」跳过（否则 hourly 计划会退化成每天一次）；
-    // 同分钟重复由 lastFiredMinute 持久化去重，rerun-failed 才保留 skipIfSuccess。
+    // 同分钟重复由 lastFiredMinute 持久化去重；批次重跑不再使用 skipIfSuccess，勾选即强制入队。
     const profiles = await this.deps.db.listProfiles(true)
     if (profiles.length === 0) {
       this.deps.logger.warn({ schedule: schedule.name }, '定时触发无启用窗口，未入队')

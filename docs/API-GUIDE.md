@@ -145,7 +145,7 @@ const ALL: SiteTask[] = [new ExampleCheckinTask(), new MyCheckinTask()]
 2. **面板验证**：任务页开开关后「立即触发」（全部启用窗口），或看板行级「执行」（单窗口单任务）。
 3. **面板手选窗口测试**：任务页卡片点「测试」，弹窗多选若干启用窗口后只对这些窗口执行（行为等同「立即触发」，只是窗口集合手选；受任务开关与全部真机规则约束）。
 4. **停止运行**：看板批次卡片头部「停止」停整批（含排队中尚未开窗的行，这些行会直接结算为 `skipped`、不会再开窗）、批次明细行「停止」停单个窗口；停止后该行变 `skipped`（错误列显示「手动停止」），不再重试、不计熔断（对应 `POST /api/batches/:id/stop`、`POST /api/runs/:id/stop`）。
-5. **重跑批次失败**：看板批量批次卡片头部「重跑失败 N」弹窗预览失败窗口今天最新一轮；已成功窗口默认不勾（可手勾强跑），停用/熔断/执行中的窗口不可勾。确认后按勾选窗口新建「批量 · 重跑失败」批次（对应 GET /api/batches/{id}/rerun-candidates、POST /api/batches/{id}/rerun-failed）。
+5. **重跑批次失败**：任意批次类型（批量/定时/单窗口）只要存在失败窗口，卡片头都会显示「重跑失败 N」；弹窗预览该批次每窗口最新一轮，已成功窗口默认不勾（可手勾强跑），停用/熔断/执行中的窗口不可勾。确认后所有勾选窗口在原批次追加新一轮（不新建批次），失败数随最新一轮成功自动减少。明细行「重跑/执行」同样写回当前批次；历史轮次默认折叠，只读保留截图与诊断。
 6. **看现场**：截图在 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/`，日志在 `data/logs/app.log`。
 
 注意：三个示例任务用占位地址 `https://example.com/`（可直接跑通导航步骤），但都显式写了 `enabled: false`，不参与日常执行；调试时在面板手动触发或用 `task:run` 脚本跑。改完任务代码必须**重启服务**才生效（后端无 watch）。
@@ -1149,7 +1149,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - `GET /api/profiles` 返回 `breakerState`（`closed/open/half_open`）、`breakerNextProbeAt`、`breakerReason`、`breakerUpdatedAt`。
 - `POST /api/profiles/:id/breaker/reset` 重置窗口健康状态：`closed`、计数 0、等级 0、清空冷却与原因。
 - `GET /api/batches` 与 `GET /api/batches/:id` 的运行行增加 `failureKind`：`environment/task/timeout/stopped/captcha/breaker`。
-- `rerun-failed` 在熔断开启时把 `open/half_open` 窗口标记为 `circuit-breaker` 不可执行；`circuitBreakerEnabled=false` 时不受历史状态阻塞。
+- 批次重跑（`POST /api/batches/:id/rerun`，旧 `/rerun-failed` 为别名）在熔断开启时把 `open/half_open` 窗口标记为 `circuit-breaker` 不可执行；`circuitBreakerEnabled=false` 时不受历史状态阻塞。
 
 ### 6.5 截图与日志位置
 
@@ -1160,7 +1160,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 
 ### 运行队列（runs 即队列）
 
-- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（触发入口写当前时间，即立即到期；失败重试时写入退避到期时间）与 `batch_id`。批量触发、`rerun-failed`、多窗口测试触发与定时计划都不再按窗口铺开；`rerun-failed` 带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 时不再入队），定时计划与「立即触发/测试触发」属于显式执行，不再按当天成功跳过（否则 hourly 计划会退化成每天一次）；定时计划用 `schedules.last_fired_minute` 持久化去重，保证同一分钟不会重复触发。单窗口手动触发（看板行级「执行/重跑」）始终新建一轮，便于手动重跑。
+- 触发任务时立即写 `runs` 的 `pending` 行，并记 `not_before_ms`（触发入口写当前时间，即立即到期；失败重试时写入退避到期时间）与 `batch_id`。批量触发、批次重跑、多窗口测试触发与定时计划都不按窗口铺开；批次重跑写回原批次并强制入队（不按当天成功跳过），定时计划与「立即触发/测试触发」属于显式执行，也不按当天成功跳过（否则 hourly 计划会退化成每天一次）；定时计划用 `schedules.last_fired_minute` 持久化去重，保证同一分钟不会重复触发。单窗口手动触发（看板行级「执行/重跑」）始终新建一轮，便于手动重跑。
 - 窗口池调度器每秒拾取当天到期且未被更新 slot 取代的 `pending/retry_wait` 行；同一窗口同一时刻只跑一个任务，任务结束后在该窗口继续领取下一个到期任务。
 - 跨午夜排队残留：旧日期的 `pending/retry_wait` 行不会补跑，窗口池调度器跨日时统一结算为 `skipped`（错误「跨日未执行，已结算」）。旧日期已在运行的会话**仅在进程存活期间**继续跑完并按认领日期落终态，其窗口/任务额度不按日期过滤，仍占用新日期的窗口池额度；进程重启时 `recoverRuns` 会调用 `settleOldRunningRuns` 把旧日期残留的 `running` 行结算为 `failed`（错误「跨日崩溃残留」），不续跑、不补跑。
 - 到期但不在任务注册表中的行会在调度前统一结算为 `skipped`（错误「任务未注册」），避免一直停在 `pending`；任务恢复注册后重新触发即可。
@@ -1169,6 +1169,14 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 面板的 `pending/retry_wait` 行来自数据库，并显示预计开始时间（`not_before_ms`）。这是最早可调度时间（下限），受池容量、内存/健康门禁与在途任务影响，实际开始可能更晚；任务页在途、看板实时运行数也只查数据库。
 - `task:run` 单窗口调试在运行前会先入队并原子认领当天该任务行（`claimQueuedRuns`），因此后端调度器不会同时拾取同一行；它不启动调度器，重试按行内 `not_before_ms` 自行等待。
 - 不要在同一窗口同时运行 `task:run` 与后端：后端重启恢复会把当天崩溃残留的 `running` 行（包括 `task:run` 正在跑的行）重新排队，可能导致双方重复执行。
+
+### 看板批次展示（面板使用）
+
+- 批次统计按“每个窗口最新一轮”计算，`total` 为窗口数；重跑成功后原失败状态被最新轮次替代。
+- 批次时间线按“最近一次入队时间”归属：昨天的批次今天重跑后会回到今天列表；卡片在入队时间比创建时间晚超过 60 秒时显示「最近活动」。
+- 批次耗时从最近一次入队时间起算，跨日重跑不会显示多天。
+- 批次明细默认只显示最新轮次，可展开历史轮次；历史行标注 slot 且不可再执行。
+- 接口：`POST /api/batches/{id}/rerun`（body `{ runIds }`，写回原批次）；旧 `/rerun-failed` 保留为别名。
 
 ### 调度节奏与窗口池
 
@@ -1182,7 +1190,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 队列与轮转：有任务但未打开的窗口按最早 `queued_at` 排队；池有空位才开，每 tick 最多开一个。池窗口任务集清空且仍有窗口排队时关闭让位；无任务时按 `idleCloseSec` 关闭（当前项目配置为 60 秒，代码兜底默认值为 180 秒），达到 `windowMaxTasks` / `windowMaxLifetimeSec`，或连续占用超过 `cohortMaxSec`（有其它窗口排队时）轮转。
 - 任务**无顺序、无任务级并发限制**：所有已打开窗口都可同时跑同一个任务；站点限频由任务重试/熔断/启动间隔兜底。
 - 开窗/关窗统一经进程内 `SerialQueue` 串行执行（两次开窗最小间隔 `windowPool.openCooldownMs`，默认 10 秒；冷却只约束开窗，关窗不等待）；关窗要等比特 `/browser/pids` 确认 pids 消失后才清 `open_windows` 登记。`open_windows.state` 区分 `opening/open/closing`，`owner_kind` 区分 `pool/manual/taskrun`。
-- 幂等：`rerun-failed` 带 `skipIfSuccess`（当天该窗口该任务最新行已 `success` 则跳过入队）；定时计划与批量/测试触发按每个触发时刻执行，不按当天成功跳过；`failed/skipped` 仍可按需重跑，单窗口手动触发始终新建一轮。定时计划额外用 `last_fired_minute` 持久化分钟去重，重启也不会重复触发。
+- 幂等：定时计划与批量/测试触发按触发时刻执行，不按当天成功跳过；批次重跑/行级执行由用户显式勾选即执行，也不按当天成功跳过；单窗口触发始终新建一轮。定时计划额外用 `last_fired_minute` 持久化分钟去重。
 - `open_windows.last_used_at` / `tasks_done` 记录窗口最近使用时间与已跑任务数，供轮转/寿命回收使用。
 - 面板设置页「窗口池状态」卡片（只读，5 秒自动刷新）展示：内存状态（正常/偏高/临界）、全局健康（正常/暂停/探测中）、空闲内存、单窗预估、有效池/上限、已打开/池窗口、忙碌/空闲/打开中、排队窗口/待执行任务与更新时间。对应接口 `GET /api/pool/status` 始终返回 `{ enabled: true, status: { memoryState, globalHealthState, freeMb, perWindowMb, effectivePool, maxOpenWindows, actualOpen, poolSize, busy, idle, opening, queueWindows, pendingTasks, updatedAt } }`；状态快照尚未产生时 `status` 为 null（关闭中的窗口不单列，仍按实际打开数对账）。
 - 触发即写 `pending` 并立即到期；`not_before_ms` 只用于重试退避与排队到期。
