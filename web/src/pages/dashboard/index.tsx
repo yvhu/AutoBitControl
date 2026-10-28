@@ -3,9 +3,9 @@ import { Button, Card, Collapse, Empty, Segmented, Space, Table, Tag, Typography
 import StatusPill from '../../components/StatusPill'
 import ConfirmButton from '../../components/ConfirmButton'
 import type { BatchItem, RunRow } from '../../types'
-import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
+import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, useRerunBatch, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime, formatEta, failureKindLabel } from './format'
-import { splitBatches, batchProgress, batchTiming, canRerunFailed } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming, canRerunFailed, latestOnly, isRunActionable, runActionTarget } from './groupBatches'
 import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
 import RunArtifactsModal from './RunArtifactsModal'
@@ -62,9 +62,48 @@ function ScreenshotButton({ runId }: { runId: number }) {
   )
 }
 
-function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
+function RunActionCell({ run }: { run: RunRow }) {
   const trigger = useTriggerTask()
   const stop = useStopRun()
+  const rerun = useRerunBatch()
+  if (!isRunActionable(run)) return <Tag>历史轮次</Tag>
+  if (run.inFlight) {
+    return (
+      <ConfirmButton
+        type="link"
+        size="small"
+        danger
+        confirm={{ title: `停止窗口「${run.profileName}」的任务？`, okText: '停止' }}
+        loading={stop.isPending && stop.variables === run.id}
+        onConfirm={() => stop.mutate(run.id)}
+      >
+        停止
+      </ConfirmButton>
+    )
+  }
+  const failed = run.status === 'failed' || run.status === 'captcha_failed'
+  const target = runActionTarget(run)
+  const busy = target === 'batch'
+    ? rerun.isPending && rerun.variables?.batchId === run.batchId && rerun.variables?.runIds[0] === run.id
+    : trigger.isPending && trigger.variables?.bitbrowserId === run.bitbrowserId
+  return (
+    <Button
+      type="link"
+      size="small"
+      loading={busy}
+      disabled={!run.bitbrowserId}
+      onClick={() => {
+        if (!run.bitbrowserId) return
+        if (target === 'batch' && run.batchId != null) rerun.mutate({ batchId: run.batchId, runIds: [run.id] })
+        else trigger.mutate({ key: run.taskKey, bitbrowserId: run.bitbrowserId })
+      }}
+    >
+      {failed ? '重跑' : '执行'}
+    </Button>
+  )
+}
+
+function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boolean; taskInfo: TaskInfoMap }) {
   return (
     <Table<RunRow>
       size="small"
@@ -93,22 +132,7 @@ function RunsTable({ runs, loading, taskInfo }: { runs: RunRow[]; loading: boole
         { title: '操作', width: 130, render: (_, r) => (
           <Space size={0}>
             {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
-            {r.inFlight ? (
-              <ConfirmButton
-                type="link"
-                size="small"
-                danger
-                confirm={{ title: `停止窗口「${r.profileName}」的任务？`, okText: '停止' }}
-                loading={stop.isPending && stop.variables === r.id}
-                onConfirm={() => stop.mutate(r.id)}
-              >
-                停止
-              </ConfirmButton>
-            ) : (
-              <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: r.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-                {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-              </Button>
-            )}
+            <RunActionCell run={r} />
           </Space>
         ) },
       ]}
@@ -121,6 +145,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
   const detail = useBatchDetail(open ? batch.id : null)
   const stop = useStopBatch()
   const [rerunOpen, setRerunOpen] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const { done } = batchProgress(batch)
   const timing = batchTiming(batch)
   const stats = batch.stats
@@ -136,6 +161,9 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
         <b>{formatDateTime(batch.createdAt)}</b>
+        {batch.lastActivityAt != null && batch.lastActivityAt.slice(0, 10) !== batch.createdAt.slice(0, 10) && (
+          <span style={{ color: '#999', fontSize: 12 }}>最近活动 {formatDateTime(batch.lastActivityAt)}</span>
+        )}
         <Tag color={tag.color}>{tag.label}</Tag>
         <span style={{ fontWeight: 600 }}><TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /></span>
         <span style={{ color: '#999', fontSize: 12 }}>{open ? '▼ 收起' : '▶ 展开窗口明细'}</span>
@@ -170,9 +198,20 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
       </div>
       {open && (
         <div style={{ marginTop: 8 }}>
-          {detail.data
-            ? <RunsTable runs={detail.data.runs} loading={false} taskInfo={taskInfo} />
-            : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={detail.isPending ? '加载中…' : '暂无运行记录'} />}
+          {detail.data ? (
+            <>
+              {detail.data.runs.length > latestOnly(detail.data.runs).length && (
+                <Button type="link" size="small" onClick={() => setShowHistory(!showHistory)}>
+                  {showHistory ? '仅看最新轮次' : `显示历史轮次 ${detail.data.runs.length - latestOnly(detail.data.runs).length}`}
+                </Button>
+              )}
+              <RunsTable
+                runs={showHistory ? detail.data.runs : latestOnly(detail.data.runs)}
+                loading={false}
+                taskInfo={taskInfo}
+              />
+            </>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={detail.isPending ? '加载中…' : '暂无运行记录'} />}
         </div>
       )}
       <RerunFailedModal batchId={batch.id} open={rerunOpen} onClose={() => setRerunOpen(false)} />
@@ -182,56 +221,57 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
 
 function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskInfoMap }) {
   const detail = useBatchDetail(batch.id)
-  const trigger = useTriggerTask()
-  const stop = useStopRun()
+  const [showHistory, setShowHistory] = useState(false)
+  const [rerunOpen, setRerunOpen] = useState(false)
+  const allRuns = detail.data?.runs ?? []
+  const runs = showHistory ? allRuns : latestOnly(allRuns)
+  const failedCount = batch.stats.failed + batch.stats.captchaFailed
   return (
-    <Table<RunRow>
-      size="small"
-      rowKey="id"
-      pagination={false}
-      dataSource={detail.data?.runs ?? []}
-      loading={detail.isPending}
-      locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
-      columns={[
-        { title: '时间', width: 130, render: () => formatDateTime(batch.createdAt) },
-        { title: '任务', width: 120, render: () => <TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /> },
-        { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
-          <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
-        ) },
-        {
-          title: '预计开始',
-          dataIndex: 'notBeforeMs',
-          width: 90,
-          render: (ms: number | null | undefined, r) =>
-            r.status === 'pending' || r.status === 'retry_wait' ? formatEta(ms) : '—',
-        },
-        { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
-        { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
-        { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
-        { title: '截图', width: 80, render: (_, r) => <ScreenshotButton runId={r.id} /> },
-        { title: '操作', width: 130, render: (_, r) => (
-          <Space size={0}>
-            {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
-            {r.inFlight ? (
-              <ConfirmButton
-                type="link"
-                size="small"
-                danger
-                confirm={{ title: `停止窗口「${r.profileName}」的任务？`, okText: '停止' }}
-                loading={stop.isPending && stop.variables === r.id}
-                onConfirm={() => stop.mutate(r.id)}
-              >
-                停止
-              </ConfirmButton>
-            ) : (
-              <Button type="link" size="small" loading={trigger.isPending && trigger.variables?.bitbrowserId === r.bitbrowserId} disabled={!r.bitbrowserId} onClick={() => { if (r.bitbrowserId) trigger.mutate({ key: batch.taskKey, bitbrowserId: r.bitbrowserId }) }}>
-                {r.status === 'failed' || r.status === 'captcha_failed' ? '重跑' : '执行'}
-              </Button>
-            )}
-          </Space>
-        ) },
-      ]}
-    />
+    <Space direction="vertical" size={4} style={{ display: 'flex' }}>
+      <Space size={8}>
+        {canRerunFailed(batch) && (
+          <Button size="small" onClick={() => setRerunOpen(true)}>重跑失败 {failedCount}</Button>
+        )}
+        {allRuns.length > latestOnly(allRuns).length && (
+          <Button type="link" size="small" onClick={() => setShowHistory(!showHistory)}>
+            {showHistory ? '仅看最新轮次' : `显示历史轮次 ${allRuns.length - latestOnly(allRuns).length}`}
+          </Button>
+        )}
+      </Space>
+      <Table<RunRow>
+        size="small"
+        rowKey="id"
+        pagination={false}
+        dataSource={runs}
+        loading={detail.isPending}
+        locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
+        columns={[
+          { title: '时间', width: 130, render: () => formatDateTime(batch.createdAt) },
+          { title: '任务', width: 120, render: () => <TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /> },
+          { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
+            <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>
+          ) },
+          {
+            title: '预计开始',
+            dataIndex: 'notBeforeMs',
+            width: 90,
+            render: (ms: number | null | undefined, r) =>
+              r.status === 'pending' || r.status === 'retry_wait' ? formatEta(ms) : '—',
+          },
+          { title: '状态', dataIndex: 'status', width: 100, render: (s: RunRow['status']) => <StatusPill status={s} /> },
+          { title: '失败类型', dataIndex: 'failureKind', width: 100, render: (k: RunRow['failureKind']) => (k ? failureKindLabel(k) : '—') },
+          { title: '错误', dataIndex: 'error', ellipsis: true, render: (e: string | null) => (e ? <Typography.Text type="danger" ellipsis={{ tooltip: e }} style={{ maxWidth: 220 }}>{e}</Typography.Text> : '—') },
+          { title: '截图', width: 80, render: (_, r) => <ScreenshotButton runId={r.id} /> },
+          { title: '操作', width: 130, render: (_, r) => (
+            <Space size={0}>
+              {r.status === 'failed' && <DiagButton runId={r.id} screenshot={r.screenshot} />}
+              <RunActionCell run={r} />
+            </Space>
+          ) },
+        ]}
+      />
+      <RerunFailedModal batchId={batch.id} open={rerunOpen} onClose={() => setRerunOpen(false)} />
+    </Space>
   )
 }
 

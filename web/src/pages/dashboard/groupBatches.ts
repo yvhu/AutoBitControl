@@ -2,9 +2,9 @@
  * 批次时间线纯函数（前端）：散批聚合分流与批次完成率计算
  * 设计思路：bulk 批次按时间线主列表展示；single 批次聚合进「单窗口散批」折叠卡
  */
-import type { BatchItem } from '../../types'
+import type { BatchItem, RunRow } from '../../types'
 
-/** 散批分流：kind=single 的批次从主列表抽出（主列表仍按后端 createdAt 倒序） */
+/** 散批分流：kind=single 的批次从主列表抽出（主列表仍按后端最近活动时间倒序） */
 export function splitBatches(batches: BatchItem[]): { bulk: BatchItem[]; single: BatchItem[] } {
   const bulk: BatchItem[] = []
   const single: BatchItem[] = []
@@ -12,9 +12,24 @@ export function splitBatches(batches: BatchItem[]): { bulk: BatchItem[]; single:
   return { bulk, single }
 }
 
-/** 批次卡片是否显示「重跑失败」：仅 bulk 批次且有失败/验证码失败行 */
+/** 批次卡片是否显示「重跑失败」：任意批次类型，只要最新一轮存在失败窗口 */
 export function canRerunFailed(batch: BatchItem): boolean {
-  return batch.kind === 'bulk' && batch.stats.failed + batch.stats.captchaFailed > 0
+  return batch.stats.failed + batch.stats.captchaFailed > 0
+}
+
+/** 明细默认只展示每窗口最新一轮（旧数据无 isLatest 时视为最新） */
+export function latestOnly(runs: RunRow[]): RunRow[] {
+  return runs.filter((r) => r.isLatest !== false)
+}
+
+/** 只有每窗口最新一轮允许执行/重跑/停止 */
+export function isRunActionable(run: RunRow): boolean {
+  return run.isLatest !== false
+}
+
+/** 行级动作路由：批次内行写回原批次，未分批历史走单窗口触发 */
+export function runActionTarget(run: RunRow): 'batch' | 'single' {
+  return run.batchId == null ? 'single' : 'batch'
 }
 
 /** 批次完成率：终态行数 / 总行数（百分比四舍五入；total=0 返回 0） */
@@ -25,13 +40,13 @@ export function batchProgress(b: BatchItem): { done: number; pct: number } {
   return { done, pct }
 }
 
-/** 批次时间信息：finished = 无任何在途（running/pending/retryWait 全 0）；耗时 = lastFinishedAt - createdAt（秒取整，任一缺失返回 null） */
+/** 批次时间信息：finished = 无任何在途（running/pending/retryWait 全 0）；耗时 = lastFinishedAt - 最近活动（秒取整，任一缺失返回 null） */
 export function batchTiming(batch: BatchItem): { finished: boolean; durationSec: number | null } {
   const s = batch.stats
   const finished = s.running === 0 && s.pending === 0 && s.retryWait === 0
   if (!finished || !batch.lastFinishedAt) return { finished, durationSec: null }
   const end = new Date(batch.lastFinishedAt.replace(' ', 'T')).getTime()
-  const start = new Date(batch.createdAt.replace(' ', 'T')).getTime()
+  const start = new Date((batch.lastActivityAt ?? batch.createdAt).replace(' ', 'T')).getTime()
   const sec = Math.round((end - start) / 1000)
   return { finished, durationSec: Number.isFinite(sec) ? sec : null }
 }
