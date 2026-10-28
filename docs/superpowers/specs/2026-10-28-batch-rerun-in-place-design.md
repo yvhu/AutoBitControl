@@ -57,7 +57,7 @@ GROUP BY b.id, r.status
 - `stats.total` = 该批次不同窗口数（100 个窗口重跑 3 个仍是 100）。
 - `stats.success/failed/captchaFailed/skipped/running/retryWait/pending` = 最新轮次状态计数。
 - `lastFinishedAt` = 最新轮次中的最大 `finished_at`。
-- `lastActivityAt` = `COALESCE(MAX(r.queued_at), b.created_at)`（新增返回字段）。
+- `lastActivityAt` = 批次内 run 的 `queued_at` 与 `finished_at` 中较晚者，再与 `b.created_at` 取最大（排队与跑完都算活动；全部为空时退回创建时间），新增返回字段。
 - 时间范围过滤与排序都改用 `lastActivityAt`。实现用 CTE/相关子查询**按批次**算出活动时间后再过滤：
 
 ```sql

@@ -118,8 +118,13 @@ Expected: FAIL（`stats.total` 为原始行数、`lastActivityAt` 为 undefined�
        GROUP BY b.id, r.status
        ORDER BY COALESCE((SELECT MAX(r3.queued_at) FROM runs r3 WHERE r3.batch_id = b.id), b.created_at) DESC,
                 b.id DESC`,
-      [from, to],
+       [from, to],
     )
+```
+
+实现口径补充：`lastActivityAt` 取批次内 run 的 `queued_at` 与 `finished_at` 较晚者（排队与跑完都算活动），无 run 时退回 `created_at`；`cleanupOld` 用同一口径。上面的 SQL 片段以 `MAX(r3.queued_at)` 示意，实际实现用 `MAX(CASE WHEN finished_at > queued_at THEN finished_at ELSE COALESCE(finished_at, queued_at) END)`（SQLite 多参数 `max()` 遇 NULL 返回 NULL，必须用 CASE）。
+
+```ts
     const list: Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }> = []
     const byId = new Map<number, BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }>()
     for (const r of rows) {
