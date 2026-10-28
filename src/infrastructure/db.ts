@@ -891,15 +891,10 @@ export class AppDb {
     return (rows[0] as unknown as BatchRow | undefined) ?? null
   }
 
-  /** 时间段内的批次列表（每窗口只取批次内最新一轮；按最近活动时间倒序）；from=null 表示不设下界 */
+  /** 时间段内的批次列表（每窗口只取批次内最新一轮；按最近一次入队时刻倒序）；from=null 表示不设下界 */
   async listBatchesForRange(from: string | null, to: string): Promise<Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }>> {
-    // 最近活动时间取批次内最晚的排队/完成时刻（重跑排队与跑完都算活动），无行时退回创建时间
-    const activitySql = `COALESCE((SELECT MAX(CASE
-        WHEN r3.finished_at IS NULL THEN r3.queued_at
-        WHEN r3.queued_at IS NULL THEN r3.finished_at
-        WHEN r3.finished_at > r3.queued_at THEN r3.finished_at
-        ELSE r3.queued_at
-      END) FROM runs r3 WHERE r3.batch_id = b.id), b.created_at)`
+    // 最近一次入队时刻（触发/重跑），无行时退回创建时间
+    const activitySql = `COALESCE((SELECT MAX(r3.queued_at) FROM runs r3 WHERE r3.batch_id = b.id), b.created_at)`
     const rows = await this.exec(
       `SELECT b.id, b.kind, b.task_key AS taskKey, b.source, b.created_at AS createdAt,
               r.status, COUNT(r.id) AS c, MAX(r.finished_at) AS lastFinishedAt,
@@ -1538,7 +1533,7 @@ export class AppDb {
 
   /**
    * 清理超期历史数据（启动时调用）：runs.date 为 YYYY-MM-DD 文本，字典序安全直接比较；
-   * batches 按批次最近活动时间（最后一条 run 的排队/完成时刻，无行为 created_at）判断超期，
+    * batches 按批次最近一次入队时刻（触发/重跑，无行为 created_at）判断超期，
    * 该时间为本地墙钟时间字符串，用 date() 提取日期比较。
    * runs.batch_id 无外键约束，先删 runs 再删 batches 安全。
    * @param retainDays 保留天数（0 = 仅清理今天之前的数据；负数按 0 处理：仅清理今天之前的数据）
@@ -1552,12 +1547,7 @@ export class AppDb {
     const r2 = await this.client.execute({
       sql: `DELETE FROM batches
             WHERE date(COALESCE(
-              (SELECT MAX(CASE
-                WHEN finished_at IS NULL THEN queued_at
-                WHEN queued_at IS NULL THEN finished_at
-                WHEN finished_at > queued_at THEN finished_at
-                ELSE queued_at
-              END) FROM runs WHERE batch_id = batches.id),
+              (SELECT MAX(queued_at) FROM runs WHERE batch_id = batches.id),
               created_at
             )) < date(?)`,
       args: [cutoff],

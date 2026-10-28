@@ -699,7 +699,7 @@ describe('批次（batches）', () => {
     expect(list[0].stats.total).toBe(1)
     expect(list[0].stats.success).toBe(1)
     expect(list[0].stats.failed).toBe(0)
-    expect(list[0].lastActivityAt).toBe('2026-09-05 09:00:00.000')
+    expect(list[0].lastActivityAt).toBe('2026-09-05 08:00:00.000')
   })
 
   it('昨天创建的批次今天重跑后按最近活动时间归入今天', async () => {
