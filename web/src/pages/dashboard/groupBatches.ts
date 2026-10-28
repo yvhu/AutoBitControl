@@ -40,6 +40,14 @@ export function batchProgress(b: BatchItem): { done: number; pct: number } {
   return { done, pct }
 }
 
+/** 最近活动是否值得展示：比创建时间晚超过 60 秒（跨日重跑或同日稍后重跑） */
+export function hasRecentActivity(batch: BatchItem): boolean {
+  if (!batch.lastActivityAt || batch.lastActivityAt === batch.createdAt) return false
+  const created = new Date(batch.createdAt.replace(' ', 'T')).getTime()
+  const activity = new Date(batch.lastActivityAt.replace(' ', 'T')).getTime()
+  return Number.isFinite(created) && Number.isFinite(activity) && activity - created > 60_000
+}
+
 /** 批次时间信息：finished = 无任何在途（running/pending/retryWait 全 0）；耗时 = lastFinishedAt - 最近活动（秒取整，任一缺失返回 null） */
 export function batchTiming(batch: BatchItem): { finished: boolean; durationSec: number | null } {
   const s = batch.stats

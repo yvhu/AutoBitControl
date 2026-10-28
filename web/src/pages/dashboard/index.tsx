@@ -5,7 +5,7 @@ import ConfirmButton from '../../components/ConfirmButton'
 import type { BatchItem, RunRow } from '../../types'
 import { useBatches, useBatchDetail, useTasks, useTriggerTask, useStopBatch, useStopRun, useRerunBatch, batchInFlight, buildTaskInfo, type TaskInfoMap } from './hooks'
 import { formatDuration, formatDateTime, formatEta, failureKindLabel } from './format'
-import { splitBatches, batchProgress, batchTiming, canRerunFailed, latestOnly, isRunActionable, runActionTarget } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming, canRerunFailed, hasRecentActivity, latestOnly, isRunActionable, runActionTarget } from './groupBatches'
 import StatsBar from './StatsBar'
 import DiagModal from './DiagModal'
 import RunArtifactsModal from './RunArtifactsModal'
@@ -66,7 +66,7 @@ function RunActionCell({ run }: { run: RunRow }) {
   const trigger = useTriggerTask()
   const stop = useStopRun()
   const rerun = useRerunBatch()
-  if (!isRunActionable(run)) return <Tag>历史轮次</Tag>
+  if (!isRunActionable(run)) return <Tag>历史轮次 · slot {run.slot}</Tag>
   if (run.inFlight) {
     return (
       <ConfirmButton
@@ -151,6 +151,8 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
   const stats = batch.stats
   const failedCount = stats.failed + stats.captchaFailed
   const tag = batchTag(batch)
+  const allRuns = detail.data?.runs ?? []
+  const latestRuns = latestOnly(allRuns)
   // 最新批次开始运行时（defaultOpen 由 false→true）自动展开；用户手动收起不受影响
   const prevDefaultOpen = useRef(defaultOpen)
   useEffect(() => {
@@ -161,7 +163,7 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
     <Card size="small" style={{ marginBottom: 12, border: defaultOpen ? '1px solid #91caff' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => setOpen(!open)}>
         <b>{formatDateTime(batch.createdAt)}</b>
-        {batch.lastActivityAt != null && batch.lastActivityAt.slice(0, 10) !== batch.createdAt.slice(0, 10) && (
+        {hasRecentActivity(batch) && (
           <span style={{ color: '#999', fontSize: 12 }}>最近活动 {formatDateTime(batch.lastActivityAt)}</span>
         )}
         <Tag color={tag.color}>{tag.label}</Tag>
@@ -200,13 +202,13 @@ function BatchCard({ batch, taskInfo, defaultOpen }: { batch: BatchItem; taskInf
         <div style={{ marginTop: 8 }}>
           {detail.data ? (
             <>
-              {detail.data.runs.length > latestOnly(detail.data.runs).length && (
+              {allRuns.length > latestRuns.length && (
                 <Button type="link" size="small" onClick={() => setShowHistory(!showHistory)}>
-                  {showHistory ? '仅看最新轮次' : `显示历史轮次 ${detail.data.runs.length - latestOnly(detail.data.runs).length}`}
+                  {showHistory ? '仅看最新轮次' : `显示历史轮次 ${allRuns.length - latestRuns.length}`}
                 </Button>
               )}
               <RunsTable
-                runs={showHistory ? detail.data.runs : latestOnly(detail.data.runs)}
+                runs={showHistory ? allRuns : latestRuns}
                 loading={false}
                 taskInfo={taskInfo}
               />
@@ -224,7 +226,8 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
   const [showHistory, setShowHistory] = useState(false)
   const [rerunOpen, setRerunOpen] = useState(false)
   const allRuns = detail.data?.runs ?? []
-  const runs = showHistory ? allRuns : latestOnly(allRuns)
+  const latestRuns = latestOnly(allRuns)
+  const runs = showHistory ? allRuns : latestRuns
   const failedCount = batch.stats.failed + batch.stats.captchaFailed
   return (
     <Space direction="vertical" size={4} style={{ display: 'flex' }}>
@@ -232,9 +235,9 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         {canRerunFailed(batch) && (
           <Button size="small" onClick={() => setRerunOpen(true)}>重跑失败 {failedCount}</Button>
         )}
-        {allRuns.length > latestOnly(allRuns).length && (
+        {allRuns.length > latestRuns.length && (
           <Button type="link" size="small" onClick={() => setShowHistory(!showHistory)}>
-            {showHistory ? '仅看最新轮次' : `显示历史轮次 ${allRuns.length - latestOnly(allRuns).length}`}
+            {showHistory ? '仅看最新轮次' : `显示历史轮次 ${allRuns.length - latestRuns.length}`}
           </Button>
         )}
       </Space>
@@ -246,7 +249,7 @@ function SingleBatchRow({ batch, taskInfo }: { batch: BatchItem; taskInfo: TaskI
         loading={detail.isPending}
         locale={{ emptyText: detail.isPending ? '加载中…' : '暂无记录' }}
         columns={[
-          { title: '时间', width: 130, render: () => formatDateTime(batch.createdAt) },
+          { title: '时间', width: 130, render: (_, r) => formatDateTime(r.startedAt ?? batch.createdAt) },
           { title: '任务', width: 120, render: () => <TaskName info={taskInfo[batch.taskKey]} fallback={batch.taskKey} /> },
           { title: '窗口', dataIndex: 'profileName', width: 130, render: (n: string, r) => (
             <span>{n}<div style={{ fontSize: 11, color: '#999' }}>{(r.bitbrowserId ?? '').slice(0, 8)}</div></span>

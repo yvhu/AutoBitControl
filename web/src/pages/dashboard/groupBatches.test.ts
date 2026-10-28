@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitBatches, batchProgress, batchTiming, canRerunFailed, latestOnly, isRunActionable, runActionTarget } from './groupBatches'
+import { splitBatches, batchProgress, batchTiming, canRerunFailed, hasRecentActivity, latestOnly, isRunActionable, runActionTarget } from './groupBatches'
 import type { BatchItem } from '../../types'
 
 function makeBatch(over: Partial<BatchItem>): BatchItem {
@@ -90,8 +90,41 @@ describe('batchProgress 批次完成率', () => {
   })
 })
 
+describe('hasRecentActivity 最近活动提示', () => {
+  it('比创建时间晚 61 秒 → 展示', () => {
+    expect(hasRecentActivity(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-04 09:01:01.000',
+    }))).toBe(true)
+  })
+
+  it('比创建时间晚 60 秒 → 不展示', () => {
+    expect(hasRecentActivity(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-04 09:01:00.000',
+    }))).toBe(false)
+  })
+
+  it('跨日重跑 → 展示', () => {
+    expect(hasRecentActivity(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-05 09:00:00.000',
+    }))).toBe(true)
+  })
+
+  it('lastActivityAt 缺失或等于 createdAt → 不展示', () => {
+    const missing = makeBatch({})
+    delete (missing as Partial<BatchItem>).lastActivityAt
+    expect(hasRecentActivity(missing)).toBe(false)
+    expect(hasRecentActivity(makeBatch({
+      createdAt: '2026-09-04 09:00:00.000',
+      lastActivityAt: '2026-09-04 09:00:00.000',
+    }))).toBe(false)
+  })
+})
+
 describe('batchTiming 批次时间信息', () => {
-  it('终态批次：finished=true 且耗时为 lastFinishedAt - createdAt', () => {
+  it('终态批次：finished=true 且耗时从最近一轮入队起算', () => {
     const t = batchTiming(makeBatch({ createdAt: '2026-09-04 09:00:00.000', lastFinishedAt: '2026-09-04 09:26:10.000', stats: { total: 50, success: 43, failed: 3, captchaFailed: 2, skipped: 2, running: 0, pending: 0, retryWait: 0 } }))
     expect(t.finished).toBe(true)
     expect(t.durationSec).toBe(1570)
