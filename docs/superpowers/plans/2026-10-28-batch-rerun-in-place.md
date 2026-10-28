@@ -122,7 +122,7 @@ Expected: FAIL（`stats.total` 为原始行数、`lastActivityAt` 为 undefined�
     )
 ```
 
-实现口径补充：`lastActivityAt` 取批次内 run 的 `queued_at` 与 `finished_at` 较晚者（排队与跑完都算活动），无 run 时退回 `created_at`；`cleanupOld` 用同一口径。上面的 SQL 片段以 `MAX(r3.queued_at)` 示意，实际实现用 `MAX(CASE WHEN finished_at > queued_at THEN finished_at ELSE COALESCE(finished_at, queued_at) END)`（SQLite 多参数 `max()` 遇 NULL 返回 NULL，必须用 CASE）。
+实现口径补充：`lastActivityAt` 取批次内最近一次入队时刻（`MAX(queued_at)`，触发/重跑时写入；重试复用原行不刷新），无 run 时退回 `created_at`；`cleanupOld` 用同一口径。批次耗时从该时刻起算，避免跨日重跑显示多天。
 
 ```ts
     const list: Array<BatchRow & { stats: BatchStats; lastFinishedAt: string | null; lastActivityAt: string }> = []
