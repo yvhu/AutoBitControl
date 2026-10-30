@@ -114,6 +114,7 @@ export class PortalRhunaTask extends SiteTask {
       if (outcome !== 'claim') {
         const modalText = await evaluate(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
         ctx.log.warn({ step: 'checkin', window: ctx.profile.name, modalText }, '弹窗内未出现 Claim/完成提示，下一轮重开')
+        await this.closeDialog(ctx)
         continue
       }
       const claimBtn = '[role="dialog"] button:has-text("Claim")'
@@ -130,8 +131,16 @@ export class PortalRhunaTask extends SiteTask {
       }
       const modalText = await evaluate(ctx, () => (document.querySelector('[role="dialog"]')?.textContent ?? '').trim().slice(0, 300)).catch(() => '')
       ctx.log.warn({ step: 'checkin', window: ctx.profile.name, modalText }, '点 Claim 后等待完成提示超时，下一轮重开')
+      await this.closeDialog(ctx)
     }
     throw new Error('Daily Check-in 领取未完成（弹窗内未出现完成提示）')
+  }
+
+  /** 失败收尾：关掉残留领取弹窗；不关的话下一轮点卡片会被遮罩挡住，Playwright 会反复滚动底层页面直到超时 */
+  private async closeDialog(ctx: TaskContext): Promise<void> {
+    if (!(await this.isVisible(ctx, DIALOG_SELECTOR))) return
+    await click(ctx, '[role="dialog"] button[aria-label="Close quest"]').catch(() => {})
+    await waitFor(ctx, { hidden: DIALOG_SELECTOR }, { budgetMs: 5000 })
   }
 
   /** 方框点击容错：瞬时 CDP 拒绝不打断领取 */

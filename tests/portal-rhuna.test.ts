@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { PortalRhunaTask } from '../src/tasks/portal-rhuna'
 import { TaskContext } from '../src/tasks/base'
-import { clickTurnstile } from '../src/api'
+import { clickTurnstile, click, waitFor, race, evaluate, takeScreenshot } from '../src/api'
 
 vi.mock('../src/api', () => ({
   openPage: vi.fn(),
@@ -27,10 +27,10 @@ vi.mock('../src/api', () => ({
 /** 真机实测的错误原文（turnstile.ts 重试耗尽后上抛） */
 const CDP_REJECTED_ERR = 'cdpSession.send: Protocol error (Input.dispatchMouseEvent): Invalid parameters'
 
-function makeCtx() {
+function makeCtx(page: unknown = {}) {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const ctx = new TaskContext({
-    page: {} as never,
+    page: page as never,
     task: new PortalRhunaTask(),
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
@@ -41,9 +41,23 @@ function makeCtx() {
   return { ctx, log }
 }
 
+/** 假页面：只回答 isVisible 需要的 count/isVisible */
+function makePage(dialogVisible: boolean) {
+  return {
+    locator: vi.fn(() => ({
+      first: () => ({
+        count: async () => (dialogVisible ? 1 : 0),
+        isVisible: async () => dialogVisible,
+      }),
+    })),
+  }
+}
+
 // 私有辅助方法经类型断言直接测试（纯容错分支逻辑，与页面无关）
 type PortalHelpers = {
   tryClickTurnstile(ctx: TaskContext): Promise<'clicked' | 'absent' | 'rejected'>
+  closeDialog(ctx: TaskContext): Promise<void>
+  checkin(ctx: TaskContext): Promise<void>
 }
 const helpers = new PortalRhunaTask() as unknown as PortalHelpers
 
@@ -73,5 +87,33 @@ describe('PortalRhunaTask 验证方框点击容错', () => {
     const { ctx } = makeCtx()
     vi.mocked(clickTurnstile).mockRejectedValueOnce(new Error('点击失败: 找不到元素 iframe'))
     await expect(helpers.tryClickTurnstile(ctx)).rejects.toThrow('找不到元素')
+  })
+})
+
+describe('PortalRhunaTask 失败收尾关闭弹窗', () => {
+  it('本轮未出 Claim → 先关弹窗，下一轮才点卡片', async () => {
+    const { ctx } = makeCtx(makePage(true))
+    vi.mocked(click).mockClear()
+    vi.mocked(click).mockResolvedValue(undefined)
+    vi.mocked(waitFor).mockResolvedValue(true)
+    vi.mocked(evaluate).mockResolvedValue('')
+    vi.mocked(takeScreenshot).mockResolvedValue('')
+    vi.mocked(race).mockResolvedValueOnce(null).mockResolvedValueOnce('success')
+
+    await helpers.checkin(ctx)
+
+    const targets = vi.mocked(click).mock.calls.map((call) => call[1])
+    expect(targets[0]).toContain('Daily Check-in')
+    expect(targets[1]).toBe('[role="dialog"] button[aria-label="Close quest"]')
+    expect(targets[2]).toContain('Daily Check-in')
+  })
+
+  it('弹窗已不存在 → 不收尾点击，避免空等', async () => {
+    const { ctx } = makeCtx(makePage(false))
+    vi.mocked(click).mockClear()
+
+    await helpers.closeDialog(ctx)
+
+    expect(click).not.toHaveBeenCalled()
   })
 })

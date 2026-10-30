@@ -1329,6 +1329,12 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 旧配置 `execution.health.globalEnvFailureWindowSec` / `globalEnvFailureThreshold` 已废弃（存在时启动告警并忽略）；代理冷却对应 `execution.circuitBreakerProxyCooldownSec` / `circuitBreakerProxyMaxCooldownSec`。
 - 通用经验：**「多个窗口都失败」不等于「全局故障」；先分清共享资源（比特 API/本机网络）与窗口私有资源（代理/指纹/登录态），只对共享资源做全局熔断。**
 
+**18）弹窗未关就重点底层卡片，会让弹窗下方页面持续滚动（2026-10-30 portal-rhuna）**
+
+- 现象：领取弹窗已打开，弹窗下方页面持续滚动约 30 秒，随后日志报「领取弹窗打开失败，刷新恢复」。
+- 根因：某轮失败后弹窗仍开着，下一轮直接点弹窗背后的卡片；被遮罩挡住时 Playwright 会反复 `scrollIntoView` 等可点击直到超时，不是快速失败。
+- 修复：失败收尾先关弹窗（点 `[role="dialog"] button[aria-label="Close quest"]` 并等它消失）再进入下一轮。
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）
