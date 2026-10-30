@@ -15,6 +15,8 @@ const CHECKIN_CARD = '#loyalty-quest-root-check_in' // 签到卡片根节点（�
 const SUCCESS_TEXT = 'Check-In Succeeded!' // 签到成功弹窗标题
 const DONE_TEXT = 'Great job!' // 本周已签到的横幅文案
 const RESET_TEXT = 'RESETS IN' // 本周已签到的倒计时文案
+const CHECKIN_READY_SELECTOR = `${CHECKIN_CARD} button:has-text("Check in"), ${CHECKIN_CARD}:has-text("${DONE_TEXT}"), ${CHECKIN_CARD}:has-text("${RESET_TEXT}")` // 登录完成的任一状态：可签到按钮 / 已签到横幅 / 已签到暗态
+const SIGN_IN_STABLE_POLLS = 3 // 站内 Sign in 连续可见的轮数（约 6 秒）才判定未登录，避开登录态页面首屏加载时的闪现
 
 const CHECKIN_CARD_WAIT_MS = 45000 // 等签到卡片渲染的预算（卡片渲染有延迟）
 const CHECKIN_SUCCESS_WAIT_MS = 30000 // 点签到后等成功弹窗/已签到态的预算
@@ -50,8 +52,8 @@ export class KonnexCheckinTask extends SiteTask {
     if (state === 'needLogin') {
       await connectWallet(ctx, {
         wallet: 'metamask',
-        // 签到按钮出现 = 站点 session 已认证（Balance 在钱包已连但未签名时也会出现，不能当登录态）
-        connected: { selector: CHECKIN_BTN },
+        // 登录完成的任一状态（可签到按钮 / 本周已签到）；避免已签到时死等永不出现的按钮
+        connected: { selector: CHECKIN_READY_SELECTOR },
         disconnected: { selector: SIGN_IN_BTN },
         connect: SIGN_IN_BTN,
         confirm: `text=${ETHEREUM_ENTRY_TEXT}`,
@@ -67,10 +69,13 @@ export class KonnexCheckinTask extends SiteTask {
    */
   private async waitCheckinState(ctx: TaskContext): Promise<'done' | 'ready' | 'needLogin'> {
     const deadline = Date.now() + CHECKIN_CARD_WAIT_MS
+    let signInPolls = 0
     while (Date.now() < deadline) {
       if (await this.checkinDone(ctx)) return 'done'
       if (await this.isVisible(ctx, CHECKIN_BTN)) return 'ready'
-      if (await this.isVisible(ctx, SIGN_IN_BTN)) return 'needLogin'
+      // 会话状态异步加载：Sign in 需连续可见若干轮才判定未登录，避免登录态页面首屏闪现 Sign in 被误判
+      signInPolls = (await this.isVisible(ctx, SIGN_IN_BTN)) ? signInPolls + 1 : 0
+      if (signInPolls >= SIGN_IN_STABLE_POLLS) return 'needLogin'
       await ctx.page.waitForTimeout(2000)
     }
     // 预算内既没签到按钮也没站内登录入口：交给 checkin 报卡片异常，便于排障

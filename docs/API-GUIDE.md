@@ -1347,6 +1347,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 现象：Konnex 窗口钱包连接/解锁处理完后，MetaMask 登录签名弹窗一直没人点，签到卡片不出现；日志只有 `kind:"unlock"`，没有 `kind:"sign"`。
 - 根因：站点登录是多段确认——站内 `Sign in` → `Connect with Ethereum` → MetaMask 连接 → SIWE 签名 → session 认证。旧任务用 `Balance` 当登录态，但钱包已连接、session 未认证时余额小部件也会出现，于是误判已登录、跳过登录，后续确认全部没人点。
 - 修复：Konnex 改为以**签到按钮出现**作为真正登录完成的标志；先判已签到态，未登录时点站内 `Sign in` + `Connect with Ethereum` 走完整登录，SIWE 签名由 `autoConfirmTransaction` 自动确认。
+- 追加：登录等待的完成标志必须同时接受「已签到态」（`Great job!` / `RESETS IN`），否则本周已签到的账号会死等一个永不出现的签到按钮；站内 `Sign in` 需连续可见约 6 秒才确认未登录，避免页面会话加载时闪现导致误判。
 - 通用经验：**登录态标记要选「只有认证后才存在」的元素（业务按钮/卡片状态），不要用余额、地址、连接按钮这类钱包已连就会出现的东西。**
 
 ---

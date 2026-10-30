@@ -85,9 +85,19 @@ describe('KonnexCheckinTask 多段登录', () => {
     const spec = vi.mocked(connectWallet).mock.calls[0][1]
     expect(spec.connect).toBe('[data-testid="connect-wallet-button"]:has-text("Sign in")')
     expect(spec.confirm).toBe('text=Connect with Ethereum')
-    expect(spec.connected).toEqual({ selector: 'button:has-text("Check in")' })
+    const connected = spec.connected as { selector: string }
+    expect(connected.selector).toContain('button:has-text("Check in")')
+    expect(connected.selector).toContain('RESETS IN')
     expect(JSON.stringify(spec)).not.toContain('Balance')
     expect(page.clicks).toContain('button:has-text("Check in")')
+  })
+
+  it('本周已签到（RESETS IN）且首屏同时闪现 Sign in → 仍判已签到，不登录', async () => {
+    const page = makePage({ done: true, signIn: true })
+    await new KonnexCheckinTask().run(makeCtx(page))
+
+    expect(connectWallet).not.toHaveBeenCalled()
+    expect(page.clicks).toHaveLength(0)
   })
 
   it('本周已签到 → 不登录、不点击', async () => {

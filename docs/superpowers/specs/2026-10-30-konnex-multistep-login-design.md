@@ -18,7 +18,9 @@
 ## 决策与改动
 
 - 登录完成标志改为**签到按钮 `button:has-text("Check in")` 出现**（只有 session 认证后才存在）。
+- 登录等待的 connected 标志同时接受「已签到态」（`Great job!` / `RESETS IN`），避免本周已签到时死等永不出现的按钮。
 - 先判已签到态（`Great job!` / `RESETS IN`），命中直接成功，不触发登录。
+- 站内 `Sign in` 需连续可见 3 轮（约 6 秒）才判定未登录，避开登录态页面首屏会话加载时闪现 `Sign in` 的误判。
 - 未登录（站内 `Sign in` 可见）时走登录：`connect` = 站内 Sign in，`confirm` = `Connect with Ethereum`，`walletOption` = MetaMask；SIWE 签名由 `autoConfirmTransaction` 默认自动确认。
 - 文件：`src/tasks/konnex-checkin.ts`、`tests/konnex-login.test.ts`（新增）。
 - 文档：`docs/API-GUIDE.md` 6.7 第 20 条。
