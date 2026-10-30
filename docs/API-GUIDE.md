@@ -1342,6 +1342,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 修复：`MetaMaskAdapter.classifyPopup` 先用 URL 含 `/signature-request` 判 `sign`；`autoConfirmTransaction` 默认改为 `true`，登录阶段弹窗自动确认；只有「登录阶段会弹真实链上交易（要花 gas）」的特殊站点才在 `connectWallet` 传 `false`。
 - 通用经验：**钱包弹窗按「按钮 testid」分类会混淆签名与交易，优先用 URL/页面意图判断；安全默认可以放宽，但必须保留任务级关闭开关。**
 
+**20）多段登录不能拿「余额小部件」当登录态（2026-10-30 konnex-checkin）**
+
+- 现象：Konnex 窗口钱包连接/解锁处理完后，MetaMask 登录签名弹窗一直没人点，签到卡片不出现；日志只有 `kind:"unlock"`，没有 `kind:"sign"`。
+- 根因：站点登录是多段确认——站内 `Sign in` → `Connect with Ethereum` → MetaMask 连接 → SIWE 签名 → session 认证。旧任务用 `Balance` 当登录态，但钱包已连接、session 未认证时余额小部件也会出现，于是误判已登录、跳过登录，后续确认全部没人点。
+- 修复：Konnex 改为以**签到按钮出现**作为真正登录完成的标志；先判已签到态，未登录时点站内 `Sign in` + `Connect with Ethereum` 走完整登录，SIWE 签名由 `autoConfirmTransaction` 自动确认。
+- 通用经验：**登录态标记要选「只有认证后才存在」的元素（业务按钮/卡片状态），不要用余额、地址、连接按钮这类钱包已连就会出现的东西。**
+
 ---
 
 ## 7. 配置速查（`config.json` / `.env`）
