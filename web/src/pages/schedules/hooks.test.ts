@@ -43,7 +43,7 @@ describe('buildPayload', () => {
   })
 })
 
-import { buildTaskOptions } from './hooks'
+import { buildTaskOptions, buildSelectableTaskOptions } from './hooks'
 import type { TaskMetaView } from '../../types'
 
 describe('buildTaskOptions', () => {
@@ -67,5 +67,21 @@ describe('buildTaskOptions', () => {
 
   it('空数组返回空数组', () => {
     expect(buildTaskOptions([])).toEqual([])
+  })
+})
+
+describe('buildSelectableTaskOptions', () => {
+  const t = (key: string, enabled: boolean | undefined) => ({ key, name: `任务${key}`, enabled, group: null }) as unknown as TaskMetaView
+
+  it('排除已停用任务与当前已选任务', () => {
+    const opts = buildSelectableTaskOptions([t('a', true), t('b', false), t('c', undefined), t('d', true)], ['d'])
+    expect(opts).toEqual([
+      { label: '任务a', value: 'a' },
+      { label: '任务c', value: 'c' },
+    ])
+  })
+
+  it('已选任务全被排除时返回空数组', () => {
+    expect(buildSelectableTaskOptions([t('a', true)], ['a'])).toEqual([])
   })
 })

@@ -11,7 +11,7 @@ import {
 import { ClockCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
-  modeLabel, buildPayload, buildTaskOptions,
+  modeLabel, buildPayload, buildSelectableTaskOptions,
   useSchedules, useCreateSchedule, useUpdateSchedule, useDeleteSchedule, useRunSchedule,
   type FormValues,
 } from './hooks'
@@ -22,6 +22,16 @@ import { NameTemplateEditor } from '../../components/name-template-editor'
 import { buildTemplate, DEFAULT_TEMPLATE_FORM, templateToForm, type TemplateForm } from '../../components/name-template'
 import type { ScheduleItem, FileAssignTemplate } from '../../types'
 
+/** 任务多选值（labelInValue：已选任务被从下拉选项过滤后仍能显示名称） */
+interface TaskKeyValue {
+  value: string
+  label: string
+}
+
+interface ScheduleFormValues extends Omit<FormValues, 'taskKeys'> {
+  taskKeys: TaskKeyValue[]
+}
+
 export default function SchedulesPage() {
   const { message } = App.useApp()
   const { data: schedules, isLoading } = useSchedules()
@@ -31,13 +41,14 @@ export default function SchedulesPage() {
   const remove = useDeleteSchedule()
   const run = useRunSchedule()
 
-  const [form] = Form.useForm<FormValues>()
+  const [form] = Form.useForm<ScheduleFormValues>()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<ScheduleItem | null>(null)
   const [templateForm, setTemplateForm] = useState<TemplateForm>({ ...DEFAULT_TEMPLATE_FORM })
   const fileAssignEnabled = Form.useWatch('fileAssignEnabled', form) ?? false
+  const selectedTaskKeys = Form.useWatch('taskKeys', form) ?? []
 
-  const taskOptions = buildTaskOptions(tasks ?? [])
+  const taskOptions = buildSelectableTaskOptions(tasks ?? [], selectedTaskKeys.map((k) => k.value))
 
   const openCreate = () => {
     setEditing(null)
@@ -57,7 +68,7 @@ export default function SchedulesPage() {
       weekdays: s.config.weekdays ?? [],
       days: s.config.days ?? [],
       times: (s.config.times ?? []).map((t) => dayjs(t, 'HH:mm')),
-      taskKeys: s.taskKeys,
+      taskKeys: s.taskKeys.map((key, i) => ({ value: key, label: s.taskNames[i] ?? key })),
       fileAssignEnabled: !!s.config.fileAssign,
       fileAssignSourceDir: s.config.fileAssign?.sourceDir ?? '',
       fileAssignColumn: s.config.fileAssign?.column ?? '文件地址',
@@ -80,7 +91,7 @@ export default function SchedulesPage() {
         return
       }
     }
-    const payload = buildPayload(values, template)
+    const payload = buildPayload({ ...values, taskKeys: values.taskKeys.map((k) => k.value) }, template)
     if (editing) {
       update.mutate({ id: editing.id, body: payload }, { onSuccess: () => setOpen(false) })
     } else {
@@ -179,13 +190,13 @@ export default function SchedulesPage() {
             name="taskKeys"
             label="选择任务（到点后依次触发）"
             rules={[{
-              validator: (_, value: string[] | undefined) => {
+              validator: (_, value: TaskKeyValue[] | undefined) => {
                 if (!fileAssignEnabled && (!value || value.length === 0)) return Promise.reject(new Error('至少选择一个任务'))
                 return Promise.resolve()
               },
             }]}
           >
-            <Select mode="multiple" options={taskOptions} placeholder="多选任务（开启自动分配后可不选=仅分配计划）" optionFilterProp="label" />
+            <Select mode="multiple" labelInValue options={taskOptions} placeholder="多选任务（开启自动分配后可不选=仅分配计划）" optionFilterProp="label" />
           </Form.Item>
 
           <Divider style={{ margin: '4px 0 12px' }} />

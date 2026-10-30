@@ -135,3 +135,14 @@ export function buildTaskOptions(tasks: TaskMetaView[]): TaskSelectOption[] {
     options: g.tasks.map((t) => ({ label: t.name, value: t.key })),
   }))
 }
+
+/**
+ * 定时计划可选任务：排除已停用任务（enabled === false）与当前已选任务，
+ * 避免下拉里再次出现关闭的任务或已选过的任务。
+ * @param tasks 全量任务
+ * @param selectedKeys 当前表单已选任务 key
+ */
+export function buildSelectableTaskOptions(tasks: TaskMetaView[], selectedKeys: string[] = []): TaskSelectOption[] {
+  const selected = new Set(selectedKeys)
+  return buildTaskOptions(tasks.filter((t) => t.enabled !== false && !selected.has(t.key)))
+}
