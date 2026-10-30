@@ -208,6 +208,29 @@ describe('MetaMaskAdapter classifyPopup', () => {
     expect(clicks).toEqual([])
   })
 
+  it('签名页 URL + 共用确认按钮 → sign（登录签名不再被 tx 抢占）', async () => {
+    const clicks: string[] = []
+    const popup = makePopup({
+      url: 'chrome-extension://abc/notification.html#/confirm-transaction/1/signature-request',
+      testids: ['confirm-footer-button'],
+      clicks,
+    })
+    const adapter = new MetaMaskAdapter()
+    expect(await adapter.classifyPopup(popup)).toBe('sign')
+    expect(await adapter.handleLoginPopup(popup, 'pw')).toBe(true)
+    expect(clicks.length).toBeGreaterThan(0)
+  })
+
+  it('普通 URL + 可见确认按钮 → tx（URL 判定不放宽交易边界）', async () => {
+    const clicks: string[] = []
+    const popup = makePopup({
+      url: 'chrome-extension://abc/notification.html#/confirm-transaction/1',
+      testids: ['confirm-footer-button'],
+      clicks,
+    })
+    expect(await new MetaMaskAdapter().classifyPopup(popup)).toBe('tx')
+  })
+
   it('隐藏解锁页 + 可见连接页 → connect（isVisible 优先于 count，不误判 unlock）', async () => {
     const popup = makePopup({ testids: ['connect-page'], hiddenTestids: ['unlock-page'], clicks: [] })
     expect(await new MetaMaskAdapter().classifyPopup(popup)).toBe('connect')

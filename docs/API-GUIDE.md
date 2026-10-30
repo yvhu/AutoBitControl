@@ -599,7 +599,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 | `attempts` | `number` | 否 | `2` | 整体重试轮数（第二轮起先刷新页面重来） |
 | `reclickAfterMs` | `number` | 否 | `8000` | 一轮内无动作时补点连接按钮前的等待毫秒数 |
 | `observeMs` | `number` | 否 | `15000` | 点连接后至少观察钱包弹窗的毫秒数（不超过 `waitConnectedMs`）；避免未连接按钮常显时瞬间跑完推进轮次、错过稍后弹出的弹窗 |
-| `autoConfirmTransaction` | `boolean` | 否 | `false` | 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认；仅「无真实链上交易的 0 撸站点」按需开启 |
+| `autoConfirmTransaction` | `boolean` | 否 | `true` | 登录阶段遇到交易/授权确认弹窗（classify=tx）自动确认；登录阶段会弹真实链上交易（要花 gas）的特殊站点显式传 `false` |
 
 **示例**：`await connectWallet(ctx, { wallet: 'metamask' })` 即可跑通常见站点。完整示例见第 4 章。
 
@@ -608,7 +608,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 - 进页面先判初始态：有 `connected`/`disconnected` 用它们竞速（20s）；否则用启发式（连接按钮可见 = 未连接，页面出现 `0x` 地址样式文本 = 已连接）。命中已连接直接返回，不点任何按钮。
 - 内部会先做扩展就绪检查（`ready`）：扩展未加载会快速失败，重试会重启浏览器窗口恢复。
 - **静默连接**（扩展已授权站点，点了却不弹钱包弹窗）不判失败，以已连接标志为准。
-- **安全边界**：登录阶段只自动处理解锁/连接/签名，**绝不自动确认交易**（交易弹窗会告警并跳过，由任务显式 `confirmTransaction`）。仅当任务显式传 `autoConfirmTransaction: true`（无真实链上交易的 0 撸站点，站点把授权确认混入登录弹窗）时，tx 弹窗才会被自动确认。
+- **自动确认边界**：登录阶段默认自动处理解锁/连接/签名/交易弹窗（`autoConfirmTransaction` 缺省 `true`）。登录阶段会弹真实链上交易（要花 gas）的特殊站点，在 `connectWallet` 显式传 `autoConfirmTransaction: false`，交易改由任务自身 `confirmTransaction` 显式确认。签名页按弹窗 URL（含 `/signature-request`）识别为 `sign`，不受该开关限制。
 - 点连接后至少观察 `observeMs`（默认 15s）：期间持续监听扩展弹窗，即使页面上「未连接」按钮一直可见也不会提前结束。`recover` 阶段同样继续监听/处理迟到的钱包弹窗；钱包交互完成后会主动刷新一次再等已连接标志。
 - 失败最终抛 `登录未完成（等待已连接标志超时）`。
 
@@ -944,7 +944,7 @@ await connectWallet(ctx, {
 
 ### 4.4 安全边界与判据可靠性
 
-- **登录阶段绝不自动确认交易**：连接编排只处理解锁/连接/签名；分类为交易（tx）的弹窗告警并跳过，交易一律由任务显式 `confirmTransaction` 完成。
+- **登录阶段默认自动确认弹窗**：连接编排自动处理解锁/连接/签名/交易（`autoConfirmTransaction` 缺省 `true`）；登录阶段会弹真实链上交易的特殊站点显式传 `false`。签名页按 `/signature-request` URL 识别，不会被当成交易跳过。
 - **判据可靠性**：自动嗅探的登录态判据（地址样式文本 / 连接按钮）是启发式，可能误判；关键站点应显式给 `connected`（框架日志会打印本轮实际使用的判据，便于排障）。
 - 站点把登录包成自定义流程（如先点站内「Sign In」再签名）的，任务里显式 `click` 后再 `signMessage`。
 
@@ -1107,7 +1107,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `MetaMask 已锁定且未配置解锁密码` | 弹窗停在解锁页但没配密码 | `WALLET_PASSWORDS` 漏了该类型 | 在 `config/.env` 的 `WALLET_PASSWORDS` 配置密码 |
 | `MetaMask 解锁失败（密码错误或解锁页未离开）` | 密码错或解锁页没走 | 密码错 | 核对 `WALLET_PASSWORDS` |
 | `登录未完成（等待已连接标志超时）` | 连接编排跑完所有轮次仍未出现已连接标志 | 站点需先登录/判据误判/交互未命中 | 关键站点显式给 `connected`/`connect`/`walletOption`；核对站点是否改版（见第 4 章） |
-| `检测到交易确认弹窗，登录流程不自动处理` | 登录阶段遇到交易（tx）弹窗 | 站点把交易确认混入登录弹窗 | 安全边界：默认交易一律用任务里显式 `confirmTransaction` 确认（见 4.4）；无真实链上交易的 0 撸站点可给 `connectWallet` 传 `autoConfirmTransaction: true` 让其自动确认 |
+| `检测到交易确认弹窗，登录流程不自动处理` | 登录阶段遇到交易（tx）弹窗且任务传了 `autoConfirmTransaction: false` | 特殊站点登录会弹真实链上交易 | 确认该站点登录不应自动确认；普通站点去掉 `autoConfirmTransaction: false`（默认 `true` 会自动点） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec` | 卡死；某等待超时太长 | 核对各等待超时；必要时上调 `meta.timeoutSec` 或 `execution.taskTimeoutMs` |
 | `任务已停用` | 手动触发被拒（409） | 开关关着 | 面板打开开关（立即生效） |
 | `任务未注册` | 队列有 key 但框架找不到任务 | key 拼错/没在 `src/tasks/index.ts` 注册 | 核对 key 与注册数组 |
@@ -1334,6 +1334,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 现象：领取弹窗已打开，弹窗下方页面持续滚动约 30 秒，随后日志报「领取弹窗打开失败，刷新恢复」。
 - 根因：某轮失败后弹窗仍开着，下一轮直接点弹窗背后的卡片；被遮罩挡住时 Playwright 会反复 `scrollIntoView` 等可点击直到超时，不是快速失败。
 - 修复：失败收尾先关弹窗（点 `[role="dialog"] button[aria-label="Close quest"]` 并等它消失）再进入下一轮。
+
+**19）MetaMask 登录签名被当成交易跳过 + 自动确认默认值调整（2026-10-30 konnex-checkin）**
+
+- 现象：Konnex 登录时 MetaMask 弹窗一直不确认，日志为 `检测到交易确认弹窗，登录流程不自动处理`，弹窗 URL 尾部是 `/signature-request`。
+- 根因：签名页与交易确认页共用 `confirm-btn`/`confirm-footer-button`，`classifyPopup` 原本 tx 优先，登录签名被误判成 tx 并被安全默认（`autoConfirmTransaction=false`）跳过。
+- 修复：`MetaMaskAdapter.classifyPopup` 先用 URL 含 `/signature-request` 判 `sign`；`autoConfirmTransaction` 默认改为 `true`，登录阶段弹窗自动确认；只有「登录阶段会弹真实链上交易（要花 gas）」的特殊站点才在 `connectWallet` 传 `false`。
+- 通用经验：**钱包弹窗按「按钮 testid」分类会混淆签名与交易，优先用 URL/页面意图判断；安全默认可以放宽，但必须保留任务级关闭开关。**
 
 ---
 

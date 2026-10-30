@@ -42,9 +42,9 @@ export interface ConnectOptions {
   /** 点连接后至少观察钱包弹窗的毫秒数（缺省 15000）：避免未连接按钮常显时瞬间跑完推进轮次、错过稍后弹出的弹窗 */
   observeMs?: number
   /**
-   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 false：
-   * 交易一律交任务显式 confirmTransaction（安全边界）；仅「无真实链上交易的 0 撸站点」
-   * 在站点把授权确认混入登录弹窗时按需开启。
+   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 true：
+   * 登录期的签名/授权弹窗自动点掉；登录阶段会弹真实链上交易（要花 gas）的
+   * 特殊站点显式传 false，交易仍交由任务自身 confirmTransaction 显式确认。
    */
   autoConfirmTransaction?: boolean
 }

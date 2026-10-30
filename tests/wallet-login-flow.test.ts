@@ -266,7 +266,7 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     expect(adapter.handleLoginPopup).toHaveBeenCalledWith(popup, 'pw')
   })
 
-  it('tx 弹窗绝不被登录流程处理：只告警、不点确认，最终超时报错', async () => {
+  it('autoConfirmTransaction=false：tx 弹窗绝不被登录流程处理，只告警、不点确认，最终超时报错', async () => {
     const state: FakeState = {
       [DISCONNECTED_TEXT]: true,
       onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
@@ -278,7 +278,7 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     const { deps } = makeDeps(adapter, state)
     await expect(new WalletActions(deps).ensureConnected({
       connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL, attempts: 1, reclickAfterMs: 30,
-      observeMs: 20, waitConnectedMs: 20,
+      observeMs: 20, waitConnectedMs: 20, autoConfirmTransaction: false,
     })).rejects.toThrow('登录未完成')
     expect(adapter.handleLoginPopup).not.toHaveBeenCalled()
     expect(adapter.confirmTx).not.toHaveBeenCalled()
@@ -286,7 +286,7 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     expect(warn).toHaveBeenCalled()
   })
 
-  it('autoConfirmTransaction=true：tx 弹窗自动确认（0 撸站点无真实交易）→ connected', async () => {
+  it('默认 autoConfirmTransaction=true：tx 弹窗自动确认 → connected', async () => {
     const state: FakeState = {
       [DISCONNECTED_TEXT]: true,
       onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
@@ -301,9 +301,31 @@ describe('WalletActions.ensureConnected 自适应连接', () => {
     const { deps } = makeDeps(adapter, state)
     const r = await new WalletActions(deps).ensureConnected({
       connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL,
-      attempts: 1, reclickAfterMs: 30, autoConfirmTransaction: true,
+      attempts: 1, reclickAfterMs: 30,
     })
     expect(r.skipped).toBe(false)
     expect(adapter.confirmTx).toHaveBeenCalledWith(popup)
+  })
+
+  it('autoConfirmTransaction=false 不影响签名页：sign 仍由登录流程自动处理', async () => {
+    const state: FakeState = {
+      [DISCONNECTED_TEXT]: true,
+      onClick: (sel: string) => { if (sel === CONNECT_SEL) state[DISCONNECTED_TEXT] = false },
+    }
+    const popup = { url: () => 'chrome-extension://x/notification.html#/confirm-transaction/1/signature-request' }
+    const adapter = makeAdapter({
+      classifyPopup: vi.fn(async () => 'sign'),
+      handleLoginPopup: vi.fn(async () => { state[CONNECTED_TEXT] = true; return true }),
+    })
+    vi.mocked(waitForPopup).mockReset()
+    vi.mocked(waitForPopup).mockResolvedValueOnce(popup as never).mockImplementation(neverPopup)
+    const { deps } = makeDeps(adapter, state)
+    const r = await new WalletActions(deps).ensureConnected({
+      connected: { text: CONNECTED_TEXT }, disconnected: DISCONNECTED_TEXT, connect: CONNECT_SEL,
+      attempts: 1, reclickAfterMs: 30, autoConfirmTransaction: false,
+    })
+    expect(r.skipped).toBe(false)
+    expect(adapter.handleLoginPopup).toHaveBeenCalledWith(popup, 'pw')
+    expect(adapter.confirmTx).not.toHaveBeenCalled()
   })
 })

@@ -111,15 +111,16 @@ export class MetaMaskAdapter implements WalletAdapter {
 
   /**
    * 分类 MetaMask 弹窗：按稳定 data-testid 判定意图。
-   * 顺序：unlock → connect → tx → sign。之所以 tx 先于 sign：二者可能共享 confirm 按钮，
-   * 且 mock/旧定位器只提供 count（存在即命中）时，隐藏的签名标记会被误判为可见——
-   * 把保守的 tx 提前，保证「隐藏 sign + 可见 confirm」不会误自动点击交易确认。
+   * 顺序：unlock → connect → 签名页 URL → tx → sign。签名页与交易页共用 confirm 按钮，
+   * 因此先用 URL（MetaMask 签名路由固定带 /signature-request）区分，避免登录签名被当成交易跳过；
+   * 其余仍保持「tx 先于 sign」的保守判定：mock/旧定位器只提供 count 时，隐藏的签名标记不会误判成可自动点击。
    * @param popup 钱包弹窗页
    * @returns 弹窗意图类别；无法判定返回 'unknown'
    */
   async classifyPopup(popup: PopupPage): Promise<'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'> {
     if (await this.testIdVisible(popup, ['unlock-password', 'unlock-page'])) return 'unlock'
     if (await this.testIdVisible(popup, ['connect-page', 'permissions-connect-button'])) return 'connect'
+    if ((popup.url?.() ?? '').includes('/signature-request')) return 'sign'
     if (await this.testIdVisible(popup, ['confirm-footer-button', 'confirm-btn'])) return 'tx'
     if (await this.testIdVisible(popup, ['signature-request', 'signature-request-sign-button'])) return 'sign'
     return 'unknown'

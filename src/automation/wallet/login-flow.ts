@@ -1,6 +1,6 @@
 /**
  * 自适应连接编排（automation/wallet 层）：判初始态 → 扩展就绪 → 点连接 → 竞速「站内钱包项/扩展弹窗/connected/disconnected」自适应推进 → 等 connected
- * 真机沉淀：静默连接容忍、站内弹窗视图归一化（短竞速 + 归一化露出钱包列表）、弹窗慢补点、刷新恢复、登录阶段绝不自动确认交易。
+ * 真机沉淀：静默连接容忍、站内弹窗视图归一化（短竞速 + 归一化露出钱包列表）、弹窗慢补点、刷新恢复、登录阶段默认自动确认弹窗（特殊站点可关）。
  * 依赖方向：依赖 ./actions（类型与门面）、./heuristics、./popup、../dom（静态导入，无运行时环）。
  */
 import { firstTextPresent, probeDesc, probeLocator, probePresent, probeVisible, raceProbes, type Probe } from '../dom'
@@ -46,9 +46,9 @@ export interface LoginFlowOptions {
    */
   observeMs?: number
   /**
-   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 false：
-   * 交易一律交任务显式 confirmTransaction（安全边界）；仅「无真实链上交易的 0 撸站点」
-   * 在站点把授权确认混入登录弹窗时按需开启，避免登录卡死。
+   * 登录阶段遇到交易/授权确认弹窗（classify=tx）也自动确认。默认 true：
+   * 登录期的签名/授权弹窗自动点掉；登录阶段会弹真实链上交易（要花 gas）的特殊站点显式传 false，
+   * 交易仍由任务自身显式 confirmTransaction 处理。
    */
   autoConfirmTransaction?: boolean
 }
@@ -91,8 +91,8 @@ type RoundResult =
  * ② wallet.ready()（适配器无 extensionId 时视为就绪）；
  * ③ 点连接按钮（显式 connect 或 findConnectButton）；
  * ④ 最多 attempts 轮，每轮先点连接，再在短竞速循环里推进（每次短竞速 ~3s）：
- *    站内钱包项 → 点击；扩展弹窗 → 按适配器分类自动处理（tx 默认绝不处理，告警后继续；
- *    autoConfirmTransaction=true 时自动确认，见 handlePopup）；
+ *    站内钱包项 → 点击；扩展弹窗 → 按适配器分类自动处理（tx 默认自动确认；
+ *    autoConfirmTransaction=false 时告警后继续，见 handlePopup）；
  *    connected → 成功；disconnected / 什么都没命中（idle）→ 归一化露出钱包列表后继续（不当作致命）；
  *    期间若始终无任何钱包交互且超过 reclickAfterMs → 补点连接按钮；
  * ⑤ 命中 connected 成功返回；否则走 recover 等「已连接」标志（错误文案/周期刷新恢复）；
@@ -130,7 +130,7 @@ export async function ensureConnected(wallet: WalletActions, opts: LoginFlowOpti
   const waitConnectedMs = opts.waitConnectedMs ?? 90000
   // 观察窗口不超过整体等待预算：任务调小 waitConnectedMs（真机/单测）时不要反而多等
   const observeMs = Math.min(opts.observeMs ?? DEFAULT_OBSERVE_MS, waitConnectedMs)
-  const autoConfirmTransaction = opts.autoConfirmTransaction ?? false
+  const autoConfirmTransaction = opts.autoConfirmTransaction ?? true
   const refreshEveryMs = opts.refreshEveryMs ?? 25000
 
   for (let round = 0; round < attempts; round++) {
@@ -344,8 +344,8 @@ async function recoverWithPopups(
 
 /**
  * 处理扩展弹窗：先等 UI 就绪再分类，避免“窗口已出现但页面还没渲染”被误判成 unknown。
- * tx 弹窗默认绝不自动确认（安全边界）——告警后返回 false，由任务显式 confirmTransaction；
- * 仅当 autoConfirmTransaction=true（0 撸站点，站点把授权确认混入登录弹窗）时自动确认 tx；
+ * tx 弹窗默认自动确认；仅当任务显式传 autoConfirmTransaction=false（登录阶段会弹真实链上交易的特殊站点）
+ * 时告警后返回 false，交易交由任务显式 confirmTransaction；
  * unlock/connect/sign 交给适配器 handleLoginPopup 自动完成。
  * @returns 是否实际处理了弹窗
  */
