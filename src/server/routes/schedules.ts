@@ -117,6 +117,34 @@ async function assertNoOtherPureAssign(db: AppDb, excludeId: number | null): Pro
   }
 }
 
+/** 拒绝把已关联到其他计划的任务重复加入；编辑时容忍本计划已有的历史关联 */
+async function assertTasksAvailable(
+  deps: { db: AppDb; tasks: Map<string, SiteTask> },
+  taskKeys: string[],
+  excludeId: number | null,
+  existingTaskKeys: string[] = [],
+): Promise<void> {
+  if (taskKeys.length === 0) return
+  const usedByOtherSchedules = new Set<string>()
+  for (const schedule of await deps.db.listSchedules()) {
+    if (schedule.id === excludeId) continue
+    try {
+      const keys = JSON.parse(schedule.taskKeys) as unknown
+      if (Array.isArray(keys)) {
+        for (const key of keys) if (typeof key === 'string') usedByOtherSchedules.add(key)
+      }
+    } catch {
+      // 损坏的历史计划不阻止其他计划正常编辑
+    }
+  }
+  const existing = new Set(existingTaskKeys)
+  const conflict = taskKeys.find((key) => usedByOtherSchedules.has(key) && !existing.has(key))
+  if (conflict) {
+    const name = deps.tasks.get(conflict)?.meta.name ?? conflict
+    throw new HttpError(409, ERROR_CODES.SCHEDULE_TASK_ALREADY_ASSIGNED, `任务「${name}」已关联到其他计划`)
+  }
+}
+
 /**
  * @swagger
  * /api/schedules:
@@ -254,7 +282,7 @@ async function assertNoOtherPureAssign(db: AppDb, excludeId: number | null): Pro
  *       '400':
  *         description: 参数校验失败（业务码 40000）
  *       '409':
- *         description: 已存在「仅分配」计划（业务码 40906）
+ *         description: 任务已关联其他计划（业务码 40908）或已存在「仅分配」计划（业务码 40906）
  */
 
 /**
@@ -346,7 +374,7 @@ async function assertNoOtherPureAssign(db: AppDb, excludeId: number | null): Pro
  *       '400':
  *         description: 参数校验失败（业务码 40000）
  *       '409':
- *         description: 已存在「仅分配」计划（业务码 40906）
+ *         description: 任务已关联其他计划（业务码 40908）或已存在「仅分配」计划（业务码 40906）
  *       '404':
  *         description: 计划不存在（业务码 40406）
  */
@@ -440,6 +468,7 @@ export function schedulesRouter(deps: { db: AppDb; scheduler: { runNow(s: Schedu
   router.post('/schedules', asyncHandler(async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>
     const parsed = parseBody(deps, body)
+    await assertTasksAvailable(deps, parsed.taskKeys!, null)
     if (parsed.taskKeys!.length === 0) await assertNoOtherPureAssign(deps.db, null)
     const s = await deps.db.createSchedule({
       name: parsed.name!,
@@ -455,6 +484,9 @@ export function schedulesRouter(deps: { db: AppDb; scheduler: { runNow(s: Schedu
     const existing = await deps.db.getSchedule(id)
     if (!existing) throw new HttpError(404, ERROR_CODES.SCHEDULE_NOT_FOUND, '计划不存在')
     const parsed = parseBody(deps, (req.body ?? {}) as Record<string, unknown>, existing)
+    if (parsed.taskKeys !== undefined) {
+      await assertTasksAvailable(deps, parsed.taskKeys, id, JSON.parse(existing.taskKeys) as string[])
+    }
     if (parsed.taskKeys !== undefined && parsed.taskKeys.length === 0) await assertNoOtherPureAssign(deps.db, id)
     const s = await deps.db.updateSchedule(id, {
       ...(parsed.name !== undefined ? { name: parsed.name } : {}),

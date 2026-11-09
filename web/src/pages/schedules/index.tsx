@@ -48,7 +48,10 @@ export default function SchedulesPage() {
   const fileAssignEnabled = Form.useWatch('fileAssignEnabled', form) ?? false
   const selectedTaskKeys = Form.useWatch('taskKeys', form) ?? []
 
-  const taskOptions = buildSelectableTaskOptions(tasks ?? [], selectedTaskKeys.map((k) => k.value))
+  const usedTaskKeys = (schedules ?? [])
+    .filter((schedule) => schedule.id !== editing?.id)
+    .flatMap((schedule) => schedule.taskKeys)
+  const taskOptions = buildSelectableTaskOptions(tasks ?? [], selectedTaskKeys.map((k) => k.value), usedTaskKeys)
 
   const openCreate = () => {
     setEditing(null)
@@ -196,7 +199,7 @@ export default function SchedulesPage() {
               },
             }]}
           >
-            <Select mode="multiple" labelInValue options={taskOptions} placeholder="多选任务（开启自动分配后可不选=仅分配计划）" optionFilterProp="label" />
+            <Select mode="multiple" labelInValue options={taskOptions} disabled={isLoading || !schedules} placeholder="多选任务（每个任务只能关联一个计划；开启自动分配后可不选=仅分配计划）" optionFilterProp="label" />
           </Form.Item>
 
           <Divider style={{ margin: '4px 0 12px' }} />

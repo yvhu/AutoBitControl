@@ -95,6 +95,53 @@ function makeCtx(page: ReturnType<typeof makeXPage>['page'], task: XDailyActivit
 }
 
 describe('XDailyActivityTask', () => {
+  it('出现时间线错误提示时点击 Retry 恢复', async () => {
+    const task = new XDailyActivityTask()
+    let errorVisible = true
+    let retryClicks = 0
+    const page = {
+      locator: (selector: string) => {
+        if (selector === 'text=Something went wrong. Try reloading.') {
+          return fakeLocator(() => errorVisible)
+        }
+        if (selector === 'button:has-text("Retry")') {
+          return fakeLocator(() => errorVisible, async () => {
+            retryClicks++
+            errorVisible = false
+          })
+        }
+        return fakeLocator(() => false)
+      },
+      waitForTimeout: async () => {},
+      reload: vi.fn(async () => {}),
+    }
+    const ctx = makeCtx(page as never, task)
+    const recover = (task as unknown as { recoverTimelineError(ctx: TaskContext): Promise<boolean> }).recoverTimelineError.bind(task)
+
+    await expect(recover(ctx)).resolves.toBe(true)
+    expect(retryClicks).toBe(1)
+    expect(page.reload).not.toHaveBeenCalled()
+  })
+
+  it('错误提示没有 Retry 按钮时回退到页面刷新', async () => {
+    const task = new XDailyActivityTask()
+    let errorVisible = true
+    const page = {
+      locator: (selector: string) => {
+        if (selector === 'text=Something went wrong. Try reloading.') return fakeLocator(() => errorVisible)
+        if (selector === 'button:has-text("Retry")') return fakeLocator(() => false)
+        return fakeLocator(() => false)
+      },
+      waitForTimeout: async () => {},
+      reload: vi.fn(async () => { errorVisible = false }),
+    }
+    const ctx = makeCtx(page as never, task)
+    const recover = (task as unknown as { recoverTimelineError(ctx: TaskContext): Promise<boolean> }).recoverTimelineError.bind(task)
+
+    await expect(recover(ctx)).resolves.toBe(true)
+    expect(page.reload).toHaveBeenCalledTimes(1)
+  })
+
   it('时间线框裁剪到视口：滚动后负 top 不会放大距离', async () => {
     const task = new XDailyActivityTask()
     const page = {

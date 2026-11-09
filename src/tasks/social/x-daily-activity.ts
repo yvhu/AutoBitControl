@@ -10,7 +10,7 @@ import { SiteTask, type TaskContext, type TaskMeta } from '../base'
 import { computeXDwellMs, readXLoadState, readXScrollMetrics, readXTimelineSignature, readXVisibleContent } from './content'
 import { ensureNoBlockingOverlay, hasBlockingOverlay, type XAdPersonalizationChoice } from './overlay'
 import { humanReadingPause, humanScrollBurst, smoothScrollBy, type ScreenBox } from './scroll'
-import { openPage, race, takeScreenshot, waitFor } from '../../api'
+import { openPage, race, takeScreenshot } from '../../api'
 
 const AD_PERSONALIZATION_CHOICE: XAdPersonalizationChoice = 'turn-on' // 用户明确选择：开启个性化广告以减少插屏
 const AUTO_EXPAND_COLLAPSED = false // 暂时关闭自动展开 Show more，避免展开时布局回跳
@@ -20,6 +20,8 @@ const TIMELINE_SELECTOR = '[data-testid="primaryColumn"]' // 主时间线容器
 const LOGGED_IN_SELECTOR = '[data-testid="SideNav_NewTweet_Button"]' // 已登录侧栏「发帖」按钮
 const LOGIN_BUTTON_SELECTOR = '[data-testid="loginButton"]' // 未登录页登录按钮
 const LOGIN_INPUT_SELECTOR = 'input[name="text"]' // 未登录页账号输入框
+const RELOAD_ERROR_SELECTOR = 'text=Something went wrong. Try reloading.' // X 时间线错误提示
+const RETRY_BUTTON_SELECTOR = 'button:has-text("Retry")' // 错误提示中的重试按钮
 const TWEET_SELECTOR = 'article[data-testid="tweet"]' // 单条推文
 const LIKE_SELECTOR = 'button[data-testid="like"]' // 未点赞按钮
 const UNLIKE_SELECTOR = 'button[data-testid="unlike"]' // 已点赞按钮
@@ -40,6 +42,8 @@ const PROMOTED_TEXTS = [
 ] // 推广推文标记（多语言，命中即跳过）
 
 const LOAD_WAIT_MS = 45000 // 登录/时间线加载预算
+const MAX_TIMELINE_RECOVERY_ATTEMPTS = 3 // X 时间线错误提示最多恢复次数
+const TIMELINE_RECOVERY_WAIT_MS = 8000 // 点击 Retry/刷新后等待错误提示消失的预算
 const ACTIVITY_MIN_MS = 180000 // 活跃最短时长（3 分钟）
 const ACTIVITY_MAX_MS = 360000 // 活跃最长时长（6 分钟）
 const SCROLL_MIN_ROUNDS = 12 // 最少滚动轮数（成功断言用）
@@ -89,7 +93,9 @@ export class XDailyActivityTask extends SiteTask {
       throw new Error('X 广告个性化插屏无法关闭，已停止执行')
     }
     await this.ensureLoggedIn(ctx)
-    await waitFor(ctx, { selector: TWEET_SELECTOR }, { assert: true, budgetMs: LOAD_WAIT_MS })
+    if (!(await this.waitForTimelineReady(ctx, LOAD_WAIT_MS))) {
+      throw new Error('X 时间线加载超时（推文未就绪）')
+    }
     const result = await this.runActivity(ctx)
     ctx.log.info({ step: 'x-activity', window: ctx.profile.name, ...result }, 'X 日常活跃完成')
     await takeScreenshot(ctx, 'x-activity-success')
@@ -103,9 +109,14 @@ export class XDailyActivityTask extends SiteTask {
     const outcome = await race(ctx, [
       ['loggedIn', { selector: LOGGED_IN_SELECTOR }],
       ['timeline', { selector: TIMELINE_SELECTOR }],
+      ['reloadError', { selector: RELOAD_ERROR_SELECTOR }],
       ['loginButton', { selector: LOGIN_BUTTON_SELECTOR }],
       ['loginInput', { selector: LOGIN_INPUT_SELECTOR }],
     ], LOAD_WAIT_MS)
+    if (outcome === 'reloadError') {
+      await this.recoverTimelineError(ctx)
+      return this.ensureLoggedIn(ctx)
+    }
     if (outcome === 'loggedIn' || outcome === 'timeline') return
     await takeScreenshot(ctx, 'x-activity-login-required')
     if (outcome === 'loginButton' || outcome === 'loginInput') {
@@ -208,6 +219,10 @@ export class XDailyActivityTask extends SiteTask {
   private async waitForTimelineReady(ctx: TaskContext, timeoutMs: number): Promise<boolean> {
     const end = Date.now() + timeoutMs
     while (Date.now() < end) {
+      if (await this.isTimelineReloadErrorVisible(ctx)) {
+        await this.recoverTimelineError(ctx)
+        continue
+      }
       const state = await readXLoadState(ctx)
       if (!state) return true
       if (!state.loading && state.articleCount >= 2) return true
@@ -215,6 +230,48 @@ export class XDailyActivityTask extends SiteTask {
     }
     ctx.log.warn({ step: 'x-activity', window: ctx.profile.name }, '等待 X 时间线加载超时，暂缓滚动')
     return false
+  }
+
+  /** 检测 X 错误提示并点 Retry 恢复；按钮缺失/点击无效时刷新页面兜底，最多尝试 3 次 */
+  private async recoverTimelineError(ctx: TaskContext): Promise<boolean> {
+    for (let attempt = 1; attempt <= MAX_TIMELINE_RECOVERY_ATTEMPTS; attempt++) {
+      if (!(await this.isTimelineReloadErrorVisible(ctx))) return true
+
+      const retryButton = ctx.page.locator(RETRY_BUTTON_SELECTOR).first()
+      const canClickRetry = await retryButton.isVisible().catch(() => false)
+      if (canClickRetry) {
+        try {
+          await retryButton.click({ timeout: 3000 })
+          ctx.log.warn({ step: 'x-activity', window: ctx.profile.name, attempt }, 'X 时间线出现错误提示，已点击 Retry')
+        } catch (e) {
+          ctx.log.warn({ step: 'x-activity', window: ctx.profile.name, attempt, err: (e as Error).message }, '点击 X Retry 失败，刷新页面兜底')
+          await ctx.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+        }
+      } else {
+        ctx.log.warn({ step: 'x-activity', window: ctx.profile.name, attempt }, 'X 错误提示未找到 Retry 按钮，刷新页面兜底')
+        await ctx.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+      }
+
+      const recoveryEnd = Date.now() + TIMELINE_RECOVERY_WAIT_MS
+      while (Date.now() < recoveryEnd) {
+        if (!(await this.isTimelineReloadErrorVisible(ctx))) return true
+        await ctx.page.waitForTimeout(250)
+      }
+    }
+
+    if (await this.isTimelineReloadErrorVisible(ctx)) {
+      throw new Error(`X 时间线错误提示连续恢复 ${MAX_TIMELINE_RECOVERY_ATTEMPTS} 次仍未消失`)
+    }
+    return true
+  }
+
+  /** 检查 X 时间线错误提示是否可见 */
+  private async isTimelineReloadErrorVisible(ctx: TaskContext): Promise<boolean> {
+    try {
+      return await ctx.page.locator(RELOAD_ERROR_SELECTOR).first().isVisible()
+    } catch {
+      return false
+    }
   }
 
   /** 计算滚动到下一篇推文顶部所需的距离；取不到内容时返回 null，回退比例滚动 */

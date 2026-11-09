@@ -39,6 +39,7 @@ export const ERROR_CODES = {
   SCHEDULE_PURE_ASSIGN_EXISTS: 40906,
   /** 同时打开的窗口数已达 execution.windowPool.maxOpenWindows 上限，拒绝再开 */
   WINDOW_LIMIT_REACHED: 40907,
+  SCHEDULE_TASK_ALREADY_ASSIGNED: 40908,
   // 500xx：服务端异常
   INTERNAL: 50000,
   TOOL_IO_FAILED: 50001,

@@ -81,6 +81,14 @@ describe('buildSelectableTaskOptions', () => {
     ])
   })
 
+  it('排除其他计划已关联的任务', () => {
+    const opts = buildSelectableTaskOptions([t('a', true), t('b', true), t('c', true)], [], ['b'])
+    expect(opts).toEqual([
+      { label: '任务a', value: 'a' },
+      { label: '任务c', value: 'c' },
+    ])
+  })
+
   it('已选任务全被排除时返回空数组', () => {
     expect(buildSelectableTaskOptions([t('a', true)], ['a'])).toEqual([])
   })

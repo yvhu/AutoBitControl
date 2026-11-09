@@ -582,6 +582,19 @@ describe('server API（RESTful + envelope）', () => {
       expect(deps.db.createSchedule).toHaveBeenCalledWith({ name: '每日签到', mode: 'daily', config: '{"times":["09:00"]}', taskKeys: '["t1"]' })
     })
 
+    it('POST /api/schedules 拒绝关联其他计划已使用的任务', async () => {
+      const deps = makeDeps()
+      deps.db.listSchedules.mockResolvedValue([{ ...row, id: 2 }])
+      deps.db.createSchedule.mockResolvedValue(row)
+      const res = await request(createApp(deps as never))
+        .post('/api/schedules')
+        .send({ name: '另一个计划', mode: 'daily', config: { times: ['10:00'] }, taskKeys: ['t1'] })
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe(40908)
+      expect(res.body.message).toContain('任务1')
+      expect(deps.db.createSchedule).not.toHaveBeenCalled()
+    })
+
     it('POST /api/schedules 非法配置/未知任务 400', async () => {
       const deps = makeDeps()
       const cases = [
@@ -643,6 +656,27 @@ describe('server API（RESTful + envelope）', () => {
       const res = await request(createApp(deps as never)).patch('/api/schedules/1').send({ enabled: false })
       expect(res.status).toBe(200)
       expect(res.body.code).toBe(0)
+    })
+
+    it('PATCH 拒绝新关联其他计划已使用的任务，同时允许保留本计划原有任务', async () => {
+      const deps = makeDeps()
+      deps.tasks.set('t2', { meta: { key: 't2', name: '任务2', url: '', wallet: 'metamask' } } as never)
+      deps.db.getSchedule.mockResolvedValue(row)
+      deps.db.listSchedules.mockResolvedValue([{ ...row, id: 2, taskKeys: '["t2"]' }])
+      deps.db.updateSchedule.mockResolvedValue(row)
+
+      const duplicate = await request(createApp(deps as never))
+        .patch('/api/schedules/1')
+        .send({ taskKeys: ['t1', 't2'] })
+      expect(duplicate.status).toBe(409)
+      expect(duplicate.body.code).toBe(40908)
+      expect(deps.db.updateSchedule).not.toHaveBeenCalled()
+
+      const unchanged = await request(createApp(deps as never))
+        .patch('/api/schedules/1')
+        .send({ taskKeys: ['t1'] })
+      expect(unchanged.status).toBe(200)
+      expect(deps.db.updateSchedule).toHaveBeenCalledWith(1, { taskKeys: '["t1"]' })
     })
 
     it('DELETE /api/schedules/:id 成功与 404', async () => {
