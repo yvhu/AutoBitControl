@@ -1063,6 +1063,35 @@ if (await clickTurnstile(ctx, { waitMs: 10000 })) {
 // 方框点不过通常是出口 IP 问题：换 ISP 住宅 IP 窗口；站点自身 token 超时按可恢复错误刷新（recoverTexts: RECOVER_TEXTS）
 ```
 
+### 配方六：社交日常活跃（X / Discord）
+
+适用：每天打开 X 首页时间线和 Discord 频道，滚动阅读并做少量互动。两个任务独立开关/重试，同属「社交日常」分组。
+
+前提：比特窗口已登录 X / Discord；未登录时任务直接失败并截图，不会自动登录。Discord 频道在 `src/tasks/social/discord-daily-activity.ts` 的 `DISCORD_CHANNEL_URLS` 常量里填写：
+
+```ts
+export const DISCORD_CHANNEL_URLS = [
+  'https://discord.com/channels/<服务器ID>/<频道ID>',
+]
+```
+
+低强度默认值（改任务文件顶部常量即可调整）：
+
+| 任务 | 滚动 | 互动 | 间隔 |
+| --- | --- | --- | --- |
+| `x-daily-activity` | 3-6 分钟（12-30 轮） | 点赞 0-2 条，跳过推广/已点赞 | 90-180 秒 |
+| `discord-daily-activity` | 每频道 2-4 分钟（8-18 轮，最多 2 个频道） | 发 1 条消息 | — |
+
+要点：
+
+- X 只用 `data-testid="like"` 点赞，不转发/回复/关注；Discord 只在允许的频道发 1 条消息，不管理服务器。
+- 两个任务都会调用通用 `dismissBlockingOverlays` 关闭订阅/通知/Cookie 等弹窗：只点关闭/暂不/以后再说/接受 Cookie，绝不点订阅/升级/安装；点不到时按 Esc 兜底，失败只告警。
+- 两个任务都不保存账号密码；登录态来自比特窗口 cookie/session。
+- Discord 的 DOM 类名混淆，首次真机运行后按截图/日志校准消息输入框 `MESSAGE_INPUT_SELECTORS`。
+- 自动化互动可能违反平台 ToS，建议用专门账号并保持低强度；出现登录挑战/验证码时任务按失败处理，人工介入。
+- 定时计划：面板「定时任务」建每日计划（建议每天 1 次），首次上线先单窗口 `task:run` 验证。
+- Discord 互动：在 `src/tasks/social/discord-daily-activity.ts` 的 `DISCORD_MESSAGE_CHANNEL_URLS` 只列自己的频道，`DISCORD_MESSAGES` 已内置 40 条短句（按窗口名+日期轮换）。每个账号每次运行**固定发 1 条消息**，不按概率；跳到最新后等待 5-15 秒再发，逐字输入并回车，5 秒内验证消息出现，失败只告警不重试。
+
 ### 已领取 / 限频收敛
 
 站点限频提示分两种语义，判定必须分开：
@@ -1349,6 +1378,53 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 修复：Konnex 改为以**签到按钮出现**作为真正登录完成的标志；先判已签到态，未登录时点站内 `Sign in` + `Connect with Ethereum` 走完整登录，SIWE 签名由 `autoConfirmTransaction` 自动确认。
 - 追加：登录等待的完成标志必须同时接受「已签到态」（`Great job!` / `RESETS IN`），否则本周已签到的账号会死等一个永不出现的签到按钮；站内 `Sign in` 需连续可见约 6 秒才确认未登录，避免页面会话加载时闪现导致误判。
 - 通用经验：**登录态标记要选「只有认证后才存在」的元素（业务按钮/卡片状态），不要用余额、地址、连接按钮这类钱包已连就会出现的东西。**
+
+**21）社交日常任务（X/Discord）首版选择器与风控边界（2026-11-09）**
+
+- X 时间线用 `[data-testid="primaryColumn"]` / `[data-testid="SideNav_NewTweet_Button"]` 判登录，推文用 `article[data-testid="tweet"]`，点赞按钮 `button[data-testid="like"]` 点击后翻转为 `button[data-testid="unlike"]`；**点击成功即计入点赞**，再尽力轮询 4 秒确认翻转，未确认只告警、不扣减（真机：X 异步更新/列表重渲染常导致 1-2 秒内查不到 unlike，曾误报「点赞后未出现已点赞状态」）。
+- 点赞只选视口内（`boundingBox.y` 在 `0 .. 视口高-80`）且文本不含推广标记的推文；推广标记覆盖多语言：英/简中/繁中/法/德/日/西/葡/意/俄/荷/土/韩/波/阿。找不到候选不算失败。
+- Discord 聊天区用 `[data-list-id="chat-messages"]` / `li[id^="chat-messages-"]`，向上滚动用 `mouse.wheel` 负 delta；消息输入框用 `[role="textbox"][data-slate-editor="true"]`，逐字输入后 Enter。
+- Discord 每次运行只在 `DISCORD_MESSAGE_CHANNEL_URLS` 列出的频道发 1 条消息；发送失败只告警，成功判定仍是频道加载 + 滚动完成。
+- 风控：X 0-2 赞/次、Discord 每个账号 1 条消息/次，随机等待；不要提高频率或加转发/回复。出现验证码/登录挑战直接失败，人工处理。
+
+**22）社交任务通用弹窗关闭（2026-11-09）**
+
+- 社交任务与 helper 统一放在 `src/tasks/social/`：`x-daily-activity.ts`、`discord-daily-activity.ts`、`overlay.ts`（弹窗）、`scroll.ts`（滚动）。helper 全部只操作 `ctx.page`（patchright Page），不引入其它自动化库。
+- X/Discord 打开页面后、滚动循环中、点赞/发消息前都会调用 `src/tasks/social/overlay.ts` 的 `dismissBlockingOverlays`，处理订阅/Premium/通知/Cookie 等阻挡弹窗。
+- 只认安全按钮：`Close` / `Dismiss` / `Not now` / `Maybe later` / `No thanks` / `关闭` / `暂不` / `以后再说` / `跳过`，以及 Cookie 的 `Accept all cookies` / `接受全部 Cookie` / `Reject non-essential` / `拒绝非必要`；**绝不点订阅/升级/安装/通知授权**。
+- 关闭按钮点击超时 2.5 秒，失败只告警；没有安全按钮但仍有弹窗时按一次 `Escape` 兜底。
+- 弹窗根节点识别：`[role="dialog"]`、`[data-testid="sheetDialog"]`、`[data-testid="BottomBar"]`、class/id 含 cookie。Discord 的 `Continue in Browser / Continuer dans le navigateur / 在浏览器中继续` 仍由任务自身先处理。
+- 关闭/ Cookie 选择器覆盖多语言（英/简中/繁中/法/德/日/西/葡/意/俄/荷/土/韩）：关闭如 `Fermer / Schließen / 閉じる / 關閉 / Cerrar / Chiudi / Закрыть / Sluiten / Kapat / 닫기`，Cookie 如 `Tout accepter / Alle Cookies akzeptieren / すべてのCookieを許可 / 接受所有 Cookie / Aceptar todas las cookies`。
+- 这些选择器按文案匹配，不依赖字体；繁简、全角/半角写法和各语言按钮文案分别列入，新增语言只需在 `src/tasks/social/overlay.ts` 的 `CLOSE_LABELS / CLOSE_TEXTS / COOKIE_TEXTS` 与任务文件的选择器数组里各加一行。
+- X 广告个性化插屏（`[data-testid="interstitialGraphic"]`，标题 You’re in control）：默认点 `Turn on personalized ads` 及多语言对应文案（用户明确选择，常量为 `src/tasks/social/x-daily-activity.ts` 的 `AD_PERSONALIZATION_CHOICE`，可改为 `keep-less-relevant`）；找不到安全按钮时按 Esc 兜底。
+- 弹窗期间**禁止滚动**：每次 wheel 前检查 `hasBlockingOverlay`，有弹窗先 `ensureNoBlockingOverlay` 关闭并等待消失，超时则跳过本次滚动，绝不在弹窗下滚底层页面。
+- 浏览器原生通知权限弹窗不属于页面 DOM，本 helper 管不到；如需要应在窗口上下文层统一拒绝通知权限（本次未改）。
+
+**23）自然滚动与多语言真机复盘（2026-11-09）**
+
+- 真机截图发现 X 窗口存在**法文界面**（Pour vous / Abonné / Suggestions），英文/中文选择器会漏；已补多语言文案（英/简中/繁中/法/德/日/西/葡/意/俄/荷/土/韩/波/阿，按适用场景分布）到推广识别、弹窗关闭、Cookie、Discord「在浏览器中继续」「登录」。
+- 原来的滚动是「每 4-9 秒一次 500-900px」，机械感明显；现在改为 `src/tasks/social/scroll.ts` 的 `humanScrollBurst`（只走 patchright 的 `ctx.page.mouse`）：随机鼠标位置 → 20% 概率 hover 停 1-2 秒 → 总距离拆成多段小滚轮（缓入缓出）。弹窗可见时直接返回 false，不滚动。
+- X 单独优化：滚动前等时间线加载（无 `tweetSkeleton`/`aria-busy` 且至少 2 条推文，最长 8 秒）；每次读取当前可见推文，先把时间线容器裁剪到当前视口（`top=max(box.y,0)`），再按「下一篇推文顶部 - 可视顶部 - 56px」计算；总距离优先用**原生平滑滚动**（`scrollTo({ behavior: 'smooth' })`）并轮询 `scrollTop` 等停止；找不到容器或执行失败时才回退帧级小 wheel。即使下一篇超过一屏也平滑滚到它顶部，不一次跳过去。然后等 2-5 秒再阅读；**关闭随机反向回滚**，不再用 150px 补滚；到底判断用实际滚动几何（`scrollTop + clientHeight >= scrollHeight - 8`），只有实际到底或连续 3 次没有新内容才停止；真正到底算成功，不再报「滚动轮数不足」。Discord 也改为原生平滑滚动：消息列表容器先裁剪到视口，再向上滚 55%-70% 高度，失败才回退 wheel。
+- 内容停留按类型：X 普通文字 1-4.5 秒、长文/折叠 4-8 秒、图片 2.5-6 秒、视频 4-12 秒；30% 内容直接跳过不看。Discord ≤3 天短文字 1.5-3 秒、中等 3-5 秒、长文 4-8 秒、图片 2.5-6 秒、视频 3-10 秒；25% 消息跳过不看。进入页面/频道先停 2-5 秒。X 时长 3-6 分钟、12-30 轮；Discord 每频道 2-4 分钟、8-18 轮，最多 2 个频道。
+- X 点赞改为「点击成功即计数 + 5 秒尽力确认」；确认失败只提示，不再把已成功的点赞计为 0。
+
+**24）Discord 聊天区被误判为未加载（2026-11-09 真机）**
+
+- 现象：窗口 06 报「Discord 频道未加载」，但诊断包 `visibleText` 和截图都显示 `airport` 服务器、`#airport` 频道和消息列表已经加载；窗口 04 则是真未登录（URL 为 `/login?redirect_to=...`，德文登录页）。
+- 原因：Discord 在低内存/多窗口下加载可能超过 45 秒；旧聊天区选择器只有 `[data-list-id="chat-messages"]` / `li[id^="chat-messages-"]`，改版或隐藏节点也会漏判。
+- 修复：`LOAD_WAIT_MS` 由 45 秒放宽到 **90 秒**；聊天区按 `[data-list-id="chat-messages"]` → `li[id^="chat-messages-"]` → `[role="log"]` → `[class*="scrollerInner"]` → `[class*="messagesWrapper"]` 逐级回退，并用 `:visible` 只取可见节点。
+- 判定失败时额外记录当前 URL 与每个候选选择器的 `count/visible`（日志 `Discord 聊天区探测详情`），用于区分慢加载和选择器失效。
+- 未登录窗口仍按「Discord 未登录」失败，不自动登录。
+- Discord 打开频道可能停在**未读位置**（首屏是旧消息）。进入频道后先点 `Jump to present`（多语言）或把消息列表滚到底，再从最新消息向上阅读；只有当前屏**全部**超过 7 天时才停止翻历史，混合新旧消息的屏幕只快速跳过旧消息。真机现象：直接向上翻会在 `scrolls:1` 就报「已翻到 7 天前的消息」，实际只是打开在未读位置。
+
+**25）内容感知阅读与容器内滚动（2026-11-09）**
+
+- X 读取当前视口前 6 条推文的类型、可见文字长度、是否折叠、视频时长；文字按短/中/长停留，图片 2.5-6 秒，视频按 duration 的 10% 限制在 4-12 秒。
+- 折叠推文自动展开暂时关闭（`AUTO_EXPAND_COLLAPSED = false`，避免展开时布局回跳）；需要恢复时把常量改回 `true`，恢复后 30% 概率点开 `[data-testid="tweet-text-show-more-link"]`。
+- Discord 按 `time[datetime]` 判断年龄：≤3 天正常读，3-7 天 1-2 秒快扫，连续 2 屏都超过 7 天才停止向上翻历史；结束前 2-4 次快速下滚回到底部，停 2-5 秒。
+- 滚动改为容器内滚动：X 用 `[data-testid="primaryColumn"]`，Discord 用消息列表容器；鼠标落在容器内，X 对齐下一篇推文顶部并用原生平滑滚动（失败才回退小 wheel，可跨一屏）；Discord 在消息列表内向上原生平滑滚动 55%-70%，减少内容跑出框。
+- 内容读取统一通过 `ctx.page.evaluate`（patchright Page）；读取失败返回空数组，任务回退到原固定节奏，不影响执行。
+- Discord 互动（2026-11-09）：仅对 `DISCORD_MESSAGE_CHANNEL_URLS` 中列出的频道生效；`DISCORD_MESSAGES` 已有 40 条短句并按窗口名+日期轮换。每个账号每次运行固定发 1 条消息，不按概率；跳到最新后等待 5-15 秒再发，逐字输入 + Enter，验证失败只告警。公开频道多账号同文案有刷屏/封号风险，建议只在自己的低流量频道使用。
 
 ---
 

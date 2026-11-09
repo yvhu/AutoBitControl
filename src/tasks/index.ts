@@ -17,6 +17,8 @@ import { ArcFaucetTask } from './arc-faucet'
 import { KonnexCheckinTask } from './konnex-checkin'
 import { AuralaunchFaucetTask } from './auralaunch-faucet'
 import { AuralaunchCheckinTask } from './auralaunch-checkin'
+import { XDailyActivityTask } from './social/x-daily-activity'
+import { DiscordDailyActivityTask } from './social/discord-daily-activity'
 
 // 全部任务实例（每个任务一个单例，跨 API/队列共享状态）
 const ALL: SiteTask[] = [
@@ -33,6 +35,8 @@ const ALL: SiteTask[] = [
   new KonnexCheckinTask(), 
   new AuralaunchFaucetTask(),
   new AuralaunchCheckinTask(),
+  new XDailyActivityTask(),
+  new DiscordDailyActivityTask(),
 ]
 
 /** 以 meta.key 为索引构建任务表（key 重复会覆盖——登记时注意唯一性） */
