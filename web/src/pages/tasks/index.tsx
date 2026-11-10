@@ -18,7 +18,7 @@ import {
 import TestWindowModal from './TestWindowModal'
 import ConfirmButton from '../../components/ConfirmButton'
 
-const WALLET_ICON: Record<string, string> = { metamask: '🦊', petra: '🐍' }
+const WALLET_ICON: Record<string, string> = { metamask: '🦊', petra: '🐍', subwallet: '🔷' }
 
 function walletIcon(wallet: string | null): string {
   return (wallet && WALLET_ICON[wallet]) || '▣'

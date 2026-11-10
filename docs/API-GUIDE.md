@@ -63,7 +63,7 @@
 | 等待探针 / `WaitMatcher` | 在 `Matcher` 基础上多一种「等消失」（`{ hidden }`），仅等待类函数支持 | 第 3 章「公共类型」 |
 | 断言 / Assertion | 检查「该出现的东西出现了没有」，没出现就报错 | §3.3 |
 | `connected` / `disconnected` | `connectWallet` 的登录态判据：`connected` 出现即认定已登录，`disconnected` 出现即走连接流程 | §4.3 |
-| 钱包适配器 / wallet | 一组「解锁 / 连接 / 签名 / 确认交易」的钱包操作方法，按 `meta.wallet` 的 key 查找（`metamask` / `petra`） | §4.1 |
+| 钱包适配器 / wallet | 一组「解锁 / 连接 / 签名 / 确认交易」的钱包操作方法，按 `meta.wallet` 的 key 查找（`metamask` / `petra` / `subwallet`） | §4.1 |
 | 批次 / batch | 一次「全部启用窗口」触发产生的运行集合，看板按批次折叠展示，可整批停止 | §6.5 |
 | 轮次 / slot | 同一窗口同一任务在当天的第几轮执行（每次终态后再触发 slot+1），行键 = 窗口×任务×日期×slot | §6.5 |
 | 熔断 / Circuit Breaker | 窗口连续环境级失败 N 次熔断；普通环境失败 30 分钟起步指数退避到 2 小时，代理连接类失败 3 分钟起步到 15 分钟；半开用真实任务探测；每日 23:59 全量重置 | §6.4 |
@@ -180,7 +180,7 @@ export abstract class SiteTask {
 | `group` | `{ key: string; name: string }?` | `undefined` | 空投分组：同一空投的多个任务写相同的 key+name，面板按组折叠展示 |
 | `lastUpdated` | `string?` | `undefined` | 最后核对站点的日期（文档约定，如 `'2026-10-09'`） |
 | `enabled` | `boolean?` | `true` | 任务开关的代码默认值：`false` 时手动触发接口 409。面板开关写入本地库 `task_states` 覆盖，立即生效、重启保留 |
-| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`）；`connectWallet`/`signMessage`/`confirmTransaction` 按此查找适配器 |
+| `wallet` | `string?` | `undefined` | 钱包适配器 key（`'metamask'`/`'petra'`/`'subwallet'`）；`connectWallet`/`signMessage`/`confirmTransaction` 按此查找适配器 |
 | `timeoutSec` | `number?` | 180 | 单次运行超时（秒）；缺省取全局 `execution.taskTimeoutMs / 1000` |
 | `retry` | `{ max: number; backoffSec: number }?` | `{ max: 2, backoffSec: 600 }` | 失败重试次数与间隔秒数；缺省取全局 `execution.retryMax`/`execution.retryBackoffSec` |
 | `requiresFileAssign` | `boolean?` | `undefined` | 声明依赖「上传前自动文件随机分配」：定时计划配置 `fileAssign` 时先分配，失败则本任务本次跳过 |
@@ -562,7 +562,7 @@ ctx.log.info({ status }, '领取接口命中')
 
 ```ts
 // 已知内置钱包 key；ConnectOptions.wallet 接受任意已注册适配器 key（配置驱动新钱包无需改类型）
-type WalletType = 'metamask' | 'petra'
+type WalletType = 'metamask' | 'petra' | 'subwallet'
 
 interface ConnectOptions {
   wallet: string
@@ -587,7 +587,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
-| `wallet` | `string` | 是 | — | 钱包适配器 key（内置 `'metamask'`/`'petra'`，可填任意已注册 key） |
+| `wallet` | `string` | 是 | — | 钱包适配器 key（内置 `'metamask'`/`'petra'`/`'subwallet'`，可填任意已注册 key） |
 | `connected` | `Matcher` | 否 | 地址样式文本启发式 | 已连接标志探针（出现即认定已连接） |
 | `disconnected` | `Matcher` | 否 | 通用连接按钮启发式 | 未连接标志探针（出现即走连接流程） |
 | `connect` | `string` | 否 | 按候选文案（`Connect Wallet`/`连接钱包`/`Connect`）自动找 | 站点「连接钱包」按钮选择器 |
@@ -899,6 +899,7 @@ await connectWallet(ctx, { wallet: 'metamask' })
 | --- | --- | --- |
 | `metamask` | `MetaMask` | 自定义适配器（解锁/URL 逻辑成熟，真机验证过） |
 | `petra` | `Petra` | 自定义适配器 |
+| `subwallet` | `SubWallet` | 自定义适配器；扩展 ID `onhogfjeacnfoofkfgppdlbmlmnplgbn`，provider 读 `window.SubWallet.isSubWallet` |
 
 `walletOption` 缺省按上表**显示名**匹配站内钱包列表项。
 
@@ -944,17 +945,26 @@ await connectWallet(ctx, {
 
 ### 4.4 安全边界与判据可靠性
 
-- **登录阶段默认自动确认弹窗**：连接编排自动处理解锁/连接/签名/交易（`autoConfirmTransaction` 缺省 `true`）；登录阶段会弹真实链上交易的特殊站点显式传 `false`。签名页按 `/signature-request` URL 识别，不会被当成交易跳过。
+- **登录阶段默认自动确认弹窗**：连接编排自动处理解锁/连接/签名/交易（`autoConfirmTransaction` 缺省 `true`）；登录阶段会弹真实链上交易的特殊站点显式传 `false`。MetaMask 签名页按 `/signature-request` URL 识别；SubWallet 签名/交易共用 `Approve` 按钮，按页面标题 `Signature request` / `Transaction request` 区分，标题判不出来时保守归为交易。
 - **判据可靠性**：自动嗅探的登录态判据（地址样式文本 / 连接按钮）是启发式，可能误判；关键站点应显式给 `connected`（框架日志会打印本轮实际使用的判据，便于排障）。
 - 站点把登录包成自定义流程（如先点站内「Sign In」再签名）的，任务里显式 `click` 后再 `signMessage`。
 
 ### 4.5 新增钱包 checklist
 
-1. 真机开该钱包，取 `extensionId` / `probePath`（取不到则省略，走降级：`ready` 不探测扩展页）。
-2. 写配置驱动适配器：`createConfigWalletAdapter({ key, displayName, extensionId? })`（`src/automation/wallet/config-adapter.ts`；多数钱包只需 `key`+`displayName`+`extensionId`，特殊按钮用 `buttons` 覆盖）。
-3. 在 `src/app.ts` 注册：`wallets.register(createConfigWalletAdapter({ ... }))`。
-4. 在手册「钱包适配器」表（4.1）加一行。
-5. 测试：适配器单测 + 真机 `task:run`。
+1. 真机开该钱包，取 `extensionId` / `probePath`（取不到则省略，走降级：`ready` 不探测扩展页）；provider 不在 `window.ethereum` 时同时记下全局对象名（填 `providerGlobal`）。
+2. 按钮没有稳定 testid 时优先用 `src/automation/wallet/labels.ts` 的共享多语言文案；结构简单可写配置驱动适配器：`createConfigWalletAdapter({ key, displayName, extensionId? })`（`src/automation/wallet/config-adapter.ts`，特殊按钮用 `buttons` 覆盖）。
+3. 结构复杂（签名/交易共用按钮、需要按标题分类）就新写专用适配器，复用 `popup-wait.ts` 的等待原语。
+4. 在 `src/app.ts`、`scripts/run-task.ts`、`scripts/smoke-wallet.ts` 三处注册。
+5. 在手册「钱包适配器」表（4.1）加一行，并在 `config/.env.example` 的 `WALLET_PASSWORDS` 增加示例 key。
+6. 测试：适配器单测（含多语言按钮）+ 真机 `task:run`。
+
+### 4.6 SubWallet 适配说明
+
+- 扩展 ID：`onhogfjeacnfoofkfgppdlbmlmnplgbn`；探测页 `index.html`；站点请求弹窗通常走 `notification.html`（`side-panel.html` / `index.html` 作版本兜底）。
+- provider：SubWallet 固定注入 `window.SubWallet`，`window.SubWallet.isSubWallet === true`；它只在 `window.ethereum` 空闲时才占用 `window.ethereum`，因此适配器用 `providerGlobal: 'SubWallet'` 做扩展就绪探测，避免与 MetaMask 同时安装时误判。
+- 按钮：解锁页 `Unlock`，授权页 `Connect`，签名页与交易页**共用 `Approve`**；分类顺序为「密码框 → 签名标题 → 交易标题 → Connect → Approve」，标题缺失时 `Approve` 保守归入交易。
+- 多语言：SubWallet 官方语言包目前覆盖 en / zh / ja / ru / vi；适配器同时接受 zh-TW / fr / de 候选，但实际是否出现以钱包版本为准。
+- 解锁密码 key：`subwallet`，配置方式同其它钱包（`WALLET_PASSWORDS={"subwallet":"..."}`）。
 
 ---
 
@@ -1135,6 +1145,8 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `窗口 X 钱包扩展未加载（重试将重启浏览器窗口）` | 钱包就绪检查探测扩展未加载 | 窗口实例异常/扩展未启用 | 等重试重启窗口恢复；连续出现检查比特窗口扩展安装 |
 | `MetaMask 已锁定且未配置解锁密码` | 弹窗停在解锁页但没配密码 | `WALLET_PASSWORDS` 漏了该类型 | 在 `config/.env` 的 `WALLET_PASSWORDS` 配置密码 |
 | `MetaMask 解锁失败（密码错误或解锁页未离开）` | 密码错或解锁页没走 | 密码错 | 核对 `WALLET_PASSWORDS` |
+| `SubWallet 已锁定且未配置解锁密码` | SubWallet 弹窗停在解锁页但没配密码 | `WALLET_PASSWORDS` 漏了 `subwallet` | 在 `config/.env` 配置 `"subwallet":"密码"` |
+| `SubWallet 解锁失败` / `SubWallet 连接/签名/交易确认未完成` | SubWallet 弹窗文案或版本与适配器不一致 | 语言包/版本变化；`Approve` 后弹窗未关闭 | 看截图确认按钮文案与标题；按 4.6 调整多语言候选或分类标题 |
 | `登录未完成（等待已连接标志超时）` | 连接编排跑完所有轮次仍未出现已连接标志 | 站点需先登录/判据误判/交互未命中 | 关键站点显式给 `connected`/`connect`/`walletOption`；核对站点是否改版（见第 4 章） |
 | `检测到交易确认弹窗，登录流程不自动处理` | 登录阶段遇到交易（tx）弹窗且任务传了 `autoConfirmTransaction: false` | 特殊站点登录会弹真实链上交易 | 确认该站点登录不应自动确认；普通站点去掉 `autoConfirmTransaction: false`（默认 `true` 会自动点） |
 | `任务 X 超时` | 单次运行超过 `timeoutSec` | 卡死；某等待超时太长 | 核对各等待超时；必要时上调 `meta.timeoutSec` 或 `execution.taskTimeoutMs` |
@@ -1445,7 +1457,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `scheduler` | `timezone`（`Asia/Shanghai`） | 定时计划与熔断每日重置统一按此时区的墙上时钟 |
 | `ai` | `provider`（`openai-compatible`）、`apiBase`（`https://api.deepseek.com`）、`model`（`deepseek-flash`）、`apiKey`（空）、`timeoutMs`（30000） | AI 能力（`askAi`/`answerQuiz`，见 3.8）：OpenAI 兼容接口，默认 DeepSeek。**密钥只写 `config/.env` 的 `AI_API_KEY`**，`config.json` 的 `apiKey` 必须留空 |
 | `web` | `host`（`127.0.0.1`）、`port`（3000） | 后端 API 监听；端口一般用环境变量 `WEB_PORT` 覆盖 |
-| `wallet` | `passwords`（`{}`） | 钱包解锁密码映射（key 为钱包类型）；一般用环境变量 `WALLET_PASSWORDS`（JSON）配置 |
+| `wallet` | `passwords`（`{}`） | 钱包解锁密码映射（key 为钱包类型，如 `metamask`/`petra`/`subwallet`）；一般用环境变量 `WALLET_PASSWORDS`（JSON）配置 |
 | `dataSource` | `path`（`config/accounts.xlsx`） | 账号/素材数据源 Excel，每个窗口按行领取 |
 | `storage` | `dbPath`、`screenshotDir`、`logDir`、`logLevel`、`logRetainDays`（7）、`dbRetainDays`（90）、`screenshotRetainDays`（3） | 本地 SQLite、截图与日志的路径与保留天数；截图启动时及每 6 小时清理超期日期目录 |
 
@@ -1457,7 +1469,7 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 | `AI_API_BASE` | `ai.apiBase` | 可选：OpenAI 兼容根地址 |
 | `AI_MODEL` | `ai.model` | 可选：模型 id |
 | `CIRCUIT_BREAKER_RESET_AT` | `execution.circuitBreakerResetAt` | 可选：熔断每日重置时刻（`HH:mm`，`""` 关闭） |
-| `WALLET_PASSWORDS` | `wallet.passwords` | JSON 映射 `{"metamask":"密码","petra":"密码"}`，同类型钱包共用一个密码 |
+| `WALLET_PASSWORDS` | `wallet.passwords` | JSON 映射 `{"metamask":"密码","petra":"密码","subwallet":"密码"}`，同类型钱包共用一个密码 |
 | `WEB_PORT` | `web.port` | 后端 API 端口（Vite 代理自动跟随） |
 | `VITE_PORT` | — | 前端 Vite 面板端口（前端也读同一份 `.env`） |
 | `BITBROWSER_API_BASE` | `bitbrowser.apiBase` | 可选：比特浏览器 API 地址 |

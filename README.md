@@ -58,7 +58,7 @@ pm2 startup   # 按提示执行输出的命令
 
 三层配置：`config/config.json`（通用）→ `config/config.local.json`（本机覆盖）→ `config/.env`（密钥）。
 数据库为本地 SQLite 文件，路径在 `config.json` 的 `storage.dbPath`（默认 `data/app.db`，已在 .gitignore，不提交）。表结构首次打开时自动创建（profiles/runs/batches/task_states/open_windows）；`storage.dbRetainDays`（默认 90）控制历史数据保留天数，超期行启动时自动清理。
-钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按钱包类型配置（JSON 映射，`{"metamask":"密码","petra":"密码"}`，同类型钱包共用同一密码，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
+钱包解锁密码在 `config/.env` 用 `WALLET_PASSWORDS` 环境变量按钱包类型配置（JSON 映射，`{"metamask":"密码","petra":"密码","subwallet":"密码"}`，同类型钱包共用同一密码，重启生效）；也可写在 `config.local.json` 的 `wallet.passwords`，环境变量优先合并。
 日志保留天数在 `config.json` 的 `storage.logRetainDays` 配置（默认 7 天，保留最近 N 天；启动时与按天滚动时均清理过期文件）。
 
 截图按 `storage.screenshotRetainDays` 保留（默认 3 天，启动时与每 6 小时清理超期日期目录）；路径为 `data/screenshots/<日期>/<窗口>/<任务>/slot-<slot>/`，每小时/手动重跑按 slot 隔离。
@@ -73,7 +73,7 @@ pm2 startup   # 按提示执行输出的命令
 
 ```powershell
 BITBROWSER_PROFILE_ID=<窗口ID> npm run smoke:window
-BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=petra npm run smoke:wallet
+BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra|subwallet npm run smoke:wallet
 ```
 
 单窗口单任务调试（只开一个窗口跑指定任务，结束即退出）：

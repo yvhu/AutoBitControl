@@ -60,9 +60,9 @@ export type PopupKind = 'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'
  * 抽象出四种交互：解锁、连接、签名、交易确认——前三者是可选的「一次弹窗一次意图」动作。
  */
 export interface WalletAdapter {
-  /** 钱包类型标识，全局唯一，与 TaskMeta.wallet 对应（如 'metamask'/'petra'） */
+  /** 钱包类型标识，全局唯一，与 TaskMeta.wallet 对应（如 'metamask'/'petra'/'subwallet'） */
   key: string
-  /** 钱包显示名（如 'MetaMask'/'Petra'）：站内钱包列表按显示名匹配入口用 */
+  /** 钱包显示名（如 'MetaMask'/'Petra'/'SubWallet'）：站内钱包列表按显示名匹配入口用 */
   displayName: string
   /** 用于判断某个弹窗页 URL 是否属于该钱包的 URL 模式列表（正则字符串，见 waitForPopup） */
   extensionUrlPatterns: string[]
@@ -72,6 +72,8 @@ export interface WalletAdapter {
   probePath: string
   /** 页面 provider 标识字段：区分其它钱包注入的 window.ethereum（isMetaMask / isPetra） */
   providerFlag: string
+  /** provider 挂载的全局对象名（默认 'ethereum'）：SubWallet 等钱包把 provider 挂在 window.SubWallet */
+  providerGlobal?: string
   /** 该钱包是否注入页面 provider：false 时跳过 provider 轮询，仅 CDP 扩展页探测判定就绪（Petra 实测不注入 window.petra） */
   expectsProvider?: boolean
   /**

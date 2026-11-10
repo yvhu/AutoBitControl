@@ -8,9 +8,20 @@
  */
 import type { WalletAdapter, PopupPage } from './types'
 import { POPUP_POLL_MS, sleep, waitForPopupClose } from './popup-wait'
+import { buttonSelectors, uniqueTexts, WALLET_BUTTON_LABELS, WALLET_CONFIRM_TEXTS } from './labels'
 
-/** 确认按钮文案候选（Petra UI 无稳定 testid，按文案匹配；Sign In 为签名确认主按钮） */
-const CONFIRM_TEXTS = ['Sign In', 'Connect', 'Approve', 'Confirm', 'Sign']
+/** 连接按钮文案候选（多语言共享） */
+const CONNECT_TEXTS = WALLET_BUTTON_LABELS.connect
+/** 签名按钮文案候选（Petra 的 Sign In 为签名确认主按钮） */
+const SIGN_TEXTS = WALLET_BUTTON_LABELS.sign
+/** 交易/授权按钮文案候选（Approve/Confirm 系列） */
+const TX_TEXTS = WALLET_CONFIRM_TEXTS
+/** 解锁按钮文案候选 */
+const UNLOCK_TEXTS = WALLET_BUTTON_LABELS.unlock
+/** 任一确认按钮文案候选（判「已解锁」与就绪检查用） */
+const CONFIRM_TEXTS = uniqueTexts([...CONNECT_TEXTS, ...SIGN_TEXTS, ...TX_TEXTS])
+/** 解锁按钮选择器（多语言） */
+const UNLOCK_BUTTONS = buttonSelectors(UNLOCK_TEXTS)
 
 /**
  * Petra 钱包适配器：与 MetaMask 同构的四类交互（解锁/连接/签名/交易确认），但定位方式不同。
@@ -60,16 +71,20 @@ export class PetraAdapter implements WalletAdapter {
       }
       if (pwCount > 0) {
         await pw.fill(password)
-        const unlockBtn = popup.locator('button:has-text("Unlock")').first()
-        try {
-          if (((await unlockBtn.count?.()) ?? 0) > 0) {
-            await unlockBtn.click()
-          } else {
-            await pw.press?.('Enter')
+        let submitted = false
+        for (const btn of UNLOCK_BUTTONS) {
+          const unlockBtn = popup.locator(btn).first()
+          try {
+            if (((await unlockBtn.count?.()) ?? 0) > 0) {
+              await unlockBtn.click()
+              submitted = true
+              break
+            }
+          } catch {
+            // 单个候选探测/点击失败时继续试下一个，最后回退回车
           }
-        } catch {
-          await pw.press?.('Enter').catch(() => {})
         }
+        if (!submitted) await pw.press?.('Enter').catch(() => {})
         // 等密码框消失；若没 detach 但已切到确认页（Sign In/Connect 等可见），也视为解锁成功
         try {
           await pw.waitFor?.({ state: 'detached', timeout: 30000 })
@@ -132,9 +147,9 @@ export class PetraAdapter implements WalletAdapter {
    */
   async classifyPopup(popup: PopupPage): Promise<'unlock' | 'connect' | 'sign' | 'tx' | 'unknown'> {
     if (await this.locatorVisible(popup, 'input[type="password"]')) return 'unlock'
-    if (await this.locatorVisible(popup, 'button:has-text("Connect")')) return 'connect'
-    if (await this.locatorVisible(popup, 'button:has-text("Approve")') || await this.locatorVisible(popup, 'button:has-text("Confirm")')) return 'tx'
-    if (await this.locatorVisible(popup, 'button:has-text("Sign In")') || await this.locatorVisible(popup, 'button:has-text("Sign")')) return 'sign'
+    if (await this.anyTextVisible(popup, CONNECT_TEXTS)) return 'connect'
+    if (await this.anyTextVisible(popup, TX_TEXTS)) return 'tx'
+    if (await this.anyTextVisible(popup, SIGN_TEXTS)) return 'sign'
     return 'unknown'
   }
 
@@ -165,6 +180,14 @@ export class PetraAdapter implements WalletAdapter {
     if (kind === 'connect') { await this.connect(popup); return true }
     await this.sign(popup)
     return true
+  }
+
+  /** 某组按钮文案中是否至少有一个可见（多语言候选逐个探测） */
+  private async anyTextVisible(popup: PopupPage, texts: string[]): Promise<boolean> {
+    for (const text of texts) {
+      if (await this.locatorVisible(popup, `button:has-text("${text}")`)) return true
+    }
+    return false
   }
 
   /** 某选择器当前是否可见：优先 isVisible（区分存在但隐藏），mock 无 isVisible 时回退 count>0 */

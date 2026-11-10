@@ -7,6 +7,7 @@
  *   多数新钱包只需 key + displayName + extensionId。
  */
 import type { PopupKind, PopupLocator, PopupPage, WalletAdapter } from './types'
+import { buttonSelectors, WALLET_BUTTON_LABELS, WALLET_CONFIRM_TEXTS } from './labels'
 
 /** 配置驱动适配器的按钮候选配置：每类意图一组选择器，按数组顺序取首个可见者 */
 export interface WalletAdapterConfig {
@@ -30,10 +31,10 @@ export interface WalletAdapterConfig {
  * 从而绝不把可能的交易确认误当签名自动点击。
  */
 const DEFAULT_BUTTONS = {
-  unlock: ['button:has-text("Unlock")', 'button:has-text("解锁")', 'button:has-text("确认")'],
-  connect: ['button:has-text("Connect")', 'button:has-text("连接")', 'button:has-text("下一步")', 'button:has-text("Next")'],
-  sign: ['button:has-text("Sign")', 'button:has-text("签名")', 'button:has-text("确认")', 'button:has-text("Confirm")'],
-  confirmTx: ['button:has-text("Confirm")', 'button:has-text("确认")', 'button:has-text("Approve")'],
+  unlock: buttonSelectors(WALLET_BUTTON_LABELS.unlock),
+  connect: buttonSelectors([...WALLET_BUTTON_LABELS.connect, ...WALLET_BUTTON_LABELS.next]),
+  sign: buttonSelectors([...WALLET_BUTTON_LABELS.sign, ...WALLET_BUTTON_LABELS.confirm]),
+  confirmTx: buttonSelectors(WALLET_CONFIRM_TEXTS),
 }
 
 /**

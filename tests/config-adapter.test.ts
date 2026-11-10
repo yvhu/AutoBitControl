@@ -155,8 +155,47 @@ describe('createConfigWalletAdapter 分类与登录处理', () => {
     expect(clicks).toEqual([])
   })
 
-  it('自定义 buttons 覆盖内置候选', async () => {
-    const custom = createConfigWalletAdapter({ key: 'bar', displayName: 'Bar', buttons: { connect: ['button:has-text("连接钱包")'] } })
+  it('多语言候选：日文连接 / 法文连接 / 德文连接都命中 connect', async () => {
+    for (const text of ['接続', 'Connecter', 'Verbinden', '连接', '連接', '連線', 'Подключить', 'Kết nối']) {
+      const clicks: string[] = []
+      const popup = makePopup({ texts: [text], clicks })
+      expect(await adapter.classifyPopup(popup)).toBe('connect')
+      expect(await adapter.handleLoginPopup(popup)).toBe(true)
+      expect(clicks).toEqual([`button:has-text("${text}")`])
+    }
+  })
+
+  it('多语言候选：日文签名 / 俄文签名命中 sign', async () => {
+    for (const text of ['署名', 'Подписать', 'Ký', 'Signer', 'Signieren']) {
+      const clicks: string[] = []
+      const popup = makePopup({ texts: [text], clicks })
+      expect(await adapter.classifyPopup(popup)).toBe('sign')
+      expect(await adapter.handleLoginPopup(popup)).toBe(true)
+      expect(clicks).toEqual([`button:has-text("${text}")`])
+    }
+  })
+
+  it('多语言候选：中文批准 / 日文承认归为 tx，不自动点击', async () => {
+    for (const text of ['批准', '核准', '承認', 'Одобрить', 'Phê duyệt', 'Approuver', 'Genehmigen']) {
+      const clicks: string[] = []
+      const popup = makePopup({ texts: [text], clicks })
+      expect(await adapter.classifyPopup(popup)).toBe('tx')
+      expect(await adapter.handleLoginPopup(popup)).toBe(false)
+      expect(clicks).toEqual([])
+    }
+  })
+
+  it('多语言候选：繁体中文解锁按钮', async () => {
+    const clicks: string[] = []
+    const fills: string[] = []
+    const popup = makePopup({ password: true, texts: ['解鎖'], clicks, fills })
+    expect(await adapter.classifyPopup(popup)).toBe('unlock')
+    expect(await adapter.handleLoginPopup(popup, 'pw')).toBe(true)
+    expect(fills).toEqual(['pw'])
+    expect(clicks).toEqual(['button:has-text("解鎖")'])
+  })
+
+  it('自定义 buttons 覆盖内置候选', async () => {    const custom = createConfigWalletAdapter({ key: 'bar', displayName: 'Bar', buttons: { connect: ['button:has-text("连接钱包")'] } })
     const clicks: string[] = []
     const popup = makePopup({ texts: ['连接钱包'], clicks })
     expect(await custom.classifyPopup(popup)).toBe('connect')
@@ -273,5 +312,11 @@ describe('PetraAdapter classifyPopup', () => {
     const clicks: string[] = []
     const popup = makePopupCountOnly(['Sign In', 'Confirm'], [], clicks)
     expect(await new PetraAdapter().classifyPopup(popup)).toBe('tx')
+  })
+
+  it('多语言候选：日文连接 / 日文签名 / 中文批准', async () => {
+    expect(await new PetraAdapter().classifyPopup(makePopup({ texts: ['接続'], clicks: [] }))).toBe('connect')
+    expect(await new PetraAdapter().classifyPopup(makePopup({ texts: ['署名'], clicks: [] }))).toBe('sign')
+    expect(await new PetraAdapter().classifyPopup(makePopup({ texts: ['批准'], clicks: [] }))).toBe('tx')
   })
 })

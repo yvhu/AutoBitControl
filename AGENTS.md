@@ -32,7 +32,7 @@ npm run task:run   # 单窗口单任务调试（BITBROWSER_PROFILE_ID + TASK_KEY
   - `execution.windowPool`：窗口池（唯一调度器，始终启用，无开关）。窗口跨任务复用、无任务级并发/顺序限制；有效池 = `min(maxOpenWindows, 内存允许的打开数)`，实际打开数含手动/`task:run` 窗口；`maxOpenWindows` 同时是手动/面板开窗的统一上限；内存 `warning` 停补池与普通分配（仅允许探测）、`critical` 停分配并关空闲；关闭窗口按最早 `queued_at` 排队轮转，idle/任务数/寿命/连续占用回收；开窗冷却由 `openCooldownMs` 控制
   - `execution.health`：全局健康门禁（**Phase 2 已接入窗口池**；只由比特 API `/browser/pids` 对账失败/本机整体故障触发 → 暂停开窗 + 指数退避 + half-open 探测；暂停期间任务保持 `pending`，不批量失败。单窗口代理/任务失败走窗口熔断，不拖停全局）
 - `config/config.local.json` — 本机覆盖（gitignore，可不存在）
-- `config/.env` — 密钥与端口：`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
+- `config/.env` — 密钥与端口：`WALLET_PASSWORDS`（JSON 映射 `{"metamask":"密码","petra":"密码","subwallet":"密码"}`）、`WEB_PORT`、`VITE_PORT`。前端 Vite 也共用此文件（vite.config.ts 的 loadEnv 指向 `../config`）
 
 定时任务时区在 `scheduler.timezone`（默认 Asia/Shanghai）。
 
@@ -48,7 +48,7 @@ src/app.ts 组装一切（compose root，只被 index.ts 调用）
 
 - `infrastructure/`：config / logger(log4js) / db(本地 SQLite，libsql 本地引擎) / datasource(Excel 账号表) / http 封装
 - `integrations/`：bitbrowser.ts（本地 API 默认 http://127.0.0.1:54345）、ai/（OpenAI 兼容客户端，默认 DeepSeek，供 AI 答题）
-- `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra 四动作 unlock/connect/sign/confirmTx + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
+- `automation/`：能力库（每目录一个 `index.ts` 出口）——`dom/`（探针/竞速/刷新恢复/坐标点击）、`wallet/`（types 注册表 + metamask/petra/subwallet 四动作 unlock/connect/sign/confirmTx + 共享多语言文案 + actions/login-flow 登录编排 + appkit 归一化）、`captcha/`（仅 Turnstile 方框点击）、`diag/`（步骤记录 + 失败诊断包）
 - `engine/`：queue（运行队列契约 `RunEnqueuer`/`SessionTask` 类型）、window-pool（唯一调度器：跨任务复用窗口、每窗口任务集、内存/健康门禁、队列轮转）、memory-governor / global-health（内存水位与全局健康纯逻辑）、scheduler（自研 tick 定时调度：计划独立于任务，存 schedules 表）、window-runner（开窗→CDP 接管→顺序跑任务→关窗/keep-open，patchright 驱动）、task-context（任务运行时数据袋子：任务经 `src/api` 能力函数操作 `ctx`，不暴露命名空间）、state（状态机）、run-recovery（启动时结算被新 slot 取代的旧行、把崩溃残留 running 重置为 pending）
 - `tasks/`：站点任务，只经 TaskContext 使用引擎能力
 - `server/`：express 路由按资源分文件（routes/），统一 `{code,message,data}` 响应（server/http/response.ts 的 ok/fail + asyncHandler），错误走 HttpError → 统一错误中间件

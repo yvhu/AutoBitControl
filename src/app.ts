@@ -25,6 +25,7 @@ import { CDP_TRANSIENT_PATTERN } from './infrastructure/constants'
 import { WalletRegistry } from './automation/wallet/types'
 import { MetaMaskAdapter } from './automation/wallet/metamask'
 import { PetraAdapter } from './automation/wallet/petra'
+import { SubWalletAdapter } from './automation/wallet/subwallet'
 import { loadTasks } from './tasks'
 import { createApp } from './server/app'
 import { FileAssignService } from './tools/file-assign/applier'
@@ -210,6 +211,7 @@ export async function startApp(): Promise<void> {
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
+  wallets.register(new SubWalletAdapter())
 
   // 取消标记注册表：进程内「已请求停止」标记，runner / 停止器共用
   const cancelRegistry = new CancelRegistry()

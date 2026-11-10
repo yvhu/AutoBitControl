@@ -61,19 +61,20 @@ export class WalletSession {
 
   /**
    * 轮询页面主世界，看钱包 provider 是否已注入且类型标识正确。
-   * 执行流程：最多 rounds 轮，每轮在页面主世界读取 window.ethereum，并断言 ethereum[providerFlag] === true
-   * （严格比类型，避免把别的钱包注入的 window.ethereum 误判成本钱包）；命中即返回，
+   * 执行流程：最多 rounds 轮，每轮在页面主世界读取 window[providerGlobal]（默认 window.ethereum），
+   * 并断言 provider[providerFlag] === true（严格比类型，避免把别的钱包注入的 window.ethereum 误判成本钱包）；
+   * SubWallet 这类把 provider 挂在 window.SubWallet 的钱包通过 adapter.providerGlobal 指定。命中即返回，
    * 否则等 pollIntervalMs 再试。单轮求值异常按本轮失败计，不中断。
-   * @param adapter 提供 providerFlag 的适配器
+   * @param adapter 提供 providerFlag/providerGlobal 的适配器
    * @param rounds 最大轮询轮数
    * @returns rounds 轮内是否检测到正确的 provider
    */
   private async providerPresent(adapter: WalletAdapter, rounds: number): Promise<boolean> {
     for (let i = 0; i < rounds; i++) {
-      const ok = await this.page.evaluate((flag: string) => {
-        const eth = (window as unknown as { ethereum?: Record<string, unknown> }).ethereum
-        return typeof eth !== 'undefined' && eth[flag] === true
-      }, adapter.providerFlag, {}, false).catch(() => false)
+      const ok = await this.page.evaluate(({ flag, globalName }: { flag: string; globalName: string }) => {
+        const holder = (window as unknown as Record<string, Record<string, unknown> | undefined>)[globalName]
+        return typeof holder !== 'undefined' && holder[flag] === true
+      }, { flag: adapter.providerFlag, globalName: adapter.providerGlobal ?? 'ethereum' }, {}, false).catch(() => false)
       if (ok) return true
       await this.page.waitForTimeout(this.pollIntervalMs)
     }

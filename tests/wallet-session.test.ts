@@ -2,19 +2,21 @@ import { describe, it, expect, vi } from 'vitest'
 import { WalletSession } from '../src/automation/wallet/session'
 import type { WalletAdapter } from '../src/automation/wallet/types'
 
-/** 假 Page：evaluate 实现「按 flag 读取 provider 标记」；context().newCDPSession 模拟 CDP 探测 */
-function makeFakePage(opts: { providerOk?: boolean; cdpOk?: boolean; evaluateDelay?: number } = {}) {
+/** 假 Page：evaluate 实现「按 providerGlobal + flag 读取 provider 标记」；context().newCDPSession 模拟 CDP 探测 */
+function makeFakePage(opts: { providerOk?: boolean; cdpOk?: boolean; evaluateDelay?: number; flags?: string[]; globalName?: string } = {}) {
   let evaluateCalls = 0
+  const flags = opts.flags ?? ['isMetaMask']
+  const globalName = opts.globalName ?? 'ethereum'
   const page = {
     __evaluateCalls: () => evaluateCalls,
-    evaluate: vi.fn(async (fn: (flag: string) => boolean, flag: string) => {
+    evaluate: vi.fn(async (_fn: (arg: { flag: string; globalName: string }) => boolean, arg: { flag: string; globalName: string }) => {
       evaluateCalls++
       const delay = opts.evaluateDelay ?? 0
       if (delay > 0) {
         // 注入慢场景：前 delay 次返回 false，之后按 providerOk
         if (evaluateCalls <= delay) return false
       }
-      return opts.providerOk !== false && flag === 'isMetaMask'
+      return opts.providerOk !== false && arg.globalName === globalName && flags.includes(arg.flag)
     }),
     waitForTimeout: vi.fn(async () => {}),
     context: () => ({
@@ -96,5 +98,12 @@ describe('WalletSession', () => {
     const s = new WalletSession(page as never, { pollIntervalMs: 5 })
     const petra = { ...adapter, key: 'petra', providerFlag: 'isPetra', expectsProvider: false }
     expect(await s.ensureReady('petra', petra)).toBe('missing')
+  })
+
+  it('SubWallet providerGlobal=SubWallet：读取 window.SubWallet.isSubWallet 判定 ready', async () => {
+    const page = makeFakePage({ providerOk: true, cdpOk: false, flags: ['isSubWallet'], globalName: 'SubWallet' })
+    const s = new WalletSession(page as never, { pollIntervalMs: 5 })
+    const subwallet = { ...adapter, key: 'subwallet', providerFlag: 'isSubWallet', providerGlobal: 'SubWallet' }
+    expect(await s.ensureReady('subwallet', subwallet)).toBe('ready')
   })
 })

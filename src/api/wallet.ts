@@ -10,7 +10,7 @@ import { WalletActions } from '../automation'
 import { waitFor, type Matcher } from './wait'
 
 /** 内置钱包类型（与 automation/wallet 注册表 key 一致）；仅作已知值提示，ConnectOptions.wallet 接受任意注册表 key */
-export type WalletType = 'metamask' | 'petra'
+export type WalletType = 'metamask' | 'petra' | 'subwallet'
 
 /**
  * 自适应连接规格：任务只描述站点「可见行为」，其余交给框架推断。

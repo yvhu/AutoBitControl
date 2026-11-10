@@ -9,7 +9,7 @@ import { AppDb } from '../src/infrastructure/db'
 import { DataSource } from '../src/infrastructure/datasource'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
 import { createAiClient } from '../src/integrations/ai'
-import { WalletRegistry, MetaMaskAdapter, PetraAdapter } from '../src/automation'
+import { WalletRegistry, MetaMaskAdapter, PetraAdapter, SubWalletAdapter } from '../src/automation'
 import { PatchrightDriver, WindowRunner } from '../src/engine/window-runner'
 import { SerialQueue } from '../src/engine/serial-queue'
 import { loadTasks } from '../src/tasks'
@@ -49,6 +49,7 @@ async function main(): Promise<void> {
   const wallets = new WalletRegistry()
   wallets.register(new MetaMaskAdapter())
   wallets.register(new PetraAdapter())
+  wallets.register(new SubWalletAdapter())
   // AI 客户端：仅在配置 AI_API_KEY 时构建（供任务经 ctx.ai / api/ai 问答）；未配置则不注入，ctx.ai 为 undefined
   const ai = cfg.ai.apiKey ? createAiClient(cfg.ai) : undefined
   let runner!: WindowRunner

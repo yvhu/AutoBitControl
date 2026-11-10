@@ -1,13 +1,13 @@
 /**
  * 冒烟脚本（scripts）：钱包弹窗链路验证——开窗 → 手动点连接 → 自动确认弹窗
- * 用法：BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra npm run smoke:wallet
+ * 用法：BITBROWSER_PROFILE_ID=<窗口ID> WALLET_KEY=metamask|petra|subwallet npm run smoke:wallet
  * 用途：验证钱包适配器的弹窗识别与按钮文案正则是否匹配真实插件 UI
  */
 import { loadConfig } from '../src/infrastructure/config'
 import { createLogger } from '../src/infrastructure/logger'
 import { createBitBrowserClient } from '../src/integrations/bitbrowser'
 import { PatchrightDriver } from '../src/engine/window-runner'
-import { waitForPopup, WalletRegistry, MetaMaskAdapter, PetraAdapter, type PopupPage } from '../src/automation'
+import { waitForPopup, WalletRegistry, MetaMaskAdapter, PetraAdapter, SubWalletAdapter, type PopupPage } from '../src/automation'
 
 async function main(): Promise<void> {
   const profileId = process.env.BITBROWSER_PROFILE_ID
@@ -23,6 +23,7 @@ async function main(): Promise<void> {
   const reg = new WalletRegistry()
   reg.register(new MetaMaskAdapter())
   reg.register(new PetraAdapter())
+  reg.register(new SubWalletAdapter())
   const adapter = reg.get(walletKey)
 
   const open = await client.openBrowser(profileId)

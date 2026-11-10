@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MetaMaskAdapter } from '../src/automation/wallet/metamask'
 import { PetraAdapter } from '../src/automation/wallet/petra'
+import { SubWalletAdapter } from '../src/automation/wallet/subwallet'
 import { WalletRegistry, type PopupPage, type PopupLocator } from '../src/automation/wallet/types'
 import { matchesWalletUrl, waitForPopup } from '../src/automation/wallet/popup'
 
@@ -350,8 +351,10 @@ describe('WalletRegistry', () => {
     const reg = new WalletRegistry()
     reg.register(new MetaMaskAdapter())
     reg.register(new PetraAdapter())
+    reg.register(new SubWalletAdapter())
     expect(reg.has('metamask')).toBe(true)
     expect(reg.has('petra')).toBe(true)
+    expect(reg.has('subwallet')).toBe(true)
     expect(() => reg.get('nope')).toThrow(/未注册/)
   })
 })
@@ -366,5 +369,10 @@ describe('WalletAdapter 探测契约', () => {
     expect(pt.extensionId.length).toBeGreaterThan(0)
     expect(pt.probePath).toBe('index.html')
     expect(pt.providerFlag).toBe('isPetra')
+    const sw = new SubWalletAdapter()
+    expect(sw.extensionId).toBe('onhogfjeacnfoofkfgppdlbmlmnplgbn')
+    expect(sw.probePath).toBe('index.html')
+    expect(sw.providerFlag).toBe('isSubWallet')
+    expect(sw.providerGlobal).toBe('SubWallet')
   })
 })
