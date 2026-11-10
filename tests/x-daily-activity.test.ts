@@ -142,6 +142,35 @@ describe('XDailyActivityTask', () => {
     expect(page.reload).toHaveBeenCalledTimes(1)
   })
 
+  it('活动时间到期且已有有效滚动时，不因少于 12 轮判失败', async () => {
+    let elapsedMs = 0
+    let rngCalls = 0
+    const task = new XDailyActivityTask(() => {
+      rngCalls++
+      return rngCalls <= 3 ? 0 : 0.71
+    })
+    const page = {
+      locator: () => fakeLocator(() => false),
+      mouse: { move: async () => {}, wheel: async () => {} },
+      evaluate: async () => ({ width: 1280, height: 800 }),
+      waitForTimeout: async (ms: number) => { elapsedMs += ms },
+    }
+    const ctx = makeCtx(page as never, task)
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => 100_000 + elapsedMs)
+    const runActivity = (task as unknown as {
+      runActivity(ctx: TaskContext): Promise<{ scrolls: number; progressedScrolls: number; stopReason: string }>
+    }).runActivity.bind(task)
+
+    try {
+      const result = await runActivity(ctx)
+      expect(result.scrolls).toBe(11)
+      expect(result.progressedScrolls).toBe(11)
+      expect(result.stopReason).toBe('time-limit')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('时间线框裁剪到视口：滚动后负 top 不会放大距离', async () => {
     const task = new XDailyActivityTask()
     const page = {

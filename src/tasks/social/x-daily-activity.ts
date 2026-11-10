@@ -7,7 +7,7 @@
  * 登录前提：依赖比特窗口已保存的 X 登录态；未登录直接截图失败，不尝试自动登录。
  */
 import { SiteTask, type TaskContext, type TaskMeta } from '../base'
-import { computeXDwellMs, readXLoadState, readXScrollMetrics, readXTimelineSignature, readXVisibleContent } from './content'
+import { computeXDwellMs, getXScrollProgress, readXLoadState, readXScrollMetrics, readXTimelineSignature, readXVisibleContent } from './content'
 import { ensureNoBlockingOverlay, hasBlockingOverlay, type XAdPersonalizationChoice } from './overlay'
 import { humanReadingPause, humanScrollBurst, smoothScrollBy, type ScreenBox } from './scroll'
 import { openPage, race, takeScreenshot } from '../../api'
@@ -46,7 +46,6 @@ const MAX_TIMELINE_RECOVERY_ATTEMPTS = 3 // X 时间线错误提示最多恢复�
 const TIMELINE_RECOVERY_WAIT_MS = 8000 // 点击 Retry/刷新后等待错误提示消失的预算
 const ACTIVITY_MIN_MS = 180000 // 活跃最短时长（3 分钟）
 const ACTIVITY_MAX_MS = 360000 // 活跃最长时长（6 分钟）
-const SCROLL_MIN_ROUNDS = 12 // 最少滚动轮数（成功断言用）
 const MAX_SCROLL_ROUNDS = 30 // 滚动轮数上限（保持活跃即可，不追求刷满时长）
 const LIKE_MIN = 0 // 单次运行最少目标点赞数
 const LIKE_MAX = 2 // 单次运行最多目标点赞数
@@ -60,6 +59,8 @@ const INITIAL_DWELL_MIN_MS = 2000 // 进入页面后先浏览再操作
 const INITIAL_DWELL_MAX_MS = 5000
 const SKIP_READ_PROBABILITY = 0.3 // 30% 的内容直接划过不看
 
+type XActivityStopReason = 'bottom' | 'stalled' | 'time-limit' | 'round-limit'
+
 /** X 日常活跃任务 */
 export class XDailyActivityTask extends SiteTask {
   meta: TaskMeta = {
@@ -70,7 +71,7 @@ export class XDailyActivityTask extends SiteTask {
     sourceUrl: 'https://x.com/home',
     note: '依赖窗口已登录 X；低强度：滚动阅读 3-6 分钟、随机点赞 0-2 条；不转发/不回复/不关注；未登录会截图报错，不自动登录',
     category: 'other',
-    lastUpdated: '2026-11-09',
+    lastUpdated: '2026-11-10',
     enabled: true,
     timeoutSec: 600,
     retry: { max: 1, backoffSec: 300 },
@@ -131,16 +132,17 @@ export class XDailyActivityTask extends SiteTask {
    * @param ctx 任务上下文
    * @returns 实际滚动轮数与点赞数
    */
-  private async runActivity(ctx: TaskContext): Promise<{ scrolls: number; likes: number }> {
+  private async runActivity(ctx: TaskContext): Promise<{ scrolls: number; likes: number; progressedScrolls: number; stopReason: XActivityStopReason }> {
     await ctx.page.waitForTimeout(this.randomInt(INITIAL_DWELL_MIN_MS, INITIAL_DWELL_MAX_MS))
     const timelineBox = await this.getTimelineBox(ctx)
     const end = Date.now() + this.randomInt(ACTIVITY_MIN_MS, ACTIVITY_MAX_MS)
     const maxLikes = this.randomInt(LIKE_MIN, LIKE_MAX)
     let scrolls = 0
     let likes = 0
+    let progressedScrolls = 0
     let nextLikeAt = 0
     let stagnantScrolls = 0
-    let reachedBottom = false
+    let stopReason: XActivityStopReason = 'time-limit'
     while (Date.now() < end && scrolls < MAX_SCROLL_ROUNDS) {
       if (!(await ensureNoBlockingOverlay(ctx, { xAdChoice: AD_PERSONALIZATION_CHOICE }))) {
         await ctx.page.waitForTimeout(1000)
@@ -150,6 +152,7 @@ export class XDailyActivityTask extends SiteTask {
         await ctx.page.waitForTimeout(1000)
         continue
       }
+      const beforeMetrics = await readXScrollMetrics(ctx)
       const beforeSignature = await readXTimelineSignature(ctx)
       const targetDistance = timelineBox ? await this.getNextTweetScroll(ctx, timelineBox) : null
       const distance = targetDistance ?? (timelineBox ? Math.round(timelineBox.height * 0.5) : 400)
@@ -180,21 +183,23 @@ export class XDailyActivityTask extends SiteTask {
       }
       const afterSignature = await readXTimelineSignature(ctx)
       const metrics = await readXScrollMetrics(ctx)
-      const atBottom = metrics !== null && metrics.top + metrics.clientHeight >= metrics.scrollHeight - 8
-      if (atBottom) {
-        reachedBottom = true
-        ctx.log.info({ step: 'x-activity', window: ctx.profile.name, scrolls }, 'X 时间线已到实际底部，停止滚动')
+      const progress = getXScrollProgress(beforeMetrics, metrics, beforeSignature, afterSignature)
+      if (progress === 'bottom') {
+        stopReason = 'bottom'
+        ctx.log.info({ step: 'x-activity', window: ctx.profile.name, scrolls, stopReason }, 'X 时间线已到实际底部，停止滚动')
         break
       }
-      if (beforeSignature && afterSignature && beforeSignature === afterSignature) {
+      if (progress === 'stationary') {
         stagnantScrolls++
         if (stagnantScrolls >= 3) {
-          reachedBottom = true
-          ctx.log.info({ step: 'x-activity', window: ctx.profile.name, scrolls }, 'X 时间线连续 3 次没有新内容，停止滚动')
+          stopReason = 'stalled'
+          ctx.log.warn({ step: 'x-activity', window: ctx.profile.name, scrolls, stopReason }, 'X 连续 3 次滚动位置无变化且未到真实底部，停止继续滚动')
           break
         }
       } else {
         stagnantScrolls = 0
+        // metrics 不可读时以滚动 API 已成功发起作为弱进度证据，防止误报 11/12 轮失败
+        progressedScrolls++
       }
       await this.readAndDwell(ctx, timelineBox)
       if (scrolls % 3 === 0) {
@@ -209,10 +214,11 @@ export class XDailyActivityTask extends SiteTask {
         ctx.log.info({ step: 'x-activity', window: ctx.profile.name, likes }, '已点赞一条推文')
       }
     }
-    if (scrolls < SCROLL_MIN_ROUNDS && !reachedBottom) {
-      throw new Error(`X 滚动轮数不足（${scrolls}/${SCROLL_MIN_ROUNDS}），页面可能未正常加载`)
+    if (scrolls >= MAX_SCROLL_ROUNDS && stopReason === 'time-limit') stopReason = 'round-limit'
+    if (progressedScrolls === 0 && stopReason !== 'bottom') {
+      throw new Error(`X 时间线没有产生有效滚动位移（滚动尝试 ${scrolls} 轮，停止原因：${stopReason}）`)
     }
-    return { scrolls, likes }
+    return { scrolls, likes, progressedScrolls, stopReason }
   }
 
   /** 等时间线加载完成：无骨架屏/aria-busy 且至少 2 条推文；读取失败时回退为可继续 */

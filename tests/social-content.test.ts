@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   computeDiscordDwellMs,
   computeXDwellMs,
+  getXScrollProgress,
   isDiscordTooOld,
   readDiscordVisibleContent,
   readXLoadState,
@@ -108,5 +109,25 @@ describe('readVisibleContent', () => {
     const ctx = { page: { evaluate: async () => ({ width: 1280, height: 800 }) } } as never
     await expect(readXVisibleContent(ctx)).resolves.toEqual([])
     await expect(readDiscordVisibleContent(ctx)).resolves.toEqual([])
+  })
+})
+
+describe('X 滚动进度判定', () => {
+  const metrics = (top: number, scrollHeight = 2000, clientHeight = 800) => ({ top, scrollHeight, clientHeight })
+
+  it('推文签名未变但滚动位置前进时仍识别为有进度', () => {
+    expect(getXScrollProgress(metrics(100), metrics(420), '/status/1|/status/2', '/status/1|/status/2')).toBe('moved')
+  })
+
+  it('按滚动容器几何位置识别真实底部', () => {
+    expect(getXScrollProgress(metrics(780, 800, 300), metrics(780, 800, 300), 'same', 'same')).toBe('bottom')
+  })
+
+  it('滚动位置与推文签名都未变化时识别为停滞', () => {
+    expect(getXScrollProgress(metrics(100), metrics(100), 'same', 'same')).toBe('stationary')
+  })
+
+  it('几何和推文签名都不可读时不误判为停滞', () => {
+    expect(getXScrollProgress(null, null, null, null)).toBe('unknown')
   })
 })

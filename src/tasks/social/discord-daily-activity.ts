@@ -108,6 +108,8 @@ const MAX_SCROLL_ROUNDS = 18 // 单频道滚动轮数上限（保持活跃即可
 const INITIAL_DWELL_MIN_MS = 2000 // 进入频道后先浏览再操作
 const INITIAL_DWELL_MAX_MS = 5000
 const SKIP_READ_PROBABILITY = 0.25 // 25% 的消息直接划过不看
+const MESSAGE_CONFIRM_WAIT_MS = 3000 // 等待发送消息出现在频道里的预算
+const MESSAGE_CONFIRM_POLL_MS = 250 // 消息出现确认间隔
 
 const CONTINUE_SETTLE_MS = 2000 // 点掉「在浏览器中继续」后的等待
 
@@ -121,7 +123,7 @@ export class DiscordDailyActivityTask extends SiteTask {
     sourceUrl: 'https://discord.com/channels/@me',
     note: '需先填写 src/tasks/social/discord-daily-activity.ts 的 DISCORD_CHANNEL_URLS；依赖窗口已登录 Discord；每频道滚动 2-4 分钟、在允许发言的频道发 1 条消息；不管理服务器；Discord DOM 混淆，首次真机需按截图校准选择器',
     category: 'other',
-    lastUpdated: '2026-11-09',
+    lastUpdated: '2026-11-10',
     enabled: true,
     timeoutSec: 900,
     retry: { max: 1, backoffSec: 300 },
@@ -288,7 +290,17 @@ export class DiscordDailyActivityTask extends SiteTask {
     if (!(await ensureNoBlockingOverlay(ctx))) return false
     const input = await this.firstVisibleOnPage(ctx, MESSAGE_INPUT_SELECTORS)
     if (!input) {
-      ctx.log.warn({ step: 'discord-activity', window: ctx.profile.name }, '未找到消息输入框，跳过发送')
+      const selectors = await Promise.all(MESSAGE_INPUT_SELECTORS.map(async (selector) => {
+        try {
+          const locator = ctx.page.locator(selector)
+          const count = await locator.count()
+          const visible = count > 0 && await locator.first().isVisible().catch(() => false)
+          return { selector, count, visible }
+        } catch {
+          return { selector, count: 0, visible: false }
+        }
+      }))
+      ctx.log.warn({ step: 'discord-activity', window: ctx.profile.name, url: ctx.page.url(), selectors }, '未找到消息输入框，跳过发送')
       return false
     }
     try {
@@ -297,10 +309,18 @@ export class DiscordDailyActivityTask extends SiteTask {
       await input.pressSequentially(text, { delay: 40 + Math.floor(this.rng() * 81) })
       await ctx.page.waitForTimeout(300 + Math.floor(this.rng() * 501))
       await ctx.page.keyboard.press('Enter')
-      await ctx.page.waitForTimeout(800)
-      const appeared = (await ctx.page.locator('[id^="message-content-"]', { hasText: text }).count()) > 0
+      const message = ctx.page.locator('[id^="message-content-"]', { hasText: text })
+      const confirmEnd = Date.now() + MESSAGE_CONFIRM_WAIT_MS
+      let appeared = false
+      while (Date.now() < confirmEnd) {
+        if ((await message.count()) > 0) {
+          appeared = true
+          break
+        }
+        await ctx.page.waitForTimeout(MESSAGE_CONFIRM_POLL_MS)
+      }
       if (!appeared) {
-        ctx.log.warn({ step: 'discord-activity', window: ctx.profile.name, text }, '消息发送后未在频道中出现，跳过')
+        ctx.log.warn({ step: 'discord-activity', window: ctx.profile.name, text, confirmWaitMs: MESSAGE_CONFIRM_WAIT_MS }, '消息发送后未在确认时限内出现在频道中，不重发')
         return false
       }
       ctx.log.info({ step: 'discord-activity', window: ctx.profile.name, text }, '已发送 Discord 消息')

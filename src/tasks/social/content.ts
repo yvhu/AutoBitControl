@@ -37,6 +37,25 @@ export interface XScrollMetrics {
   clientHeight: number
 }
 
+export type XScrollProgress = 'bottom' | 'moved' | 'stationary' | 'unknown'
+
+/** 根据真实滚动位置优先判断进度；位置不可读时才回退比较推文签名 */
+export function getXScrollProgress(
+  beforeMetrics: XScrollMetrics | null,
+  afterMetrics: XScrollMetrics | null,
+  beforeSignature: string | null,
+  afterSignature: string | null,
+): XScrollProgress {
+  if (afterMetrics && afterMetrics.top + afterMetrics.clientHeight >= afterMetrics.scrollHeight - 8) return 'bottom'
+  if (beforeMetrics && afterMetrics) {
+    if (Math.abs(afterMetrics.top - beforeMetrics.top) > 1) return 'moved'
+    if (beforeSignature && afterSignature && beforeSignature !== afterSignature) return 'moved'
+    return 'stationary'
+  }
+  if (beforeSignature && afterSignature) return beforeSignature === afterSignature ? 'stationary' : 'moved'
+  return 'unknown'
+}
+
 export const DISCORD_NORMAL_DAYS = 3 // 3 天内正常阅读
 export const DISCORD_MAX_DAYS = 7 // 超过 7 天不再读，停止翻历史
 

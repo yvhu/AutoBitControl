@@ -90,13 +90,17 @@ function makeDiscordPage(opts: {
   return { page, state }
 }
 
-function makeCtx(page: ReturnType<typeof makeDiscordPage>['page'], task: DiscordDailyActivityTask): TaskContext {
+function makeCtx(
+  page: ReturnType<typeof makeDiscordPage>['page'],
+  task: DiscordDailyActivityTask,
+  logger = { info: () => {}, warn: () => {}, error: () => {} },
+): TaskContext {
   return new TaskContext({
     page: page as never,
     task,
     profile: { id: 1, bitbrowserId: 'bb-1', name: '窗口1', enabled: 1, circuitBreakerCount: 0 },
     cfg: {} as never,
-    logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
+    logger: logger as never,
     artifactsDir: mkdtempSync(join(tmpdir(), 'discord-activity-test-')),
     walletPasswords: {},
   })
@@ -188,6 +192,51 @@ describe('DiscordDailyActivityTask', () => {
     expect(ok).toBe(true)
     expect(typed).toEqual(['hello'])
     expect(keys).toContain('Enter')
+  })
+
+  it('消息延迟渲染时继续等待确认，不立即记为发送失败', async () => {
+    const task = new DiscordDailyActivityTask([CHANNEL])
+    let confirmationChecks = 0
+    const inputLocator = {
+      first: () => inputLocator,
+      count: async () => 1,
+      isVisible: async () => true,
+      click: async () => {},
+      pressSequentially: async () => {},
+    }
+    const page = {
+      locator: (selector: string) => {
+        if (selector.includes('data-slate-editor') || selector.includes('contenteditable')) return inputLocator
+        if (selector.includes('message-content')) {
+          return { count: async () => (++confirmationChecks >= 5 ? 1 : 0) }
+        }
+        return { count: async () => 0, first: () => ({ count: async () => 0, isVisible: async () => false }) }
+      },
+      keyboard: { press: async () => {} },
+      waitForTimeout: async () => {},
+    }
+    const ctx = makeCtx(page as never, task)
+    const send = (task as unknown as { sendChannelMessage(ctx: TaskContext, text: string): Promise<boolean> }).sendChannelMessage.bind(task)
+
+    await expect(send(ctx, 'hello')).resolves.toBe(true)
+    expect(confirmationChecks).toBeGreaterThan(1)
+  })
+
+  it('找不到输入框时记录当前 URL 和候选选择器探测结果', async () => {
+    const task = new DiscordDailyActivityTask([CHANNEL])
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const page = {
+      locator: () => fakeLocator(() => false),
+      url: () => CHANNEL,
+    }
+    const ctx = makeCtx(page as never, task, logger)
+    const send = (task as unknown as { sendChannelMessage(ctx: TaskContext, text: string): Promise<boolean> }).sendChannelMessage.bind(task)
+
+    await expect(send(ctx, 'hello')).resolves.toBe(false)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ url: CHANNEL, selectors: expect.arrayContaining([expect.objectContaining({ selector: expect.any(String), count: 0 })]) }),
+      '未找到消息输入框，跳过发送',
+    )
   })
 
   it('打开频道后先点「Jump to present」跳到最新', async () => {
