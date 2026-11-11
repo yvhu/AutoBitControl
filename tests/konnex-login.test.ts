@@ -14,7 +14,7 @@ vi.mock('../src/api', () => ({
   connectWallet: vi.fn(async () => {}),
   race: vi.fn(async () => 'success'),
   evaluate: vi.fn(async () => ''),
-  takeScreenshot: vi.fn(async () => ''),
+  takeElementScreenshot: vi.fn(async () => ''),
 }))
 
 import { openPage, connectWallet, race } from '../src/api'

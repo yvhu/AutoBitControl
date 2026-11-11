@@ -577,6 +577,7 @@ interface ConnectOptions {
   attempts?: number
   reclickAfterMs?: number
   observeMs?: number
+  page?: Page
   autoConfirmTransaction?: boolean
 }
 
@@ -599,6 +600,7 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 | `attempts` | `number` | 否 | `2` | 整体重试轮数（第二轮起先刷新页面重来） |
 | `reclickAfterMs` | `number` | 否 | `8000` | 一轮内无动作时补点连接按钮前的等待毫秒数 |
 | `observeMs` | `number` | 否 | `15000` | 点连接后至少观察钱包弹窗的毫秒数（不超过 `waitConnectedMs`）；避免未连接按钮常显时瞬间跑完推进轮次、错过稍后弹出的弹窗 |
+| `page` | `Page` | 否 | `ctx.page` | 操作页面；多标签页场景指定新标签页（如站点用 `target=_blank` 打开的 Quest 页） |
 | `autoConfirmTransaction` | `boolean` | 否 | `true` | 登录阶段遇到交易/授权确认弹窗（classify=tx）自动确认；登录阶段会弹真实链上交易（要花 gas）的特殊站点显式传 `false` |
 
 **示例**：`await connectWallet(ctx, { wallet: 'metamask' })` 即可跑通常见站点。完整示例见第 4 章。
@@ -619,13 +621,19 @@ connectWallet(ctx: TaskContext, opts: ConnectOptions): Promise<void>
 **签名**：
 
 ```ts
-signMessage(ctx: TaskContext, opts?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
+signMessage(ctx: TaskContext, opts?: {
+  wallet?: string
+  page?: Page
+  reclick?: { selector: string; afterMs: number }
+}): Promise<{ popupFailed: boolean }>
 ```
 
 **参数**
 
 | 名称 | 类型 | 必填 | 默认 | 含义 |
 | --- | --- | --- | --- | --- |
+| `opts.wallet` | `string` | 否 | `meta.wallet` | 钱包适配器 key；同一任务需要第二个钱包时显式指定（如 Hub 用 MetaMask、Quest 页用 SubWallet） |
+| `opts.page` | `Page` | 否 | `ctx.page` | 操作页面；多标签页/二次确认场景可指定其它标签页 |
 | `opts.reclick.selector` | `string` | 否 | — | 弹窗没出现时补点的选择器（如提交按钮） |
 | `opts.reclick.afterMs` | `number` | 否 | — | 等 `afterMs` 毫秒弹窗仍未出现就补点一次 |
 
@@ -640,7 +648,7 @@ for (let i = 0; i < 2; i++) {
 }
 ```
 
-**注意**：作用于任务配置的钱包 `meta.wallet`——未配置会抛 `任务未配置钱包`；未注册的 key 抛 `未注册的钱包适配器: X`。
+**注意**：缺省作用于任务配置的钱包 `meta.wallet`——未配置会抛 `任务未配置钱包`；未注册的 key 抛 `未注册的钱包适配器: X`。`wallet`/`page` 只影响本次动作，不修改 `meta.wallet`。
 
 #### `confirmTransaction(ctx, opts?)`
 
@@ -649,7 +657,11 @@ for (let i = 0; i < 2; i++) {
 **签名**：
 
 ```ts
-confirmTransaction(ctx: TaskContext, opts?: { reclick?: { selector: string; afterMs: number } }): Promise<{ popupFailed: boolean }>
+confirmTransaction(ctx: TaskContext, opts?: {
+  wallet?: string
+  page?: Page
+  reclick?: { selector: string; afterMs: number }
+}): Promise<{ popupFailed: boolean }>
 ```
 
 **示例**：
@@ -661,6 +673,35 @@ await waitFor(ctx, { selector: '.tx-success' }, { assert: true, budgetMs: 30000 
 ```
 
 **注意**：同 `signMessage`；`popupFailed: true` 时结合页面/链上结果判定，不要直接失败。
+
+#### `closeWalletPopups(ctx, opts?)`
+
+**用途**：关闭当前浏览器里该钱包遗留的扩展弹窗（连接/解锁/签名页）。多阶段钱包流程里，上一段残留弹窗会被下一次 `waitForPopup` 先命中，导致新弹窗没人处理；在发起新动作前先清理。
+
+**签名**：
+
+```ts
+closeWalletPopups(ctx: TaskContext, opts?: {
+  wallet?: string
+  page?: Page
+}): Promise<number>
+```
+
+| 名称 | 类型 | 必填 | 默认 | 含义 |
+| --- | --- | --- | --- | --- |
+| `opts.wallet` | `string` | 否 | `meta.wallet` | 钱包适配器 key |
+| `opts.page` | `Page` | 否 | `ctx.page` | 起始页面；会扫描其所属浏览器的全部 context |
+
+**返回**：实际关闭的弹窗数量。
+
+**示例**：
+
+```ts
+const closed = await closeWalletPopups(ctx, { wallet: 'metamask', page: questPage })
+if (closed > 0) ctx.log.info({ closed }, '已清理残留钱包弹窗')
+```
+
+**注意**：只在「确定上一段钱包动作已结束、准备发起新动作」时调用；不要在有在途钱包请求时清理。
 
 ### 3.5 验证码（`src/api/captcha.ts`）
 
@@ -773,6 +814,36 @@ await setInputFiles(ctx, 'input[type="file"]', 'D:/avatars/my-avatar.png') // �
 - **成功截图一律用它**：持续动画页面（倒计时/动态榜）会让 CDP 截图偶发挂起，直接 await 会把已成功的任务误报失败（真机教训，见第 6 章）。
 - 目录为 `data/screenshots/<日期>/<比特窗口ID>/<任务key>/slot-<slot>/`；同一轮重试共用目录，每小时/每次手动重跑独立；成功优先用任务截图，任务没截时框架补 `<日期>-success`，失败框架补 `<日期>-attemptN`。
 
+#### `takeElementScreenshot(ctx, name, selector, opts?)`
+
+**用途**：滚动到目标元素并只截该元素区域。任务卡片在首屏下方时，全屏截图看不到任务，用它可以稳定截到任务位置。**容错**：元素截图失败默认回退到 `takeScreenshot`（整页视口），不会让任务失败。
+
+**签名**：
+
+```ts
+takeElementScreenshot(ctx: TaskContext, name: string, selector: string, opts?: {
+  page?: Page
+  timeoutMs?: number
+  fallbackToViewport?: boolean
+}): Promise<string>
+```
+
+| 名称 | 类型 | 必填 | 默认 | 含义 |
+| --- | --- | --- | --- | --- |
+| `selector` | `string` | 是 | — | 目标元素选择器（首个匹配） |
+| `opts.page` | `Page` | 否 | `ctx.page` | 目标页面；多标签页场景传入 |
+| `opts.timeoutMs` | `number` | 否 | `15000` | 定位/截图超时毫秒 |
+| `opts.fallbackToViewport` | `boolean` | 否 | `true` | 失败时是否回退整页视口截图 |
+
+**示例**：
+
+```ts
+await takeElementScreenshot(ctx, 'checkin-success', '#loyalty-quest-root-check_in')
+await takeElementScreenshot(ctx, 'quest-success', '#loyalty-quest-root-external_rule')
+```
+
+**注意**：目标元素必须有稳定选择器；截图只包含元素本身，页面上下文由日志/诊断包补充。
+
 ### 3.7 诊断（`src/api/diag.ts`）
 
 #### `recordStep(ctx, name, fn)`
@@ -880,6 +951,68 @@ if (fallback) ctx.log.warn('AI 未给出可用答案，已随机作答')
 
 - 无匹配选项元素（`count() === 0`）时抛错，不做兜底。
 - 答案越界或无法解析（含推理模型返回空 `content`）→ 随机点击一项并返回 `fallback:true`，任务不应把 `fallback` 当失败。
+
+### 3.9 标签页（`src/api/tab.ts`）
+
+站点用 `target=_blank` 打开新页面时，主流程仍留在 `ctx.page`，用本节函数接管新标签页；不要修改 `ctx.page`，也不要复制一套等待/点击逻辑。
+
+#### `openTab(ctx, trigger, opts?)`
+
+**用途**：执行一个会打开新标签页的动作（如点击链接），等新标签出现并置前。
+
+```ts
+interface OpenTabOptions {
+  timeoutMs?: number
+  urlIncludes?: string
+}
+
+openTab(ctx: TaskContext, trigger: () => Promise<void>, opts?: OpenTabOptions): Promise<Page>
+```
+
+| 名称 | 类型 | 必填 | 默认 | 含义 |
+| --- | --- | --- | --- | --- |
+| `trigger` | `() => Promise<void>` | 是 | — | 打开新标签页的动作（通常是 `() => click(ctx, selector)`） |
+| `opts.timeoutMs` | `number` | 否 | `30000` | 等新标签出现的最长毫秒数 |
+| `opts.urlIncludes` | `string` | 否 | — | 只接受 URL 含该片段的标签页；页面跳转中时用于等最终地址 |
+
+**返回**：新标签页 `Page`；超时抛 `等待新标签页超时`。
+
+**示例**：
+
+```ts
+const questPage = await openTab(ctx, () => click(ctx, '#testnet-link'), {
+  urlIncludes: '/quest?walletAddress=',
+})
+```
+
+#### `waitInTab(ctx, page, matcher, opts?)` / `raceInTab(page, entries, timeoutMs)`
+
+**用途**：在指定标签页等待条件命中 / 多匹配器竞速，语义与 `waitFor` / `race` 相同。
+
+```ts
+waitInTab(ctx: TaskContext, page: Page, matcher: WaitMatcher, opts?: WaitOptions): Promise<boolean>
+raceInTab<K extends string>(page: Page, entries: Array<[K, Matcher]>, timeoutMs: number): Promise<K | null>
+```
+
+#### `clickInTab(page, target)`
+
+**用途**：在指定标签页点击；选择器走 `locator().first().click()`，`{ x, y }` 走 CDP 坐标点击。
+
+#### `focusTab(page)` / `closeTab(ctx, page)`
+
+**用途**：把指定标签页置前 / 关闭它并把 `ctx.page` 置前。关闭前需要保留的失败诊断截图请先截好。
+
+```ts
+await focusTab(questPage)
+// ...在 questPage 上操作...
+await closeTab(ctx, questPage)
+```
+
+**注意**
+
+- `openTab` 通过浏览器上下文的页面列表轮询新页，会过滤 `chrome-extension://` 钱包弹窗；`urlIncludes` 要在新页导航后才会命中。
+- 新标签页上的钱包登录/签名调用 `connectWallet(ctx, { ..., page })` 或 `signMessage(ctx, { wallet, page, ... })`，不要临时改 `ctx.page`。
+- 页面操作仍优先用 `waitFor`/`race`/`click` 的能力语义；`waitInTab` 只是把作用页面换成指定标签页。
 
 ---
 
@@ -1101,6 +1234,58 @@ export const DISCORD_CHANNEL_URLS = [
 - 自动化互动可能违反平台 ToS，建议用专门账号并保持低强度；出现登录挑战/验证码时任务按失败处理，人工介入。
 - 定时计划：面板「定时任务」建每日计划（建议每天 1 次），首次上线先单窗口 `task:run` 验证。
 - Discord 互动：在 `src/tasks/social/discord-daily-activity.ts` 的 `DISCORD_MESSAGE_CHANNEL_URLS` 只列自己的频道，`DISCORD_MESSAGES` 已内置 40 条短句（按窗口名+日期轮换）。每个账号每次运行固定尝试发 1 条消息，不按概率；跳到最新后等待 5-15 秒再发，逐字输入并回车，最多等待 3 秒确认消息出现，未确认不重发以免重复。找不到输入框时记录当前 URL 与候选选择器数量/可见状态，便于区分频道权限与选择器失效。
+
+### 配方七：多标签页 + 双钱包（Konnex Testnet 周任务）
+
+适用：主站卡片点 `target=_blank` 进入子站，子站先用 MetaMask、再在后续步骤用 SubWallet 签名，完成后回主站刷新判定。参考 `src/tasks/konnex-testnet-weekly.ts`。
+
+```ts
+import { openTab, focusTab, clickInTab, waitInTab, closeTab, signMessage, connectWallet, click } from '../api'
+
+const questPage = await openTab(ctx, () => click(ctx, '#testnet-link'), {
+  urlIncludes: '/quest?walletAddress=',
+})
+await focusTab(questPage)
+// 子站只确认 origin + path，不校验 walletAddress 具体值
+await connectWallet(ctx, {
+  wallet: 'metamask',
+  page: questPage,
+  connect: 'button:has-text("Connect EVM wallet"):visible',
+  connected: { selector: 'button:has-text("Reconnect EVM wallet"):visible' },
+})
+// 首次未验证 Snag 账户：连接 EVM 后按钮会变为可点，需再签一次 MetaMask
+const verifySnag = 'button:has-text("Verify Snag account"):not([disabled]):visible'
+if (await waitInTab(ctx, questPage, { selector: verifySnag }, { budgetMs: 30000 })) {
+  await clickInTab(questPage, verifySnag)
+  await signMessage(ctx, { wallet: 'metamask', page: questPage, reclick: { selector: verifySnag, afterMs: 15000 } })
+}
+// 之后进入 KNX Wallet 步骤：连接 SubWallet（已授权时静默），成功后出现 RPC URL
+await waitInTab(ctx, questPage, { selector: 'button:has-text("KNX Wallet"):not([disabled]):visible' }, { budgetMs: 60000 })
+const rpc = 'div:has-text("RPC URL"):visible'
+if (!(await waitInTab(ctx, questPage, { selector: rpc }, { budgetMs: 5000 }))) {
+  await connectWallet(ctx, {
+    wallet: 'subwallet',
+    page: questPage,
+    connect: 'section button:has-text("Connect wallet"):visible',
+    connected: { selector: rpc },
+  })
+}
+await clickInTab(questPage, 'button:has-text("Next"):visible')
+// 同一任务第二个钱包：显式 wallet + page，不改 meta.wallet
+await signMessage(ctx, { wallet: 'subwallet', page: questPage })
+await closeTab(ctx, questPage)
+```
+
+要点：
+
+- `openTab` 会过滤钱包扩展弹窗；`urlIncludes` 用最终地址片段，避免拿到 `about:blank`。
+- 子站的钱包动作一律通过 `connectWallet`/`signMessage`/`confirmTransaction` 的 `page` 参数指定，不修改 `ctx.page`。
+- 需要第二个钱包时用 `signMessage`/`confirmTransaction` 的 `wallet` 参数；`meta.wallet` 只保留主登录钱包。
+- 子站登录完成判据优先选「只有连接后才出现的业务按钮」（如按钮文案从 `Connect EVM wallet` 变为 `Reconnect EVM wallet`）；`Next` 在连接前也存在，不能当连接判据。
+- Snag 账户验证要等 MetaMask 签名完成并进入 `KNX Wallet` 步骤；RPC URL 是 `KNX Wallet` 连接 SubWallet 后才出现，不要把它挂在 EVM 连接后面。
+- KNX Wallet 步骤的内容区 `Connect wallet` 与页头同名，用 `section button:has-text("Connect wallet")` 限定，避免点到页头。
+- 首次账户连接 EVM 后，`Verify Snag account` 才从 disabled 变为可点，需要再签一次 MetaMask；已验证账户该按钮不可点，应跳过而不是死等。
+- 主站完成态刷新可能延迟，用 `waitFor(..., { refreshEveryMs })` 周期刷新等待，别写固定 sleep。
 
 ### 已领取 / 限频收敛
 
@@ -1439,6 +1624,16 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 滚动改为容器内滚动：X 用 `[data-testid="primaryColumn"]`，Discord 用消息列表容器；鼠标落在容器内，X 对齐下一篇推文顶部并用原生平滑滚动（失败才回退小 wheel，可跨一屏）；Discord 在消息列表内向上原生平滑滚动 55%-70%，减少内容跑出框。
 - 内容读取统一通过 `ctx.page.evaluate`（patchright Page）；读取失败返回空数组，任务回退到原固定节奏，不影响执行。
 - Discord 互动（2026-11-09）：仅对 `DISCORD_MESSAGE_CHANNEL_URLS` 中列出的频道生效；`DISCORD_MESSAGES` 已有 40 条短句并按窗口名+日期轮换。每个账号每次运行固定发 1 条消息，不按概率；跳到最新后等待 5-15 秒再发，逐字输入 + Enter，验证失败只告警。公开频道多账号同文案有刷屏/封号风险，建议只在自己的低流量频道使用。
+
+**26）Konnex Testnet 周任务多阶段登录（2026-11-10 真机）**
+
+- Quest 页 `Next` 按钮在 EVM 连接前就存在，不能当连接判据；EVM 连接成功看按钮文案从 `Connect EVM wallet` 变为 `Reconnect EVM wallet`。
+- 首次账户连接 EVM 后，`Verify Snag account` 才从 disabled 变为可点，需要再完成一次 MetaMask 签名（multichain signature-request 页）；签名成功后页面自动进入 `KNX Wallet` 步骤。已验证账户该按钮保持 disabled，应跳过而不是死等。
+- `RPC URL` 不是 EVM 签名的结果，而是 `KNX Wallet` 步骤连接 SubWallet 后才出现。该步骤内容区的 `Connect wallet` 与页头同名，用 `section button:has-text("Connect wallet")` 限定；SubWallet 已授权时是静默连接，无钱包弹窗。
+- MetaMask multichain 签名页的 `confirm-footer-button` 在切页动画期间可能已挂载但不可见；`waitConfirmBtn` 已改为「等可见后再点」，否则会过早点击导致弹窗不关闭（现象：`MetaMask 连接确认未完成（弹窗未关闭）`）。
+- 仍有个别窗口 MetaMask 弹窗不关闭（真机 23:45-23:54，窗口 93/97）：失败截图停在 `Verify Snag account` 的 loading 转圈。任务已改为「先等 30 秒看页面是否已进入 KNX Wallet（弹窗 close 事件与页面推进不同步），未推进则 `closeWalletPopups` 清残留弹窗后重试 1 次」。
+- 成功截图不要截首屏：Hub 的 Testnet 卡片在首屏下方，整页视口截图看不到任务。用 `takeElementScreenshot` 截卡片（`#loyalty-quest-root-external_rule` / `#loyalty-quest-root-check_in`），失败自动回退整页。
+- 成功后回 Hub 刷新，卡片出现 `Great job!`，余额增加 500 KP（真机 680 → 1180）。
 
 ---
 

@@ -1,15 +1,13 @@
 /**
  * Konnex 签到任务：Check In (Weekly) 每周签到（+10 KP，每周一次）
- * 登录：Connect Wallet → 弹窗「Connect with Ethereum」→ 选 MetaMask → 钱包弹窗确认
+ * 登录：Sign in → Connect with Ethereum → MetaMask → SIWE 签名（共享 ./konnex-hub）
  * 已签到两种卡片状态（Great job! 横幅 / RESETS IN 倒计时）都算成功
- * 依赖方向：依赖 ./base（任务基类）与 ../api（能力函数）
+ * 依赖方向：依赖 ./base（任务基类）、./konnex-hub（共享 Hub 登录）与 ../api（能力函数）
  */
 import { SiteTask, type TaskContext, type TaskMeta } from './base'
-import { openPage, connectWallet, race, evaluate, takeScreenshot } from '../api'
+import { openPage, race, evaluate, takeElementScreenshot } from '../api'
+import { ensureKonnexHubLogin, KONNEX_HUB_URL, KONNEX_SIGN_IN_BTN } from './konnex-hub'
 
-const SIGN_IN_BTN = '[data-testid="connect-wallet-button"]:has-text("Sign in")' // 站内登录入口（钱包已连但 session 未认证时出现）
-const ETHEREUM_ENTRY_TEXT = 'Connect with Ethereum' // 登录弹窗内的入口文案
-const METAMASK_ENTRY_TEXT = 'MetaMask' // 钱包选择项文案
 const CHECKIN_BTN = 'button:has-text("Check in")' // 签到按钮（页面唯一；也是真正登录完成的标志）
 const CHECKIN_CARD = '#loyalty-quest-root-check_in' // 签到卡片根节点（含按钮/已签到态）
 const SUCCESS_TEXT = 'Check-In Succeeded!' // 签到成功弹窗标题
@@ -26,11 +24,11 @@ export class KonnexCheckinTask extends SiteTask {
     key: 'konnex-checkin',
     name: 'Konnex 签到',
     group: { key: 'konnex', name: 'Konnex' },
-    url: 'https://hub.konnex.world/points',
+    url: KONNEX_HUB_URL,
     sourceUrl: ['https://cryptorank.io/zh/drophunting/konnex-activity1071', 'https://airdrops.io/konnex/'],
     note: '每周签到（+10 KP）；登录是多段确认：站内 Sign in → Connect with Ethereum → MetaMask 连接 → SIWE 签名（autoConfirmTransaction 自动确认）→ 站点 session 认证。不能用 Balance 判登录（钱包已连但未签名时也会出现）；以签到按钮出现作为真正登录完成的标志。成功判定弹窗 h1（Check-In Succeeded!）；当周已签到显示 Great job! 横幅或暗态 RESETS IN，两种都算成功',
     category: 'checkin',
-    lastUpdated: '2026-10-30',
+    lastUpdated: '2026-11-11',
     enabled: true,
     wallet: 'metamask',
     timeoutSec: 600,
@@ -46,19 +44,12 @@ export class KonnexCheckinTask extends SiteTask {
     const state = await this.waitCheckinState(ctx)
     if (state === 'done') {
       ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '本周已签到（卡片为已签到状态）')
-      await takeScreenshot(ctx, 'konnex-success')
+      await takeElementScreenshot(ctx, 'konnex-success', CHECKIN_CARD)
       return
     }
     if (state === 'needLogin') {
-      await connectWallet(ctx, {
-        wallet: 'metamask',
-        // 登录完成的任一状态（可签到按钮 / 本周已签到）；避免已签到时死等永不出现的按钮
-        connected: { selector: CHECKIN_READY_SELECTOR },
-        disconnected: { selector: SIGN_IN_BTN },
-        connect: SIGN_IN_BTN,
-        confirm: `text=${ETHEREUM_ENTRY_TEXT}`,
-        walletOption: { text: METAMASK_ENTRY_TEXT },
-      })
+      // 登录完成的任一状态（可签到按钮 / 本周已签到）；避免已签到时死等永不出现的按钮
+      await ensureKonnexHubLogin(ctx, { connected: { selector: CHECKIN_READY_SELECTOR } })
     }
     await this.checkin(ctx)
   }
@@ -74,7 +65,7 @@ export class KonnexCheckinTask extends SiteTask {
       if (await this.checkinDone(ctx)) return 'done'
       if (await this.isVisible(ctx, CHECKIN_BTN)) return 'ready'
       // 会话状态异步加载：Sign in 需连续可见若干轮才判定未登录，避免登录态页面首屏闪现 Sign in 被误判
-      signInPolls = (await this.isVisible(ctx, SIGN_IN_BTN)) ? signInPolls + 1 : 0
+      signInPolls = (await this.isVisible(ctx, KONNEX_SIGN_IN_BTN)) ? signInPolls + 1 : 0
       if (signInPolls >= SIGN_IN_STABLE_POLLS) return 'needLogin'
       await ctx.page.waitForTimeout(2000)
     }
@@ -112,7 +103,7 @@ export class KonnexCheckinTask extends SiteTask {
       // 按钮未出现前先判是否已签到（本周已签到则卡片无按钮，直接成功）
       if (await this.checkinDone(ctx)) {
         ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '本周已签到（卡片为已签到状态）')
-        await takeScreenshot(ctx, 'konnex-success')
+        await takeElementScreenshot(ctx, 'konnex-success', CHECKIN_CARD)
         return
       }
       await ctx.page.waitForTimeout(2000)
@@ -124,7 +115,7 @@ export class KonnexCheckinTask extends SiteTask {
     const outcome = await race(ctx, [['success', { text: SUCCESS_TEXT }], ['done', { text: DONE_TEXT }]], CHECKIN_SUCCESS_WAIT_MS)
     if (outcome === 'success' || outcome === 'done' || (await this.checkinDone(ctx))) {
       ctx.log.info({ step: 'checkin', window: ctx.profile.name }, '签到成功（Check-In Succeeded!）')
-      await takeScreenshot(ctx, 'konnex-success')
+      await takeElementScreenshot(ctx, 'konnex-success', CHECKIN_CARD)
       return
     }
     // 兜底排错信息：把卡片文本与页面 h1 一并抛出，便于定位站点改版

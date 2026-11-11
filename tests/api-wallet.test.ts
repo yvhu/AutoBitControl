@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../src/automation/wallet', () => ({
+  matchesWalletUrl: (url: string, patterns: string[]) => patterns.some((p) => new RegExp(p).test(url)),
   WalletActions: class {
     deps: Record<string, unknown>
     constructor(deps: Record<string, unknown>) {
@@ -34,7 +35,7 @@ vi.mock('../src/automation/wallet', () => ({
   },
 }))
 
-import { connectWallet, signMessage, confirmTransaction } from '../src/api'
+import { connectWallet, signMessage, confirmTransaction, closeWalletPopups } from '../src/api'
 
 /** 假 ctx：wallets.get 按 key 返回带 displayName 的适配器 */
 function makeCtx(taskWallet = 'metamask') {
@@ -106,6 +107,12 @@ describe('api/wallet connectWallet', () => {
     expect(spec.reclickAfterMs).toBe(5000)
   })
 
+  it('page 覆盖：装配进 WalletActions.deps.page（多标签页连接场景）', async () => {
+    const page = { marker: 'quest' }
+    await connectWallet(makeCtx(), { wallet: 'metamask', page: page as never })
+    expect(mocks.instances[0].deps.page).toBe(page)
+  })
+
   it('把 ctx 的 walletKey/wallets/walletPasswords/walletSession/log 与 recover 装配进 WalletActions', async () => {
     const ctx = makeCtx() as unknown as {
       wallets: unknown
@@ -121,6 +128,40 @@ describe('api/wallet connectWallet', () => {
     expect(deps.walletSession).toBe(ctx.walletSession)
     expect(deps.log).toBe(ctx.log)
     expect(typeof deps.recover).toBe('function')
+  })
+})
+
+describe('api/wallet closeWalletPopups', () => {
+  it('关闭匹配的钱包扩展弹窗，返回数量', async () => {
+    const closePopup = vi.fn(async () => {})
+    const closeOther = vi.fn(async () => {})
+    const page = {
+      url: () => 'https://site',
+      context: () => ({
+        browser: () => ({
+          contexts: () => [{
+            pages: () => [
+              { url: () => 'chrome-extension://abc/notification.html', close: closePopup },
+              { url: () => 'https://site', close: closeOther },
+            ],
+          }],
+        }),
+      }),
+    }
+    const ctx = {
+      page,
+      task: { meta: { wallet: 'metamask' } },
+      wallets: { get: () => ({ extensionUrlPatterns: ['chrome-extension://.*/notification.html'] }) },
+      log: { info: vi.fn() },
+    }
+    expect(await closeWalletPopups(ctx as never)).toBe(1)
+    expect(closePopup).toHaveBeenCalled()
+    expect(closeOther).not.toHaveBeenCalled()
+  })
+
+  it('未配置钱包/注册表：直接返回 0', async () => {
+    const ctx = { page: {}, task: { meta: {} }, wallets: undefined, log: { info: vi.fn() } }
+    expect(await closeWalletPopups(ctx as never)).toBe(0)
   })
 })
 
@@ -145,11 +186,31 @@ describe('api/wallet 动作函数', () => {
     expect(mocks.sign).toHaveBeenCalledWith({})
   })
 
+  it('signMessage：wallet/page 覆盖任务钱包，且只把动作参数透传给 sign', async () => {
+    const page = { marker: 'quest' }
+    await signMessage(makeCtx('metamask'), {
+      wallet: 'subwallet',
+      page: page as never,
+      reclick: { selector: '#submit', afterMs: 3000 },
+    })
+    expect(mocks.instances[0].deps.walletKey).toBe('subwallet')
+    expect(mocks.instances[0].deps.page).toBe(page)
+    expect(mocks.sign).toHaveBeenCalledWith({ reclick: { selector: '#submit', afterMs: 3000 } })
+  })
+
   it('confirmTransaction：以 options 调 confirmTx 并透传 popupFailed', async () => {
     mocks.confirmTx.mockResolvedValueOnce({ popupFailed: true })
     const res = await confirmTransaction(makeCtx('petra'), { reclick: { selector: '#confirm', afterMs: 3000 } })
     expect(mocks.confirmTx).toHaveBeenCalledTimes(1)
     expect(mocks.confirmTx).toHaveBeenCalledWith({ reclick: { selector: '#confirm', afterMs: 3000 } })
     expect(res).toEqual({ popupFailed: true })
+  })
+
+  it('confirmTransaction：wallet/page 覆盖并剥离出动作参数', async () => {
+    const page = { marker: 'quest' }
+    await confirmTransaction(makeCtx('metamask'), { wallet: 'subwallet', page: page as never })
+    expect(mocks.instances[0].deps.walletKey).toBe('subwallet')
+    expect(mocks.instances[0].deps.page).toBe(page)
+    expect(mocks.confirmTx).toHaveBeenCalledWith({})
   })
 })

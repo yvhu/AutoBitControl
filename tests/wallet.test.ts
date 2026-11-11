@@ -202,6 +202,25 @@ describe('MetaMaskAdapter 连接确认', () => {
     expect(Date.now() - started).toBeLessThan(1500)
   })
 
+  it('确认按钮存在但隐藏：等它可见后再点（避免切页动画中点击丢失）', async () => {
+    const adapter = new MetaMaskAdapter()
+    let visibilityChecks = 0
+    let clicks = 0
+    const popup = makePopup({
+      getByTestId: (id: string) => id === 'confirm-btn'
+        ? makeLocator({
+            isVisible: async () => { visibilityChecks++; return visibilityChecks > 2 },
+            click: async () => { clicks++ },
+          })
+        : makeLocator({ count: async () => 0, isVisible: async () => false }),
+      getByRole: () => makeLocator({ count: async () => 0, isVisible: async () => false }),
+      waitForEvent: async () => {},
+    })
+    await adapter.connect(popup)
+    expect(clicks).toBe(1)
+    expect(visibilityChecks).toBeGreaterThan(2)
+  })
+
   it('确认按钮延迟渲染：等到出现点击，弹窗关闭即成功', async () => {
     const adapter = new MetaMaskAdapter()
     let clicks = 0

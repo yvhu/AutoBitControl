@@ -2,6 +2,7 @@
  * 等待能力函数（api 层）：条件等待 / 多匹配器竞速 / 接口响应等待
  * 依赖方向：engine 的 TaskContext 类型、automation 的探针命中内核、infrastructure 常量
  */
+import type { Page } from 'patchright'
 import type { TaskContext } from '../engine/task-context'
 import { DEFAULT_RELOAD_TIMEOUT_MS } from '../infrastructure/constants'
 import { firstTextPresent, probeDesc, probeHit } from '../automation'
@@ -24,6 +25,17 @@ export interface WaitOptions {
 
 /** 等条件命中（出现/可见/消失）；可选刷新恢复；返回是否命中；assert 时超时抛错 */
 export async function waitFor(ctx: TaskContext, matcher: WaitMatcher, opts: WaitOptions = {}): Promise<boolean> {
+  return waitForOn(ctx, ctx.page, matcher, opts)
+}
+
+/**
+ * 页面级等待：语义同 waitFor，但作用于指定页面（供多标签页能力复用）。
+ * @param ctx 任务上下文（提供日志）
+ * @param page 目标页面
+ * @param matcher 等待条件
+ * @param opts 等待参数
+ */
+export async function waitForOn(ctx: TaskContext, page: Page, matcher: WaitMatcher, opts: WaitOptions = {}): Promise<boolean> {
   const budgetMs = opts.budgetMs ?? 10000
   const refreshEveryMs = opts.refreshEveryMs ?? 0
   const recoverTexts = opts.recoverTexts ?? []
@@ -33,21 +45,21 @@ export async function waitFor(ctx: TaskContext, matcher: WaitMatcher, opts: Wait
   let lastRefresh = Date.now()
   let lastBeat = Date.now()
   while (Date.now() < end) {
-    if (await probeHit(ctx.page, matcher)) return true
-    const errText = await firstTextPresent(ctx.page, recoverTexts)
+    if (await probeHit(page, matcher)) return true
+    const errText = await firstTextPresent(page, recoverTexts)
     const stale = refreshEveryMs > 0 && Date.now() - lastRefresh >= refreshEveryMs
     if (errText !== '' || stale) {
-      ctx.log.info({ step: 'recover', errText, url: ctx.page.url() }, '刷新页面恢复（错误提示或周期刷新）')
-      await ctx.page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
-      await ctx.page.waitForTimeout(settleMs)
+      ctx.log.info({ step: 'recover', errText, url: page.url() }, '刷新页面恢复（错误提示或周期刷新）')
+      await page.reload({ timeout: DEFAULT_RELOAD_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {})
+      await page.waitForTimeout(settleMs)
       lastRefresh = Date.now(); lastBeat = Date.now()
       continue
     }
     if (Date.now() - lastBeat >= heartbeatMs) {
       lastBeat = Date.now()
-      ctx.log.info({ step: 'wait', probe: probeDesc(matcher), waitedMs: budgetMs - (end - Date.now()), url: ctx.page.url() }, '仍在等待条件命中')
+      ctx.log.info({ step: 'wait', probe: probeDesc(matcher), waitedMs: budgetMs - (end - Date.now()), url: page.url() }, '仍在等待条件命中')
     }
-    await ctx.page.waitForTimeout(3000)
+    await page.waitForTimeout(3000)
   }
   if (opts.assert) throw new Error(`等待超时: ${JSON.stringify(matcher)}`)
   return false
@@ -55,12 +67,22 @@ export async function waitFor(ctx: TaskContext, matcher: WaitMatcher, opts: Wait
 
 /** 多匹配器竞速：任一先命中返回其键，都等不到返回 null（空数组直接返回 null，避免 Promise.race([]) 永不落定） */
 export async function race<K extends string>(ctx: TaskContext, entries: Array<[K, Matcher]>, timeoutMs: number): Promise<K | null> {
+  return raceOn(ctx.page, entries, timeoutMs)
+}
+
+/**
+ * 页面级竞速：语义同 race，但作用于指定页面（供多标签页能力复用）。
+ * @param page 目标页面
+ * @param entries 键与匹配器
+ * @param timeoutMs 单条竞速预算
+ */
+export async function raceOn<K extends string>(page: Page, entries: Array<[K, Matcher]>, timeoutMs: number): Promise<K | null> {
   if (entries.length === 0) return null
   const r = await Promise.race(entries.map(async ([k, matcher]) => {
     const end = Date.now() + timeoutMs
     while (Date.now() < end) {
-      if (await probeHit(ctx.page, matcher)) return k
-      await ctx.page.waitForTimeout(800)
+      if (await probeHit(page, matcher)) return k
+      await page.waitForTimeout(800)
     }
     return null
   }))

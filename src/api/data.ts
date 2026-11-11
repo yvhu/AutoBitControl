@@ -48,3 +48,44 @@ export async function takeScreenshot(ctx: TaskContext, name: string, page?: Page
     return ''
   }
 }
+
+/** 元素截图选项 */
+export interface ElementScreenshotOptions {
+  /** 目标页面（缺省 ctx.page）；多标签页场景可指定新标签页 */
+  page?: Page
+  /** 定位/截图超时毫秒（缺省 15000） */
+  timeoutMs?: number
+  /** 元素截图失败时是否回退截当前视口（缺省 true，保证不会因截图让任务失败） */
+  fallbackToViewport?: boolean
+}
+
+/**
+ * 按元素截图：滚动到目标元素并只截元素区域，适合任务卡片在首屏下方、全屏截图看不到任务的场景。
+ * 执行流程：在目标页面定位 selector 首元素 → locator.screenshot（自动滚动到可见）→ 记录产物路径；
+ * 失败时按 fallbackToViewport 回退到 takeScreenshot（默认回退），绝不因截图失败影响任务结果。
+ * @param ctx 任务上下文（提供产物目录与日志）
+ * @param name 截图名（不含扩展名）
+ * @param selector 目标元素选择器
+ * @param opts 页面/超时/回退选项
+ * @returns 截图路径；失败返回空串
+ */
+export async function takeElementScreenshot(
+  ctx: TaskContext,
+  name: string,
+  selector: string,
+  opts: ElementScreenshotOptions = {},
+): Promise<string> {
+  const page = opts.page ?? ctx.page
+  try {
+    mkdirSync(ctx.artifactsDir, { recursive: true })
+    const file = join(ctx.artifactsDir, `${name}.png`)
+    const timeout = opts.timeoutMs ?? 15000
+    await page.locator(selector).first().screenshot({ path: file, timeout })
+    ctx.recordScreenshot(file)
+    return file
+  } catch (e) {
+    ctx.log.warn({ step: 'screenshot', selector, window: ctx.profile.name, err: (e as Error).message }, '元素截图失败（不影响任务结果）')
+    if (opts.fallbackToViewport === false) return ''
+    return takeScreenshot(ctx, name, page)
+  }
+}

@@ -6,7 +6,7 @@
  * 弹窗 UI 渲染有延迟（多窗口并发时尤甚），解锁与连接确认均改为轮询等待状态出现，
  * 不能单次 count 判「已解锁」；连接确认成功判定 = 弹窗关闭 或 连接页先存在后消失
  */
-import type { WalletAdapter, PopupPage } from './types'
+import type { WalletAdapter, PopupLocator, PopupPage } from './types'
 import { POPUP_POLL_MS, sleep, waitForPopupClose } from './popup-wait'
 
 /** 连接确认按钮 testid 候选（多版本兼容，与 UI 语言无关） */
@@ -219,15 +219,28 @@ export class MetaMaskAdapter implements WalletAdapter {
       try {
         for (const tid of CONFIRM_TESTIDS) {
           const loc = popup.getByTestId(tid).first()
-          if (((await loc.count?.()) ?? 0) > 0) return loc
+          if (await this.locatorIsVisible(loc)) return loc
         }
         const role = popup.getByRole('button', { name: CONFIRM_ROLE }).first()
-        if (((await role.count?.()) ?? 0) > 0) return role
+        if (await this.locatorIsVisible(role)) return role
       } catch {
         if (popup.isClosed?.()) return null
       }
       await sleep(POPUP_POLL_MS)
     }
     return null
+  }
+
+  /**
+   * 定位器当前是否可见：优先用真实 isVisible（区分存在但隐藏/过渡态），mock 无可见性 API 时回退 count>0。
+   * 确认按钮在切页动画期间可能已挂载但不可点；只看 count 会过早点击导致点击丢失、弹窗不关闭。
+   */
+  private async locatorIsVisible(loc: PopupLocator): Promise<boolean> {
+    try {
+      if (loc.isVisible) return await loc.isVisible()
+      return ((await loc.count?.()) ?? 0) > 0
+    } catch {
+      return false
+    }
   }
 }

@@ -15,6 +15,7 @@ import { ShelbyFaucetTask } from './shelby-faucet'
 import { ShelbyExplorerTask } from './shelby-explorer'
 import { ArcFaucetTask } from './arc-faucet'
 import { KonnexCheckinTask } from './konnex-checkin'
+import { KonnexTestnetWeeklyTask } from './konnex-testnet-weekly'
 import { AuralaunchFaucetTask } from './auralaunch-faucet'
 import { AuralaunchCheckinTask } from './auralaunch-checkin'
 import { XDailyActivityTask } from './social/x-daily-activity'
@@ -33,6 +34,7 @@ const ALL: SiteTask[] = [
   new ShelbyExplorerTask(), 
   new ArcFaucetTask(), 
   new KonnexCheckinTask(), 
+  new KonnexTestnetWeeklyTask(),
   new AuralaunchFaucetTask(),
   new AuralaunchCheckinTask(),
   new XDailyActivityTask(),

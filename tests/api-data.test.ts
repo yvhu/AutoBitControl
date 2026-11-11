@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { getAccountValue, setInputFiles, takeScreenshot, recordStep, getSteps } from '../src/api'
+import { getAccountValue, setInputFiles, takeScreenshot, takeElementScreenshot, recordStep, getSteps } from '../src/api'
 import { StepRecorder } from '../src/automation'
 
 /** 最小假 ctx：只提供被测函数用到的字段 */
@@ -75,6 +75,45 @@ describe('api/data takeScreenshot', () => {
     expect(out.endsWith('shot2.png')).toBe(true)
     expect(otherShot).toHaveBeenCalled()
     expect(spies.screenshot).not.toHaveBeenCalled()
+  })
+})
+
+describe('api/data takeElementScreenshot', () => {
+  it('成功：按元素截图并记录路径，不截整页', async () => {
+    const elementShot = vi.fn(async () => {})
+    const viewportShot = vi.fn(async () => {})
+    const { ctx, spies } = makeCtx({
+      page: {
+        locator: () => ({ first: () => ({ screenshot: elementShot }) }),
+        screenshot: viewportShot,
+      },
+    })
+    const out = await takeElementScreenshot(ctx, 'card', '#card')
+    expect(out.endsWith('card.png')).toBe(true)
+    expect(elementShot).toHaveBeenCalledWith(expect.objectContaining({ path: out }))
+    expect(viewportShot).not.toHaveBeenCalled()
+    expect(spies.recordScreenshot).toHaveBeenCalledWith(out)
+  })
+
+  it('元素截图失败：回退整页截图，保证不影响任务', async () => {
+    const elementShot = vi.fn(async () => { throw new Error('element gone') })
+    const viewportShot = vi.fn(async () => {})
+    const { ctx, spies } = makeCtx({
+      page: { locator: () => ({ first: () => ({ screenshot: elementShot }) }), screenshot: viewportShot },
+    })
+    const out = await takeElementScreenshot(ctx, 'card', '#card')
+    expect(out.endsWith('card.png')).toBe(true)
+    expect(viewportShot).toHaveBeenCalled()
+    expect(spies.recordScreenshot).toHaveBeenCalledWith(out)
+  })
+
+  it('可指定 page：在传入页面按元素截图', async () => {
+    const elementShot = vi.fn(async () => {})
+    const { ctx } = makeCtx()
+    const otherPage = { locator: () => ({ first: () => ({ screenshot: elementShot }) }), screenshot: vi.fn() }
+    const out = await takeElementScreenshot(ctx, 'card2', '#card', { page: otherPage as never })
+    expect(out.endsWith('card2.png')).toBe(true)
+    expect(elementShot).toHaveBeenCalled()
   })
 })
 
