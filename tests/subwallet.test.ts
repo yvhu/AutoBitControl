@@ -10,14 +10,18 @@ function makePopup(opts: {
   clicks: string[]
   fills?: string[]
   closeOnClick?: boolean
+  dappAlert?: boolean
   url?: string
 }): PopupPage {
   const texts = opts.texts ?? []
   const titles = opts.titles ?? []
   let closed = false
+  let dappAlertOpen = !!opts.dappAlert
   const locator = (selector: string): PopupLocator => {
     let visible = false
-    if (selector.includes('input[type="password"]')) {
+    if (selector.includes('modal-id-dapp-alert-modal')) {
+      visible = dappAlertOpen
+    } else if (selector.includes('input[type="password"]')) {
       visible = !!opts.password
     } else {
       const button = /button:has-text\("([^"]+)"\)/.exec(selector)
@@ -28,7 +32,8 @@ function makePopup(opts: {
     const loc: PopupLocator = {
       click: async () => {
         opts.clicks.push(selector)
-        if (opts.closeOnClick) closed = true
+        if (selector.includes('modal-id-dapp-alert-modal')) dappAlertOpen = false
+        else if (opts.closeOnClick) closed = true
       },
       fill: async (text: string) => { opts.fills?.push(text) },
       press: async () => {},
@@ -159,6 +164,21 @@ describe('SubWalletAdapter 动作', () => {
     const popup = makePopup({ titles: ['Transaction request'], texts: ['Approve'], clicks, closeOnClick: true })
     await new SubWalletAdapter().confirmTx(popup)
     expect(clicks).toEqual(['button:has-text("Approve")'])
+  })
+
+  it('dApp alert 挡住 Approve：先点右侧确认，再点 Approve', async () => {
+    const clicks: string[] = []
+    const popup = makePopup({
+      titles: ['Signature request'],
+      texts: ['Approve'],
+      clicks,
+      closeOnClick: true,
+      dappAlert: true,
+    })
+    await new SubWalletAdapter().sign(popup)
+    expect(clicks[0]).toContain('modal-id-dapp-alert-modal')
+    expect(clicks[1]).toBe('button:has-text("Approve")')
+    expect(clicks).toHaveLength(2)
   })
 
   it('handleLoginPopup：tx 不自动处理', async () => {

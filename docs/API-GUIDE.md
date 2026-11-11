@@ -1098,6 +1098,7 @@ await connectWallet(ctx, {
 - 按钮：解锁页 `Unlock`，授权页 `Connect`，签名页与交易页**共用 `Approve`**；分类顺序为「密码框 → 签名标题 → 交易标题 → Connect → Approve」，标题缺失时 `Approve` 保守归入交易。
 - 多语言：SubWallet 官方语言包目前覆盖 en / zh / ja / ru / vi；适配器同时接受 zh-TW / fr / de 候选，但实际是否出现以钱包版本为准。
 - 解锁密码 key：`subwallet`，配置方式同其它钱包（`WALLET_PASSWORDS={"subwallet":"..."}`）。
+- **dApp alert 弹窗**：签名/交易前 SubWallet 可能弹出 `dapp-alert-modal`（元数据过期/风险提示等），其右侧 `__right-button` 会挡住 `Approve`（Approve 可能先 disabled，启用后点击仍被弹窗拦截）。适配器现在会在确认动作前先点该右侧按钮，再点 `Approve`；点击被拦截时会清提示后重试，避免 30 秒 click 超时。
 
 ---
 
@@ -1634,6 +1635,13 @@ if (await hasText(ctx, 'Please wait')) throw new Error('领取冷却中')
 - 仍有个别窗口 MetaMask 弹窗不关闭（真机 23:45-23:54，窗口 93/97）：失败截图停在 `Verify Snag account` 的 loading 转圈。任务已改为「先等 30 秒看页面是否已进入 KNX Wallet（弹窗 close 事件与页面推进不同步），未推进则 `closeWalletPopups` 清残留弹窗后重试 1 次」。
 - 成功截图不要截首屏：Hub 的 Testnet 卡片在首屏下方，整页视口截图看不到任务。用 `takeElementScreenshot` 截卡片（`#loyalty-quest-root-external_rule` / `#loyalty-quest-root-check_in`），失败自动回退整页。
 - 成功后回 Hub 刷新，卡片出现 `Great job!`，余额增加 500 KP（真机 680 → 1180）。
+
+**27）SubWallet dApp alert 挡住 Approve（2026-11-11 真机报错）**
+
+- 现象：Konnex 周任务在 SubWallet 签名阶段报 `locator.click: Timeout 30000ms exceeded`，日志里 Approve 先 disabled，随后 `element is visible, enabled and stable`，但 `modal-id-dapp-alert-modal` 的 `__right-button` 拦截点击。
+- 根因：SubWallet 在签名/交易前弹出 dApp alert（元数据过期/风险提示），右侧确认按钮未点掉时 Approve 不可点；适配器只找 Approve，没处理该弹窗，Playwright 等 30 秒 click 超时。不是任务总超时，也不是单纯网络慢。
+- 修复：`SubWalletAdapter` 新增 `dismissDappAlert`，在 `unlock`/`confirmWith`/`waitButton` 循环里先点 `.modal-id-dapp-alert-modal .__right-button:visible`；Approve 点击改 5 秒短超时，被拦截时清提示后重试。
+- 排查要点：看到 `dapp-alert-modal`/`__right-button` 且 Approve disabled，先点掉钱包提示再判断任务是否真的失败。
 
 ---
 

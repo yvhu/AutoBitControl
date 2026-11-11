@@ -7,6 +7,8 @@
  *   标题缺失时 Approve 保守归为 tx，绝不把可能的交易确认误当签名自动点击。
  *   SubWallet 把 provider 挂在 window.SubWallet（isSubWallet），不是固定 window.ethereum，
  *   通过 providerGlobal 显式指定，避免与 MetaMask 同时注入时误判扩展未加载。
+ *   签名/交易前 SubWallet 可能弹出 dapp-alert-modal（元数据过期/风险提示），
+ *   右侧 __right-button 会挡住 Approve；确认动作前先点掉它，避免 Approve disabled + 点击被拦截。
  */
 import type { PopupKind, PopupLocator, PopupPage, WalletAdapter } from './types'
 import { POPUP_POLL_MS, sleep, waitForPopupClose } from './popup-wait'
@@ -21,6 +23,9 @@ const UNLOCK_TEXTS = WALLET_BUTTON_LABELS.unlock
 const CONNECT_TEXTS = WALLET_BUTTON_LABELS.connect
 /** 签名/交易确认按钮文案：SubWallet 两者都用 Approve，另收 Sign/Confirm 与多语言候选 */
 const APPROVE_TEXTS = uniqueTexts([...WALLET_BUTTON_LABELS.approve, ...WALLET_BUTTON_LABELS.sign, ...WALLET_BUTTON_LABELS.confirm])
+
+/** SubWallet dApp alert 弹窗的右侧确认按钮（元数据过期/风险提示会挡住 Approve） */
+const DAPP_ALERT_OK = '.modal-id-dapp-alert-modal .__right-button:visible'
 
 /** 签名页标题文案（SubWallet 用标题区分签名与交易，两者按钮都叫 Approve） */
 const SIGNATURE_TITLE_TEXTS = [
@@ -79,6 +84,7 @@ export class SubWalletAdapter implements WalletAdapter {
     const deadline = Date.now() + 45000
     while (Date.now() < deadline) {
       if (popup.isClosed?.()) return
+      if (await this.dismissDappAlert(popup)) continue
       if (await this.isActionReady(popup)) return
       const pw = popup.locator('input[type="password"]').first()
       let pwCount = 0
@@ -196,9 +202,17 @@ export class SubWalletAdapter implements WalletAdapter {
       if (await this.locatorVisible(popup, 'input[type="password"]')) {
         throw new Error('SubWallet 已锁定且未配置解锁密码（请在 config/.env 配置 WALLET_PASSWORDS 或 config.local.json 的 wallet.passwords）')
       }
+      // dApp alert 会盖住 Approve（按钮 disabled 或点击被 __right-button 拦截）：先点掉右侧确认
+      if (await this.dismissDappAlert(popup)) continue
       const btn = await this.waitButton(popup, texts, 10000)
       if (!btn) break
-      await btn.click()
+      try {
+        await btn.click({ timeout: 5000 })
+      } catch (e) {
+        // 点击瞬间弹出 dApp alert：清掉提示后进入下一轮重试；没有提示则保留原始错误
+        if (await this.dismissDappAlert(popup)) continue
+        throw e
+      }
       if (await waitForPopupClose(popup, 5000)) return
     }
     throw new Error(`SubWallet ${label}未完成（弹窗未关闭）`)
@@ -210,11 +224,26 @@ export class SubWalletAdapter implements WalletAdapter {
     const selectors = buttonSelectors(texts)
     while (Date.now() < deadline) {
       if (popup.isClosed?.()) return null
+      if (await this.dismissDappAlert(popup)) continue
       const found = await this.firstVisible(popup, selectors)
       if (found) return found
       await sleep(POPUP_POLL_MS)
     }
     return null
+  }
+
+  /**
+   * 关闭 SubWallet 的 dApp alert 提示（元数据过期/风险提示等）。
+   * 只点右侧确认按钮（__right-button），不碰左侧取消；弹窗不在/点击失败时返回 false。
+   * @param popup 钱包弹窗页
+   * @returns 是否处理了提示（点击成功或弹窗已消失）
+   */
+  private async dismissDappAlert(popup: PopupPage): Promise<boolean> {
+    const right = popup.locator(DAPP_ALERT_OK).first()
+    if (!(await this.locatorIsVisible(right))) return false
+    const clicked = await right.click({ timeout: 5000 }).then(() => true).catch(() => false)
+    await sleep(POPUP_POLL_MS)
+    return clicked || !(await this.locatorIsVisible(right))
   }
 
   /** 一组选择器中首个可见的定位器 */
